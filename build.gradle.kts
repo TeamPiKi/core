@@ -54,6 +54,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
 
+    // Discord 슬래시커맨드(admin 접근 #654) 인터랙션의 Ed25519 서명 검증용. raw 32B 공개키를 BouncyCastle 로 다룬다
+    // (JDK EdEC raw-key 디코딩이 까다로움). Spring Boot 4.0.5 BOM 미관리라 버전 명시(Maven Central 최신 안정).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
+
     // admin 백오피스 SSR 뷰(로그인·관리 화면). #505 가 옛 dev 백오피스와 함께 제거했고, prod 운영 백오피스(#249)로 재도입.
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
 
