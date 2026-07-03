@@ -624,6 +624,9 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
           ACTOR: ${{ github.actor }}
+          REF: ${{ needs.resolve.outputs.ref }}
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
@@ -631,9 +634,9 @@ jobs:
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
-          SHORT_SHA="${{ needs.resolve.outputs.ref }}"
+          SHORT_SHA="$REF"
           SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/$REF"
           # 커밋 메시지 첫 줄만. `jq | head` 는 head 가 파이프를 닫을 때 jq 가 SIGPIPE 로 죽어 step 이 exit 2 로
           # 끊기므로(#586), split 로 jq 안에서 첫 줄을 뽑는다(거대 커밋 메시지 대비).
           COMMIT_MSG=$(jq -r '((.workflow_run.head_commit.message // .head_commit.message // "") | split("\n")[0])' "$GITHUB_EVENT_PATH")
@@ -647,11 +650,12 @@ jobs:
           esac
           # Discord 마크다운: 링크는 [text](url), 멘션은 <@id>. named 링크는 큰 임베드를 안 만든다.
           TEXT=$(printf '✅ `%s` 배포 성공!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• [워크플로우 로그](%s)' \
-            "$TARGET" "${{ needs.resolve.outputs.branch }}" "$TARGET" "${{ needs.resolve.outputs.domain }}" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$RUN_URL")
+            "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$RUN_URL")
 
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
       - name: Notify Discord on failure
         if: failure()
@@ -661,6 +665,9 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
           ACTOR: ${{ github.actor }}
+          REF: ${{ needs.resolve.outputs.ref }}
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
@@ -668,9 +675,9 @@ jobs:
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
-          SHORT_SHA="${{ needs.resolve.outputs.ref }}"
+          SHORT_SHA="$REF"
           SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/$REF"
           # 커밋 메시지 첫 줄만 (거대 메시지 대비 jq split — `jq | head` 의 SIGPIPE 중단 회피, #586).
           COMMIT_MSG=$(jq -r '((.workflow_run.head_commit.message // .head_commit.message // "") | split("\n")[0])' "$GITHUB_EVENT_PATH")
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -709,11 +716,12 @@ jobs:
             *)       TARGET="PiKi-Dev" ;;
           esac
           TEXT=$(printf '❌ `%s` 배포 실패!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• 원인: %s\n• [워크플로우 로그 확인](%s)' \
-            "$TARGET" "${{ needs.resolve.outputs.branch }}" "$TARGET" "${{ needs.resolve.outputs.domain }}" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$CAUSE" "$RUN_URL")
+            "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$CAUSE" "$RUN_URL")
 
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
   # main(prod) 배포 성공 후에만 GitHub Release 자동 생성 — 릴리스 = 실제로 라이브된 버전.
   # 배포 실패 시 release 가 needs(deploy) 실패로 skip 되어 "안 뜬 버전의 릴리스"가 안 남는다.
@@ -764,12 +772,14 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
           ACTOR: ${{ github.actor }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](%s)\n• 배포자: %s' \
-            "$TAG" "${{ needs.resolve.outputs.domain }}" "$TAG" "$RELEASE_URL" "$ACTOR_MENTION")
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            "$TAG" "$DOMAIN" "$TAG" "$RELEASE_URL" "$ACTOR_MENTION")
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
