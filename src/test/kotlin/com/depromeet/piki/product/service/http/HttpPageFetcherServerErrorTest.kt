@@ -48,23 +48,26 @@ class HttpPageFetcherServerErrorTest {
     }
 
     @Test
-    fun `body 있는 500 은 진짜 서버 장애로 보아 escalate 하지 않는다`() {
-        // 봇 차단(no-body 패턴)이 아니라 실제 서버 오류라, 헤드리스로도 못 살려 escalatable=false. status·category 는 500 과 동일.
-        val fetcher =
-            fetcherWith { server ->
-                server
-                    .expect(requestTo("https://shop.example.com/p"))
-                    .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR).body("Internal Server Error"))
-            }
+    fun `body 있는 500·501 은 진짜 서버 장애로 보아 escalate 하지 않는다`() {
+        // 봇 차단(no-body 패턴)이 아니라 실제 서버 오류라, 헤드리스로도 못 살려 escalatable=false. status·category 는 500/501 과 동일.
+        // 500/501 은 PERMANENT_SERVER_ERRORS 로 같은 body 유무 분기를 타므로 둘 다 순회해 상태코드별 회귀를 막는다.
+        listOf(HttpStatus.INTERNAL_SERVER_ERROR, HttpStatus.NOT_IMPLEMENTED).forEach { status ->
+            val fetcher =
+                fetcherWith { server ->
+                    server
+                        .expect(requestTo("https://shop.example.com/p"))
+                        .andRespond(withStatus(status).body("Internal Server Error"))
+                }
 
-        val ex =
-            assertFailsWith<PageFetchException> {
-                fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
-            }
+            val ex =
+                assertFailsWith<PageFetchException>("$status body 있는 경우는 escalate 대상이 아님") {
+                    fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
+                }
 
-        assertEquals(ErrorCategory.SERVER_ERROR, ex.category)
-        assertEquals(HttpStatus.BAD_GATEWAY, ex.httpStatus)
-        assertFalse(ex.escalatable, "body 있는 500 은 진짜 장애라 escalate 대상이 아님")
+            assertEquals(ErrorCategory.SERVER_ERROR, ex.category)
+            assertEquals(HttpStatus.BAD_GATEWAY, ex.httpStatus)
+            assertFalse(ex.escalatable, "$status body 있는 경우는 진짜 장애라 escalate 대상이 아님")
+        }
     }
 
     @Test

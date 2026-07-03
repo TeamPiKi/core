@@ -2,6 +2,7 @@ package com.depromeet.piki.product.service
 
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.http.PageFetchException
+import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -29,10 +30,11 @@ class FallbackProductLinkExtractorTest {
         headlessEnabled: Boolean,
         plain: FakeStrategy,
         headless: FakeStrategy,
+        meterRegistry: MeterRegistry = SimpleMeterRegistry(),
     ) = FallbackProductLinkExtractor(
         plain,
         headless,
-        SimpleMeterRegistry(),
+        meterRegistry,
         HeadlessExtractionProperties(enabled = headlessEnabled),
     )
 
@@ -71,6 +73,25 @@ class FallbackProductLinkExtractorTest {
         assertEquals(headlessSnapshot, result)
         assertEquals(1, plain.calls)
         assertEquals(1, headless.calls)
+    }
+
+    @Test
+    fun `headless 도 실패하면 그 예외를 전파하고 에스컬레이션 카운터는 증가한다`() {
+        // 호출부(AsyncItemParsingWorker)의 재시도 판정과 맞물리는 지점이라, headless 예외가 그대로 상위로 전파돼야 한다.
+        val plain = FakeStrategy { throw PageFetchException.blocked(RuntimeException("403")) }
+        val headless = FakeStrategy { throw RuntimeException("headless 도 실패") }
+        val registry = SimpleMeterRegistry()
+
+        assertFailsWith<RuntimeException> {
+            fallback(headlessEnabled = true, plain, headless, registry).extract(link)
+        }
+        assertEquals(1, plain.calls)
+        assertEquals(1, headless.calls)
+        // 카운터는 headless 호출 전에 오르므로, headless 실패와 무관하게 에스컬레이션은 집계된다(관측성 회귀 방지).
+        assertEquals(
+            1.0,
+            registry.counter("product.extract", "via", "headless", "reason", "escalated").count(),
+        )
     }
 
     @Test
