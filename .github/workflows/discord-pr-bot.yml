@@ -4,6 +4,7 @@ on:
   pull_request:
     types:
       - opened
+      - ready_for_review
       - review_requested
       - review_request_removed
       - edited
@@ -13,10 +14,8 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+# 최소권한: 상단은 비우고 job 단위로만 필요한 것을 준다 (zizmor excessive-permissions).
+permissions: {}
 
 # 레이스 방지용 concurrency
 concurrency:
@@ -27,6 +26,9 @@ jobs:
   notify-discord:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # PR 코멘트(메타데이터) 생성·이슈 상태 조회 = issues 스코프. PR 데이터는 event payload 에서 읽어 API 권한 불필요.
+    permissions:
+      issues: write
     env:
       # github 로그인 → discord user id 매핑(멘션용). 알림(deploy/promote)과 같은 secret 을 공유한다.
       DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
@@ -111,7 +113,7 @@ jobs:
           echo "initial_reviewers=$INITIAL_REVIEWERS" >> "$GITHUB_OUTPUT"
 
       - name: Post parent message and create thread
-        if: steps.find_meta.outputs.message_id == '' && github.event.action == 'opened' && github.event.pull_request.draft == false
+        if: steps.find_meta.outputs.message_id == '' && (github.event.action == 'opened' || github.event.action == 'ready_for_review') && github.event.pull_request.draft == false
         id: post_parent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -220,6 +222,8 @@ jobs:
           **reviewer**: $REVIEWER_TEXT
           EOF
           )
+          # Discord content 2000자 제한 — 넘치면 POST 가 400 → 실패. 여유 두고 1900자로 자른다 (러너 UTF-8 로케일 char 기준).
+          TEXT="${TEXT:0:1900}"
 
           # 1) 부모 메시지 발행 → message id 확보
           RESP=$(curl -s -X POST "$DISCORD_API/channels/$DISCORD_CHANNEL_ID/messages" \
@@ -277,7 +281,7 @@ jobs:
             local github_id="$1"
             local discord_id
             discord_id=$(echo "$DISCORD_USER_MAP" | jq -r --arg id "$github_id" '.[$id] // empty')
-            if [ -n "$discord_id" ]; then echo "<@$discord_id>"; else echo "$github_id"; fi
+            if [ -n "$discord_id" ]; then echo "<@$discord_id>"; else echo "@$github_id"; fi
           }
 
           build_reviewer_text() {
@@ -372,6 +376,7 @@ jobs:
           **Reviewer**: $REVIEWER_TEXT
           EOF
           )
+          TEXT="${TEXT:0:1900}"
 
           RESP=$(curl -s -X PATCH "$DISCORD_API/channels/$CHANNEL_ID/messages/$MESSAGE_ID" \
             -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
@@ -456,6 +461,9 @@ jobs:
   alert-direct-push:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # 이 커밋의 PR 조회만 함 = pull-requests read.
+    permissions:
+      pull-requests: read
     env:
       DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
       DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
@@ -468,11 +476,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          # 이 push 커밋과 연결된 PR 을 직접 조회한다. closed PR 20건 윈도우 스캔은 머지 직후 다른 PR 업데이트에 밀려
+          # 대상 PR 을 놓쳐 정상 머지를 "직접 푸시"로 오분류(@here 오탐)할 수 있다. commits/{sha}/pulls 는 그 커밋의 PR 을 바로 준다.
           PR_LIST=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=20")
-          PR_COUNT=$(echo "$PR_LIST" | jq --arg sha "${{ github.sha }}" '[.[]? | objects | select(.merge_commit_sha == $sha)] | length')
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls")
+          PR_COUNT=$(echo "$PR_LIST" | jq 'if type=="array" then length else 0 end')
           echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Send Discord alert
