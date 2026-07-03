@@ -107,16 +107,20 @@ jobs:
           fi
 
       # dev/staging 은 ENV_ACCESS_GATE=true 라 도메인 전체가 allowlist IP 로만 열린다. 그 IP 를 등록하는 유일한 경로가
-      # 슬랙(/admin-access)인데, SLACK_ADMIN_SIGNING_SECRET 이 비면 서명 검증이 전부 실패해 IP 를 못 열어 도메인째 잠긴다(브릭).
-      # 빈 secret 으로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
-      - name: Guard — env gate 환경은 Slack signing secret 필수
+      # Discord 슬래시커맨드(/admin-access/discord)인데, 아래 넷 중 하나라도 비면 진입이 전부 막혀 IP 를 못 열어 도메인째
+      # 잠긴다(브릭): DISCORD_PUBLIC_KEY(서명검증)·DISCORD_ADMIN_USER_IDS(allowlist)·DISCORD_ADMIN_CHANNEL_ID(채널)·ADMIN_GRANT_SIGNING_KEY(토큰서명).
+      # 빈 채로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
+      - name: Guard — env gate 환경은 Discord admin secret 필수
         id: secret_guard
         if: ${{ needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging' }}
         env:
-          SLACK_ADMIN_SIGNING_SECRET: ${{ secrets.SLACK_ADMIN_SIGNING_SECRET }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
+          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
+          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
         run: |
-          if [ -z "$SLACK_ADMIN_SIGNING_SECRET" ]; then
-            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 SLACK_ADMIN_SIGNING_SECRET 이 비어 있음 — 슬랙으로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
+          if [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; then
+            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 admin secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID·ADMIN_GRANT_SIGNING_KEY) 중 빈 값이 있음 — Discord 로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
             echo "reason=$REASON" >> "$GITHUB_OUTPUT"
             echo "::error::$REASON"
             exit 1
@@ -357,12 +361,18 @@ jobs:
           # Spring 프로파일 — prod·staging 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
           # prod·staging 에서 안 뜨게 하는 핵심. staging 은 진짜 pre-prod 라 prod 와 동일 동작(#498). dev 만 'dev'(=!prod).
           SPRING_PROFILES_ACTIVE: ${{ (needs.resolve.outputs.environment == 'prod' || needs.resolve.outputs.environment == 'staging') && 'prod' || 'dev' }}
-          # 운영 백오피스(#249) — 슬랙-IP 게이트(#526)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
+          # 운영 백오피스(#249) — Discord-IP 게이트(#526·#654)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
           ADMIN_ENABLED: 'true'
-          # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 슬랙 세션 게이트).
+          # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
           ENV_ACCESS_GATE: ${{ (needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging') && 'true' || 'false' }}
-          # 슬랙 슬래시커맨드 HMAC 검증 키(민감) — 게이트를 여는 유일 진입(/admin-access)의 보호막. 비면 /admin 항상 404.
-          SLACK_ADMIN_SIGNING_SECRET: ${{ secrets.SLACK_ADMIN_SIGNING_SECRET }}
+          # Discord admin 진입(/admin-access/discord)의 보호막·게이트. 셋 다 필요(비면 /admin 항상 404):
+          # 공개키(Ed25519 서명검증)·allowlist(허용 userId)·채널 게이트(허용 채널 id).
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
+          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
+          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩. 서명키는 전 환경 동일 secret 이라 cross-env 검증된다.
+          ADMIN_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 에러 트래킹(#608) — staging·prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
@@ -380,12 +390,12 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,SLACK_ADMIN_SIGNING_SECRET,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE
+          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE
           script: |
-            # ADMIN_ENABLED=true 인데 서명 시크릿이 비면 /admin-access 서명 검증이 전부 실패해 allowlist 를 열 수 없고
+            # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
-            if [ "$ADMIN_ENABLED" = "true" ] && [ -z "$SLACK_ADMIN_SIGNING_SECRET" ]; then
-              echo "::error::SLACK_ADMIN_SIGNING_SECRET is empty while ADMIN_ENABLED=true"
+            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
+              echo "::error::admin secret(DISCORD_PUBLIC_KEY/DISCORD_ADMIN_USER_IDS/DISCORD_ADMIN_CHANNEL_ID/ADMIN_GRANT_SIGNING_KEY) empty while ADMIN_ENABLED=true"
               exit 1
             fi
             # APPLE_WEB_CALLBACK_URL 은 AppleProperties.webCallbackUrl(@NotBlank)로 필수다(#430). 비면 컨테이너 기동이
@@ -496,7 +506,11 @@ jobs:
               -e FIREBASE_SERVICE_ACCOUNT="$FIREBASE_SERVICE_ACCOUNT" \
               -e ADMIN_ENABLED="$ADMIN_ENABLED" \
               -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
-              -e SLACK_ADMIN_SIGNING_SECRET="$SLACK_ADMIN_SIGNING_SECRET" \
+              -e DISCORD_PUBLIC_KEY="$DISCORD_PUBLIC_KEY" \
+              -e DISCORD_ADMIN_USER_IDS="$DISCORD_ADMIN_USER_IDS" \
+              -e DISCORD_ADMIN_CHANNEL_ID="$DISCORD_ADMIN_CHANNEL_ID" \
+              -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
+              -e ADMIN_GRANT_SIGNING_KEY="$ADMIN_GRANT_SIGNING_KEY" \
               -e SENTRY_DSN="$SENTRY_DSN" \
               -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
               -e SENTRY_RELEASE="$SENTRY_RELEASE" \
@@ -579,7 +593,7 @@ jobs:
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
           elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            STATUS="❌ 중단 (Slack signing secret 누락 가드)"
+            STATUS="❌ 중단 (Discord admin secret 누락 가드)"
           elif [ "${{ steps.health.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
@@ -691,7 +705,7 @@ jobs:
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
           elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.secret_guard.outputs.reason }}"
-            CAUSE="${CAUSE:-SLACK_ADMIN_SIGNING_SECRET 누락 (dev/staging 도메인 잠금 방지 가드)}"
+            CAUSE="${CAUSE:-Discord admin secret 누락 (dev/staging 도메인 잠금 방지 가드)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then

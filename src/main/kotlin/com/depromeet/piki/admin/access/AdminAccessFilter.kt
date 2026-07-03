@@ -41,10 +41,10 @@ class AdminAccessFilter(
         if (AdminSession.boundIp(session) != ip) return deny(response)
         if (!allowlistService.isAllowed(ip)) return deny(response)
         allowlistService.refresh(ip) // sliding
-        // 신원 확립 — 슬랙 actor(표시명)를 이 요청에 싣는다. MDC 는 요청 내내 떠 있어 도메인 로그에 "누가"가 찍히고,
+        // 신원 확립 — Discord actor(표시명)를 이 요청에 싣는다. MDC 는 요청 내내 떠 있어 도메인 로그에 "누가"가 찍히고,
         // attribute 는 AccessLogFilter(바깥)가 access log 한 줄에 재주입한다(userId 와 동일 흐름). hasIdentity 가
         // non-blank 를 보장하나 타입상 nullable 이라 Elvis 로 방어한다(여기 닿으면 사실상 non-null).
-        val actor = AdminSession.slackName(session) ?: return deny(response)
+        val actor = AdminSession.actorName(session) ?: return deny(response)
         MDC.put(LoggingKeys.ADMIN_ACTOR, actor)
         request.setAttribute(LoggingKeys.ADMIN_ACTOR, actor)
         try {
