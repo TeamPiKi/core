@@ -26,9 +26,11 @@ jobs:
   notify-discord:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # PR 코멘트(메타데이터) 생성·이슈 상태 조회 = issues 스코프. PR 데이터는 event payload 에서 읽어 API 권한 불필요.
+    # metadata 코멘트는 PR(=issue #N)에 다는데, 대상이 PR 이라 생성엔 pull-requests write 가 필요하다
+    # (issues:write 만으론 403 Resource not accessible). 연관 이슈(close #N) 상태 조회는 issues:read.
     permissions:
-      issues: write
+      pull-requests: write
+      issues: read
     env:
       # github 로그인 → discord user id 매핑(멘션용). 알림(deploy/promote)과 같은 secret 을 공유한다.
       DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
