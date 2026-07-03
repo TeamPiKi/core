@@ -11,7 +11,9 @@ import java.time.Duration
  *
  * @property enabled 백오피스 빈 전체 게이트(ConditionalOnAdminEnabled). 전 환경 true(게이트가 보호).
  * @property environmentGate dev/staging 도메인 전체를 allowlist IP 로만 여는 게이트(EnvironmentAccessFilter). prod 는 false(공개).
- * @property slackSigningSecret 슬랙 슬래시커맨드 HMAC 검증 키(민감). 비면 슬랙 진입이 항상 거부돼 게이트를 못 연다.
+ * @property discordPublicKey Discord 슬래시커맨드 Ed25519 검증 공개키(hex). 비면 Discord 진입이 항상 거부돼 게이트를 못 연다.
+ * @property discordAdminUserIds 백오피스 접근 허용 Discord userId 집합. 슬래시커맨드 실행자가 여기 없으면 링크 미발급.
+ * @property discordAdminChannelId admin 인터랙션 허용 Discord 채널 id. 이 채널 밖 실행은 거부. 비면 전부 거부(fail-closed).
  * @property allowlistTtl 허용 IP sliding TTL(무활동 만료, IP 변동 흡수).
  * @property grantTokenTtl 원타임 grant 링크 토큰 수명(짧게).
  * @property localBypass 로컬 개발에서 /admin 게이트(AdminAccessFilter)를 건너뛴다. 배포 환경은 false.
@@ -22,16 +24,19 @@ import java.time.Duration
 data class AdminProperties(
     val enabled: Boolean = false,
     val environmentGate: Boolean = false,
-    val slackSigningSecret: String = "",
+    val discordPublicKey: String = "",
+    val discordAdminUserIds: Set<String> = emptySet(),
+    val discordAdminChannelId: String = "",
     val allowlistTtl: Duration = Duration.ofHours(24),
-    val grantTokenTtl: Duration = Duration.ofMinutes(5),
+    val grantTokenTtl: Duration = Duration.ofMinutes(3),
     val localBypass: Boolean = false,
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
     val schedulerAutoDispatch: Boolean = true,
 ) {
-    // slackSigningSecret 는 크리덴셜이라 로그·디버그 출력에 평문이 새지 않게 마스킹한다(data class toString 자동 노출 차단).
+    // discordPublicKey 는 공개키라 민감하진 않으나 toString 노이즈를 줄이려 set 여부만, adminUserIds 는 개수만 노출한다.
     override fun toString(): String =
         "AdminProperties(enabled=$enabled, environmentGate=$environmentGate, " +
-            "slackSigningSecret=${if (slackSigningSecret.isBlank()) "<none>" else "<set>"}, " +
+            "discordPublicKey=${if (discordPublicKey.isBlank()) "<none>" else "<set>"}, " +
+            "discordAdminUserIds=${discordAdminUserIds.size} ids, " +
             "allowlistTtl=$allowlistTtl, grantTokenTtl=$grantTokenTtl, localBypass=$localBypass)"
 }
