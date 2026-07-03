@@ -39,34 +39,36 @@ jobs:
       - name: Extract PR data
         id: pr
         shell: bash
+        env:
+          # 사용자 제어 값(제목·브랜치명 등)은 run 에 ${{ }} 로 직접 보간하지 않고 env 로 받는다 — 제목의 백틱·$()·따옴표가
+          # 스크립트로 실행/크래시되는 인젝션을 막는다. env 값은 셸이 재파싱하지 않아 안전하다.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           # 멘션 맵 방어 — 미설정이면 빈 객체. `${VAR:-{}}` 는 값이 있을 때 bash 가 stray `}` 를 붙여 jq 를 깨뜨리므로 분리한다.
           [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
 
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          AUTHOR="${{ github.event.pull_request.user.login }}"
-          ACTION="${{ github.event.action }}"
-          MERGED="${{ github.event.pull_request.merged }}"
-          IS_DRAFT="${{ github.event.pull_request.draft }}"
-          BASE_REF="${{ github.event.pull_request.base.ref }}"
-          HEAD_REF="${{ github.event.pull_request.head.ref }}"
-
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           {
-            echo "pr_title<<EOF"
+            echo "pr_title<<__PR_TITLE_EOF__"
             echo "$PR_TITLE"
-            echo "EOF"
+            echo "__PR_TITLE_EOF__"
           } >> "$GITHUB_OUTPUT"
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
           # 작성자 멘션: 매핑 있으면 <@discordid>, 없으면 로그인명(핑 안 감).
-          AUTHOR_DISCORD_ID=$(echo "$DISCORD_USER_MAP" | jq -r --arg login "$AUTHOR" '.[$login] // empty')
+          AUTHOR_DISCORD_ID=$(echo "$DISCORD_USER_MAP" | jq -r --arg login "$AUTHOR_LOGIN" '.[$login] // empty')
           if [ -n "$AUTHOR_DISCORD_ID" ]; then
             AUTHOR_MENTION="<@$AUTHOR_DISCORD_ID>"
           else
-            AUTHOR_MENTION="$AUTHOR"
+            AUTHOR_MENTION="$AUTHOR_LOGIN"
           fi
 
           echo "author=$AUTHOR_MENTION" >> "$GITHUB_OUTPUT"
@@ -89,7 +91,7 @@ jobs:
 
           # 메타 주석 본문(마지막 것)에서 JSON 객체를 뽑는다. initial_reviewers 는 배열([])이라 중괄호 중첩이 없어
           # `\{[^}]*\}` 로 객체 하나를 통째로 잡을 수 있다.
-          BODY=$(echo "$COMMENTS" | jq -r '.[] | select(.body | contains("discord-pr-bot")) | .body' | tail -n 1)
+          BODY=$(echo "$COMMENTS" | jq -r '.[]? | objects | select((.body // "") | contains("discord-pr-bot")) | .body' | tail -n 1)
           # 신규 PR 은 아직 메타 주석이 없어 grep 이 no-match(exit 1)로 끝난다. set -eo pipefail 이 이를 실패로 보고 스텝을
           # 죽이므로 `|| true` 로 방어한다. 없으면 META_JSON 은 빈 문자열이고, 빈 입력에 jq 를 물리면 파싱 에러가 나므로
           # META_JSON 이 있을 때만 파싱한다.
@@ -113,6 +115,9 @@ jobs:
         id: post_parent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_TITLE: ${{ steps.pr.outputs.pr_title }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
           [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
@@ -196,7 +201,7 @@ jobs:
           ISSUE_TEXT=$(build_issue_text "$PR_BODY")
           SUMMARY=$(build_summary "$PR_BODY")
 
-          TITLE_LINK="[#${{ steps.pr.outputs.pr_number }} ${{ steps.pr.outputs.pr_title }}](${{ steps.pr.outputs.pr_url }})"
+          TITLE_LINK="[#${{ steps.pr.outputs.pr_number }} $PR_TITLE](${{ steps.pr.outputs.pr_url }})"
 
           TEXT=$(cat <<EOF
           [PR] $TITLE_LINK
@@ -211,7 +216,7 @@ jobs:
 
 
           **Author**: ${{ steps.pr.outputs.author }}
-          **branch**: ${{ steps.pr.outputs.head_ref }} -> ${{ steps.pr.outputs.base_ref }}
+          **branch**: $HEAD_REF -> $BASE_REF
           **reviewer**: $REVIEWER_TEXT
           EOF
           )
@@ -227,7 +232,7 @@ jobs:
           fi
 
           # 2) 그 메시지에서 스레드 생성(봇 필요). 이름은 100자 제한이라 잘라 넣는다.
-          THREAD_NAME=$(printf 'PR #%s %s' "${{ steps.pr.outputs.pr_number }}" "${{ steps.pr.outputs.pr_title }}" | cut -c1-90)
+          THREAD_NAME=$(printf 'PR #%s %s' "${{ steps.pr.outputs.pr_number }}" "$PR_TITLE" | cut -c1-90)
           TRESP=$(curl -s -X POST "$DISCORD_API/channels/$DISCORD_CHANNEL_ID/messages/$MESSAGE_ID/threads" \
             -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
             -H "Content-Type: application/json; charset=utf-8" \
@@ -261,6 +266,9 @@ jobs:
         if: github.event.action != 'opened' && steps.find_meta.outputs.message_id != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_TITLE: ${{ steps.pr.outputs.pr_title }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
           [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
@@ -345,7 +353,7 @@ jobs:
           elif [ "${{ github.event.action }}" = "closed" ] && [ "${{ steps.pr.outputs.merged }}" != "true" ]; then
             STATUS_LINE="🗑️ 머지 없이 종료됨"
           fi
-          TITLE_LINK="[#${{ steps.pr.outputs.pr_number }} ${{ steps.pr.outputs.pr_title }}](${{ steps.pr.outputs.pr_url }})"
+          TITLE_LINK="[#${{ steps.pr.outputs.pr_number }} $PR_TITLE](${{ steps.pr.outputs.pr_url }})"
 
           TEXT=$(cat <<EOF
           [PR] $TITLE_LINK
@@ -360,7 +368,7 @@ jobs:
 
 
           **Author**: ${{ steps.pr.outputs.author }}
-          **Branch**: ${{ steps.pr.outputs.head_ref }} -> ${{ steps.pr.outputs.base_ref }}
+          **Branch**: $HEAD_REF -> $BASE_REF
           **Reviewer**: $REVIEWER_TEXT
           EOF
           )
@@ -378,6 +386,8 @@ jobs:
         if: github.event.action != 'opened' && steps.find_meta.outputs.thread_id != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
           [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
@@ -419,17 +429,17 @@ jobs:
           elif [ "$ACTION" = "synchronize" ]; then
             COMMITS_URL=$(jq -r '.pull_request.commits_url' "$GITHUB_EVENT_PATH")
             COMMITS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$COMMITS_URL")
-            LAST_COMMIT_MSG=$(echo "$COMMITS" | jq -r '.[-1].commit.message // ""' | head -n 1)
-            COMMIT_COUNT=$(echo "$COMMITS" | jq 'length')
+            LAST_COMMIT_MSG=$(echo "$COMMITS" | jq -r 'if type=="array" and length>0 then (.[-1].commit.message // "") else "" end' | head -n 1)
+            COMMIT_COUNT=$(echo "$COMMITS" | jq 'if type=="array" then length else 0 end')
             if [ -n "$LAST_COMMIT_MSG" ] && [ "$LAST_COMMIT_MSG" != "null" ]; then
               TEXT=$(printf '🔄 새 커밋 추가됨 (%s commits)\n• %s' "$COMMIT_COUNT" "$LAST_COMMIT_MSG")
             else
               TEXT="🔄 새 커밋이 추가되었습니다."
             fi
           elif [ "$ACTION" = "closed" ] && [ "$MERGED" = "true" ]; then
-            TEXT="✅ PR #${{ steps.pr.outputs.pr_number }} 머지 완료: ${{ steps.pr.outputs.head_ref }} -> ${{ steps.pr.outputs.base_ref }}"
+            TEXT="✅ PR #${{ steps.pr.outputs.pr_number }} 머지 완료: $HEAD_REF -> $BASE_REF"
           elif [ "$ACTION" = "closed" ] && [ "$MERGED" != "true" ]; then
-            TEXT="🗑️ PR #${{ steps.pr.outputs.pr_number }} 이 머지 없이 닫혔습니다: ${{ steps.pr.outputs.head_ref }} -> ${{ steps.pr.outputs.base_ref }}"
+            TEXT="🗑️ PR #${{ steps.pr.outputs.pr_number }} 이 머지 없이 닫혔습니다: $HEAD_REF -> $BASE_REF"
           else
             echo "No message needed."; exit 0
           fi
@@ -462,7 +472,7 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=20")
-          PR_COUNT=$(echo "$PR_LIST" | jq --arg sha "${{ github.sha }}" '[.[] | select(.merge_commit_sha == $sha)] | length')
+          PR_COUNT=$(echo "$PR_LIST" | jq --arg sha "${{ github.sha }}" '[.[]? | objects | select(.merge_commit_sha == $sha)] | length')
           echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Send Discord alert
