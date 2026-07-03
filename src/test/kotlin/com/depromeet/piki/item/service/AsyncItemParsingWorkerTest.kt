@@ -31,4 +31,11 @@ class AsyncItemParsingWorkerTest {
         assertTrue(AsyncItemParsingWorker.isRetryable(IllegalStateException("boom")))
         assertTrue(AsyncItemParsingWorker.isRetryable(NullPointerException()))
     }
+
+    @Test
+    fun `치명적 JVM 오류(Error)는 재시도 대상이 아니다`() {
+        // runCatching 이 Throwable 을 다 잡아 Error 도 여기로 온다. 재시도해도 소용없으므로 제외한다.
+        assertFalse(AsyncItemParsingWorker.isRetryable(OutOfMemoryError()))
+        assertFalse(AsyncItemParsingWorker.isRetryable(StackOverflowError()))
+    }
 }

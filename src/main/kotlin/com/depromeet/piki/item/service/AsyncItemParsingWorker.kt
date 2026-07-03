@@ -153,12 +153,14 @@ class AsyncItemParsingWorker(
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.
         private const val PARSE_OBSERVATION = "item.parse"
 
-        // 재시도(일시)로 볼지 판정. 분류 가능한 HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), HttpMappable 이
-        // 아닌 예상 못한 예외(NPE·IllegalStateException 등)는 일시·영구를 단정할 수 없어 보수적으로 재시도 대상으로 둔다 —
-        // 즉시 FAILED 로 떨어뜨리면 일시 오류를 영구로 오판해 사라지므로. recover 가 상한(MAX_ATTEMPTS)까지만 재실행해
-        // bounded 이고, #461 의 retry-first(확정 영구만 fail-fast) 기조와 맞는다. 순수 함수라 단위 테스트로 분기를 망라한다.
+        // 재시도(일시)로 볼지 판정. 치명적 JVM 오류(Error: OutOfMemory·StackOverflow 등)는 재시도해도 소용없고
+        // runCatching 이 Throwable 을 다 잡아 여기로 들어오므로 먼저 제외한다(재시도 대상 아님, 즉시 종결). 분류 가능한
+        // HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), 그 외 예상 못한 예외(NPE·IllegalStateException 등)는
+        // 일시·영구를 단정할 수 없어 보수적으로 재시도 대상으로 둔다(즉시 FAILED 면 일시 오류를 영구로 오판해 사라지므로).
+        // recover 가 상한(MAX_ATTEMPTS)까지만 재실행해 bounded 이고 #461 retry-first 기조와 맞는다. 순수 함수라 단위 테스트로 망라한다.
         internal fun isRetryable(e: Throwable): Boolean =
             when (e) {
+                is Error -> false
                 is HttpMappable -> e.category == ErrorCategory.RETRYABLE
                 else -> true
             }
