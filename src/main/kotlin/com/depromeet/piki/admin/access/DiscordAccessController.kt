@@ -70,7 +70,12 @@ class DiscordAccessController(
         }
 
         val userId = root.path("member").path("user").path("id").takeIf { it.isString }?.asString() ?: ""
-        val userName = root.path("member").path("user").path("username").takeIf { it.isString }?.asString() ?: "unknown"
+        // 로그·감사 actor 이름 — 서버 별명(nick) 우선, 없으면 표시이름(global_name), 없으면 고유 핸들(username).
+        val userName =
+            root.path("member").path("nick").takeIf { it.isString }?.asString()
+                ?: root.path("member").path("user").path("global_name").takeIf { it.isString }?.asString()
+                ?: root.path("member").path("user").path("username").takeIf { it.isString }?.asString()
+                ?: "unknown"
 
         // allowlist 게이트 — 허용된 Discord userId 만 링크를 받는다. 아니면 발급 없이 거부 UI(응답이 ephemeral 이라 본인만 봄).
         if (userId !in adminProperties.discordAdminUserIds) {
