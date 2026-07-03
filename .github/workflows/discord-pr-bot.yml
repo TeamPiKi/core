@@ -480,11 +480,18 @@ jobs:
         run: |
           # 이 push 커밋과 연결된 PR 을 직접 조회한다. closed PR 20건 윈도우 스캔은 머지 직후 다른 PR 업데이트에 밀려
           # 대상 PR 을 놓쳐 정상 머지를 "직접 푸시"로 오분류(@here 오탐)할 수 있다. commits/{sha}/pulls 는 그 커밋의 PR 을 바로 준다.
-          PR_LIST=$(curl -s \
+          # 조회 실패(401/403/rate limit 등)를 pr_count=0 으로 흘리면 정상 머지를 직접푸시로 오인해 @here 를 쏜다.
+          # HTTP 200 이 아니면 알림을 생략(fail-safe)한다 — pr_count=skip 은 아래 알림 스텝의 '== 0' 조건에 안 걸린다.
+          HTTP_CODE=$(curl -s -o /tmp/pr_list.json -w '%{http_code}' \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls")
-          PR_COUNT=$(echo "$PR_LIST" | jq 'if type=="array" then length else 0 end')
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls") || HTTP_CODE="000"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "commits/{sha}/pulls 조회 실패 (HTTP $HTTP_CODE) — 직접푸시 오탐 방지 위해 알림 생략"
+            echo "pr_count=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PR_COUNT=$(jq 'if type=="array" then length else 0 end' /tmp/pr_list.json)
           echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Send Discord alert
