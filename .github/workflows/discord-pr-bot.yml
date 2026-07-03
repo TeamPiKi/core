@@ -87,16 +87,21 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.pr.outputs.pr_number }}/comments")
 
-          # discord-pr-bot 메타 주석 본문(마지막 것)을 찾아 JSON 을 뽑는다. initial_reviewers 는 배열([])이라 중괄호 중첩이 없어
+          # 메타 주석 본문(마지막 것)에서 JSON 객체를 뽑는다. initial_reviewers 는 배열([])이라 중괄호 중첩이 없어
           # `\{[^}]*\}` 로 객체 하나를 통째로 잡을 수 있다.
           BODY=$(echo "$COMMENTS" | jq -r '.[] | select(.body | contains("discord-pr-bot")) | .body' | tail -n 1)
-          META_JSON=$(echo "$BODY" | grep -oP 'discord-pr-bot:\s*\K\{[^}]*\}' | tail -n 1)
+          # 신규 PR 은 아직 메타 주석이 없어 grep 이 no-match(exit 1)로 끝난다. set -eo pipefail 이 이를 실패로 보고 스텝을
+          # 죽이므로 `|| true` 로 방어한다. 없으면 META_JSON 은 빈 문자열이고, 빈 입력에 jq 를 물리면 파싱 에러가 나므로
+          # META_JSON 이 있을 때만 파싱한다.
+          META_JSON=$(echo "$BODY" | grep -oP 'discord-pr-bot:\s*\K\{[^}]*\}' | tail -n 1 || true)
 
-          MESSAGE_ID=$(echo "$META_JSON" | jq -r '.message_id // empty' 2>/dev/null)
-          THREAD_ID=$(echo "$META_JSON" | jq -r '.thread_id // empty' 2>/dev/null)
-          CHANNEL_ID=$(echo "$META_JSON" | jq -r '.channel_id // empty' 2>/dev/null)
-          INITIAL_REVIEWERS=$(echo "$META_JSON" | jq -c '.initial_reviewers // []' 2>/dev/null)
-          [ -z "$INITIAL_REVIEWERS" ] && INITIAL_REVIEWERS="[]"
+          MESSAGE_ID=""; THREAD_ID=""; CHANNEL_ID=""; INITIAL_REVIEWERS="[]"
+          if [ -n "$META_JSON" ]; then
+            MESSAGE_ID=$(echo "$META_JSON" | jq -r '.message_id // empty')
+            THREAD_ID=$(echo "$META_JSON" | jq -r '.thread_id // empty')
+            CHANNEL_ID=$(echo "$META_JSON" | jq -r '.channel_id // empty')
+            INITIAL_REVIEWERS=$(echo "$META_JSON" | jq -c '.initial_reviewers // []')
+          fi
 
           echo "message_id=$MESSAGE_ID" >> "$GITHUB_OUTPUT"
           echo "thread_id=$THREAD_ID" >> "$GITHUB_OUTPUT"
