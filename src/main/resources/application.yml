@@ -18,6 +18,15 @@ admin:
   discord-admin-user-ids: ${DISCORD_ADMIN_USER_IDS:}
   # admin 인터랙션 허용 Discord 채널 id. 이 채널 밖 슬래시커맨드는 거부(원타임링크·대시보드 조회를 admin 채널로 국한). 비면 전부 거부.
   discord-admin-channel-id: ${DISCORD_ADMIN_CHANNEL_ID:}
+  # 이 앱이 도는 환경(dev/staging/prod). grant 토큰 env 바인딩 검증용.
+  environment: ${ADMIN_ENVIRONMENT:}
+  # grant 토큰 HMAC 서명 공유키(전 환경 동일 secret). 발급 env(인터랙션 엔드포인트)와 소비 env(링크 클릭)가 달라도 검증되게 한다.
+  grant-signing-key: ${ADMIN_GRANT_SIGNING_KEY:}
+  # env → admin 접속 호스트. 선택한 env 의 grant 링크 host 로 쓴다 (공개 도메인이라 secret 아님).
+  grant-hosts:
+    dev: https://dev.api.piki.day
+    staging: https://staging.api.piki.day
+    prod: https://api.piki.day
   # 허용 IP sliding TTL(무활동 만료, IP 변동 흡수). grant-token 은 원타임 링크 수명.
   allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:24h}
   grant-token-ttl: 3m

@@ -14,6 +14,9 @@ import java.time.Duration
  * @property discordPublicKey Discord 슬래시커맨드 Ed25519 검증 공개키(hex). 비면 Discord 진입이 항상 거부돼 게이트를 못 연다.
  * @property discordAdminUserIds 백오피스 접근 허용 Discord userId 집합. 슬래시커맨드 실행자가 여기 없으면 링크 미발급.
  * @property discordAdminChannelId admin 인터랙션 허용 Discord 채널 id. 이 채널 밖 실행은 거부. 비면 전부 거부(fail-closed).
+ * @property environment 이 앱이 도는 환경(dev/staging/prod). grant 토큰의 env 바인딩 검증에 쓴다.
+ * @property grantSigningKey grant 토큰 HMAC 서명 공유키(전 환경 동일값). 발급 env 와 소비 env 가 달라도 서명이 검증되게 한다.
+ * @property grantHosts env → admin 접속 호스트(base URL) 맵. 선택한 env 의 grant 링크를 만든다.
  * @property allowlistTtl 허용 IP sliding TTL(무활동 만료, IP 변동 흡수).
  * @property grantTokenTtl 원타임 grant 링크 토큰 수명(짧게).
  * @property localBypass 로컬 개발에서 /admin 게이트(AdminAccessFilter)를 건너뛴다. 배포 환경은 false.
@@ -27,6 +30,9 @@ data class AdminProperties(
     val discordPublicKey: String = "",
     val discordAdminUserIds: Set<String> = emptySet(),
     val discordAdminChannelId: String = "",
+    val environment: String = "",
+    val grantSigningKey: String = "",
+    val grantHosts: Map<String, String> = emptyMap(),
     val allowlistTtl: Duration = Duration.ofHours(24),
     val grantTokenTtl: Duration = Duration.ofMinutes(3),
     val localBypass: Boolean = false,
