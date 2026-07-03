@@ -630,7 +630,9 @@ jobs:
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
-          DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
@@ -671,7 +673,9 @@ jobs:
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
-          DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
@@ -775,7 +779,9 @@ jobs:
           DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](%s)\n• 배포자: %s' \
             "$TAG" "$DOMAIN" "$TAG" "$RELEASE_URL" "$ACTOR_MENTION")

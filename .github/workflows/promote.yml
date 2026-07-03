@@ -179,7 +179,9 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           SHORT_SHA="${SHA:0:7}"
           COMMIT_URL="https://github.com/${{ github.repository }}/commit/$SHA"
@@ -212,7 +214,9 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           # 분기(non-ff)·dispatch 실패 등. 경로는 입력 기준으로만 표기(ff 실패 시 plan 출력이 비어있을 수 있음).
