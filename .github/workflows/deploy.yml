@@ -623,9 +623,9 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          ACTOR="${{ github.actor }}"
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
@@ -660,9 +660,9 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          ACTOR="${{ github.actor }}"
           # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
@@ -763,9 +763,9 @@ jobs:
           RELEASE_URL: ${{ steps.release.outputs.url }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          ACTOR="${{ github.actor }}"
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](%s)\n• 배포자: %s' \

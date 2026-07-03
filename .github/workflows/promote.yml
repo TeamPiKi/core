@@ -176,9 +176,9 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          ACTOR="${{ github.actor }}"
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           SHORT_SHA="${SHA:0:7}"
@@ -208,9 +208,9 @@ jobs:
           TARGET_INPUT: ${{ steps.plan.outputs.env }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
         run: |
           [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          ACTOR="${{ github.actor }}"
           DISCORD_ID=$(echo "${DISCORD_USER_MAP:-{}}" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
