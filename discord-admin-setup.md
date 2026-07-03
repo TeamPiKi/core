@@ -42,7 +42,7 @@ curl -X PUT "https://discord.com/api/v10/applications/$APP_ID/guilds/$GUILD_ID/c
 
 Developer Portal → 앱 → **General Information → Interactions Endpoint URL** 에 배포된 엔드포인트를 넣는다 (앱당 URL 1개라 **prod** 로 건다):
 
-```
+```text
 https://api.piki.day/admin-access/discord
 ```
 

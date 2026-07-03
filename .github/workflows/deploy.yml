@@ -361,7 +361,7 @@ jobs:
           # Spring 프로파일 — prod·staging 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
           # prod·staging 에서 안 뜨게 하는 핵심. staging 은 진짜 pre-prod 라 prod 와 동일 동작(#498). dev 만 'dev'(=!prod).
           SPRING_PROFILES_ACTIVE: ${{ (needs.resolve.outputs.environment == 'prod' || needs.resolve.outputs.environment == 'staging') && 'prod' || 'dev' }}
-          # 운영 백오피스(#249) — 슬랙-IP 게이트(#526)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
+          # 운영 백오피스(#249) — Discord-IP 게이트(#526·#654)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
           ADMIN_ENABLED: 'true'
           # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
           ENV_ACCESS_GATE: ${{ (needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging') && 'true' || 'false' }}
@@ -593,7 +593,7 @@ jobs:
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
           elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            STATUS="❌ 중단 (Slack signing secret 누락 가드)"
+            STATUS="❌ 중단 (Discord admin secret 누락 가드)"
           elif [ "${{ steps.health.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then

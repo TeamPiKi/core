@@ -39,10 +39,11 @@ data class AdminProperties(
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
     val schedulerAutoDispatch: Boolean = true,
 ) {
-    // discordPublicKey 는 공개키라 민감하진 않으나 toString 노이즈를 줄이려 set 여부만, adminUserIds 는 개수만 노출한다.
+    // 공개키·채널·호스트는 민감치 않아 노출하되 userId 는 개수만. grantSigningKey 는 크리덴셜이라 set 여부만 마스킹한다.
     override fun toString(): String =
-        "AdminProperties(enabled=$enabled, environmentGate=$environmentGate, " +
+        "AdminProperties(enabled=$enabled, environmentGate=$environmentGate, environment=$environment, " +
             "discordPublicKey=${if (discordPublicKey.isBlank()) "<none>" else "<set>"}, " +
-            "discordAdminUserIds=${discordAdminUserIds.size} ids, " +
+            "discordAdminUserIds=${discordAdminUserIds.size} ids, discordAdminChannelId=$discordAdminChannelId, " +
+            "grantSigningKey=${if (grantSigningKey.isBlank()) "<none>" else "<set>"}, " +
             "allowlistTtl=$allowlistTtl, grantTokenTtl=$grantTokenTtl, localBypass=$localBypass)"
 }
