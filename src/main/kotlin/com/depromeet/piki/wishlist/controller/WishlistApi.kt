@@ -617,7 +617,7 @@ interface WishlistApi {
             이미지 등록 v2 의 1단계. 올릴 이미지들의 content-type(1~5개)을 받아, 클라가 S3 에 직접 PUT 할 presigned URL 을 발급한다.
             v1(multipart)이 서버로 이미지 바이트를 받아 S3 에 올리던 것을 클라→S3 직접 업로드로 바꿔 서버 대역·메모리를 아낀다.
             클라는 각 uploadUrl 로 응답의 contentType 을 Content-Type 헤더에 실어 PUT 한 뒤, imageKey 들을 2단계(/images/confirm)로 되돌려준다.
-            발급만 하고 아무것도 저장하지 않는다.
+            발급 시점에는 pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않는다(확정 단계에서 생성).
         """,
     )
     @ApiResponses(

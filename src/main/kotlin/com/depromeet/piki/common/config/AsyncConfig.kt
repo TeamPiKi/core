@@ -77,7 +77,13 @@ class AsyncConfig {
             queueCapacity = 0
             setThreadNamePrefix("image-polling-")
             setTaskDecorator(ContextPropagatingTaskDecorator())
-            setRejectedExecutionHandler { _, _ -> log.warn("이미지 폴링 executor 포화 — 이번 주기 건너뜀") }
+            setRejectedExecutionHandler { _, executor ->
+                log.warn(
+                    "이미지 폴링 executor 포화 — 이번 주기 건너뜀 (activeCount={}, queueSize={})",
+                    executor.activeCount,
+                    executor.queue.size,
+                )
+            }
             initialize()
         }
 
