@@ -101,9 +101,17 @@ class ProductImageTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["IMAGE/JPEG", "Image/Png", "image/webp; charset=utf-8", "  image/heic  "])
-    fun `extensionForMimeType 도 of 와 같은 정규화를 거쳐 확장자를 도출한다`(mimeType: String) {
-        assertEquals(true, ProductImage.extensionForMimeType(mimeType) in setOf("png", "jpg", "webp", "heic", "heif"))
+    @CsvSource(
+        "IMAGE/JPEG, jpg",
+        "Image/Png, png",
+        "image/webp; charset=utf-8, webp",
+        "'  image/heic  ', heic",
+    )
+    fun `extensionForMimeType 도 of 와 같은 정규화를 거쳐 정확한 확장자를 도출한다`(
+        mimeType: String,
+        expected: String,
+    ) {
+        assertEquals(expected, ProductImage.extensionForMimeType(mimeType))
     }
 
     @ParameterizedTest

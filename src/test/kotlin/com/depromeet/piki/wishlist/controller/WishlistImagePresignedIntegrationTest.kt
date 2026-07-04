@@ -183,6 +183,49 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             val wishCount =
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId))
             assertEquals(2, wishCount)
+            awaitDispatchSettled(userId)
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `같은 key 로 confirm 을 두 번 하면 두 번째는 빈 목록 201 이고 위시가 중복 생기지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            stubProductImageExtractor.build = {
+                ImageExtraction(ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"), boundingBox = null)
+            }
+            val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
+            val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
+
+            // 1차 confirm — pending 을 claim(삭제)하며 2개 등록.
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/images/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                        .content(body),
+                ).andExpect(status().isCreated)
+                .andExpect(jsonPath("$.data.length()").value(2))
+
+            // 2차 confirm(같은 key) — raw 는 S3 에 남아 형식·존재 검증은 통과하지만 pending 이 이미 claim 돼 등록할 게 없다.
+            // 멱등 no-op 으로 빈 목록 201 이고, 위시는 중복 생기지 않는다.
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/images/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                        .content(body),
+                ).andExpect(status().isCreated)
+                .andExpect(jsonPath("$.data.length()").value(0))
+
+            val wishCount =
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId))
+            assertEquals(2, wishCount)
+            awaitDispatchSettled(userId)
         } finally {
             cleanup(userId)
         }
@@ -339,6 +382,23 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }
+        // presign 만 하고 confirm 을 안 한(또는 confirm 이 400 인) 케이스의 pending_uploads 가 남지 않게 함께 지운다(FK 는 없음, orphan 위생).
+        jdbcTemplate.update("DELETE FROM pending_uploads WHERE user_id = ?", uuidToBytes(userId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
+    }
+
+    // confirm 이 만든 PENDING 을 자동 dispatch(1s)가 파싱 중일 수 있어, 삭제-vs-워커 UPDATE 레이스를 피하려면
+    // 후속 처리가 terminal(READY/FAILED)로 끝난 뒤 cleanup 한다.
+    private fun awaitDispatchSettled(userId: UUID) {
+        await().atMost(Duration.ofSeconds(5)).until {
+            val inFlight =
+                jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM item_snapshots s JOIN wishes w ON w.snapshot_id = s.id " +
+                        "WHERE w.user_id = ? AND s.status IN ('PENDING', 'PROCESSING')",
+                    Int::class.java,
+                    uuidToBytes(userId),
+                ) ?: 0
+            inFlight == 0
+        }
     }
 }

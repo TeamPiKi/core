@@ -264,6 +264,8 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
 
             // 부분 등록(2개) 없이 30 그대로 — confirm 의 all-or-nothing 과 같은 정원 판정.
             assertEquals(30, tournamentItemCount(tournamentId))
+            // 실패한 그룹의 pending 은 삭제되지 않고 남아 다음 폴링이 재시도할 수 있어야 한다(registerUploaded 는 만료 전이라 폐기하지 않는다).
+            assertEquals(3, pendingCount(ownerId))
         } finally {
             cleanupTournament(ownerId, tournamentId)
         }

@@ -8,6 +8,7 @@ import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubProductImageExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
+import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -22,6 +23,7 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.time.Duration
 import java.util.UUID
 import kotlin.test.assertEquals
 
@@ -127,6 +129,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
                     tournamentId,
                 )
             assertEquals(2, count)
+            awaitDispatchSettled(tournamentId)
         } finally {
             cleanup(ownerId, tournamentId)
         }
@@ -163,6 +166,72 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
             assertEquals(0, count)
         } finally {
             stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
+            cleanup(ownerId, tournamentId)
+        }
+    }
+
+    @Test
+    fun `지원하지 않는 content-type 으로 발급하면 400 으로 거부된다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertGuest(ownerId)
+        var tournamentId = 0L
+        try {
+            tournamentId = createTournament(mockMvc, ownerId)
+            val body = objectMapper.writeValueAsString(mapOf("contentTypes" to listOf("application/pdf")))
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/images/presigned")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId)}")
+                        .content(body),
+                ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.detail").value("지원하지 않는 이미지 형식이에요."))
+        } finally {
+            cleanup(ownerId, tournamentId)
+        }
+    }
+
+    @Test
+    fun `content-type 이 6개면 개수 위반으로 400 이 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertGuest(ownerId)
+        var tournamentId = 0L
+        try {
+            tournamentId = createTournament(mockMvc, ownerId)
+            val body = objectMapper.writeValueAsString(mapOf("contentTypes" to List(6) { "image/png" }))
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/images/presigned")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId)}")
+                        .content(body),
+                ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.detail").value("이미지는 1~5장만 올릴 수 있어요."))
+        } finally {
+            cleanup(ownerId, tournamentId)
+        }
+    }
+
+    @Test
+    fun `발급 형식이 아닌 key 로 confirm 하면 400 으로 거부된다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertGuest(ownerId)
+        var tournamentId = 0L
+        try {
+            tournamentId = createTournament(mockMvc, ownerId)
+            val body = objectMapper.writeValueAsString(mapOf("imageKeys" to listOf("items/raw/not-a-uuid.png")))
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/images/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId)}")
+                        .content(body),
+                ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.detail").value("올바르지 않은 이미지 업로드 정보예요. 업로드를 다시 시도해 주세요."))
+        } finally {
             cleanup(ownerId, tournamentId)
         }
     }
@@ -249,6 +318,23 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
                 jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
             }
         }
+        // presign 만 하고 confirm 을 안 한(또는 confirm 이 400 인) 케이스의 pending_uploads 가 남지 않게 함께 지운다(FK 는 없음, orphan 위생).
+        jdbcTemplate.update("DELETE FROM pending_uploads WHERE user_id = ?", uuidToBytes(ownerId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
+    }
+
+    // confirm 이 만든 PENDING 을 자동 dispatch(1s)가 파싱 중일 수 있어, 삭제-vs-워커 UPDATE 레이스를 피하려면
+    // 후속 처리가 terminal(READY/FAILED)로 끝난 뒤 cleanup 한다.
+    private fun awaitDispatchSettled(tournamentId: Long) {
+        await().atMost(Duration.ofSeconds(5)).until {
+            val inFlight =
+                jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM item_snapshots s JOIN tournament_items ti ON ti.snapshot_id = s.id " +
+                        "WHERE ti.tournament_id = ? AND s.status IN ('PENDING', 'PROCESSING')",
+                    Int::class.java,
+                    tournamentId,
+                ) ?: 0
+            inFlight == 0
+        }
     }
 }
