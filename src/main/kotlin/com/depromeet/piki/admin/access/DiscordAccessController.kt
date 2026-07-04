@@ -8,6 +8,7 @@ import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -15,16 +16,16 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseBody
 import org.springframework.web.bind.annotation.RestController
-import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.nio.charset.StandardCharsets
 
-// 백오피스 접근의 유일한 공개 표면 — Discord 슬래시커맨드(인터랙션) + grant 링크. 두 게이트 필터(EnvironmentAccessFilter·
+// 백오피스·운영 조회의 유일한 공개 표면 — Discord 슬래시커맨드(인터랙션) + grant 링크. 두 게이트 필터(EnvironmentAccessFilter·
 // AdminAccessFilter)는 이 경로(/admin-access/**)를 항상 통과시킨다(여기서 IP 를 등록해야 게이트를 열 수 있으므로).
 //
-// Slack(HMAC)에서 Discord(Ed25519 인터랙션)로 이관(#654). `/piki-admin env:<dev|staging|prod>` 로 선택한 환경의 원타임
-// 링크를 발급한다. 인터랙션은 한 엔드포인트로 오지만(Discord 앱당 URL 1개), 토큰을 HMAC 서명(GrantTokenCodec)해
-// 대상 env 가 검증·소비하므로 cross-env 로 동작한다. 링크 클릭·IP 캡처·세션은 진입 표면과 무관해 그대로다.
+// Slack(HMAC)에서 Discord(Ed25519 인터랙션)로 이관(#654). Discord 앱당 인터랙션 URL 은 1개라, 이 컨트롤러가 공통
+// 게이트(서명 검증 → PING → 채널 → allowlist)를 처리한 뒤 data.name 으로 DiscordCommandHandler 에 라우팅한다(#664):
+//   piki-admin → AdminGrantCommandHandler (원타임 grant 링크)
+//   stats      → StatsCommandHandler (대시보드 지표 조회)
 @Hidden
 @RestController
 @ConditionalOnAdminEnabled
@@ -35,10 +36,21 @@ class DiscordAccessController(
     private val auditService: AdminAuditService,
     private val adminProperties: AdminProperties,
     private val objectMapper: ObjectMapper,
+    handlers: List<DiscordCommandHandler>,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+    private val handlersByName: Map<String, DiscordCommandHandler> = handlers.associateBy { it.commandName }
+
+    init {
+        // 커맨드명이 겹치면 associateBy 가 조용히 하나를 덮어써 그 라우팅이 사라진다. 부팅 시점에 깨 fail-fast.
+        require(handlers.size == handlersByName.size) {
+            "Discord 커맨드명이 중복됐다: ${handlers.map { it.commandName }}"
+        }
+    }
+
     // Discord 인터랙션 수신(application/json). Ed25519 서명 검증 후 분기:
     //   PING(type 1)  → PONG (Discord 가 엔드포인트 등록 시 이걸로 살아있음을 확인)
-    //   커맨드(type 2) → 채널 게이트 → allowlist 게이트 → 선택한 env(옵션)의 원타임 grant 링크를 ephemeral embed 로
+    //   커맨드(type 2) → 채널 게이트 → allowlist 게이트 → data.name 라우팅 → 해당 핸들러 응답(ephemeral)
     @PostMapping("/discord", produces = [MediaType.APPLICATION_JSON_VALUE])
     @ResponseBody
     fun discord(
@@ -60,30 +72,38 @@ class DiscordAccessController(
         }
 
         val root = objectMapper.readTree(rawBody)
-        if ((root.path("type").takeIf { it.canConvertToInt() }?.asInt() ?: 0) == TYPE_PING) return pong()
+        if ((root.path("type").takeIf { it.canConvertToInt() }?.asInt() ?: 0) == DiscordInteractions.TYPE_PING) {
+            return DiscordInteractions.pong()
+        }
 
-        // admin 전용 채널에서만 — 원타임 링크·대화형 대시보드 조회 등 admin 인터랙션을 한 채널로 국한한다(봇이 여러
-        // 채널에 있어도). 채널 미설정(blank)이면 fail-closed 로 전부 거부(설정 실수로 아무 채널에서나 열리는 것 방지).
+        // admin 전용 채널에서만 — 원타임 링크·대화형 조회 등 운영 인터랙션을 한 채널로 국한한다(봇이 여러 채널에 있어도).
+        // 채널 미설정(blank)이면 fail-closed 로 전부 거부(설정 실수로 아무 채널에서나 열리는 것 방지).
         val channelId = root.path("channel_id").takeIf { it.isString }?.asString() ?: ""
         if (adminProperties.discordAdminChannelId.isBlank() || channelId != adminProperties.discordAdminChannelId) {
-            return embed(COLOR_RED, "❌ 사용 불가", "이 명령은 지정된 admin 채널에서만 사용할 수 있습니다.")
+            return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 사용 불가", "이 명령은 지정된 admin 채널에서만 사용할 수 있습니다.")
         }
 
-        val userId = root.path("member").path("user").path("id").takeIf { it.isString }?.asString() ?: ""
-        // 로그·감사 actor 이름 — 서버 별명(nick) 우선, 없으면 표시이름(global_name), 없으면 고유 핸들(username).
-        val userName =
-            root.path("member").path("nick").takeIf { it.isString }?.asString()
-                ?: root.path("member").path("user").path("global_name").takeIf { it.isString }?.asString()
-                ?: root.path("member").path("user").path("username").takeIf { it.isString }?.asString()
-                ?: "unknown"
+        val userId = DiscordInteractions.userId(root)
+        val userName = DiscordInteractions.userName(root)
 
-        // allowlist 게이트 — 허용된 Discord userId 만 링크를 받는다. 아니면 발급 없이 거부 UI(응답이 ephemeral 이라 본인만 봄).
+        // allowlist 게이트 — 허용된 Discord userId 만 통과. 아니면 처리 없이 거부 UI(응답이 ephemeral 이라 본인만 봄).
         if (userId !in adminProperties.discordAdminUserIds) {
             auditService.record(userName, AdminAuditAction.ACCESS_DENIED, "미허용 Discord 계정의 admin 커맨드 시도", ClientIp.of(request))
-            return embed(COLOR_RED, "❌ 접근 불가", "이 Discord 계정은 관리자 목록에 없습니다.")
+            return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 접근 불가", "이 Discord 계정은 관리자 목록에 없습니다.")
         }
 
-        return issueGrantLink(optionValue(root, "env"), userId, userName)
+        // data.name 라우팅 — 등록되지 않은 커맨드는 거부(운영 실수·미배포 커맨드 방지).
+        val commandName = DiscordInteractions.commandName(root)
+        val handler =
+            handlersByName[commandName]
+                ?: return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 알 수 없는 명령", "지원하지 않는 명령입니다.")
+        // 핸들러 예외(DB 조회 실패 등)가 인터랙션 응답을 통째로 깨지 않게 감싼다.
+        // Discord 는 3초 안에 응답이 없으면 사용자에게 "상호작용 실패" 를 띄우므로, 예외도 사용자 대면 embed 로 되돌린다.
+        return runCatching { handler.handle(DiscordInteraction(root, userId, userName, ClientIp.of(request))) }
+            .getOrElse { e ->
+                log.error("Discord 커맨드 처리 실패: command={}", commandName, e)
+                DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 처리 실패", "요청 처리 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            }
     }
 
     // grant 링크 클릭 — 토큰 검증(서명·만료·env·one-time) 후 접속자 IP 를 캡처해 등록 + 세션 발급(신원·IP 바인딩) → /admin.
@@ -108,67 +128,5 @@ class DiscordAccessController(
         AdminSession.establish(request.getSession(true), identity.userId, identity.name, ip)
         auditService.record(identity.name, AdminAuditAction.ACCESS_GRANTED, "원타임 링크로 접근 허용(IP 캡처)", ip)
         response.sendRedirect("/admin")
-    }
-
-    // 선택한 env 의 원타임 링크를 만든다. host 는 grantHosts 맵에서(요청 host 가 아니라) — 인터랙션 엔드포인트와 대상 env 가
-    // 다를 수 있기 때문. 토큰은 그 env 에 바인딩 서명돼, 대상 env 만 소비할 수 있다.
-    private fun issueGrantLink(
-        env: String,
-        userId: String,
-        name: String,
-    ): Map<String, Any> {
-        val host =
-            adminProperties.grantHosts[env]
-                ?: return embed(COLOR_RED, "❌ 알 수 없는 환경", "지원하지 않는 환경입니다: `$env`")
-        val token = allowlistService.issueGrantToken(userId, name, env)
-        val link = "$host/admin-access/grant?token=$token"
-        return embed(
-            COLOR_GREEN,
-            "✅ 관리자 인증됨 — $name",
-            "**$env** 접속: 이 기기에서 3분 내 아래 링크를 여세요 (그 기기 IP 가 등록됩니다).\n$link",
-        )
-    }
-
-    // 최상위 커맨드 옵션 값(data.options[name==?].value). 서브커맨드 없이 env 옵션 하나라 인덱스 순회로 찾는다(Jackson 3).
-    private fun optionValue(
-        root: JsonNode,
-        name: String,
-    ): String {
-        val opts = root.path("data").path("options")
-        if (!opts.isArray) return ""
-        for (i in 0 until opts.size()) {
-            val o = opts.get(i)
-            if (o.path("name").takeIf { it.isString }?.asString() == name) {
-                return o.path("value").takeIf { it.isString }?.asString() ?: ""
-            }
-        }
-        return ""
-    }
-
-    // Discord 인터랙션 응답: PONG(type 1).
-    private fun pong(): Map<String, Any> = mapOf("type" to TYPE_PONG)
-
-    // ephemeral(본인만 보임, flags 64) embed 응답(type 4). 링크가 채널에 새지 않게 항상 ephemeral.
-    private fun embed(
-        color: Int,
-        title: String,
-        description: String,
-    ): Map<String, Any> =
-        mapOf(
-            "type" to TYPE_CHANNEL_MESSAGE,
-            "data" to
-                mapOf(
-                    "embeds" to listOf(mapOf("title" to title, "description" to description, "color" to color)),
-                    "flags" to FLAG_EPHEMERAL,
-                ),
-        )
-
-    companion object {
-        private const val TYPE_PING = 1
-        private const val TYPE_PONG = 1
-        private const val TYPE_CHANNEL_MESSAGE = 4
-        private const val FLAG_EPHEMERAL = 64
-        private const val COLOR_GREEN = 0x2ECC71
-        private const val COLOR_RED = 0xE74C3C
     }
 }

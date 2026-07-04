@@ -1,0 +1,60 @@
+name: Discord 슬래시커맨드 등록
+
+# Discord admin 봇의 길드 슬래시커맨드(/piki-admin·/stats)를 등록/갱신한다.
+# 봇 토큰은 secrets.DISCORD_BOT_TOKEN 을 러너 안에서만 꺼내 써서(로컬 curl 불필요) 노출되지 않는다.
+# 길드 스코프라 즉시 반영. POST 는 개별 upsert 라 서로를 덮어쓰지 않는다.
+# Actions 탭 → 이 워크플로 → Run workflow(초록 버튼) → command 선택 → 실행.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "등록할 커맨드"
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - piki-admin
+          - stats
+
+env:
+  APP_ID: "1522386661067980921"
+  GUILD_ID: "1520952901944475778"
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 슬래시커맨드 등록
+        env:
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          COMMAND: ${{ inputs.command }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BOT_TOKEN" ]; then echo "::error::secrets.DISCORD_BOT_TOKEN 이 비어 있음"; exit 1; fi
+
+          register() {
+            # $1: 표시용 이름, $2: 커맨드 JSON
+            local code
+            code=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
+              -X POST "https://discord.com/api/v10/applications/$APP_ID/guilds/$GUILD_ID/commands" \
+              -H "Authorization: Bot $BOT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$2")
+            if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+              echo "::notice::$1 등록 완료 (HTTP $code)"
+            else
+              echo "::error::$1 등록 실패 (HTTP $code) — $(cat /tmp/resp.json)"
+              exit 1
+            fi
+          }
+
+          PIKI_ADMIN='{"name":"piki-admin","description":"백오피스 접근 링크 발급","options":[{"type":3,"name":"env","description":"접속 환경","required":true,"choices":[{"name":"dev","value":"dev"},{"name":"staging","value":"staging"},{"name":"prod","value":"prod"}]}]}'
+          STATS='{"name":"stats","description":"운영 지표 조회 (개발진 제외 기본)","options":[{"type":3,"name":"period","description":"조회 기간","required":true,"choices":[{"name":"오늘","value":"today"},{"name":"어제","value":"yesterday"},{"name":"최근 7일","value":"7d"},{"name":"최근 30일","value":"30d"}]},{"type":3,"name":"metric","description":"지표 섹션 (기본: 요약)","required":false,"choices":[{"name":"요약","value":"summary"},{"name":"가입","value":"signup"},{"name":"위시","value":"wish"},{"name":"토너먼트","value":"tournament"},{"name":"푸시","value":"push"}]}]}'
+
+          case "$COMMAND" in
+            piki-admin) register "piki-admin" "$PIKI_ADMIN" ;;
+            stats)      register "stats" "$STATS" ;;
+            all)        register "piki-admin" "$PIKI_ADMIN"; register "stats" "$STATS" ;;
+            *)          echo "::error::알 수 없는 command=$COMMAND"; exit 1 ;;
+          esac
