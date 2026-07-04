@@ -8,6 +8,7 @@ import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -37,7 +38,15 @@ class DiscordAccessController(
     private val objectMapper: ObjectMapper,
     handlers: List<DiscordCommandHandler>,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
     private val handlersByName: Map<String, DiscordCommandHandler> = handlers.associateBy { it.commandName }
+
+    init {
+        // 커맨드명이 겹치면 associateBy 가 조용히 하나를 덮어써 그 라우팅이 사라진다. 부팅 시점에 깨 fail-fast.
+        require(handlers.size == handlersByName.size) {
+            "Discord 커맨드명이 중복됐다: ${handlers.map { it.commandName }}"
+        }
+    }
 
     // Discord 인터랙션 수신(application/json). Ed25519 서명 검증 후 분기:
     //   PING(type 1)  → PONG (Discord 가 엔드포인트 등록 시 이걸로 살아있음을 확인)
@@ -84,10 +93,17 @@ class DiscordAccessController(
         }
 
         // data.name 라우팅 — 등록되지 않은 커맨드는 거부(운영 실수·미배포 커맨드 방지).
+        val commandName = DiscordInteractions.commandName(root)
         val handler =
-            handlersByName[DiscordInteractions.commandName(root)]
+            handlersByName[commandName]
                 ?: return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 알 수 없는 명령", "지원하지 않는 명령입니다.")
-        return handler.handle(DiscordInteraction(root, userId, userName, ClientIp.of(request)))
+        // 핸들러 예외(DB 조회 실패 등)가 인터랙션 응답을 통째로 깨지 않게 감싼다.
+        // Discord 는 3초 안에 응답이 없으면 사용자에게 "상호작용 실패" 를 띄우므로, 예외도 사용자 대면 embed 로 되돌린다.
+        return runCatching { handler.handle(DiscordInteraction(root, userId, userName, ClientIp.of(request))) }
+            .getOrElse { e ->
+                log.error("Discord 커맨드 처리 실패: command={}", commandName, e)
+                DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 처리 실패", "요청 처리 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            }
     }
 
     // grant 링크 클릭 — 토큰 검증(서명·만료·env·one-time) 후 접속자 IP 를 캡처해 등록 + 세션 발급(신원·IP 바인딩) → /admin.

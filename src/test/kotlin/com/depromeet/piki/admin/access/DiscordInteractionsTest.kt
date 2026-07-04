@@ -34,4 +34,24 @@ class DiscordInteractionsTest {
         assertEquals("핸들", DiscordInteractions.userName(handle))
         assertEquals("1", DiscordInteractions.userId(nick))
     }
+
+    @Test
+    fun `member user 정보가 없으면 userId 는 빈 문자열, userName 은 unknown 이다`() {
+        // allowlist 게이트가 userId 로 판정하므로, 예상 밖 payload(member 없음)의 fail-safe 폴백을 고정한다.
+        val root = mapper.readTree("""{"data":{"name":"stats"}}""")
+        assertEquals("", DiscordInteractions.userId(root))
+        assertEquals("unknown", DiscordInteractions.userName(root))
+    }
+
+    @Test
+    fun `embed 는 type 4 와 ephemeral flag 를, pong 은 type 1 을 담는다`() {
+        val embed = DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "t", "d")
+        assertEquals(DiscordInteractions.TYPE_CHANNEL_MESSAGE, embed["type"])
+
+        @Suppress("UNCHECKED_CAST")
+        val data = embed["data"] as Map<String, Any>
+        assertEquals(DiscordInteractions.FLAG_EPHEMERAL, data["flags"])
+
+        assertEquals(DiscordInteractions.TYPE_PONG, DiscordInteractions.pong()["type"])
+    }
 }
