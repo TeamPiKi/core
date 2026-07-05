@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service
 
+import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.http.PageFetchException
 import io.micrometer.core.instrument.MeterRegistry
@@ -37,24 +38,29 @@ class FallbackProductLinkExtractor(
             plain.extract(link)
         } catch (e: Exception) {
             if (!shouldEscalate(e)) throw e
-            escalateToHeadless(link)
+            escalateToHeadless(link, e)
         }
     }
 
-    // plain 이 차단으로 막혀 headless 로 넘긴다. 결과를 outcome 으로 집계한다 — "무조건 폴백" 이라 escalate 를 넓게 트는 대신,
-    // "폴백했는데도 못 가져온"(headless 마저 실패) 비율이 낭비·한계 지표이자 후속 per-host 튜닝의 근거다. 어느 host 가
-    // 헤드리스로도 안 되는지는 로그(host)로 드릴다운한다(메트릭=추세, 로그=원장). headless 예외는 그대로 상위로 전파해
-    // 워커의 재시도/종결 판정에 맡긴다.
-    private fun escalateToHeadless(link: ProductLink): ProductSnapshot {
-        log.info("extract escalate=headless url={}", link.safeLogString())
+    // plain 이 막혀 headless 로 넘긴다. 결과를 outcome 으로 집계하되 "어떤 실패가 escalate 됐나" 를 category 로 쪼갠다 —
+    // "무조건 폴백" 이라 낭비(특히 일시 오류 category=RETRYABLE 을 헤드리스로 보냈는데 실패)가 생기므로, 그 비율을 category별로 봐서
+    // "왜/어디서 낭비됐나" 를 조사하고 후속 per-host 튜닝의 근거로 삼는다(메트릭=추세, host 로그=원장). headless 예외는 그대로
+    // 상위로 전파해 워커의 재시도/종결 판정에 맡긴다.
+    private fun escalateToHeadless(
+        link: ProductLink,
+        plainFailure: Throwable,
+    ): ProductSnapshot {
+        val category = (plainFailure as? PageFetchException)?.category
+        log.info("extract escalate=headless plainCategory={} url={}", category, link.safeLogString())
         return try {
             headless.extract(link).also {
-                meterRegistry.counter(ESCALATION_METRIC, TAG_OUTCOME, OUTCOME_SUCCESS).increment()
+                escalationCounter(OUTCOME_SUCCESS, category).increment()
             }
         } catch (headlessFailure: Exception) {
-            meterRegistry.counter(ESCALATION_METRIC, TAG_OUTCOME, OUTCOME_FAILED).increment()
+            escalationCounter(OUTCOME_FAILED, category).increment()
             log.warn(
-                "extract escalate=headless outcome=failed cause={} url={}",
+                "extract escalate=headless outcome=failed plainCategory={} headlessCause={} url={}",
+                category,
                 headlessFailure::class.simpleName,
                 link.safeLogString(),
             )
@@ -62,14 +68,20 @@ class FallbackProductLinkExtractor(
         }
     }
 
-    // plain 실패가 "차단이라 headless 면 뚫릴 수 있음" 인지 판정한다. 어떤 fetch 실패가 그런지는 PageFetchException.escalatable
-    // 이 단일 진실이다(무조건 폴백: 영구 실패는 전부 true, SSRF 와 일시 오류만 false). SSRF 로 우리가 막은 host(blockedHost)는
-    // escalatable=false 라 절대 여기로 오지 않는다(뚫어선 안 되는 내부망).
+    private fun escalationCounter(
+        outcome: String,
+        category: ErrorCategory?,
+    ) = meterRegistry.counter(ESCALATION_METRIC, TAG_OUTCOME, outcome, TAG_CATEGORY, category?.name ?: "unknown")
+
+    // plain 실패를 headless 로 넘길지 판정한다. 어떤 fetch 실패가 그런지는 PageFetchException.escalatable 이 단일 진실이다
+    // (무조건 폴백: SSRF 만 빼고 전부 true). SSRF 로 우리가 막은 host(blockedHost)는 escalatable=false 라 절대 여기로 오지 않는다
+    // (내부망에 헤드리스를 겨누는 건 SSRF 취약점이라 recall 이 아니라 보안 문제).
     private fun shouldEscalate(e: Throwable): Boolean = (e as? PageFetchException)?.escalatable == true
 
     companion object {
         private const val ESCALATION_METRIC = "product.extract.escalation"
         private const val TAG_OUTCOME = "outcome"
+        private const val TAG_CATEGORY = "category"
         private const val OUTCOME_SUCCESS = "success"
         private const val OUTCOME_FAILED = "failed"
     }

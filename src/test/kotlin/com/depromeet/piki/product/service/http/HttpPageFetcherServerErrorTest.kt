@@ -11,7 +11,6 @@ import org.springframework.web.client.RestClient
 import java.net.InetAddress
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 // 대상 서버의 5xx 를 status 별로 일시(RETRYABLE)/영구(SERVER_ERROR)로 가르는지 네트워크 없이 검증한다.
@@ -71,7 +70,9 @@ class HttpPageFetcherServerErrorTest {
     }
 
     @Test
-    fun `502·503·504 는 일시 오류로 보아 재시도 대상이다`() {
+    fun `502·503·504 는 RETRYABLE 이되 escalate 대상이기도 하다`() {
+        // category 는 RETRYABLE 이라 flag off 시엔 워커가 plain 재시도한다. 하지만 escalatable=true 라 flag on 시엔 헤드리스로도 태운다
+        // (무조건 폴백, SSRF 만 제외). 지속적 503-throttle 을 놓치지 않기 위함이고, 일시 blip 을 헤드리스로 보내는 낭비는 관측으로 조사한다.
         listOf(HttpStatus.BAD_GATEWAY, HttpStatus.SERVICE_UNAVAILABLE, HttpStatus.GATEWAY_TIMEOUT).forEach { status ->
             val fetcher =
                 fetcherWith { server ->
@@ -79,13 +80,13 @@ class HttpPageFetcherServerErrorTest {
                 }
 
             val ex =
-                assertFailsWith<PageFetchException>("$status 는 일시 오류(RETRYABLE)여야 함") {
+                assertFailsWith<PageFetchException>("$status") {
                     fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
                 }
 
             assertEquals(ErrorCategory.RETRYABLE, ex.category)
             assertEquals(HttpStatus.BAD_GATEWAY, ex.httpStatus)
-            assertFalse(ex.escalatable, "$status(일시 게이트웨이 오류)는 재시도 축이지 escalate 대상이 아님")
+            assertTrue(ex.escalatable, "$status 도 escalate 대상이어야 함(SSRF 만 제외)")
         }
     }
 

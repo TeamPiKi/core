@@ -74,7 +74,11 @@ class FallbackProductLinkExtractorTest {
         assertEquals(headlessSnapshot, result)
         assertEquals(1, plain.calls)
         assertEquals(1, headless.calls)
-        assertEquals(1.0, registry.counter("product.extract.escalation", "outcome", "success").count())
+        // clientError(4xx) → category=INVALID_INPUT. outcome·category 로 escalate 를 쪼개 낭비를 조사 가능하게 한다.
+        assertEquals(
+            1.0,
+            registry.counter("product.extract.escalation", "outcome", "success", "category", "INVALID_INPUT").count(),
+        )
     }
 
     @Test
@@ -90,7 +94,10 @@ class FallbackProductLinkExtractorTest {
         }
         assertEquals(1, plain.calls)
         assertEquals(1, headless.calls)
-        assertEquals(1.0, registry.counter("product.extract.escalation", "outcome", "failed").count())
+        assertEquals(
+            1.0,
+            registry.counter("product.extract.escalation", "outcome", "failed", "category", "INVALID_INPUT").count(),
+        )
     }
 
     @Test
