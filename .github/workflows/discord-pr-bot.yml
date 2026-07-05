@@ -115,6 +115,13 @@ jobs:
             echo "$reviewer_text"
           }
 
+          # PR 라벨을 "a, b" 목록으로(없으면 "없음"). $GITHUB_EVENT_PATH 참조.
+          build_label_text() {
+            local labels
+            labels=$(jq -r '[.pull_request.labels[]?.name] | join(", ")' "$GITHUB_EVENT_PATH")
+            [ -z "$labels" ] && echo "없음" || echo "$labels"
+          }
+
           # PR 본문의 close #N 을 뽑아 각 이슈 상태(🟢열림/⚫닫힘)와 링크 목록으로. $GH_TOKEN·$REPO 참조.
           build_issue_text() {
             local pr_body="$1" issues issue_text num res state emoji link line
@@ -219,6 +226,7 @@ jobs:
 
           PR_BODY=$(jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH")
           REVIEWER_TEXT=$(build_reviewer_text)
+          LABEL_TEXT=$(build_label_text)
           ISSUE_TEXT=$(build_issue_text "$PR_BODY")
           SUMMARY=$(build_summary "$PR_BODY")
 
@@ -239,6 +247,7 @@ jobs:
           **Author**: ${{ steps.pr.outputs.author }}
           **branch**: $HEAD_REF -> $BASE_REF
           **reviewer**: $REVIEWER_TEXT
+          **label**: $LABEL_TEXT
           EOF
           )
           # Discord content 2000자 제한 — 넘치면 POST 가 400 → 실패. 여유 두고 1900자로 자른다 (러너 UTF-8 로케일 char 기준).
@@ -300,6 +309,7 @@ jobs:
           MESSAGE_ID="${{ steps.find_meta.outputs.message_id }}"
           PR_BODY=$(jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH")
           REVIEWER_TEXT=$(build_reviewer_text)
+          LABEL_TEXT=$(build_label_text)
           ISSUE_TEXT=$(build_issue_text "$PR_BODY")
           SUMMARY=$(build_summary "$PR_BODY")
           STATUS_LINE=""
@@ -325,6 +335,7 @@ jobs:
           **Author**: ${{ steps.pr.outputs.author }}
           **Branch**: $HEAD_REF -> $BASE_REF
           **Reviewer**: $REVIEWER_TEXT
+          **Label**: $LABEL_TEXT
           EOF
           )
           TEXT="${TEXT:0:1900}"
@@ -376,10 +387,14 @@ jobs:
               TEXT="➖ 리뷰 요청이 해제되었습니다."
             fi
           elif [ "$ACTION" = "synchronize" ]; then
-            COMMITS_URL=$(jq -r '.pull_request.commits_url' "$GITHUB_EVENT_PATH")
-            COMMITS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$COMMITS_URL")
-            LAST_COMMIT_MSG=$(echo "$COMMITS" | jq -r 'if type=="array" and length>0 then (.[-1].commit.message // "") else "" end' | head -n 1)
-            COMMIT_COUNT=$(echo "$COMMITS" | jq 'if type=="array" then length else 0 end')
+            # 커밋 수는 PR 페이로드가 직접 주는 정확한 총수(.pull_request.commits)를 쓴다. commits_url 을 fetch 해
+            # length 로 세면 페이지네이션 상한(기본 30)에 잘려 커밋 30개 넘는 PR 이 "30 commits"로 오표기된다.
+            COMMIT_COUNT=$(jq -r '.pull_request.commits' "$GITHUB_EVENT_PATH")
+            # 마지막 커밋 메시지는 head sha 단건 조회로 정확히 가져온다(commits_url 첫 페이지의 마지막이 아니라 실제 최신).
+            HEAD_SHA=$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+            LAST_COMMIT=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/commits/$HEAD_SHA")
+            LAST_COMMIT_MSG=$(echo "$LAST_COMMIT" | jq -r '.commit.message // ""' | head -n 1)
             if [ -n "$LAST_COMMIT_MSG" ] && [ "$LAST_COMMIT_MSG" != "null" ]; then
               TEXT=$(printf '🔄 새 커밋 추가됨 (%s commits)\n• %s' "$COMMIT_COUNT" "$LAST_COMMIT_MSG")
             else
