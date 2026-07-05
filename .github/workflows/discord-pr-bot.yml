@@ -441,9 +441,20 @@ jobs:
 
           reaction_api() {
             # $1: HTTP 메서드, $2: name:id 이모지. 봇 자신의 리액션(@me)만 조작한다.
-            curl -s -o /dev/null -w '%{http_code}' -X "$1" \
-              "$DISCORD_API/channels/$CH_ID/messages/$MSG_ID/reactions/$2/@me" \
-              -H "Authorization: Bot $DISCORD_BOT_TOKEN"
+            # Discord reaction API 는 rate limit 이 빡빡해(이전 상태 DELETE 3 + 현재 PUT 1 을 몰아 호출하면 429),
+            # 429 면 응답 body 의 retry_after(초, 소수 가능)만큼 쉬고 재시도한다(최대 5회). 소진 시 마지막 코드를 돌려준다.
+            local method="$1" emoji="$2" url resp code retry
+            url="$DISCORD_API/channels/$CH_ID/messages/$MSG_ID/reactions/$emoji/@me"
+            for _ in 1 2 3 4 5; do
+              resp=$(curl -s -w '\n%{http_code}' -X "$method" "$url" -H "Authorization: Bot $DISCORD_BOT_TOKEN")
+              code=$(printf '%s' "$resp" | tail -n1)
+              [ "$code" != "429" ] && { printf '%s' "$code"; return; }
+              # 429 body: {"message":..,"retry_after":0.5,..}. 없거나 비정상이면 1 초.
+              retry=$(printf '%s' "$resp" | sed '$d' | jq -r '.retry_after // 1' 2>/dev/null)
+              case "$retry" in ''|*[!0-9.]*) retry=1 ;; esac
+              sleep "$retry"
+            done
+            printf '%s' "$code"
           }
 
           # 이번 이벤트의 현재 상태. 전환 없는 이벤트(review_requested 등)는 상태를 안 바꾸고 끝낸다.
