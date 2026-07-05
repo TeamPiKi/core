@@ -20,7 +20,7 @@ class AsyncItemParsingWorkerTest {
     @Test
     fun `RETRYABLE 이 아닌 HttpMappable 예외는 재시도 대상이 아니다(즉시 확정 실패)`() {
         // 봇 차단·상품 아님·4xx 등 재시도해도 결정론적으로 재실패하는 것들.
-        assertFalse(AsyncItemParsingWorker.isRetryable(PageFetchException.blocked(RuntimeException("403"))))
+        assertFalse(AsyncItemParsingWorker.isRetryable(PageFetchException.clientError(RuntimeException("403"))))
         assertFalse(AsyncItemParsingWorker.isRetryable(PageFetchException.clientError(RuntimeException("404"))))
         assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.notProductPage()))
     }

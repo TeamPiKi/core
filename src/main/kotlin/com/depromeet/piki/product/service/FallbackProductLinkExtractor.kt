@@ -37,25 +37,40 @@ class FallbackProductLinkExtractor(
             plain.extract(link)
         } catch (e: Exception) {
             if (!shouldEscalate(e)) throw e
-            log.info("extract escalate=headless cause={} url={}", e::class.simpleName, link.safeLogString())
-            // product.extract 카운터는 {via, reason} 두 라벨 키를 모든 경로에서 동일하게 유지한다(라벨 키 집합이
-            // 갈라지면 Prometheus 가 뒤 시계열을 조용히 드롭). plain 성공은 DefaultProductLinkExtractor 가 via=structured/llm 로
-            // 이미 세고, 차단 fetch 실패는 파서 도달 전 throw 라 카운터를 안 올리므로, 여기 via=headless 는 이중 집계가 아니다.
-            meterRegistry.counter(EXTRACT_METRIC, TAG_VIA, VIA_HEADLESS, TAG_REASON, REASON_ESCALATED).increment()
-            headless.extract(link)
+            escalateToHeadless(link)
+        }
+    }
+
+    // plain 이 차단으로 막혀 headless 로 넘긴다. 결과를 outcome 으로 집계한다 — "무조건 폴백" 이라 escalate 를 넓게 트는 대신,
+    // "폴백했는데도 못 가져온"(headless 마저 실패) 비율이 낭비·한계 지표이자 후속 per-host 튜닝의 근거다. 어느 host 가
+    // 헤드리스로도 안 되는지는 로그(host)로 드릴다운한다(메트릭=추세, 로그=원장). headless 예외는 그대로 상위로 전파해
+    // 워커의 재시도/종결 판정에 맡긴다.
+    private fun escalateToHeadless(link: ProductLink): ProductSnapshot {
+        log.info("extract escalate=headless url={}", link.safeLogString())
+        return try {
+            headless.extract(link).also {
+                meterRegistry.counter(ESCALATION_METRIC, TAG_OUTCOME, OUTCOME_SUCCESS).increment()
+            }
+        } catch (headlessFailure: Exception) {
+            meterRegistry.counter(ESCALATION_METRIC, TAG_OUTCOME, OUTCOME_FAILED).increment()
+            log.warn(
+                "extract escalate=headless outcome=failed cause={} url={}",
+                headlessFailure::class.simpleName,
+                link.safeLogString(),
+            )
+            throw headlessFailure
         }
     }
 
     // plain 실패가 "차단이라 headless 면 뚫릴 수 있음" 인지 판정한다. 어떤 fetch 실패가 그런지는 PageFetchException.escalatable
-    // 이 단일 진실이고(던지는 지점이 표시), 여기선 그 플래그만 본다 — 집합은 provisional. SSRF 로 우리가 막은
-    // host(blockedHost)는 escalatable=false 라 절대 여기로 오지 않는다(뚫어선 안 되는 내부망).
+    // 이 단일 진실이다(무조건 폴백: 영구 실패는 전부 true, SSRF 와 일시 오류만 false). SSRF 로 우리가 막은 host(blockedHost)는
+    // escalatable=false 라 절대 여기로 오지 않는다(뚫어선 안 되는 내부망).
     private fun shouldEscalate(e: Throwable): Boolean = (e as? PageFetchException)?.escalatable == true
 
     companion object {
-        private const val EXTRACT_METRIC = "product.extract"
-        private const val TAG_VIA = "via"
-        private const val TAG_REASON = "reason"
-        private const val VIA_HEADLESS = "headless"
-        private const val REASON_ESCALATED = "escalated"
+        private const val ESCALATION_METRIC = "product.extract.escalation"
+        private const val TAG_OUTCOME = "outcome"
+        private const val OUTCOME_SUCCESS = "success"
+        private const val OUTCOME_FAILED = "failed"
     }
 }

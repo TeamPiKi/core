@@ -90,38 +90,23 @@ class HttpPageFetcherServerErrorTest {
     }
 
     @Test
-    fun `4xx 는 입력 오류로 본다`() {
-        val fetcher =
-            fetcherWith { server ->
-                server.expect(requestTo("https://shop.example.com/p")).andRespond(withStatus(HttpStatus.NOT_FOUND))
-            }
+    fun `4xx 는 입력 오류(400)로 노출하되 봇 클로킹 가능성으로 escalatable 이다`() {
+        // 봇 방어가 404("없는 척")·403(차단)·429(throttle)로 클로킹할 수 있어, 4xx 는 헤드리스로 뚫릴 후보로 본다(무조건 폴백).
+        // 사용자 매핑은 입력 오류라 400, escalatable=true.
+        listOf(HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND, HttpStatus.GONE, HttpStatus.TOO_MANY_REQUESTS).forEach { status ->
+            val fetcher =
+                fetcherWith { server ->
+                    server.expect(requestTo("https://shop.example.com/p")).andRespond(withStatus(status))
+                }
 
-        val ex =
-            assertFailsWith<PageFetchException> {
-                fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
-            }
+            val ex =
+                assertFailsWith<PageFetchException>("$status 는 escalatable 이어야 함") {
+                    fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
+                }
 
-        assertEquals(ErrorCategory.INVALID_INPUT, ex.category)
-        assertEquals(HttpStatus.BAD_REQUEST, ex.httpStatus)
-        assertFalse(ex.escalatable, "404 는 진짜 없는 페이지라 헤드리스로 escalate 하지 않는다")
-    }
-
-    @Test
-    fun `403 은 봇 차단 신호로 escalatable 로 표시한다`() {
-        // 봇 차단·로그인 벽을 403 으로 응답하는 케이스(쿠팡·올리브영 등). 정적 fetch 로는 막히지만 실제 브라우저면
-        // 뚫릴 수 있어, 사용자 매핑(400)은 4xx 와 같게 두되 escalatable 로 표시해 Fallback 이 헤드리스로 넘길 수 있게 한다.
-        val fetcher =
-            fetcherWith { server ->
-                server.expect(requestTo("https://shop.example.com/p")).andRespond(withStatus(HttpStatus.FORBIDDEN))
-            }
-
-        val ex =
-            assertFailsWith<PageFetchException> {
-                fetcher.fetch(ProductLink.parse("https://shop.example.com/p"))
-            }
-
-        assertEquals(ErrorCategory.INVALID_INPUT, ex.category)
-        assertEquals(HttpStatus.BAD_REQUEST, ex.httpStatus)
-        assertTrue(ex.escalatable, "403(봇 차단)은 헤드리스로 escalate 대상이어야 함")
+            assertEquals(ErrorCategory.INVALID_INPUT, ex.category)
+            assertEquals(HttpStatus.BAD_REQUEST, ex.httpStatus)
+            assertTrue(ex.escalatable, "$status 는 헤드리스로 escalate 대상이어야 함")
+        }
     }
 }

@@ -53,7 +53,7 @@ class FallbackProductLinkExtractorTest {
     @Test
     fun `headless 가 꺼져 있으면 escalatable 차단이어도 plain 예외를 그대로 전파한다`() {
         // behavior-neutral: 플래그가 꺼진 동안엔 차단(escalatable)이라도 에스컬레이트하지 않고 현재 동작(예외 전파)을 유지한다.
-        val plain = FakeStrategy { throw PageFetchException.blocked(RuntimeException("403")) }
+        val plain = FakeStrategy { throw PageFetchException.clientError(RuntimeException("403")) }
         val headless = FakeStrategy { snapshot }
 
         assertFailsWith<PageFetchException> {
@@ -63,22 +63,25 @@ class FallbackProductLinkExtractorTest {
     }
 
     @Test
-    fun `headless 가 켜져 있고 plain 이 escalatable 차단으로 막히면 headless 로 에스컬레이트한다`() {
-        val plain = FakeStrategy { throw PageFetchException.blocked(RuntimeException("403")) }
+    fun `headless 가 켜져 있고 plain 이 escalatable 차단으로 막히면 headless 로 에스컬레이트하고 success 로 집계한다`() {
+        val plain = FakeStrategy { throw PageFetchException.clientError(RuntimeException("403")) }
         val headlessSnapshot = ProductSnapshot(name = "헤드리스 결과", currentPrice = 50_000)
         val headless = FakeStrategy { headlessSnapshot }
+        val registry = SimpleMeterRegistry()
 
-        val result = fallback(headlessEnabled = true, plain, headless).extract(link)
+        val result = fallback(headlessEnabled = true, plain, headless, registry).extract(link)
 
         assertEquals(headlessSnapshot, result)
         assertEquals(1, plain.calls)
         assertEquals(1, headless.calls)
+        assertEquals(1.0, registry.counter("product.extract.escalation", "outcome", "success").count())
     }
 
     @Test
-    fun `headless 도 실패하면 그 예외를 전파하고 에스컬레이션 카운터는 증가한다`() {
+    fun `headless 도 실패하면 그 예외를 전파하고 escalation 을 failed 로 집계한다`() {
         // 호출부(AsyncItemParsingWorker)의 재시도 판정과 맞물리는 지점이라, headless 예외가 그대로 상위로 전파돼야 한다.
-        val plain = FakeStrategy { throw PageFetchException.blocked(RuntimeException("403")) }
+        // "폴백했는데도 못 가져온" 이 outcome=failed 로 집계돼, 무조건-폴백의 낭비·한계를 관측할 수 있어야 한다.
+        val plain = FakeStrategy { throw PageFetchException.clientError(RuntimeException("403")) }
         val headless = FakeStrategy { throw RuntimeException("headless 도 실패") }
         val registry = SimpleMeterRegistry()
 
@@ -87,17 +90,13 @@ class FallbackProductLinkExtractorTest {
         }
         assertEquals(1, plain.calls)
         assertEquals(1, headless.calls)
-        // 카운터는 headless 호출 전에 오르므로, headless 실패와 무관하게 에스컬레이션은 집계된다(관측성 회귀 방지).
-        assertEquals(
-            1.0,
-            registry.counter("product.extract", "via", "headless", "reason", "escalated").count(),
-        )
+        assertEquals(1.0, registry.counter("product.extract.escalation", "outcome", "failed").count())
     }
 
     @Test
     fun `headless 가 켜져 있어도 escalatable 이 아닌 실패는 전파하고 headless 를 호출하지 않는다`() {
-        // 404 같은 진짜 입력 오류(clientError, escalatable=false)는 헤드리스로 넘겨봐야 소용없다.
-        val plain = FakeStrategy { throw PageFetchException.clientError(RuntimeException("404")) }
+        // SSRF 로 우리가 막은 내부망(blockedHost)은 escalatable=false — 절대 헤드리스로 넘기지 않는다("무조건 폴백" 의 유일 예외).
+        val plain = FakeStrategy { throw PageFetchException.blockedHost() }
         val headless = FakeStrategy { snapshot }
 
         assertFailsWith<PageFetchException> {
