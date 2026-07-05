@@ -82,6 +82,95 @@ jobs:
           echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
           echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare shared helpers
+        # post_parent·update 에 복붙돼 있던 헬퍼 4개를 공유 스크립트로 추출한다(#661 nitpick). checkout 없이
+        # 같은 job 의 러너 파일시스템($RUNNER_TEMP)으로 공유하고, 함수가 참조하는 REPO·DISCORD_USER_MAP 은
+        # GITHUB_ENV 로 이후 스텝에 넘긴다(GH_TOKEN 은 각 스텝이 secrets 로 받는다).
+        env:
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
+          cat > "$RUNNER_TEMP/discord-pr-lib.sh" <<'LIB'
+          # github 로그인 → discord 멘션(매핑 없으면 @로그인명, 핑 안 감). $DISCORD_USER_MAP 참조.
+          mention_discord_user() {
+            local github_id="$1" discord_id
+            discord_id=$(echo "$DISCORD_USER_MAP" | jq -r --arg id "$github_id" '.[$id] // empty')
+            if [ -n "$discord_id" ]; then echo "<@$discord_id>"; else echo "@$github_id"; fi
+          }
+
+          # requested_reviewers → "a, b" 멘션 목록(없으면 "없음"). $GITHUB_EVENT_PATH 참조.
+          build_reviewer_text() {
+            local reviewers reviewer_text user_mention
+            reviewers=$(jq -r '.pull_request.requested_reviewers[]?.login' "$GITHUB_EVENT_PATH")
+            reviewer_text=""
+            if [ -z "$reviewers" ]; then echo "없음"; return; fi
+            while IFS= read -r reviewer; do
+              [ -z "$reviewer" ] && continue
+              user_mention=$(mention_discord_user "$reviewer")
+              if [ -z "$reviewer_text" ]; then reviewer_text="$user_mention"; else reviewer_text="$reviewer_text, $user_mention"; fi
+            done <<< "$reviewers"
+            [ -z "$reviewer_text" ] && reviewer_text="없음"
+            echo "$reviewer_text"
+          }
+
+          # PR 본문의 close #N 을 뽑아 각 이슈 상태(🟢열림/⚫닫힘)와 링크 목록으로. $GH_TOKEN·$REPO 참조.
+          build_issue_text() {
+            local pr_body="$1" issues issue_text num res state emoji link line
+            issues=$(echo "$pr_body" | grep -oiE '\bclose[sd]?[[:space:]]+#[0-9]+' | grep -oE '#[0-9]+' | sort -u || true)
+            issue_text=""
+            if [ -z "$issues" ]; then echo "없음"; return; fi
+            while IFS= read -r issue; do
+              [ -z "$issue" ] && continue
+              num=$(echo "$issue" | tr -d '#')
+              res=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/$REPO/issues/$num")
+              state=$(echo "$res" | jq -r '.state // "unknown"')
+              if [ "$state" = "open" ]; then emoji="🟢"; elif [ "$state" = "closed" ]; then emoji="⚫"; else emoji="❓"; fi
+              link="https://github.com/$REPO/issues/$num"
+              line="$emoji [#$num]($link)"
+              if [ -z "$issue_text" ]; then issue_text="$line"; else issue_text=$(printf "%s\n%s" "$issue_text" "$line"); fi
+            done <<< "$issues"
+            [ -z "$issue_text" ] && issue_text="없음"
+            echo "$issue_text"
+          }
+
+          # PR 본문의 ## Task 섹션 불릿을 "• ..." 요약으로(없으면 "요약 없음"). 순수(인자만).
+          build_summary() {
+            local pr_body="$1"
+            printf '%s\n' "$pr_body" | awk '
+              BEGIN { in_task=0; n=0; out="" }
+              /^##/ {
+                if (in_task == 1) exit
+                r = $0
+                sub(/^##[[:space:]]+/, "", r)
+                ok = (match(r, /^[Tt][Aa][Ss][Kk]([^A-Za-z]|$)/) || match(r, /[[:space:]][Tt][Aa][Ss][Kk]([^A-Za-z]|$)/))
+                if (ok) { in_task=1; next }
+                next
+              }
+              in_task == 1 && /^##/ { exit }
+              in_task == 1 {
+                s = $0
+                sub(/^[[:space:]]+/, "", s)
+                if (s ~ /^>/) next
+                if (s ~ /^-[[:space:]]*\[[[:space:]xX]\]/) next
+                if (s ~ /^-[[:space:]]+/) {
+                  sub(/^-[[:space:]]+/, "", s)
+                  if (length(s) > 0) { if (n++ > 0) out = out "\n"; out = out "• " s }
+                }
+              }
+              END { if (n > 0) print out; else print "요약 없음" }
+            '
+          }
+          LIB
+          {
+            echo "DISCORD_USER_MAP<<__PKENV_EOF__"
+            echo "$DISCORD_USER_MAP"
+            echo "__PKENV_EOF__"
+            echo "REPO=$REPO"
+          } >> "$GITHUB_ENV"
+
       - name: Find existing Discord message/thread from PR comments
         id: find_meta
         env:
@@ -124,81 +213,7 @@ jobs:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
-          [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
-
-          # github 로그인 → discord 멘션(매핑 없으면 @로그인명, 핑 안 감).
-          mention_discord_user() {
-            local github_id="$1"
-            local discord_id
-            discord_id=$(echo "$DISCORD_USER_MAP" | jq -r --arg id "$github_id" '.[$id] // empty')
-            if [ -n "$discord_id" ]; then
-              echo "<@$discord_id>"
-            else
-              echo "@$github_id"
-            fi
-          }
-
-          build_reviewer_text() {
-            local reviewers reviewer_text user_mention
-            reviewers=$(jq -r '.pull_request.requested_reviewers[]?.login' "$GITHUB_EVENT_PATH")
-            reviewer_text=""
-            if [ -z "$reviewers" ]; then echo "없음"; return; fi
-            while IFS= read -r reviewer; do
-              [ -z "$reviewer" ] && continue
-              user_mention=$(mention_discord_user "$reviewer")
-              if [ -z "$reviewer_text" ]; then reviewer_text="$user_mention"; else reviewer_text="$reviewer_text, $user_mention"; fi
-            done <<< "$reviewers"
-            [ -z "$reviewer_text" ] && reviewer_text="없음"
-            echo "$reviewer_text"
-          }
-
-          build_issue_text() {
-            local pr_body="$1" issues issue_text num res state emoji link line
-            issues=$(echo "$pr_body" | grep -oiE '\bclose[sd]?[[:space:]]+#[0-9]+' | grep -oE '#[0-9]+' | sort -u || true)
-            issue_text=""
-            if [ -z "$issues" ]; then echo "없음"; return; fi
-            while IFS= read -r issue; do
-              [ -z "$issue" ] && continue
-              num=$(echo "$issue" | tr -d '#')
-              res=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/issues/$num")
-              state=$(echo "$res" | jq -r '.state // "unknown"')
-              if [ "$state" = "open" ]; then emoji="🟢"; elif [ "$state" = "closed" ]; then emoji="⚫"; else emoji="❓"; fi
-              # Discord 마크다운: 링크는 [text](url).
-              link="https://github.com/${{ github.repository }}/issues/$num"
-              line="$emoji [#$num]($link)"
-              if [ -z "$issue_text" ]; then issue_text="$line"; else issue_text=$(printf "%s\n%s" "$issue_text" "$line"); fi
-            done <<< "$issues"
-            [ -z "$issue_text" ] && issue_text="없음"
-            echo "$issue_text"
-          }
-
-          build_summary() {
-            local pr_body="$1"
-            printf '%s\n' "$pr_body" | awk '
-              BEGIN { in_task=0; n=0; out="" }
-              /^##/ {
-                if (in_task == 1) exit
-                r = $0
-                sub(/^##[[:space:]]+/, "", r)
-                ok = (match(r, /^[Tt][Aa][Ss][Kk]([^A-Za-z]|$)/) || match(r, /[[:space:]][Tt][Aa][Ss][Kk]([^A-Za-z]|$)/))
-                if (ok) { in_task=1; next }
-                next
-              }
-              in_task == 1 && /^##/ { exit }
-              in_task == 1 {
-                s = $0
-                sub(/^[[:space:]]+/, "", s)
-                if (s ~ /^>/) next
-                if (s ~ /^-[[:space:]]*\[[[:space:]xX]\]/) next
-                if (s ~ /^-[[:space:]]+/) {
-                  sub(/^-[[:space:]]+/, "", s)
-                  if (length(s) > 0) { if (n++ > 0) out = out "\n"; out = out "• " s }
-                }
-              }
-              END { if (n > 0) print out; else print "요약 없음" }
-            '
-          }
+          source "$RUNNER_TEMP/discord-pr-lib.sh"
 
           PR_BODY=$(jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH")
           REVIEWER_TEXT=$(build_reviewer_text)
@@ -277,75 +292,7 @@ jobs:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
-          [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
-
-          mention_discord_user() {
-            local github_id="$1"
-            local discord_id
-            discord_id=$(echo "$DISCORD_USER_MAP" | jq -r --arg id "$github_id" '.[$id] // empty')
-            if [ -n "$discord_id" ]; then echo "<@$discord_id>"; else echo "@$github_id"; fi
-          }
-
-          build_reviewer_text() {
-            local reviewers reviewer_text user_mention
-            reviewers=$(jq -r '.pull_request.requested_reviewers[]?.login' "$GITHUB_EVENT_PATH")
-            reviewer_text=""
-            if [ -z "$reviewers" ]; then echo "없음"; return; fi
-            while IFS= read -r reviewer; do
-              [ -z "$reviewer" ] && continue
-              user_mention=$(mention_discord_user "$reviewer")
-              if [ -z "$reviewer_text" ]; then reviewer_text="$user_mention"; else reviewer_text="$reviewer_text, $user_mention"; fi
-            done <<< "$reviewers"
-            [ -z "$reviewer_text" ] && reviewer_text="없음"
-            echo "$reviewer_text"
-          }
-
-          build_issue_text() {
-            local pr_body="$1" issues issue_text num res state emoji link line
-            issues=$(echo "$pr_body" | grep -oiE '\bclose[sd]?[[:space:]]+#[0-9]+' | grep -oE '#[0-9]+' | sort -u || true)
-            issue_text=""
-            if [ -z "$issues" ]; then echo "없음"; return; fi
-            while IFS= read -r issue; do
-              [ -z "$issue" ] && continue
-              num=$(echo "$issue" | tr -d '#')
-              res=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/issues/$num")
-              state=$(echo "$res" | jq -r '.state // "unknown"')
-              if [ "$state" = "open" ]; then emoji="🟢"; elif [ "$state" = "closed" ]; then emoji="⚫"; else emoji="❓"; fi
-              link="https://github.com/${{ github.repository }}/issues/$num"
-              line="$emoji [#$num]($link)"
-              if [ -z "$issue_text" ]; then issue_text="$line"; else issue_text=$(printf "%s\n%s" "$issue_text" "$line"); fi
-            done <<< "$issues"
-            [ -z "$issue_text" ] && issue_text="없음"
-            echo "$issue_text"
-          }
-
-          build_summary() {
-            local pr_body="$1"
-            printf '%s\n' "$pr_body" | awk '
-              BEGIN { in_task=0; n=0; out="" }
-              /^##/ {
-                if (in_task == 1) exit
-                r = $0
-                sub(/^##[[:space:]]+/, "", r)
-                ok = (match(r, /^[Tt][Aa][Ss][Kk]([^A-Za-z]|$)/) || match(r, /[[:space:]][Tt][Aa][Ss][Kk]([^A-Za-z]|$)/))
-                if (ok) { in_task=1; next }
-                next
-              }
-              in_task == 1 && /^##/ { exit }
-              in_task == 1 {
-                s = $0
-                sub(/^[[:space:]]+/, "", s)
-                if (s ~ /^>/) next
-                if (s ~ /^-[[:space:]]*\[[[:space:]xX]\]/) next
-                if (s ~ /^-[[:space:]]+/) {
-                  sub(/^-[[:space:]]+/, "", s)
-                  if (length(s) > 0) { if (n++ > 0) out = out "\n"; out = out "• " s }
-                }
-              }
-              END { if (n > 0) print out; else print "요약 없음" }
-            '
-          }
+          source "$RUNNER_TEMP/discord-pr-lib.sh"
 
           CHANNEL_ID="${{ steps.find_meta.outputs.channel_id }}"
           MESSAGE_ID="${{ steps.find_meta.outputs.message_id }}"
@@ -397,18 +344,11 @@ jobs:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
         shell: bash
         run: |
-          [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
+          source "$RUNNER_TEMP/discord-pr-lib.sh"
 
           THREAD_ID="${{ steps.find_meta.outputs.thread_id }}"
           ACTION="${{ steps.pr.outputs.action }}"
           MERGED="${{ steps.pr.outputs.merged }}"
-
-          mention_discord_user() {
-            local github_id="$1"
-            local discord_id
-            discord_id=$(echo "$DISCORD_USER_MAP" | jq -r --arg id "$github_id" '.[$id] // empty')
-            if [ -n "$discord_id" ]; then echo "<@$discord_id>"; else echo "@$github_id"; fi
-          }
 
           TEXT=""
 
@@ -458,6 +398,97 @@ jobs:
           OK=$(echo "$RESP" | jq -r '.id // empty')
           if [ -z "$OK" ]; then
             echo "Discord thread reply failed"; echo "$RESP"; exit 1
+          fi
+
+      - name: Manage status reaction (전환 - 현재 상태 하나만)
+        # 부모 메시지가 있어야(신규는 post_parent, 기존은 find_meta) 리액션을 단다. review_requested 등
+        # 상태 전환이 없는 이벤트는 아래 case 에서 스킵한다(리액션은 큰 상태만, 세부는 스레드 답글).
+        if: steps.find_meta.outputs.message_id != '' || steps.post_parent.outputs.message_id != ''
+        env:
+          ACTION: ${{ steps.pr.outputs.action }}
+          MERGED: ${{ steps.pr.outputs.merged }}
+        shell: bash
+        run: |
+          MSG_ID="${{ steps.find_meta.outputs.message_id }}"
+          [ -z "$MSG_ID" ] && MSG_ID="${{ steps.post_parent.outputs.message_id }}"
+          CH_ID="${{ steps.find_meta.outputs.channel_id }}"
+          [ -z "$CH_ID" ] && CH_ID="$DISCORD_CHANNEL_ID"
+          [ -z "$MSG_ID" ] && { echo "부모 메시지 없음 - 리액션 생략"; exit 0; }
+
+          # PiKi 상태 이모지 (name:id). 전환 방식이라 매 이벤트에 이전 상태를 지우고 현재 하나만 남긴다.
+          EMOJI_OPEN="piki_open:1523200235701014528"
+          EMOJI_WIP="piki_wip:1523200286758539264"
+          EMOJI_DONE="piki_done:1523200333482823720"
+          EMOJI_CLOSED="piki_closed:1523200373899132928"
+          ALL="$EMOJI_OPEN $EMOJI_WIP $EMOJI_DONE $EMOJI_CLOSED"
+
+          reaction_api() {
+            # $1: HTTP 메서드, $2: name:id 이모지. 봇 자신의 리액션(@me)만 조작한다.
+            curl -s -o /dev/null -w '%{http_code}' -X "$1" \
+              "$DISCORD_API/channels/$CH_ID/messages/$MSG_ID/reactions/$2/@me" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN"
+          }
+
+          # 이번 이벤트의 현재 상태. 전환 없는 이벤트(review_requested 등)는 상태를 안 바꾸고 끝낸다.
+          CURRENT=""
+          case "$ACTION" in
+            opened|ready_for_review) CURRENT="$EMOJI_OPEN" ;;
+            synchronize)             CURRENT="$EMOJI_WIP" ;;
+            closed)
+              if [ "$MERGED" = "true" ]; then CURRENT="$EMOJI_DONE"; else CURRENT="$EMOJI_CLOSED"; fi ;;
+            *) echo "상태 전환 없는 이벤트($ACTION) - 리액션 유지"; exit 0 ;;
+          esac
+
+          # 이전 상태 제거(없으면 Discord 가 무시) 후 현재 하나만 추가.
+          for e in $ALL; do
+            [ "$e" = "$CURRENT" ] && continue
+            reaction_api DELETE "$e" >/dev/null
+          done
+          CODE=$(reaction_api PUT "$CURRENT")
+          # 성공은 204. 실패해도 알림 본체는 이미 나갔으므로 워크플로를 깨지 않고 로그만 남긴다.
+          [ "$CODE" = "204" ] && echo "리액션 설정: $CURRENT" || echo "::warning::리액션 실패 (HTTP $CODE): $CURRENT"
+
+      - name: Pin parent on open (열린 PR 채널 상단 고정)
+        # 열린(리뷰 대기) PR 부모를 채널 상단에 고정해 눈에 띄게 한다. 고정은 채널당 50개 한도라, 초과 시
+        # PUT 이 실패해도(경고만) 알림 본체엔 영향을 주지 않는다. 닫힐 때 아래 스텝이 해제한다.
+        if: (github.event.action == 'opened' || github.event.action == 'ready_for_review') && steps.post_parent.outputs.message_id != ''
+        shell: bash
+        run: |
+          MSG_ID="${{ steps.post_parent.outputs.message_id }}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+            "$DISCORD_API/channels/$DISCORD_CHANNEL_ID/pins/$MSG_ID" \
+            -H "Authorization: Bot $DISCORD_BOT_TOKEN")
+          [ "$CODE" = "204" ] && echo "고정됨" || echo "::warning::고정 실패 (HTTP $CODE) - 채널 고정 50개 한도일 수 있음"
+
+      - name: Unpin and archive thread on close (종료 시 정리)
+        # 머지/종료 시: 부모 고정 해제 + 스레드 이름에 결과 프리픽스(✅/🗑️) + archive·lock 으로 정리한다.
+        if: github.event.action == 'closed' && steps.find_meta.outputs.message_id != ''
+        env:
+          MERGED: ${{ steps.pr.outputs.merged }}
+          PR_TITLE: ${{ steps.pr.outputs.pr_title }}
+        shell: bash
+        run: |
+          CH_ID="${{ steps.find_meta.outputs.channel_id }}"
+          [ -z "$CH_ID" ] && CH_ID="$DISCORD_CHANNEL_ID"
+          MSG_ID="${{ steps.find_meta.outputs.message_id }}"
+          THREAD_ID="${{ steps.find_meta.outputs.thread_id }}"
+
+          # 고정 해제 (열린 PR 만 상단에 두므로, 닫히면 내린다). 없어도 무해.
+          if [ -n "$MSG_ID" ]; then
+            curl -s -o /dev/null -X DELETE "$DISCORD_API/channels/$CH_ID/pins/$MSG_ID" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN"
+          fi
+
+          # 스레드: 이름 앞에 결과 프리픽스 + archive + lock. 이름은 100자 제한이라 90자로 자른다.
+          if [ -n "$THREAD_ID" ]; then
+            if [ "$MERGED" = "true" ]; then PREFIX="✅"; else PREFIX="🗑️"; fi
+            NEW_NAME=$(printf '%s PR #%s %s' "$PREFIX" "${{ steps.pr.outputs.pr_number }}" "$PR_TITLE" | cut -c1-90)
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+              "$DISCORD_API/channels/$THREAD_ID" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+              -H "Content-Type: application/json; charset=utf-8" \
+              --data "$(jq -n --arg name "$NEW_NAME" '{name:$name, archived:true, locked:true}')")
+            [ "$CODE" = "200" ] && echo "스레드 정리됨: $NEW_NAME" || echo "::warning::스레드 정리 실패 (HTTP $CODE)"
           fi
 
   alert-direct-push:
