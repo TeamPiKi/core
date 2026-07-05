@@ -100,7 +100,7 @@ jobs:
           ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
           echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
           if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            # 실패 사유를 step output 으로 남겨 요약·Slack 이 정확한 원인을 표시하게 한다(exit 전 기록).
+            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
             echo "reason=[$ENVIRONMENT] 배포 대상 EC2_HOST($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — 환경 secret 오설정(dev/prod 교차배선) 의심" >> "$GITHUB_OUTPUT"
             echo "::error::배포 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 환경 secret 오설정 의심, 중단."
             exit 1
