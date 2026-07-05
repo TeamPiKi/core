@@ -5,6 +5,8 @@
   admin 공통 헤더. 모든 admin 페이지가 자기 헤더 대신 이 fragment 를 include 한다(헤더 복붙 통합).
   환경(adminEnv)·접속 IP(adminClientIp)는 AdminHeaderInterceptor 가 /admin/** 모든 뷰 모델에 주입한다.
   backHref/backLabel 은 페이지별 뒤로가기 링크(홈·공지 목록·템플릿 목록 등). 없으면(홈·목록 루트) 생략한다.
+  세션 남은시간·연장(#669): /admin/session/ttl 로 남은시간을 받아 카운트다운하고, 연장 버튼(명시적)만 TTL 을 갱신한다
+  (게이트의 sliding 자동연장을 없앴으므로 배경 요청으로는 세션이 안 늘어난다).
 -->
 <th:block th:fragment="topbar(backHref, backLabel)">
   <style>
@@ -23,11 +25,23 @@
     .pkbar .pkenv.env-LOCAL{background:#e2e8f0;color:#475569;}
     .pkbar a.pkhome{font-size:13px;color:#64748b;text-decoration:none;font-weight:600;}
     .pkbar a.pkhome:hover{color:#0f172a;}
+    .pkbar .pksession{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#64748b;}
+    .pkbar .pksession b{color:#334155;font-weight:700;font-variant-numeric:tabular-nums;}
+    .pkbar .pksession.pkwarn b{color:#b91c1c;}
+    .pkbar .pkextend{font-size:12px;font-weight:700;color:#0EA5E9;background:#e0f2fe;border:1px solid #bae6fd;
+      border-radius:7px;padding:4px 10px;cursor:pointer;line-height:1;transition:.15s;}
+    .pkbar .pkextend:hover{background:#bae6fd;}
+    .pkbar .pkextend:disabled{opacity:.5;cursor:default;}
   </style>
   <div class="pkbar">
     <span class="pkbrand"><img src="/favicon.ico" alt="PiKi"
         style="width:19px;height:19px;border-radius:5px;vertical-align:-4px;margin-right:6px">PiKi<span class="pkdot">.</span> 백오피스</span>
     <span class="pksp"></span>
+    <span class="pksession" id="pk-session">
+      <span>세션 <b id="pk-session-remaining">-</b></span>
+      <button type="button" class="pkextend" id="pk-session-extend">연장</button>
+    </span>
+    <span class="pksep">·</span>
     <span class="pkmeta">
       <span th:if="${adminEnv}">현재 접속하신 환경은
         <span class="pkenv" th:classappend="'env-'+${adminEnv}" th:text="${adminEnv}">DEV</span> 입니다</span>
@@ -36,6 +50,52 @@
     </span>
     <a class="pkhome" th:if="${backHref}" th:href="@{${backHref}}" th:text="${backLabel}">←</a>
   </div>
+  <script>
+    (function () {
+      var box = document.getElementById('pk-session');
+      var out = document.getElementById('pk-session-remaining');
+      var btn = document.getElementById('pk-session-extend');
+      if (!box || !out || !btn) return;
+      var remaining = 0, timer = null;
+
+      // 남은 초 → 사람이 읽는 표기. 1시간 이상은 "N시간 M분", 미만은 "M분 S초"(막판엔 초까지).
+      function fmt(s) {
+        if (s <= 0) return '만료됨';
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+        if (h > 0) return h + '시간 ' + m + '분';
+        if (m > 0) return m + '분 ' + sec + '초';
+        return sec + '초';
+      }
+      function render() {
+        out.textContent = fmt(remaining);
+        // 5분 이하로 남으면 강조(연장 유도).
+        box.classList.toggle('pkwarn', remaining > 0 && remaining <= 300);
+      }
+      function tick() {
+        render();
+        if (remaining <= 0) { clearInterval(timer); return; }
+        remaining -= 1;
+      }
+      function start(sec) {
+        remaining = Math.max(0, sec | 0);
+        if (timer) clearInterval(timer);
+        render();
+        timer = setInterval(tick, 1000);
+      }
+      function load() {
+        fetch('/admin/session/ttl').then(function (r) { return r.json(); })
+          .then(function (d) { start(d.remainingSeconds); })
+          .catch(function () { out.textContent = '-'; });
+      }
+      btn.addEventListener('click', function () {
+        btn.disabled = true;
+        fetch('/admin/session/extend', { method: 'POST' }).then(function (r) { return r.json(); })
+          .then(function (d) { start(d.remainingSeconds); })
+          .finally(function () { btn.disabled = false; });
+      });
+      load();
+    })();
+  </script>
 </th:block>
 </body>
 </html>
