@@ -30,15 +30,12 @@ class PageFetchException private constructor(
         fun upstreamError(cause: Throwable): PageFetchException =
             PageFetchException(LINK_UNREACHABLE, ErrorCategory.RETRYABLE, HttpStatus.BAD_GATEWAY, cause)
 
-        // 대상 서버가 500/501 을 body 와 함께 준 경우 = 진짜 서버 장애(과부하·버그 등). 502/503/504(일시) 와 달리
-        // 500/501 은 재시도해도 결정론적으로 재실패가 흔해 영구(SERVER_ERROR → 워커가 즉시 FAILED)로 본다. status 는 502.
-        // escalatable=false — 헤드리스로 열어도 못 살리는 실제 장애라 escalate 하지 않는다.
+        // 대상 서버가 500/501 을 준 경우. 일부 쇼핑몰이 봇 차단을 500 으로 응답하고(크림 등), 우리가 fetch 하는 대형 몰은
+        // 사실상 상시 가용이라 우리가 받는 500/501 은 대개 진짜 장애가 아니라 봇 방어다. 502/503/504(일시 게이트웨이)와 달리
+        // 재시도해도 결정론적으로 재실패하는 영구(SERVER_ERROR → 워커가 즉시 FAILED)로 보고, escalatable=true 로 둔다(헤드리스면
+        // 뚫릴 수 있어 Fallback 이 에스컬레이트). body 유무로 봇차단/장애를 나누지 않는다: 봇 방어가 body(캡차·차단 페이지)를
+        // 실을 수 있어 구분이 불확실하고, 드문 genuine 500 에 헤드리스 1회 낭비는 감수한다. status 는 외부 의존성 실패라 502.
         fun permanentUpstreamError(cause: Throwable): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause)
-
-        // 대상 서버가 500/501 을 body 없이 준 경우 = 봇 차단 신호(KREAM 등이 봇을 no-body 500 으로 응답). 영구(SERVER_ERROR)이되,
-        // 실제 브라우저(헤드리스)면 뚫릴 수 있어 escalatable=true — Fallback 이 헤드리스로 에스컬레이트한다. (no-body 판별은 던지는 지점.)
-        fun permanentUpstreamBlock(cause: Throwable): PageFetchException =
             PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause, escalatable = true)
 
         // 4xx (404, 410 등, 403 제외). 입력 URL 자체가 문제이므로 사용자에게 400 으로 노출한다. escalatable=false —

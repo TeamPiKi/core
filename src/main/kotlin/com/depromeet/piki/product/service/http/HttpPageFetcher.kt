@@ -77,16 +77,10 @@ class HttpPageFetcher(
         } catch (e: RestClientResponseException) {
             log.warn("link fetch failed: status={} url={}", e.statusCode, current.safeLogString())
             throw when {
-                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않는다(SERVER_ERROR).
-                // 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도 대상(RETRYABLE)으로 둔다.
-                // 500/501 중 body 없는 것만 봇 차단(KREAM 등 no-body 500)으로 보고 escalatable(permanentUpstreamBlock)로 던진다 —
-                // 헤드리스면 뚫릴 수 있다. body 가 있으면 진짜 서버 장애라 헤드리스로도 못 살려 escalate 하지 않는다.
-                e.statusCode.value() in PERMANENT_SERVER_ERRORS ->
-                    if (e.responseBodyAsByteArray.isEmpty()) {
-                        PageFetchException.permanentUpstreamBlock(e)
-                    } else {
-                        PageFetchException.permanentUpstreamError(e)
-                    }
+                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않고(SERVER_ERROR), 헤드리스면 뚫릴 수 있어
+                // escalatable 로 던진다. 대형 몰은 상시 가용이라 우리가 받는 500/501 은 대개 봇 방어이고, body 유무로 장애/차단이
+                // 깔끔히 안 갈려 body 를 구분하지 않는다. 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도(RETRYABLE) 대상.
+                e.statusCode.value() in PERMANENT_SERVER_ERRORS -> PageFetchException.permanentUpstreamError(e)
                 e.statusCode.is5xxServerError -> PageFetchException.upstreamError(e)
                 // 403 (봇 차단·로그인 벽) 은 정적 fetch 로는 막혀도 실제 브라우저(헤드리스)면 뚫릴 수 있어 escalatable(blocked)로
                 // 던진다. 그 외 4xx(404/410 등)는 진짜 입력 오류라 escalate 하지 않는다(clientError).
