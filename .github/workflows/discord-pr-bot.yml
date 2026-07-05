@@ -544,7 +544,7 @@ jobs:
           SOUNDS=("비상비상 애옹애옹 🐱" "비상비상 멍멍멍멍 🐶" "비상비상 크르르릉~~~!!! 🐯" "비상비상 꽥꽥꽥꽥 🦆" "비상비상 어흥어흥!!! 🦁" "비상비상 뀨뀨뀨뀨 🐹" "비상비상 히이이잉~~~ 🐴" "비상비상 총총총총 🐰")
           SOUND="${SOUNDS[$RANDOM % ${#SOUNDS[@]}]}"
 
-          # Slack <!channel> → Discord @here. allowed_mentions 에 everyone(= @here/@everyone)·users 를 열어야 실제로 핑이 간다.
+          # @here(=@everyone) 핑은 allowed_mentions 에 everyone·users 를 열어야 실제로 간다.
           TEXT=$(printf '@here 🚨🚨🚨 %s 님이 main에 **직접 푸시** 했어요!!\n%s\n\n• **커밋**: [%s](%s)\n• **메시지**: %s' \
             "$PUSHER_MENTION" "$SOUND" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG")
 

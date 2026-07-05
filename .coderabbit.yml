@@ -230,7 +230,7 @@ reviews:
         - concurrency 설정이 필요한 워크플로우인지
         - 조건문(if), branch filter, paths filter가 실제 운영 의도와 맞는지
         - 중복 실행, 무한 루프, 자기 자신을 다시 트리거하는 구조가 없는지
-        - Slack/외부 API 호출 실패 시 전체 workflow를 불필요하게 실패시키지 않는지
+        - Discord/외부 API 호출 실패 시 전체 workflow를 불필요하게 실패시키지 않는지
         - PR 알림/리뷰/배포 workflow가 서로 중복 코멘트나 중복 알림을 만들지 않는지
         - checkout, cache, artifact, upload/download 단계가 불필요하게 무겁지 않은지
 
