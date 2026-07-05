@@ -4,6 +4,7 @@ import com.depromeet.piki.admin.config.AdminProperties
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
+import java.time.Duration
 
 // 슬랙으로 등록한 "접근 허용 IP" 를 Redis 에 둔다. 이 한 allowlist 가 두 게이트를 다 받친다 —
 // (1) prod /admin (AdminAccessFilter), (2) dev/staging 도메인 전체(EnvironmentAccessFilter).
@@ -35,6 +36,9 @@ class AdminAllowlistService(
     fun revoke(ip: String) {
         redis.delete(allowKey(ip))
     }
+
+    // 남은 세션 시간 — allowlist IP 의 Redis 잔여 TTL. 키가 없거나(만료·미등록) 만료 미설정이면 null.
+    fun ttl(ip: String): Duration? = redis.getExpire(allowKey(ip)).takeIf { it > 0 }?.let { Duration.ofSeconds(it) }
 
     // 현재 허용된 IP 목록 (/piki-admin list 용). 소수라 keys 스캔으로 충분.
     fun list(): List<AllowedIp> =
