@@ -5,6 +5,7 @@ import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.service.PageContent
 import com.depromeet.piki.product.service.PageFetcher
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.client.ResourceAccessException
@@ -23,7 +24,9 @@ import java.nio.charset.Charset
 // 연결도 이뤄지게(IP pin) 해 DNS rebinding/TOCTOU 를 닫는다. 한 fetch 가 끝나면 clear() 로 캐시를 비운다.
 @Component
 class HttpPageFetcher(
-    private val restClient: RestClient,
+    // RestClient 빈이 둘(pageFetchRestClient·remoteExtractionRestClient)이라 대상을 명시한다 —
+    // 타입 단일 후보에 기대던 기존 주입은 빈 추가만으로 조용히 깨지는 잠재 결함이었다.
+    @Qualifier("pageFetchRestClient") private val restClient: RestClient,
     private val dnsResolver: RequestScopedDnsResolver,
 ) : PageFetcher {
     private val log = LoggerFactory.getLogger(javaClass)
