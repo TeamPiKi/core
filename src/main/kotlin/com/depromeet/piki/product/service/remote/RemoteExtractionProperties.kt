@@ -8,6 +8,7 @@ import java.util.Locale
 // 스위치 자체는 이 클래스가 아니라 @ConditionalOnProperty("product.extract.remote.enabled") 하나가 진다 —
 // 여기에 enabled 필드를 두면 같은 키의 독자가 둘이 되어, relaxed 바인딩("yes"→true)과 조건의 정확 매칭("true"만)이
 // 갈라지는 분열이 생긴다(스위치가 조용히 꺼진 채 켜졌다고 믿게 되는 최악의 오설정). 독자를 하나로 줄여 그 분열을 없앤다.
+// 이미지 게이트(image-enabled, HttpImageSnapshotExtractor)도 같은 이유로 필드를 두지 않는다.
 // enabled=false(기본)면 원격 빈들(라우팅·클라이언트·RestClient)이 아예 뜨지 않아 현행과 완전 동일(zero-diff)이고,
 // 전환이 끝나면(이관 8단계) 이 설정과 embedded 경로를 함께 제거한다.
 @ConfigurationProperties(prefix = "product.extract.remote")
