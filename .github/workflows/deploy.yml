@@ -428,6 +428,11 @@ jobs:
               echo "::error::EXTRACT_REMOTE_ENABLED=true 인데 base-url host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
               exit 1
             fi
+            # 이미지 게이트만 켜고 마스터 스위치가 꺼진 반쪽 켜짐은 앱이 조용히 embedded 로 남는다(부팅 오류 없음).
+            # 배포는 유효한 상태라 막지 않되(enabled=false 는 링크·이미지 공통 롤백 경로), 켰다고 믿는 오설정을 로그로 드러낸다.
+            if [ "$EXTRACT_REMOTE_IMAGE_ENABLED" = "true" ] && [ "$EXTRACT_REMOTE_ENABLED" != "true" ]; then
+              echo "::warning::EXTRACT_REMOTE_IMAGE_ENABLED=true 인데 EXTRACT_REMOTE_ENABLED 가 꺼져 있어 이미지 원격 게이트가 무효 (전량 embedded 로 동작)"
+            fi
 
             IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
 

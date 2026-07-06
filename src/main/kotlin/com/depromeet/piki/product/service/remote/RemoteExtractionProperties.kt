@@ -21,10 +21,12 @@ data class RemoteExtractionProperties(
     val hosts: List<String> = emptyList(),
     val connectTimeoutMs: Int = 2_000,
     // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 recover 의 유령 중복 발주가 없다.
+    // 이미지 경로(HttpImageSnapshotExtractor)도 같은 클라이언트·같은 값을 쓴다 — extractor 내부 이미지 예산
+    // (S3 download + Gemini OCR 30s cap + crop + 결과 upload, 최악 40s대)이 이 값 미만이어야 하며,
+    // 예산 합의는 계약 문서(extractor repo docs/api-contract.md §3)가 진다.
     // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
     // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
-    // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음). extractor 내부 예산과 함께
-    // 계약 문서(extractor repo docs/api-contract.md §3)를 갱신한다.
+    // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음).
     val readTimeoutMs: Int = 55_000,
 ) {
     // 매칭에 쓰는 정규형(소문자·trailing dot 제거) — ProductLink.matchesAnyDomain 의 도메인 목록 계약.

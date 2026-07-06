@@ -7,17 +7,49 @@ import com.depromeet.piki.product.service.ProductSnapshotException
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.web.client.RestClient
+import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 
 // 원격 추출 서비스(PIKI-Extractor) 계약(extractor repo docs/api-contract.md)의 공용 절반.
 // link(HttpProductLinkExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResponse)과
-// 같은 3갈래 번역을 쓰므로 한 곳에 모은다 — 계약이 진화할 때 두 클라이언트가 조용히 어긋나는 것을 막는다.
-// 클라이언트별로 갈리는 건 요청 모양(URL vs bucket·key)과 로그 컨텍스트(target: "url=..." / "key=...")뿐이다.
+// 같은 3갈래 번역을 쓰므로 호출·번역 전체를 한 곳에 모은다 — 계약이 진화할 때 두 클라이언트가 조용히 어긋나는 것을 막는다.
+// 클라이언트별로 갈리는 건 요청 모양(URL vs bucket·key)과 로그 컨텍스트(target)뿐이다.
 internal object RemoteExtractionContract {
     private val log = LoggerFactory.getLogger(javaClass)
 
     private const val CODE_NOT_PRODUCT_PAGE = "NOT_PRODUCT_PAGE"
     private const val CODE_UNTRUSTWORTHY_VALUE = "UNTRUSTWORTHY_VALUE"
+
+    // 원격 추출 호출 한 건의 전부 — POST 부터 3갈래(2xx 매핑 / 422+code 확정 / 그 외 일시)가 이 함수 안에서 끝난다.
+    // transport catch 까지 여기 두는 이유: 클라이언트별 복제가 남으면 계약이 진화할 때(타임아웃 구분·status 취급 등)
+    // 한쪽만 고쳐져 링크·이미지가 조용히 어긋난다 — 클라이언트에는 요청 구성(경로·body)만 남긴다.
+    // target 은 로그 컨텍스트다. 마스킹된 값만 넘긴다(url 은 safeLogString, key 는 내부 S3 식별자) — raw URL 금지.
+    fun postForSnapshot(
+        restClient: RestClient,
+        path: String,
+        request: Any,
+        link: ProductLink?,
+        target: String,
+    ): ProductSnapshot {
+        val response =
+            try {
+                restClient
+                    .post()
+                    .uri(path)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(RemoteExtractionResponse::class.java)
+            } catch (e: RestClientResponseException) {
+                throw translate(e, target)
+            } catch (e: RestClientException) {
+                // 연결 실패·read timeout(ResourceAccessException)·본문 추출 중 오류 등 transport 장애 — 일시로 본다.
+                throw ProductExtractorException.transientFailure(e)
+            }
+        return toSnapshot(response, link, target)
+    }
 
     // 2xx 응답 → ProductSnapshot. extractor 는 2xx 로 name·imageUrl·currentPrice 를 non-null 로 보장한다
     // (자기 쪽 ExtractionResponse.from 이 강제). 신뢰 경계를 넘어온 값이라, 계약이 깨진 2xx(초기 이관기 extractor
@@ -25,7 +57,9 @@ internal object RemoteExtractionContract {
     // 원인이 "원격 계약 위반"으로 boundary 로그에 또렷이 남는다.
     // raw 응답 필드를 본다: "값은 있으나 우리가 정규화로 떨구는" 경우(non-https imageUrl 등)는 여기가 아니라
     // fromExtracted 소관이라, 그건 embedded 와 동일하게 스냅샷에 null 로 흘러 엔티티 requireReadyInvariant 가 최종 판정한다.
-    fun toSnapshot(
+    // (이미지 경로에선 그 귀결이 READY 거부 → FAILED + raw 회수다. 현재 extractor 는 결과 URL 을 https 로 하드코딩
+    // 생성하므로 non-https 2xx 는 구성 불가능하다 — extractor 가 CDN 등 결과 URL 출처를 바꾸면 이 가드를 재검토한다.)
+    private fun toSnapshot(
         response: RemoteExtractionResponse?,
         link: ProductLink?,
         target: String,
@@ -47,7 +81,7 @@ internal object RemoteExtractionContract {
     // (item.parsing reason=not_product)과 실패 의미가 embedded 경로와 동일하게 유지되도록 한다. 그 외 code
     // (이미지 전용 IMAGE_UNSUPPORTED 포함)는 모르는 code 와 같은 취급이다 — 전이 판정은 status 만으로 충분하고
     // code 는 관측용이라(계약 §1), 새 code 마다 매핑을 늘리지 않는다.
-    fun translate(
+    private fun translate(
         e: RestClientResponseException,
         target: String,
     ): BaseException {

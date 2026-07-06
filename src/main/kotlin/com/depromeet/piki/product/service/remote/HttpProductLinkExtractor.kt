@@ -4,14 +4,11 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
-import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
-import org.springframework.web.client.RestClientException
-import org.springframework.web.client.RestClientResponseException
 
 // 원격 추출 서비스(PIKI-Extractor)의 링크 추출 클라이언트. 계약은 extractor repo 의 docs/api-contract.md 가
-// single source 이고, 응답 모양·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
+// single source 이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
 // (HttpImageSnapshotExtractor)와 공유하므로 RemoteExtractionContract 한 곳에 있다 — 여기는 링크 고유의 요청(URL)만 진다.
 //
 // ProductLinkExtractor 를 구현하지 않는다 — 진입점(ProductLinkExtractor) 주입 후보가 둘(Fallback + 이 빈)이 되는
@@ -21,25 +18,14 @@ import org.springframework.web.client.RestClientResponseException
 class HttpProductLinkExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,
 ) {
-    fun extract(link: ProductLink): ProductSnapshot {
-        val target = "url=${link.safeLogString()}"
-        val response =
-            try {
-                restClient
-                    .post()
-                    .uri(LINK_EXTRACTION_PATH)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(RemoteLinkExtractionRequest(link.value.toString()))
-                    .retrieve()
-                    .body(RemoteExtractionResponse::class.java)
-            } catch (e: RestClientResponseException) {
-                throw RemoteExtractionContract.translate(e, target)
-            } catch (e: RestClientException) {
-                // 연결 실패·read timeout(ResourceAccessException)·본문 추출 중 오류 등 transport 장애 — 일시로 본다.
-                throw ProductExtractorException.transientFailure(e)
-            }
-        return RemoteExtractionContract.toSnapshot(response, link, target)
-    }
+    fun extract(link: ProductLink): ProductSnapshot =
+        RemoteExtractionContract.postForSnapshot(
+            restClient = restClient,
+            path = LINK_EXTRACTION_PATH,
+            request = RemoteLinkExtractionRequest(link.value.toString()),
+            link = link,
+            target = "url=${link.safeLogString()}",
+        )
 
     companion object {
         private const val LINK_EXTRACTION_PATH = "/internal/extractions/link"

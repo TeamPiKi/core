@@ -3,7 +3,6 @@ package com.depromeet.piki.image.service.remote
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.item.service.AsyncImageParsingWorker
-import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ProductExtractorException
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
@@ -18,17 +17,16 @@ import org.springframework.test.web.client.response.MockRestResponseCreators.wit
 import org.springframework.test.web.client.response.MockRestResponseCreators.withStatus
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
-import java.io.IOException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// 이미지 원격 추출이 링크와 공유하는 계약 번역(RemoteExtractionContract)에 올바르게 배선되는지, 그리고 이미지
-// 고유의 것 — 요청 모양(bucket·key), link=null 스냅샷, 이미지 전용 422 code(IMAGE_UNSUPPORTED) 취급, 이미지 워커
-// (AsyncImageParsingWorker.isRetryable)와의 정합 — 을 검증한다. 3갈래 번역·경계 정규화의 분기 망라는 같은 계약
-// 객체를 쓰는 HttpProductLinkExtractorTest 가 이미 고정하므로 여기서 반복하지 않는다.
+// 이미지 고유의 것만 고정한다 — 요청 모양(bucket·key·경로), link=null 스냅샷, 이미지 전용 422 code(IMAGE_UNSUPPORTED)
+// 취급, 그리고 확정/일시 갈래가 이미지 워커의 재시도 판정(AsyncImageParsingWorker.isRetryable)과 맞물리는 정합.
+// 3갈래 번역·경계 정규화·계약 위반 가드의 분기 망라는 같은 공유 함수(RemoteExtractionContract.postForSnapshot)를
+// 쓰는 HttpProductLinkExtractorTest 가 이미 고정하므로 여기서 반복하지 않는다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다.
 class HttpImageSnapshotExtractorTest {
     private val imageKey = "items/raw/0f8a1c2e.png"
@@ -71,41 +69,7 @@ class HttpImageSnapshotExtractorTest {
     }
 
     @Test
-    fun `2xx 이어도 필수 필드가 빠진 계약 위반 응답은 일시 실패로 걸러진다`() {
-        // extractor 는 2xx 로 imageUrl(업로드 결과)을 보장한다 - 초기 이관기 버그로 null 이 오면 불완전 스냅샷이
-        // 조용히 READY 로 새면 안 되므로 boundary 에서 일시 실패로 걸러 재시도 후 FAILED 로 종결한다(링크와 동일 가드).
-        val extractor =
-            extractorWith { server ->
-                server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(
-                    withSuccess(
-                        """{"name":"나이키 에어포스","imageUrl":null,"currentPrice":129000,"currency":"KRW"}""",
-                        MediaType.APPLICATION_JSON,
-                    ),
-                )
-            }
-
-        val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
-        assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncImageParsingWorker.isRetryable(e))
-    }
-
-    @Test
-    fun `422 UNTRUSTWORTHY_VALUE 는 기존 ProductSnapshotException 으로 되돌려 워커가 즉시 FAILED 한다`() {
-        val extractor =
-            extractorWith { server ->
-                server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(
-                    withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("""{"code":"UNTRUSTWORTHY_VALUE"}"""),
-                )
-            }
-
-        val e = assertFailsWith<ProductSnapshotException> { extractor.extract(imageKey) }
-        assertFalse(AsyncImageParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
-    }
-
-    @Test
-    fun `이미지 전용 422 code(IMAGE_UNSUPPORTED)도 별도 매핑 없이 확정 실패다 - 전이 판정은 status 만으로 충분`() {
+    fun `이미지 전용 422 code(IMAGE_UNSUPPORTED)도 별도 매핑 없이 확정 실패다 - 워커가 즉시 FAILED`() {
         // 미지원 이미지 형식은 다시 보내도 결과가 같다. code 는 관측용이라 새 code 마다 매핑을 늘리지 않는다(tolerant reader).
         val extractor =
             extractorWith { server ->
@@ -118,7 +82,7 @@ class HttpImageSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
-        assertFalse(AsyncImageParsingWorker.isRetryable(e))
+        assertFalse(AsyncImageParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
     @Test
@@ -126,20 +90,6 @@ class HttpImageSnapshotExtractorTest {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(withServerError())
-            }
-
-        val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
-        assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncImageParsingWorker.isRetryable(e))
-    }
-
-    @Test
-    fun `연결 실패·타임아웃 같은 transport 장애도 일시 실패다`() {
-        val extractor =
-            extractorWith { server ->
-                server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond {
-                    throw IOException("connection reset")
-                }
             }
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
