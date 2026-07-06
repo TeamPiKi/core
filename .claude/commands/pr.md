@@ -1,4 +1,4 @@
-브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사) · Project(99) 도 자동 설정합니다. 마지막에 항상 `/notion-board` 를 호출해 Notion `프로젝트 일정 관리` 보드 반영을 시도합니다 — 무엇을 거를지(스킵·확인)는 `/notion-board` 가 판단합니다 (토큰이 없을 때만 자동 생략).
+브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사, 없으면 브랜치 prefix) · Project(99) 도 자동 설정합니다. 마지막에 항상 `/notion-board` 를 호출해 Notion `프로젝트 일정 관리` 보드 반영을 시도합니다 — 무엇을 거를지(스킵·확인)는 `/notion-board` 가 판단합니다 (토큰이 없을 때만 자동 생략).
 
 ## PR 본문 작성 원칙
 
@@ -89,7 +89,15 @@ ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | joi
 ```
 
 - 라벨이 있으면 `### 3-A` / `### 3-B` 에서 `--label "$ISSUE_LABELS"` 로 PR 에 부여.
-- 이슈 번호 매칭이 안 됐거나 이슈에 라벨이 없으면 라벨 없이 진행.
+- 이슈 번호 매칭이 안 됐거나 이슈에 라벨이 없으면 **브랜치 prefix 로 fallback** 한다 — 이 레포는 라벨 == 브랜치 prefix 1:1 체계(`/issue` 의 B-2 와 같은 결)라, 이슈 미연결 브랜치도 prefix 가 곧 분류 라벨이다. 이 fallback 이 없으면 이슈 없이 만든 브랜치의 PR 이 조용히 라벨 없이 올라간다 (Discord PR 봇의 라벨 표시 등 하류도 함께 빈다).
+  ```bash
+  if [ -z "$ISSUE_LABELS" ]; then
+    PREFIX=$(git branch --show-current | cut -d/ -f1)
+    # 레포에 실재하는 라벨만 채택 — 오타·비표준 prefix 로 존재하지 않는 라벨을 붙여 gh 가 실패하지 않게
+    gh label list --json name --jq '.[].name' | grep -qx "$PREFIX" && ISSUE_LABELS=$PREFIX
+  fi
+  ```
+  fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — `/notion-board` 호출 계약이 이 이름을 참조하고, 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
 
 ### 2단계: STAR 본문 작성 — create 모드 한정
 
@@ -184,7 +192,7 @@ fi
      ${ISSUE_LABELS:+--label "$ISSUE_LABELS"}
    ```
    - `--assignee @me` — PR 작성자가 작업자라는 가정 (`issue` 스킬과 동일).
-   - `--label` — 1단계에서 수집한 `$ISSUE_LABELS` 가 있을 때만 붙인다.
+   - `--label` — 1단계에서 수집한 `$ISSUE_LABELS`(연관 이슈 라벨, 없으면 브랜치 prefix fallback)가 있을 때만 붙인다.
    - 라벨이 레포에 없어 실패하면 라벨 없이 재시도하고 사용자에게 보고한다.
 4. **Project 추가 + Status In review + Start date** — 생성된 PR 을 Project 99 에 등록하고 Status 를 `In review`, Start date 를 첫 commit author date 로 세팅한다. `item-add` 만 하면 기본값 `Backlog` 이 되므로, 반환된 item id 로 후속 mutation 들을 이어서 호출한다:
    ```bash
