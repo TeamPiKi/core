@@ -314,9 +314,10 @@ jobs:
           GRAFANA_TRACES_USER: ${{ secrets.GRAFANA_TRACES_USER }}
           GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
           # piki-extractor(파싱 분리 이관) 메트릭 scrape 대상 — Alloy(--network host)가 이 주소를 긁는다.
-          # dev=동거 컨테이너(localhost:8090), prod=전용 박스(10.0.1.176:8090, 앱 SG→8090 허용). staging 은
+          # dev=동거 컨테이너(localhost:8090), prod=전용 박스(secrets.EXTRACTOR_PROD_ADDRESS, 앱 SG→8090 허용). staging 은
           # 빈 값 → config.alloy 가 discard 포트로 fallback(prod extractor 는 prod Alloy 가 이미 수집, 환경 라벨 오염 방지).
-          EXTRACTOR_METRICS_TARGET: ${{ needs.resolve.outputs.environment == 'dev' && 'localhost:8090' || (needs.resolve.outputs.environment == 'prod' && '10.0.1.176:8090' || '') }}
+          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다).
+          EXTRACTOR_METRICS_TARGET: ${{ needs.resolve.outputs.environment == 'dev' && 'localhost:8090' || (needs.resolve.outputs.environment == 'prod' && secrets.EXTRACTOR_PROD_ADDRESS || '') }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -397,8 +398,9 @@ jobs:
           EXTRACT_REMOTE_ENABLED: ${{ vars.EXTRACT_REMOTE_ENABLED || 'false' }}
           EXTRACT_REMOTE_HOSTS: ${{ vars.EXTRACT_REMOTE_HOSTS }}
           # base-url 은 환경별 고정 — dev=동거 컨테이너(앱 컨테이너는 --add-host host.docker.internal 로 호스트에 닿는다),
-          # staging·prod=extractor 전용 박스(private IP, 앱 SG→8090 인바운드 허용). enabled=false 면 미사용.
-          EXTRACT_REMOTE_BASE_URL: ${{ needs.resolve.outputs.environment == 'dev' && 'http://host.docker.internal:8090' || 'http://10.0.1.176:8090' }}
+          # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용). enabled=false 면 미사용.
+          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
+          EXTRACT_REMOTE_BASE_URL: ${{ needs.resolve.outputs.environment == 'dev' && 'http://host.docker.internal:8090' || format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
