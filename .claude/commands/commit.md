@@ -38,12 +38,17 @@ refactor: DB schema squash 와 테이블명 복수형 통일
 ```
 
 ## 허용 타입
+
+commit-msg 훅(`.git/hooks/commit-msg`)이 강제하는 목록과 1:1 이다. 훅을 바꾸면 이 목록도 함께 갱신한다.
+
 - `feat:` — 새 기능
 - `fix:` — 버그 수정
 - `refactor:` — 동작 변경 없는 리팩토링
+- `perf:` — 성능 개선
 - `chore:` — 빌드, 설정 등 기타
 - `docs:` — 문서 변경
 - `test:` — 테스트 추가/수정
+- `infra:` — 인프라 (Terraform·AWS·배포 워크플로우·서버 설정)
 - `style:` — 코드 포맷, 세미콜론 등 로직 변경 없는 스타일
 
 ## 커밋 분리 원칙
