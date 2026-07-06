@@ -123,6 +123,16 @@ gemini:
     max-attempts: ${GEMINI_RETRY_MAX_ATTEMPTS:1}
     initial-delay-ms: ${GEMINI_RETRY_INITIAL_DELAY_MS:1000}
 
+product:
+  extract:
+    remote:
+      # 원격 추출 서비스(PIKI-Extractor) 라우팅 스위치 (strangler 전환기). false(기본)면 라우팅 빈 자체가 뜨지 않아
+      # 기존 embedded 경로(FallbackProductLinkExtractor)가 그대로 쓰인다. 켜려면 base-url 이 필수다.
+      enabled: ${EXTRACT_REMOTE_ENABLED:false}
+      base-url: ${EXTRACT_REMOTE_BASE_URL:}
+      # 원격으로 보낼 host 목록(콤마 구분, 도메인 단위 suffix 매칭·서브도메인 포함). 비면 전량 원격 — 점진 전환 시 소수 host 부터.
+      hosts: ${EXTRACT_REMOTE_HOSTS:}
+
 s3:
   # 크롭한 상품 이미지 저장 버킷. 자격증명은 EC2 instance role / 로컬 환경변수(DefaultCredentialsProvider).
   bucket: ${S3_BUCKET:}
