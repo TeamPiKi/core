@@ -82,6 +82,36 @@ class FallbackProductLinkExtractorTest {
     }
 
     @Test
+    fun `headless 가 켜져 있어도 plain 이 성공하면 headless 는 호출하지 않는다`() {
+        // 정상 흐름(가장 흔함): headless on 이어도 plain 이 성공하면 그 결과를 그대로 쓰고 headless 를 안 부른다.
+        val plain = FakeStrategy { snapshot }
+        val headless = FakeStrategy { error("headless 는 호출되면 안 됨") }
+
+        val result = fallback(headlessEnabled = true, plain, headless).extract(link)
+
+        assertEquals(snapshot, result)
+        assertEquals(1, plain.calls)
+        assertEquals(0, headless.calls)
+    }
+
+    @Test
+    fun `headless 가 Error 로 실패해도 failed 로 집계하고 전파한다`() {
+        // headless placeholder 가 TODO()(NotImplementedError=Error) 로 바뀌어도, Exception 이 아닌 Error 라 catch 가 좁아지면
+        // outcome=failed 집계가 조용히 빠질 수 있다. Throwable 을 잡아 집계하고 그대로 전파함을 고정한다.
+        val plain = FakeStrategy { throw PageFetchException.clientError(RuntimeException("403")) }
+        val headless = FakeStrategy { throw NotImplementedError("headless 미구현") }
+        val registry = SimpleMeterRegistry()
+
+        assertFailsWith<NotImplementedError> {
+            fallback(headlessEnabled = true, plain, headless, registry).extract(link)
+        }
+        assertEquals(
+            1.0,
+            registry.counter("product.extract.escalation", "outcome", "failed", "category", "INVALID_INPUT").count(),
+        )
+    }
+
+    @Test
     fun `headless 도 실패하면 그 예외를 전파하고 escalation 을 failed 로 집계한다`() {
         // 호출부(AsyncItemParsingWorker)의 재시도 판정과 맞물리는 지점이라, headless 예외가 그대로 상위로 전파돼야 한다.
         // "폴백했는데도 못 가져온" 이 outcome=failed 로 집계돼, 무조건-폴백의 낭비·한계를 관측할 수 있어야 한다.

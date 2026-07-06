@@ -56,7 +56,9 @@ class FallbackProductLinkExtractor(
             headless.extract(link).also {
                 escalationCounter(OUTCOME_SUCCESS, category).increment()
             }
-        } catch (headlessFailure: Exception) {
+        } catch (headlessFailure: Throwable) {
+            // Exception 이 아니라 Throwable 을 잡는다: headless 구현이 TODO()(NotImplementedError) 나 OOM 등 Error 로 실패해도
+            // outcome=failed 집계가 빠지지 않게. 여기선 기록만 하고 그대로 rethrow 하므로(swallow 아님) Error 의미는 보존된다.
             escalationCounter(OUTCOME_FAILED, category).increment()
             log.warn(
                 "extract escalate=headless outcome=failed plainCategory={} headlessCause={} url={}",
