@@ -185,11 +185,15 @@ fi
 3. 확인 후 PR 생성 — assignee / 라벨을 함께 부여한다:
    ```bash
    SLUG=$(git branch --show-current | tr '/' '_')
+   # 라벨 플래그는 배열로 — `${VAR:+--label "$VAR"}` 관용구는 zsh 가 unquoted 확장을
+   # word split 하지 않아 "--label chore" 한 단어가 되어 unknown flag 로 터진다 (bash/zsh 양쪽 안전형).
+   LABEL_ARGS=()
+   [ -n "$ISSUE_LABELS" ] && LABEL_ARGS=(--label "$ISSUE_LABELS")
    gh pr create --base $BASE \
      --title "{제목}" \
      --body-file /tmp/pr_body_$SLUG.md \
      --assignee @me \
-     ${ISSUE_LABELS:+--label "$ISSUE_LABELS"}
+     "${LABEL_ARGS[@]}"
    ```
    - `--assignee @me` — PR 작성자가 작업자라는 가정 (`issue` 스킬과 동일).
    - `--label` — 1단계에서 수집한 `$ISSUE_LABELS`(연관 이슈 라벨, 없으면 브랜치 prefix fallback)가 있을 때만 붙인다.
@@ -257,7 +261,9 @@ fi
 10. **메타데이터 보정** — 이전 버전 스킬로 만든 PR 은 assignee / 라벨 / Project / Start date 가 비어 있을 수 있다. update 모드에서도 멱등하게 보정한다 (이미 설정돼 있으면 no-op). `item-add` 는 이미 등록된 PR 이면 기존 item id 를 그대로 반환한다.
     Status 는 **현재 값을 먼저 조회해, 리뷰 이전 단계(`Backlog` / `Ready` / `In progress`)일 때만** `In review` 로 올린다 — 이미 `Done` 등으로 옮긴 PR 을 되돌리지 않기 위함이다. Start date 도 멱등 — 이미 set 되어 있으면 건드리지 않는다 (사람이 수동으로 다른 의미로 박았을 수 있어 보존). Status / Start date 조회는 item 노드를 직접 부르는 GraphQL 이 안정적이다 (`gh project item-list` 는 단일 선택 필드 값을 신뢰성 있게 주지 않는다):
     ```bash
-    gh pr edit --add-assignee @me ${ISSUE_LABELS:+--add-label "$ISSUE_LABELS"}
+    gh pr edit --add-assignee @me
+    # 라벨은 별도 호출로 — `${VAR:+--add-label "$VAR"}` 는 zsh 에서 한 단어로 붙어 unknown flag (3-A 와 동일 함정)
+    [ -n "$ISSUE_LABELS" ] && gh pr edit --add-label "$ISSUE_LABELS"
     ITEM_ID=$(gh project item-add 99 --owner depromeet --url {PR URL} --format json --jq '.id')
 
     # Status + Start date 현재 값 동시 조회. @tsv 출력이라 IFS 를 탭으로 고정한다.
