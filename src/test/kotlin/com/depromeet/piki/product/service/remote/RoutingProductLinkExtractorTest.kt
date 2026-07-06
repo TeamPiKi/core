@@ -1,6 +1,8 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoute
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.product.service.FallbackProductLinkExtractor
 import com.depromeet.piki.product.service.HeadlessExtractionProperties
 import com.depromeet.piki.product.service.LinkExtractionStrategy
@@ -58,6 +60,10 @@ class RoutingProductLinkExtractorTest {
                 headless,
                 SimpleMeterRegistry(),
                 HeadlessExtractionProperties(enabled = false),
+                // headless 가 꺼져 있어 정책 분기에 도달하지 않는다 — 정책 없음(null) 고정으로 충분.
+                object : ExtractionRoutingPolicy {
+                    override fun routeOf(link: ProductLink): ExtractionRoute? = null
+                },
             )
         return RoutingProductLinkExtractor(
             remote,
