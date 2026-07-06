@@ -28,13 +28,19 @@ PR 이 없으면 (`gh pr view` 실패) 먼저 `/pr` 로 PR 을 만들라고 안�
 ### 1. CodeRabbit 인라인 thread 조회 — author `coderabbitai*` 필터
 
 ```bash
-gh api graphql -f query='
-  query { repository(owner: "depromeet", name: "PIKI-Server") {
+PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 — 셸 변수는 bash 호출 간 유지되지 않는다 (0단계 값에 기대지 않기)
+# --paginate 가 커서 페이지네이션을 자동 처리한다 (gh 규약: 변수명 $endCursor + pageInfo{hasNextPage endCursor} 선택).
+# 수동 재호출 루프를 두지 않는 이유: hasNext 신호를 실행자가 놓치면 100개 초과 thread 가 조용히 누락된다 — --paginate 는 호출 1회로 결정론적으로 전부 모은다.
+gh api graphql --paginate -f query='
+  query($endCursor: String) { repository(owner: "depromeet", name: "PIKI-Server") {
     pullRequest(number: '"$PR"') {
-      reviewThreads(first: 50) { nodes {
-        id isResolved path line
-        comments(first: 1) { nodes { author { login } body } }
-      } }
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id isResolved path line
+          comments(first: 1) { nodes { author { login } body } }
+        }
+      }
     }
   }}' --jq '.data.repository.pullRequest.reviewThreads.nodes[]
             | select((.comments.nodes[0].author.login // "") | startswith("coderabbitai"))
@@ -44,8 +50,13 @@ gh api graphql -f query='
 ### 1.5. review body 의 nitpick·추가 코멘트 조회 — reviewThreads 에 안 잡히므로 필수
 
 ```bash
-gh api repos/depromeet/PIKI-Server/pulls/$PR/reviews \
-  --jq '.[] | select(((.user.login // "") | startswith("coderabbitai")) and (.body | length) > 100) | .body'
+PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 (셸 변수 미유지 — 비면 pulls//reviews 404 가 된다)
+# --paginate 필수 — 기본은 30건/페이지라, CodeRabbit 이 푸시마다 리뷰를 새로 다는 특성상
+# 리뷰 왕복이 길어지면 첫 30개 이후의 review body(nitpick 포함)가 조용히 누락된다.
+# 길이 필터를 두지 않는다 — 짧은 body 도 유효한 코멘트일 수 있어 비어있지 않으면 전부 수집하고,
+# nitpick 여부는 길이가 아니라 본문 마커(`🧹 Nitpick comments` 등)로 가른다.
+gh api --paginate repos/depromeet/PIKI-Server/pulls/$PR/reviews \
+  --jq '.[] | select(((.user.login // "") | startswith("coderabbitai")) and ((.body // "") | length > 0)) | .body'
 ```
 
 출력된 body 를 읽고 `🧹 Nitpick comments` 등 접힌 코멘트를 건별 평가한다. nitpick 은 thread 가 아니라 **resolve 대상이 아니므로**, 반영하면 커밋 + PR `## Updates`(또는 PR 일반 코멘트)로 처리 사실을 남긴다.
