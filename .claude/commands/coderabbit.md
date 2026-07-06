@@ -28,13 +28,13 @@ PR 이 없으면 (`gh pr view` 실패) 먼저 `/pr` 로 PR 을 만들라고 안�
 ### 1. CodeRabbit 인라인 thread 조회 — author `coderabbitai*` 필터
 
 ```bash
-# 첫 호출은 cursor 없이 (변수 미전달 = null = 첫 페이지). 출력 첫 줄이 hasNext=true 면
-# `-F cursor=<endCursor>` 를 붙여 재호출을 반복해 전부 모은다 — 리뷰 왕복이 긴 PR 은
-# thread 가 100개를 넘을 수 있고, 페이지네이션 없이는 초과분이 조용히 누락된다.
-gh api graphql -f query='
-  query($cursor: String) { repository(owner: "depromeet", name: "PIKI-Server") {
+PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 — 셸 변수는 bash 호출 간 유지되지 않는다 (0단계 값에 기대지 않기)
+# --paginate 가 커서 페이지네이션을 자동 처리한다 (gh 규약: 변수명 $endCursor + pageInfo{hasNextPage endCursor} 선택).
+# 수동 재호출 루프를 두지 않는 이유: hasNext 신호를 실행자가 놓치면 100개 초과 thread 가 조용히 누락된다 — --paginate 는 호출 1회로 결정론적으로 전부 모은다.
+gh api graphql --paginate -f query='
+  query($endCursor: String) { repository(owner: "depromeet", name: "PIKI-Server") {
     pullRequest(number: '"$PR"') {
-      reviewThreads(first: 100, after: $cursor) {
+      reviewThreads(first: 100, after: $endCursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved path line
@@ -42,16 +42,15 @@ gh api graphql -f query='
         }
       }
     }
-  }}' --jq '.data.repository.pullRequest.reviewThreads
-            | "hasNext=\(.pageInfo.hasNextPage) cursor=\(.pageInfo.endCursor)",
-              (.nodes[]
-               | select((.comments.nodes[0].author.login // "") | startswith("coderabbitai"))
-               | {id, isResolved, path, line})'
+  }}' --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+            | select((.comments.nodes[0].author.login // "") | startswith("coderabbitai"))
+            | {id, isResolved, path, line}'
 ```
 
 ### 1.5. review body 의 nitpick·추가 코멘트 조회 — reviewThreads 에 안 잡히므로 필수
 
 ```bash
+PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 (셸 변수 미유지 — 비면 pulls//reviews 404 가 된다)
 # --paginate 필수 — 기본은 30건/페이지라, CodeRabbit 이 푸시마다 리뷰를 새로 다는 특성상
 # 리뷰 왕복이 길어지면 첫 30개 이후의 review body(nitpick 포함)가 조용히 누락된다.
 gh api --paginate repos/depromeet/PIKI-Server/pulls/$PR/reviews \
