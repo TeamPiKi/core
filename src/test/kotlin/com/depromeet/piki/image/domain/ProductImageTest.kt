@@ -83,4 +83,49 @@ class ProductImageTest {
     ) {
         assertEquals(expected, ProductImage.of(byteArrayOf(1), mimeType).extension)
     }
+
+    // 이미지 등록 v2 발급 단계는 바이트가 아직 없어 content-type 만으로 raw key 확장자를 만든다.
+    @ParameterizedTest
+    @CsvSource(
+        "image/png, png",
+        "image/jpeg, jpg",
+        "image/webp, webp",
+        "image/heic, heic",
+        "image/heif, heif",
+    )
+    fun `content-type 만으로 바이트 없이 스토리지 확장자를 도출한다`(
+        mimeType: String,
+        expected: String,
+    ) {
+        assertEquals(expected, ProductImage.extensionForMimeType(mimeType))
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+        "IMAGE/JPEG, jpg",
+        "Image/Png, png",
+        "image/webp; charset=utf-8, webp",
+        "'  image/heic  ', heic",
+    )
+    fun `extensionForMimeType 도 of 와 같은 정규화를 거쳐 정확한 확장자를 도출한다`(
+        mimeType: String,
+        expected: String,
+    ) {
+        assertEquals(expected, ProductImage.extensionForMimeType(mimeType))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["image/gif", "image/svg+xml", "application/pdf", "text/plain", ""])
+    fun `extensionForMimeType 은 지원하지 않는 타입이면 예외가 발생한다`(mimeType: String) {
+        assertFailsWith<ProductImageException> {
+            ProductImage.extensionForMimeType(mimeType)
+        }
+    }
+
+    @Test
+    fun `extensionForMimeType 은 content-type 이 null 이면 예외가 발생한다`() {
+        assertFailsWith<ProductImageException> {
+            ProductImage.extensionForMimeType(null)
+        }
+    }
 }

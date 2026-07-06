@@ -7,15 +7,21 @@ import software.amazon.awssdk.services.s3.model.Delete
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest
 import software.amazon.awssdk.services.s3.model.GetObjectRequest
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
+import software.amazon.awssdk.services.s3.model.S3Exception
+import software.amazon.awssdk.services.s3.presigner.S3Presigner
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 
 @Component
 class S3ImageStorage(
     private val s3Client: S3Client,
+    private val s3Presigner: S3Presigner,
     private val s3Properties: S3Properties,
 ) : ImageStorage {
     override fun upload(
@@ -37,6 +43,43 @@ class S3ImageStorage(
             )
             "${s3Properties.publicBaseUrl.trimEnd('/')}/${encodePath(key)}"
         }.getOrElse { e -> throw ImageStorageException.uploadFailed(e) }
+
+    override fun presignUpload(
+        key: String,
+        contentType: String,
+        expiry: Duration,
+    ): String =
+        // 서명은 로컬 계산이라 네트워크 호출이 없지만, SDK 예외(자격증명 없음 등)는 계약 예외(502)로 변환한다.
+        // contentType 을 putObjectRequest 에 박아 서명하면, 클라이언트는 같은 content-type 헤더로만 PUT 할 수 있다(S3 가 강제).
+        runCatching {
+            s3Presigner
+                .presignPutObject(
+                    PutObjectPresignRequest
+                        .builder()
+                        .signatureDuration(expiry)
+                        .putObjectRequest(
+                            PutObjectRequest
+                                .builder()
+                                .bucket(s3Properties.bucket)
+                                .key(key)
+                                .contentType(contentType)
+                                .build(),
+                        ).build(),
+                ).url()
+                .toString()
+        }.getOrElse { e -> throw ImageStorageException.presignFailed(e) }
+
+    override fun exists(key: String): Boolean =
+        // 객체 없음(404)은 정상 결과(false)이고, 그 외 스토리지 장애(권한·네트워크·timeout)만 502 로 던진다.
+        // headObject 는 없는 key 에 대해 NoSuchKeyException(=S3Exception, statusCode 404)을 던진다.
+        runCatching {
+            s3Client.headObject(
+                HeadObjectRequest.builder().bucket(s3Properties.bucket).key(key).build(),
+            )
+            true
+        }.getOrElse { e ->
+            if ((e as? S3Exception)?.statusCode() == 404) false else throw ImageStorageException.existsCheckFailed(e)
+        }
 
     override fun deleteByPrefix(prefix: String) {
         // AWS SDK 예외를 삭제 실패 계약 예외(502)로 변환한다. 호출부(탈퇴)가 best-effort 로 감싸지만

@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Configuration
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.presigner.S3Presigner
 import java.time.Duration
 
 @Configuration
@@ -26,4 +27,13 @@ class S3Config(
                     .apiCallAttemptTimeout(Duration.ofSeconds(5))
                     .build(),
             ).build()
+
+    // 이미지 등록 v2 는 클라이언트가 S3 에 직접 PUT 업로드하도록 presigned URL 을 발급한다.
+    // 서명은 로컬 계산이라 네트워크 호출이 없다(자격증명·region 만 필요) — s3Client 와 같은 credential 체인·region 을 쓴다.
+    @Bean
+    fun s3Presigner(): S3Presigner =
+        S3Presigner
+            .builder()
+            .region(Region.of(s3Properties.region))
+            .build()
 }

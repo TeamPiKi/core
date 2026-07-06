@@ -7,6 +7,8 @@ import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
 import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
@@ -193,6 +195,35 @@ class WishlistApiExamples(
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                 }
             }
+            if (handlerMethod.binds(WishlistController::presignImageUploads)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(
+                        status = HttpStatus.OK,
+                        name = "presigned 발급 성공 (다건)",
+                        payload = ApiResponseBody.ok(presignedUploadsSample),
+                    )
+                    add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
+                    add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
+                    add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                }
+            }
+            if (handlerMethod.binds(WishlistController::confirmImageRegistration)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "이미지 등록 접수 (PENDING, 다건)",
+                        payload = ApiResponseBody.created(imagePendingEntries),
+                    )
+                    add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
+                    add(ImageUploadException.invalidKey(), name = "발급 형식이 아닌 key")
+                    add(ImageUploadException.notUploaded(), name = "아직 업로드되지 않은 이미지")
+                    add(ImageStorageException.existsCheckFailed(), name = "이미지 존재 확인 실패 (스토리지 장애)")
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                }
+            }
             operation
         }
 
@@ -296,6 +327,29 @@ class WishlistApiExamples(
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67890",
+                ),
+        )
+
+    // 이미지 등록 v2 presigned 발급 응답 샘플 — 클라는 각 uploadUrl 로 contentType 을 Content-Type 헤더에 실어 S3 에 직접 PUT 한 뒤
+    // imageKey 들을 confirm 으로 되돌려준다. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.
+    private val presignedUploadsSample =
+        PresignedImageUploadResponse(
+            uploads =
+                listOf(
+                    PresignedImageUploadResponse.PresignedImageUpload(
+                        imageKey = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
+                        uploadUrl =
+                            "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +
+                                "550e8400-e29b-41d4-a716-446655440000.png?X-Amz-Signature=EXAMPLE",
+                        contentType = "image/png",
+                    ),
+                    PresignedImageUploadResponse.PresignedImageUpload(
+                        imageKey = "items/raw/7c9e6679-7425-40de-944b-e07fc1f90ae7.jpg",
+                        uploadUrl =
+                            "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +
+                                "7c9e6679-7425-40de-944b-e07fc1f90ae7.jpg?X-Amz-Signature=EXAMPLE",
+                        contentType = "image/jpeg",
+                    ),
                 ),
         )
 

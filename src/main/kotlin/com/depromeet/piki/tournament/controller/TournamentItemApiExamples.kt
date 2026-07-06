@@ -6,6 +6,9 @@ import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.image.domain.ImageUploadException
+import com.depromeet.piki.image.domain.ProductImageException
 import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
@@ -98,6 +101,47 @@ class TournamentItemApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
+                    }
+
+                handlerMethod.binds(TournamentItemController::presignImageUploads) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            name = "presigned 발급 성공 (다건)",
+                            payload = ApiResponseBody.ok(presignedUploadsSample),
+                        )
+                        add(TournamentException.invalidImageCount(), name = "이미지 개수 위반 (1~5개)")
+                        add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
+                        unauthorized()
+                        add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
+                        add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
+                    }
+
+                handlerMethod.binds(TournamentItemController::confirmImageRegistration) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            name = "이미지 아이템 추가 성공",
+                            payload =
+                                ApiResponseBody.ok(
+                                    AddTournamentItemsFromImagesResponse(
+                                        tournamentItemIds = listOf(1L, 2L, 3L),
+                                    ),
+                                ),
+                        )
+                        add(TournamentException.invalidImageCount(), name = "이미지 개수 위반 (1~5개)")
+                        add(ImageUploadException.invalidKey(), name = "발급 형식이 아닌 key")
+                        add(ImageUploadException.notUploaded(), name = "아직 업로드되지 않은 이미지")
+                        add(TournamentException.tooManyTournamentItems(), name = "아이템 최대 32개 초과")
+                        unauthorized()
+                        add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
+                        add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(ImageStorageException.existsCheckFailed(), name = "이미지 존재 확인 실패 (스토리지 장애)")
                     }
 
                 handlerMethod.binds(TournamentItemController::updateItem) ->
@@ -234,4 +278,19 @@ class TournamentItemApiExamples(
     // ProductLinkException.invalidFormat 은 cause 를 요구하지만, example 헬퍼는 message·category·status 만
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
+
+    // 이미지 등록 v2 presigned 발급 응답 샘플 — 위시와 동일 구조. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.
+    private val presignedUploadsSample =
+        PresignedImageUploadResponse(
+            uploads =
+                listOf(
+                    PresignedImageUploadResponse.PresignedImageUpload(
+                        imageKey = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
+                        uploadUrl =
+                            "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +
+                                "550e8400-e29b-41d4-a716-446655440000.png?X-Amz-Signature=EXAMPLE",
+                        contentType = "image/png",
+                    ),
+                ),
+        )
 }

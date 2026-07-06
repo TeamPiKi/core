@@ -1,5 +1,7 @@
 package com.depromeet.piki.tournament.service
 
+import com.depromeet.piki.image.domain.PendingUploadContext
+import com.depromeet.piki.image.service.PendingUploadClaimer
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -28,6 +30,7 @@ class TournamentItemPersistenceService(
     private val tournamentItemRepository: TournamentItemRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
     @Transactional
@@ -61,8 +64,31 @@ class TournamentItemPersistenceService(
         return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
     }
 
+    // v1(multipart) 이미지 아이템 추가 — 서버가 바이트를 받아 올린 뒤 pending 매핑 없이 바로 적재한다.
     @Transactional
     fun persistPendingImageItems(
+        userId: UUID,
+        tournamentId: Long,
+        imageKeys: List<String>,
+    ): List<PersistedTournamentItem> = persistImageItemsInternal(userId, tournamentId, imageKeys)
+
+    // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
+    // 잠가 삭제(claim)하고, claim 에 성공한 TOURNAMENT 매핑(해당 user·tournament)만 적재한다 — confirm·폴링이 같은 key 를
+    // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 맥락 매핑은 걸러낸다.
+    @Transactional
+    fun registerClaimedImages(
+        imageKeys: List<String>,
+        userId: UUID,
+        tournamentId: Long,
+    ): List<PersistedTournamentItem> {
+        val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.TOURNAMENT, userId, tournamentId)
+        if (claimedKeys.isEmpty()) return emptyList()
+        return persistImageItemsInternal(userId, tournamentId, claimedKeys)
+    }
+
+    // 이미지 key 들을 정원 검증(FOR UPDATE) 후 item → PENDING snapshot → tournament_item 으로 배치 적재하는 공통 코어.
+    // 트랜잭션은 호출부가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
+    private fun persistImageItemsInternal(
         userId: UUID,
         tournamentId: Long,
         imageKeys: List<String>,

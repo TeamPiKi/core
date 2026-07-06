@@ -1,12 +1,14 @@
 package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.storage.ImageStorage
+import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.image.service.ImagePresignService
+import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
@@ -15,12 +17,11 @@ import java.util.UUID
 class TournamentItemService(
     private val tournamentItemPersistenceService: TournamentItemPersistenceService,
     private val imageStorage: ImageStorage,
+    private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
     private val tournamentItemRepository: TournamentItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
 ) {
-    private val log = LoggerFactory.getLogger(javaClass)
-
     fun addItemFromLink(
         userId: UUID,
         tournamentId: Long,
@@ -53,9 +54,42 @@ class TournamentItemService(
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
         val persisted =
             runCatching { tournamentItemPersistenceService.persistPendingImageItems(userId, tournamentId, imageKeys) }
-                .onFailure { deleteRawsQuietly(imageKeys) }
+                .onFailure { imagePresignService.deleteRawsQuietly(imageKeys) }
                 .getOrThrow()
         return persisted.map { it.tournamentItemId }
+    }
+
+    // 이미지 등록 v2 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다(위시 presignImageUploads 와 동일 패턴).
+    // v1(addItemsFromImages)이 서버로 바이트를 받아 S3 에 올리던 것을 클라→S3 직접 업로드로 바꿔 서버 대역·메모리를 아낀다.
+    // 개수·권한(참여자·PENDING·비복제)을 사전 검증하고, content-type 검증·raw key 생성·presign 은 ImagePresignService 에 위임한다.
+    // 발급은 pending_uploads 매핑만 남기고 tournament_item 을 만들지 않으므로 정원 최종 판정(persist 의 FOR UPDATE)은 confirm 으로 미룬다 — 여기선 사전 권한만 본다(v1 대칭).
+    fun presignImageUploads(
+        userId: UUID,
+        tournamentId: Long,
+        contentTypes: List<String>,
+    ): List<PresignedRawUpload> {
+        if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
+        tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
+            PendingUpload.tournament(key, userId, tournamentId, expiresAt)
+        }
+    }
+
+    // 이미지 등록 v2 확정(빠른 경로) — presigned 로 업로드를 마친 key 들을 받아 PENDING 아이템으로 적재한다.
+    // 권한 사전검증 → key 형식·존재(HEAD) 검증 → pending_uploads claim(FOR UPDATE 삭제) + persist(정원 FOR UPDATE 최종 판정).
+    // 폴링 백스톱과 같은 진입점이라 confirm 이 안 와도 폴링이 회수하고, 둘이 같은 key 를 다퉈도 claim 이 한쪽만 이긴다(멱등).
+    // persist 실패 시 트랜잭션이 claim 을 롤백해 pending 이 남으므로 회수는 폴링에 맡긴다(raw 는 클라가 올린 것 + lifecycle 백업).
+    fun confirmImageRegistration(
+        userId: UUID,
+        tournamentId: Long,
+        imageKeys: List<String>,
+    ): List<Long> {
+        if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
+        tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        imagePresignService.verifyUploaded(imageKeys)
+        return tournamentItemPersistenceService
+            .registerClaimedImages(imageKeys, userId, tournamentId)
+            .map { it.tournamentItemId }
     }
 
     // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다(워커가 download(key)로 다시 읽는다). 파싱이 끝나면 워커가 회수한다.
@@ -63,15 +97,6 @@ class TournamentItemService(
         val key = "items/raw/${UUID.randomUUID()}.${image.extension}"
         imageStorage.upload(image.bytes, key, image.mimeType)
         return key
-    }
-
-    // persist 거부·실패로 item 에 매이지 못한 raw 를 즉시 회수한다. best-effort — 삭제 실패가 원래 예외(클라이언트로 나갈
-    // 거부 사유)를 덮지 않게 runCatching 으로 삼키고 경고만 남긴다. 회수 못 한 raw 는 items/raw/ S3 lifecycle 이 백업으로 만료한다.
-    private fun deleteRawsQuietly(imageKeys: List<String>) {
-        imageKeys.forEach { key ->
-            runCatching { imageStorage.delete(key) }
-                .onFailure { e -> log.warn("거부된 등록의 raw {} 회수 실패(lifecycle 이 만료): {}", key, e.message) }
-        }
     }
 
     // recoverWishItem 과 동일한 패턴 — 이미지 형식 검증 후 S3 업로드는 트랜잭션 밖에서,

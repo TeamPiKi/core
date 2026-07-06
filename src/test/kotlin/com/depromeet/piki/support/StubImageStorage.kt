@@ -2,6 +2,7 @@ package com.depromeet.piki.support
 
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.common.storage.StoredImage
+import java.time.Duration
 
 // S3 업로드를 통합 테스트에서 격리하는 stub. 기본 동작은 key 로 URL 을 만드는 순수 변환이라
 // 이전 테스트 상태가 누수될 위험이 없어, ProductExtractor stub 과 달리 default 를 고정 URL 로 둔다.
@@ -58,6 +59,34 @@ class StubImageStorage : ImageStorage {
 
     override fun delete(key: String) {
         deletedKeys.add(key)
+    }
+
+    // presigned 업로드 URL 발급 stub — 클라가 서버를 거치지 않고 S3 에 직접 PUT 하는 v2 경로를 재현한다.
+    // 서명 계산은 부수효과 없는 순수 변환이라 default 를 고정 URL 로 둔다(upload 와 같은 결). 발급 실패(502)
+    // 시나리오만 presignBehavior 를 throw 람다로 교체한다. 발급 검증은 presignedKeys 를 본다.
+    val presignedKeys = mutableListOf<String>()
+    val defaultPresignBehavior: (String, String, Duration) -> String = { key, _, _ -> "$BASE_URL/$key?X-Amz-Signature=stub" }
+    var presignBehavior: (String, String, Duration) -> String = defaultPresignBehavior
+
+    override fun presignUpload(
+        key: String,
+        contentType: String,
+        expiry: Duration,
+    ): String {
+        presignedKeys.add(key)
+        return presignBehavior(key, contentType, expiry)
+    }
+
+    // 객체 존재 확인 stub — v2 confirm 이 "클라가 실제로 올렸는지" HEAD 로 검증하는 경로를 재현한다.
+    // default 는 "올라왔다"(true)로 두고, 미업로드(400)·존재확인 실패(502) 시나리오만 existsBehavior 를 교체한다.
+    // 확인 검증은 existsCheckedKeys 를 본다.
+    val existsCheckedKeys = mutableListOf<String>()
+    val defaultExistsBehavior: (String) -> Boolean = { true }
+    var existsBehavior: (String) -> Boolean = defaultExistsBehavior
+
+    override fun exists(key: String): Boolean {
+        existsCheckedKeys.add(key)
+        return existsBehavior(key)
     }
 
     companion object {
