@@ -1,4 +1,4 @@
-브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 본문을 덮어쓰지 않고 `## Updates` 섹션에 추가 변경 내역을 append 합니다. assignee(`@me`) · 라벨(연관 이슈에서 복사) · Project(99) 도 자동 설정합니다. 마지막에 항상 `/notion-board` 를 호출해 Notion `프로젝트 일정 관리` 보드 반영을 시도합니다 — 무엇을 거를지(스킵·확인)는 `/notion-board` 가 판단합니다 (토큰이 없을 때만 자동 생략).
+브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사) · Project(99) 도 자동 설정합니다. 마지막에 항상 `/notion-board` 를 호출해 Notion `프로젝트 일정 관리` 보드 반영을 시도합니다 — 무엇을 거를지(스킵·확인)는 `/notion-board` 가 판단합니다 (토큰이 없을 때만 자동 생략).
 
 ## PR 본문 작성 원칙
 
@@ -14,6 +14,8 @@
 
 ```bash
 CURRENT_BRANCH=$(git branch --show-current)
+# origin 최신화 — base 판정과 1단계 log·diff, Start date 계산은 전부 origin/$BASE 기준이라, fetch 없이는 stale 참조로 남의 커밋이 diff 에 섞인다.
+git fetch origin -q
 # 진입 정리: 7일 넘게 안 건드린 stale PR 본문 임시파일 제거 (session-close 를 안 거친 중단 작업의 누수를 회수 — mtime 기준이라 동시 세션의 최신 파일은 안 건드림). 임시파일은 지워져도 gh pr view 로 재생성돼 손실이 없으므로, 진행 중 장기 PR(리뷰 대기 등 며칠 걸침)을 절대 안 건드리도록 임계값을 넉넉히 7일로 둔다.
 # -mmin +10080 = 7일(10080분) 초과. -mtime 계열은 find 에서 +1일 반올림되니 -mmin 으로 명시. /tmp/ 의 trailing slash 필수 — macOS /tmp 는 /private/tmp symlink 라, 슬래시 없으면 find 가 symlink 를 안 따라가 0건(조용한 no-op)이 된다.
 find /tmp/ -maxdepth 1 -name 'pr_body_*.md' -mmin +10080 -delete 2>/dev/null
@@ -58,15 +60,17 @@ gh pr view --json url,number,body,baseRefName 2>/dev/null
   ```
 - `$ARGUMENTS` 에 사용자가 base 명시한 경우 (`/pr main` 같은) 그 값을 우선 (create 모드 한정 — update 모드에서 base 변경하지 않는다).
 
+**로컬 git 비교는 항상 `origin/$BASE` 기준이다.** `$BASE`(브랜치 이름)는 `gh pr create --base $BASE` 같은 GitHub 쪽 지정에만 그대로 쓰고, `git log`·`git diff`·Start date 계산 등 로컬 비교는 전부 `origin/$BASE` 를 쓴다 — 로컬 `dev` 는 stale 일 수 있어 그걸 기준 삼으면 머지로 끌려온 남의 커밋이 diff 에 부풀려 섞인다 (0-A 의 fetch 가 `origin/$BASE` 최신을 보장).
+
 **임시파일 경로 규칙 (동시 세션 격리)** — PR 본문 임시파일은 고정 `/tmp/pr_body.md` 가 아니라 **브랜치별 경로** `/tmp/pr_body_$SLUG.md` 를 쓴다 (`SLUG` = 브랜치명의 `/` 를 `_` 로 치환, 예: `chore/skill-tmp` → `/tmp/pr_body_chore_skill-tmp.md`). 워크트리는 브랜치당 하나라(스택 금지) 브랜치별 경로면 두 워크트리 세션이 동시에 `/pr` 을 돌려도 본문 파일이 안 겹친다 — 고정 경로일 때 한 세션이 다른 세션의 본문을 덮어쓰던 race 를 막는다. 아래 3-A·3-B 의 본문 파일 경로는 모두 이 규칙을 따른다. **셸 변수는 bash 호출 간 유지되지 않으므로, 본문 파일을 다루는 각 bash 블록은 `SLUG=$(git branch --show-current | tr '/' '_')` 를 자기 안에서 다시 구한다.** (Write 도구로 본문을 저장할 때도 같은 경로를 쓴다 — Claude 가 현재 브랜치명으로 슬러그를 박는다.)
 
 ### 1단계: 정보 수집
 
 아래 명령을 병렬로 실행하여 변경 내역을 파악한다 (`$BASE` 는 0단계에서 결정):
 
-- `git log $BASE..HEAD --oneline` — 커밋 목록
-- `git diff $BASE...HEAD --stat` — 변경 파일 요약
-- `git diff $BASE...HEAD` — 실제 변경 내용
+- `git log origin/$BASE..HEAD --oneline` — 커밋 목록
+- `git diff origin/$BASE...HEAD --stat` — 변경 파일 요약
+- `git diff origin/$BASE...HEAD` — 실제 변경 내용
 - `git status` — 현재 상태 (커밋되지 않은 변경이 있는지)
 
 커밋되지 않은 변경이 있으면 먼저 커밋할지 사용자에게 확인한다.
@@ -89,7 +93,7 @@ ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | joi
 
 ### 2단계: STAR 본문 작성 — create 모드 한정
 
-(update 모드는 `### 3-B` 의 자체 가이드를 따른다 — 기존 본문은 그대로 두고 Updates 섹션에 짧은 STAR 항목만 추가)
+(update 모드는 `### 3-B` 의 자체 가이드를 따른다 — Updates 섹션에 짧은 STAR 항목을 append 하고, 이번 변경이 기존 본문을 낡게 만들면 그 자리도 함께 갱신)
 
 이번 대화에서 나눈 내용을 중심으로, 아래 템플릿을 채운다:
 
@@ -129,7 +133,7 @@ ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | joi
 - **섹션 간 재진술 금지 — 각 섹션은 자기 정보만 한 번.** 특히 Result 는 Situation/Task 에 이미 쓴 문제·과제를 "~문제가 해소됐다"로 다시 풀어 쓰지 않는다. Result 에는 새 정보만 — 결과 수치·효과·리스크·후속. (앞에서 깔고 → 과제로 다시 → 결과로 또 풀면 같은 내용이 본문에 세 번 실려 비대해진다.)
 - Task 섹션은 Discord PR 봇이 읽으므로, 핵심 작업을 간결하게 요약
 - 한국어로 작성, 기술 용어는 영어 허용
-- **본문에 물결(`~`)·em dash(`—`)를 쓰지 않는다.** `~text~` 는 GitHub-flavored markdown 이 취소선(strikethrough)으로 렌더링해 두 물결 사이 텍스트를 통째로 줄 그어버린다. em dash 는 가독성 선호상 쓰지 않는다. 대체: 곁가지·부연은 쉼표·괄호·콜론(`:`)이나 문장 분리로, approximately 는 "약", 범위는 "에서"나 하이픈(`-`)으로 표현한다.
+- **제목·본문에 이모지·물결(`~`)·em dash(`—`)를 쓰지 않는다.** 이모지는 렌더링 환경에 따라 깨지고 미적 선호에도 어긋난다. `~text~` 는 GitHub-flavored markdown 이 취소선(strikethrough)으로 렌더링해 두 물결 사이 텍스트를 통째로 줄 그어버린다. em dash 는 가독성 선호상 쓰지 않는다. 대체: 곁가지·부연은 쉼표·괄호·콜론(`:`)이나 문장 분리로, approximately 는 "약", 범위는 "에서"나 하이픈(`-`)으로 표현한다.
 - **1단계에서 수집한 `git log` 의 모든 커밋이 STAR(특히 Action)에 빠짐없이 반영됐는지 최종 점검한다.** 해시 명기는 update 모드 전용이지만, "누락된 커밋이 없는지" 점검은 create 모드도 같은 레벨로 거친다 — 기억·추측이 아니라 로그와 대조한다.
 - **CI 가 보증하는 자명한 결과는 본문에 적지 않는다.** "전체 테스트 통과"·"컴파일 성공"·"그린"·"전체 회귀 통과" 같은 머지 전제 사실은 리뷰어에게 새 정보가 0 이므로 Result 에서 뺀다. 검증은 **결과가 아니라 "무엇을·어떻게·왜 그렇게 확인했나"가 비자명할 때만** 적는다 — 동시성·negative control(임시 제거 시 FAIL 확인 등)·실측으로 확정한 가정·분기 망라의 폭(예: 케이스 N건)·검증의 한계와 후속 같은 것. 단순 통과 단언과 비자명한 검증 설명을 구분하라. 테스트 결과 XML·로그 전문을 `<details>` 로 덤프하지 않는다 (필요하면 한 줄로 요약).
 
@@ -194,7 +198,7 @@ fi
      --single-select-option-id df73e18b
 
    # Start date → 첫 commit author date (작업이 실제로 시작된 시점의 fact)
-   START_DATE=$(git log --reverse "$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
+   START_DATE=$(git log --reverse "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
    gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
      mutation($itemId: ID!, $date: Date!) {
        updateProjectV2ItemFieldValue(input: {
@@ -221,7 +225,7 @@ fi
    ```
 2. **이번 추가 변경 내역을 `git log` 로 정확히 식별한다 — 기억·추측에 의존하지 않는다.**
    ```bash
-   git log $BASE..HEAD --oneline   # PR 의 전체 커밋
+   git log origin/$BASE..HEAD --oneline   # PR 의 전체 커밋
    ```
    - PR 전체 커밋 중 기존 본문·`## Updates` 에 **이미 반영된 커밋(해시로 대조)** 을 제외해, 이번에 새로 추가된 커밋만 가려낸다.
    - merge 커밋이 있으면 `--no-merges` 로 우리 커밋만, merge 사실 자체는 별도 항목으로 다룬다.
@@ -232,9 +236,13 @@ fi
    - 모든 새 커밋이 어느 항목엔가 반영됐는지 최종 점검한다 — 빠진 커밋이 없어야 한다.
 4. 기존 본문 끝에 `## Updates` 섹션이 없으면 새로 추가, 있으면 그 안에 새 항목 append.
    - 항목은 날짜 또는 추가 변경의 의도를 sub-heading 으로 (`### CodeRabbit 리뷰 대응`, `### dev 머지 충돌 해결` 등)
-5. **기존 본문은 절대 덮어쓰지 않는다.** 갱신본 = 기존 본문 + Updates 항목 추가만.
+5. **본문 STAR 는 항상 최종 진실을 유지한다 (살아있는 본문).** 기준 한 줄: **"이번 변경으로 기존 본문이 거짓말을 하게 되는가."**
+   - **순수 추가 작업** (기존 서술을 무효화하지 않는 리뷰 반영·버그 수정·보강) → 기존 본문은 건드리지 않고 Updates 항목 추가만.
+   - **본문을 거짓으로 만드는 변경** (접근 전환·스코프 변경·응답 계약 변경 등) → Updates 항목 추가에 **더해**, 낡은 서술이 있는 본문 자리(Action·Result 등)를 최종 상태로 고친다. 큰 전환은 "처음 시도 → 전환한 흐름" 자체를 STAR 서사에 흡수한다 (`/commit` 본문 철학과 같은 결).
+   - 본문을 고친 update 는 해당 Updates 항목에 **"본문 Action 갱신"** 처럼 어느 섹션을 고쳤는지 한 줄 명기한다 — 증분(Updates)만 보는 리뷰어가 본문 변화를 놓치지 않게.
+   - 이유: 스쿼시 머지라 dev 히스토리에 증분이 안 남아 **PR 본문이 유일한 원장**이다. 머지 후 blame 으로 오는 독자가 "초판 + 정오표"를 머릿속에서 리플레이하지 않고 본문만 읽으면 되게 한다. 본문이 늘 최종이므로 머지 시점의 별도 통합(fold) 단계도 필요 없다 — 언제 어디서 머지되든 본문은 이미 완결 서사다.
 6. **제목 변경 필요 검토**: 추가 변경으로 작업 의도/스코프가 바뀌었거나 기존 제목에 오타·부정확한 표현이 있으면 새 제목 제안. 그 외엔 제목 유지.
-7. 갱신본(기존 본문 + Updates)을 `/tmp/pr_body_$SLUG.md` 에 저장(Write)한 뒤 IDE 로 열어 확인받는다 (위 "본문 확인 — IDE 로 열기"). 새 제목이 있으면 채팅에 제목·변경 이유를 함께 짚는다.
+7. 갱신본(최신화된 본문 + Updates)을 `/tmp/pr_body_$SLUG.md` 에 저장(Write)한 뒤 IDE 로 열어 확인받는다 (위 "본문 확인 — IDE 로 열기"). 새 제목이 있으면 채팅에 제목·변경 이유를 함께 짚는다.
 8. 확인 후 `gh pr edit --body-file /tmp/pr_body_$SLUG.md` 로 갱신 (1번과 같은 브랜치 경로 — 별도 bash 호출이라 `SLUG=$(git branch --show-current | tr '/' '_')` 를 다시 구한다). 제목 변경이 있으면 `--title "새 제목"` 추가.
 9. **CodeRabbit 리뷰 대응** — 이번 변경이 CodeRabbit 리뷰 대응이라면 commit + push 로 끝내지 않는다. CodeRabbit 리뷰(인라인 thread + review body nitpick) 조회·평가·reply·resolve 는 **`/coderabbit` 스킬**로 처리한다. 그 스킬이 author 매칭(GraphQL `reviewThreads` 는 `coderabbitai`, REST `reviews` 는 `coderabbitai[bot]` 이라 `coderabbitai` 로 시작하는지로 판별), nitpick 조회, accept/reject reply·resolve 정책을 담는다. (사람 리뷰 thread 는 작성자가 직접 답하므로 `/coderabbit` 도 건드리지 않는다.)
 
@@ -272,7 +280,7 @@ fi
 
     # Start date: 비어있을 때만 첫 commit author date 로 세팅
     if [[ "$CURRENT_START" == "null" ]]; then
-      START_DATE=$(git log --reverse "$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
+      START_DATE=$(git log --reverse "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
       gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
         mutation($itemId: ID!, $date: Date!) {
           updateProjectV2ItemFieldValue(input: {
