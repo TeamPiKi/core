@@ -19,15 +19,16 @@ data class S3Properties(
         require(!presignedUploadExpiry.isZero && !presignedUploadExpiry.isNegative) {
             "s3.presigned-upload-expiry 는 양수여야 합니다."
         }
-        // SigV4 presigned URL 의 서명 유효기간 상한은 7일이다. 서명은 로컬 계산이라 상한을 넘겨도 발급은 통과하고
+        // SigV4 presigned URL 의 서명 유효기간은 7일 미만이어야 한다. 서명은 로컬 계산이라 상한을 넘겨도 발급은 통과하고
         // 클라가 실제 PUT 할 때에야 S3 가 거부하므로, 설정 실수를 부팅 시점에 잡도록 상한도 검증한다.
-        require(presignedUploadExpiry <= MAX_PRESIGNED_UPLOAD_EXPIRY) {
-            "s3.presigned-upload-expiry 는 7일을 초과할 수 없습니다."
+        // presigned 업로드는 어차피 짧게(기본 5분) 쓰므로 경계(7일 정각)를 굳이 허용하지 않고 strict 미만으로 좁힌다.
+        require(presignedUploadExpiry < MAX_PRESIGNED_UPLOAD_EXPIRY) {
+            "s3.presigned-upload-expiry 는 7일 미만이어야 합니다."
         }
     }
 
     companion object {
-        // SigV4 presigned URL 서명 유효기간의 프로토콜 상한.
+        // SigV4 presigned URL 서명 유효기간의 프로토콜 상한(미만).
         private val MAX_PRESIGNED_UPLOAD_EXPIRY: Duration = Duration.ofDays(7)
     }
 }
