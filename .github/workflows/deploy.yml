@@ -419,6 +419,13 @@ jobs:
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
             fi
+            # 원격 추출(#680)을 켰는데(EXTRACT_REMOTE_ENABLED=true) base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS
+            # secret 미설정 → base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는
+            # 통과해 배포는 성공하나 원격 호출이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
+            if [ "$EXTRACT_REMOTE_ENABLED" = "true" ] && { [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; }; then
+              echo "::error::EXTRACT_REMOTE_ENABLED=true 인데 base-url host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
+              exit 1
+            fi
 
             IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
 
