@@ -45,7 +45,20 @@ class HttpProductLinkExtractor(
                 // 연결 실패·read timeout(ResourceAccessException)·본문 추출 중 오류 등 transport 장애 — 일시로 본다.
                 throw ProductExtractorException.transientFailure(e)
             } ?: throw ProductExtractorException.transientFailure(null)
+        // extractor 는 2xx 로 name·imageUrl·currentPrice 를 non-null 로 보장한다(자기 쪽 LinkExtractionResponse.from 이 강제).
+        // 신뢰 경계를 넘어온 값이라, 계약이 깨진 2xx(초기 이관기 extractor 버그 등: raw 필드가 null)를 여기서 일시 실패로
+        // 걸러 불완전 스냅샷이 조용히 READY 로 새는 걸 막는다 — 원인이 "원격 계약 위반"으로 boundary 로그에 또렷이 남는다.
+        // raw 응답 필드를 본다: "값은 있으나 우리가 정규화로 떨구는" 경우(non-https imageUrl 등)는 여기가 아니라
+        // fromExtracted 소관이라, 그건 embedded 와 동일하게 스냅샷에 null 로 흘러 엔티티 requireReadyInvariant 가 최종 판정한다.
+        response.name?.takeIf { it.isNotBlank() } ?: throw contractViolation(link)
+        response.imageUrl ?: throw contractViolation(link)
+        response.currentPrice ?: throw contractViolation(link)
         return response.toProductSnapshot(link)
+    }
+
+    private fun contractViolation(link: ProductLink): ProductExtractorException {
+        log.warn("remote extract contract violation: missing required field url={}", link.safeLogString())
+        return ProductExtractorException.transientFailure(null)
     }
 
     // 계약 3갈래 번역: 422 만 확정 실패, 그 외 status 는 전부 일시(fail-safe — recover 상한이 재시도를 바운드).
@@ -56,6 +69,9 @@ class HttpProductLinkExtractor(
         e: RestClientResponseException,
     ): BaseException {
         if (!e.statusCode.isSameCodeAs(HttpStatus.UNPROCESSABLE_ENTITY)) {
+            // 실제 원격 status(401·404·5xx 등)를 여기서 남긴다 — 예외는 category 만 들고 httpStatus 는 항상 502 라,
+            // 워커의 재시도 warn 로그엔 실제 원격 status 가 드러나지 않는다(그럼 잘못된 base-url 404·인증 401 을 502 로 오인).
+            log.warn("remote extract transient status={} url={}", e.statusCode.value(), link.safeLogString())
             return ProductExtractorException.transientFailure(e)
         }
         val code =

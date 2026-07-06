@@ -179,6 +179,40 @@ class HttpProductLinkExtractorTest {
     }
 
     @Test
+    fun `422 가 아닌 4xx(404 등)도 일시 실패다 - 422 만 확정, 나머지는 RETRYABLE`() {
+        // translate 의 "422 만 확정 실패, 그 외 전부 일시" 의도를 고정한다. 잘못된 base-url 로 인한 404·인증 401 같은
+        // 4xx 도 fail-safe 로 재시도 경로를 타야 한다(recover 상한이 바운드). 5xx 와 같은 패턴.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andRespond(withStatus(HttpStatus.NOT_FOUND))
+            }
+
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
+        assertEquals(ErrorCategory.RETRYABLE, e.category)
+        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+    }
+
+    @Test
+    fun `2xx 이어도 필수 필드가 빠진 계약 위반 응답은 일시 실패로 걸러진다`() {
+        // extractor 는 자기 쪽에서 필수 필드를 강제하지만, 초기 이관기 버그로 2xx + null 필드가 오면
+        // 불완전 스냅샷이 조용히 READY 로 새면 안 된다 — boundary 에서 일시 실패로 걸러 재시도 후 FAILED 로 종결.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"나이키","imageUrl":null,"currentPrice":99000,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
+        assertEquals(ErrorCategory.RETRYABLE, e.category)
+        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+    }
+
+    @Test
     fun `5xx 는 일시 실패다 - RETRYABLE 로 워커가 PROCESSING 유지 후 재시도`() {
         val extractor =
             extractorWith { server ->
