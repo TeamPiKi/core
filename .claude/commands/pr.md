@@ -213,7 +213,8 @@ fi
      --single-select-option-id df73e18b
 
    # Start date → 첫 commit author date (작업이 실제로 시작된 시점의 fact)
-   START_DATE=$(git log --reverse "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
+   # --first-parent --no-merges: 브랜치 메인라인의 첫 커밋만 — 머지로 끌려온 다른 topic 의 옛 커밋이 시작일을 앞당기지 않게
+   START_DATE=$(git log --reverse --first-parent --no-merges "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
    gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
      mutation($itemId: ID!, $date: Date!) {
        updateProjectV2ItemFieldValue(input: {
@@ -300,7 +301,8 @@ fi
 
     # Start date: 비어있을 때만 첫 commit author date 로 세팅
     if [[ "$CURRENT_START" == "null" ]]; then
-      START_DATE=$(git log --reverse "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
+      # --first-parent --no-merges: 브랜치 메인라인의 첫 커밋만 — 머지로 끌려온 다른 topic 의 옛 커밋이 시작일을 앞당기지 않게
+   START_DATE=$(git log --reverse --first-parent --no-merges "origin/$BASE..HEAD" --format=%aI | head -1 | cut -d'T' -f1)
       gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
         mutation($itemId: ID!, $date: Date!) {
           updateProjectV2ItemFieldValue(input: {
