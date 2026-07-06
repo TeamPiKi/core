@@ -15,7 +15,8 @@
 ```bash
 CURRENT_BRANCH=$(git branch --show-current)
 # origin 최신화 — base 판정과 1단계 log·diff, Start date 계산은 전부 origin/$BASE 기준이라, fetch 없이는 stale 참조로 남의 커밋이 diff 에 섞인다.
-git fetch origin -q
+# 실패 시 중단 — stale 기준으로 그냥 진행하면 위 문제가 조용히 그대로 일어난다 (네트워크·인증 확인 후 재시도).
+git fetch origin -q || { echo "git fetch 실패 — origin 이 stale 인 채 진행하지 않는다. 네트워크 확인 후 재시도."; exit 1; }
 # 진입 정리: 7일 넘게 안 건드린 stale PR 본문 임시파일 제거 (session-close 를 안 거친 중단 작업의 누수를 회수 — mtime 기준이라 동시 세션의 최신 파일은 안 건드림). 임시파일은 지워져도 gh pr view 로 재생성돼 손실이 없으므로, 진행 중 장기 PR(리뷰 대기 등 며칠 걸침)을 절대 안 건드리도록 임계값을 넉넉히 7일로 둔다.
 # -mmin +10080 = 7일(10080분) 초과. -mtime 계열은 find 에서 +1일 반올림되니 -mmin 으로 명시. /tmp/ 의 trailing slash 필수 — macOS /tmp 는 /private/tmp symlink 라, 슬래시 없으면 find 가 symlink 를 안 따라가 0건(조용한 no-op)이 된다.
 find /tmp/ -maxdepth 1 -name 'pr_body_*.md' -mmin +10080 -delete 2>/dev/null
@@ -25,6 +26,7 @@ if git rev-parse --verify origin/dev >/dev/null 2>&1; then
 else
   BASE_GUESS=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || echo main)
 fi
+echo "CURRENT_BRANCH=$CURRENT_BRANCH BASE_GUESS=$BASE_GUESS"   # 아래 같음/다름 판단과 뒤 블록의 $BASE 인라인이 이 출력을 근거로 한다
 ```
 
 `$CURRENT_BRANCH` 가 `$BASE_GUESS` 와 **다르면** 정상(작업 브랜치) — 가드를 통과해 0-B 로 넘어간다.
@@ -62,7 +64,7 @@ gh pr view --json url,number,body,baseRefName 2>/dev/null
 
 **로컬 git 비교는 항상 `origin/$BASE` 기준이다.** `$BASE`(브랜치 이름)는 `gh pr create --base $BASE` 같은 GitHub 쪽 지정에만 그대로 쓰고, `git log`·`git diff`·Start date 계산 등 로컬 비교는 전부 `origin/$BASE` 를 쓴다 — 로컬 `dev` 는 stale 일 수 있어 그걸 기준 삼으면 머지로 끌려온 남의 커밋이 diff 에 부풀려 섞인다 (0-A 의 fetch 가 `origin/$BASE` 최신을 보장).
 
-**임시파일 경로 규칙 (동시 세션 격리)** — PR 본문 임시파일은 고정 `/tmp/pr_body.md` 가 아니라 **브랜치별 경로** `/tmp/pr_body_$SLUG.md` 를 쓴다 (`SLUG` = 브랜치명의 `/` 를 `_` 로 치환, 예: `chore/skill-tmp` → `/tmp/pr_body_chore_skill-tmp.md`). 워크트리는 브랜치당 하나라(스택 금지) 브랜치별 경로면 두 워크트리 세션이 동시에 `/pr` 을 돌려도 본문 파일이 안 겹친다 — 고정 경로일 때 한 세션이 다른 세션의 본문을 덮어쓰던 race 를 막는다. 아래 3-A·3-B 의 본문 파일 경로는 모두 이 규칙을 따른다. **셸 변수는 bash 호출 간 유지되지 않으므로, 본문 파일을 다루는 각 bash 블록은 `SLUG=$(git branch --show-current | tr '/' '_')` 를 자기 안에서 다시 구한다.** (Write 도구로 본문을 저장할 때도 같은 경로를 쓴다 — Claude 가 현재 브랜치명으로 슬러그를 박는다.)
+**임시파일 경로 규칙 (동시 세션 격리)** — PR 본문 임시파일은 고정 `/tmp/pr_body.md` 가 아니라 **브랜치별 경로** `/tmp/pr_body_$SLUG.md` 를 쓴다 (`SLUG` = 브랜치명의 `/` 를 `_` 로 치환, 예: `chore/skill-tmp` → `/tmp/pr_body_chore_skill-tmp.md`). 워크트리는 브랜치당 하나라(스택 금지) 브랜치별 경로면 두 워크트리 세션이 동시에 `/pr` 을 돌려도 본문 파일이 안 겹친다 — 고정 경로일 때 한 세션이 다른 세션의 본문을 덮어쓰던 race 를 막는다. 아래 3-A·3-B 의 본문 파일 경로는 모두 이 규칙을 따른다. **셸 변수는 bash 호출 간 유지되지 않으므로, 본문 파일을 다루는 각 bash 블록은 `SLUG=$(git branch --show-current | tr '/' '_')` 를 자기 안에서 다시 구한다. 같은 이유로 `$BASE`·`$ISSUE_LABELS` 처럼 앞 블록에서 결정된 값도 뒤 블록에서 변수 참조로 기대지 않는다 — 결정 시점에 echo 로 남긴 실제 값을 뒤 블록에 인라인으로 박는다.** (Write 도구로 본문을 저장할 때도 같은 경로를 쓴다 — Claude 가 현재 브랜치명으로 슬러그를 박는다.)
 
 ### 1단계: 정보 수집
 
@@ -81,23 +83,23 @@ gh pr view --json url,number,body,baseRefName 2>/dev/null
 - 매칭 → `## 연관 이슈\n- close #{번호}` 본문에 자동 채움
 - 매칭 안 됨 → 섹션은 유지하되 항목을 빈 줄로 둔다 (`- ` 만). 이슈 미연결 상태가 본문에서 명시적으로 드러나야 작성자가 의도적으로 비웠음을 인지할 수 있다.
 
-**연관 이슈에서 PR 라벨 자동 수집** (이슈 번호 매칭 시):
-PR 은 연관 이슈와 같은 분류를 갖는 것이 자연스러우므로, 이슈의 라벨을 그대로 PR 라벨로 쓴다.
+**PR 라벨 결정 — 연관 이슈 라벨 우선, 없으면 브랜치 prefix** (이슈 매칭 여부와 무관하게 항상 수행):
+PR 은 연관 이슈와 같은 분류를 갖는 것이 자연스러우므로 이슈 라벨을 우선하고, 이슈가 없으면 브랜치 prefix 가 곧 분류 라벨이다 — `/issue` 의 B-2 가 만드는 **8개 prefix 는 라벨과 1:1** 이다 (전체 1:1 은 아니다: `epic` 라벨은 브랜치가 없고 커밋 타입 `style` 은 라벨이 없다 — 그래서 아래 "실재 라벨 검증" 가드가 필요하다). 이 fallback 이 없으면 이슈 없이 만든 브랜치의 PR 이 조용히 라벨 없이 올라간다 (Discord PR 봇의 라벨 표시 등 하류도 함께 빈다).
 
 ```bash
-ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)
+# 한 블록에서 끝까지 계산하고 echo 로 값을 남긴다 — 셸 변수는 bash 호출 간 유지되지 않으므로,
+# 3-A·3-B 10단계 블록은 이 출력으로 확인한 값을 인라인으로 박아 쓴다 (SLUG 재도출과 같은 규칙).
+ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)   # 이슈 번호 미매칭이면 이 줄은 건너뛴다
+if [ -z "$ISSUE_LABELS" ]; then
+  PREFIX=$(git branch --show-current | cut -d/ -f1)
+  # 레포에 실재하는 라벨만 채택 (오타·비표준 prefix 방어). --limit 명시: 기본 30이라 라벨이 늘면 조용히 놓친다. grep -F: prefix 를 정규식이 아닌 리터럴로 비교.
+  gh label list --limit 100 --json name --jq '.[].name' | grep -Fqx "$PREFIX" && ISSUE_LABELS=$PREFIX
+fi
+echo "ISSUE_LABELS=${ISSUE_LABELS:-없음}"
 ```
 
-- 라벨이 있으면 `### 3-A` / `### 3-B` 에서 `--label "$ISSUE_LABELS"` 로 PR 에 부여.
-- 이슈 번호 매칭이 안 됐거나 이슈에 라벨이 없으면 **브랜치 prefix 로 fallback** 한다 — 이 레포는 라벨 == 브랜치 prefix 1:1 체계(`/issue` 의 B-2 와 같은 결)라, 이슈 미연결 브랜치도 prefix 가 곧 분류 라벨이다. 이 fallback 이 없으면 이슈 없이 만든 브랜치의 PR 이 조용히 라벨 없이 올라간다 (Discord PR 봇의 라벨 표시 등 하류도 함께 빈다).
-  ```bash
-  if [ -z "$ISSUE_LABELS" ]; then
-    PREFIX=$(git branch --show-current | cut -d/ -f1)
-    # 레포에 실재하는 라벨만 채택 — 오타·비표준 prefix 로 존재하지 않는 라벨을 붙여 gh 가 실패하지 않게
-    gh label list --json name --jq '.[].name' | grep -qx "$PREFIX" && ISSUE_LABELS=$PREFIX
-  fi
-  ```
-  fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — `/notion-board` 호출 계약이 이 이름을 참조하고, 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
+- 라벨이 있으면 `### 3-A`(LABEL_ARGS 배열) / `### 3-B` 10단계(EDIT_ARGS 배열)에서 부여한다. 두 블록 모두 **위 echo 로 확인한 값을 인라인으로 박는다** — 셸 변수가 블록 간 유지되지 않아서다.
+- fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — `/notion-board` 호출 계약이 이 이름을 참조하고, 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
 
 ### 2단계: STAR 본문 작성 — create 모드 한정
 
@@ -185,6 +187,7 @@ fi
 3. 확인 후 PR 생성 — assignee / 라벨을 함께 부여한다:
    ```bash
    SLUG=$(git branch --show-current | tr '/' '_')
+   ISSUE_LABELS="{1단계 echo 로 확인한 값. '없음'이면 빈 값}"   # 셸 변수는 블록 간 미유지 — SLUG 처럼 블록 안에서 확정한다 ($BASE 는 0-A echo 의 BASE_GUESS)
    # 라벨 플래그는 배열로 — `${VAR:+--label "$VAR"}` 관용구는 zsh 가 unquoted 확장을
    # word split 하지 않아 "--label chore" 한 단어가 되어 unknown flag 로 터진다 (bash/zsh 양쪽 안전형).
    LABEL_ARGS=()
@@ -224,7 +227,7 @@ fi
    - PR 을 올린다는 것은 곧 리뷰 대기 상태이므로 `In review` 가 자연스럽다. create 모드는 방금 만든 PR 이라 Status 가 항상 기본값(`Backlog`)이므로 조건 없이 세팅한다 (update 모드 10단계는 기존 Status 를 확인 후 분기).
    - Start date 는 "이슈 생성일" 이 아니라 **첫 commit author date** 를 쓴다 — 이슈만 만들어 두고 작업 안 들어가는 백로그 케이스의 노이즈를 피하기 위해. 첫 commit 은 history rewrite 가 없는 한 바뀌지 않는 fact 라 create 모드에선 무조건 set.
    - ID 의미: project=99 노드 ID, Status 필드/`In review` 옵션 ID, Start date 필드 ID(`PVTF_..GA`, DATE 타입). 보드에서 필드/옵션이 바뀌면 이 ID 들도 갱신 필요.
-   - Target date 와 Status `Done` 은 PR 머지 시점에 별도 CI workflow (`.github/workflows/project-sync-on-pr-close.yml`) 가 자동 세팅. PR 스킬은 머지 이전 단계만 책임짐.
+   - Target date 와 Status `Done` 은 PR 머지 시점에 별도 CI workflow (`.github/workflows/pr-merge-project-sync.yml`) 가 자동 세팅. PR 스킬은 머지 이전 단계만 책임짐.
    - 권한 부족 시 사용자에게 `gh auth refresh -h github.com -s project,read:project` 안내 (일회성 디바이스 인증).
 5. PR URL 과 부여된 assignee / 라벨 / Project(Status: In review, Start date) 결과를 사용자에게 전달한 뒤, `### 4. Notion 보드 반영` 으로 이어진다.
 
@@ -252,6 +255,8 @@ fi
    - **순수 추가 작업** (기존 서술을 무효화하지 않는 리뷰 반영·버그 수정·보강) → 기존 본문은 건드리지 않고 Updates 항목 추가만.
    - **본문을 거짓으로 만드는 변경** (접근 전환·스코프 변경·응답 계약 변경 등) → Updates 항목 추가에 **더해**, 낡은 서술이 있는 본문 자리(Action·Result 등)를 최종 상태로 고친다. 큰 전환은 "처음 시도 → 전환한 흐름" 자체를 STAR 서사에 흡수한다 (`/commit` 본문 철학과 같은 결).
    - 본문을 고친 update 는 해당 Updates 항목에 **"본문 Action 갱신"** 처럼 어느 섹션을 고쳤는지 한 줄 명기한다 — 증분(Updates)만 보는 리뷰어가 본문 변화를 놓치지 않게.
+   - **남이 쓴 본문은 건드리지 않는다.** 갱신 범위는 이 스킬이 쓴 STAR 로 한정한다. 사람이 GitHub 에서 직접 고친 문구는 그대로 보존하고, 봇 소유 블록(CodeRabbit 의 `<!-- ... auto-generated ... -->` 마커 쌍 등)은 마커째 통째로 유지한다 — `gh pr edit --body-file` 은 전체 덮어쓰기라 한 번 누락되면 복구되지 않는다.
+   - **`## Updates` 항목은 원장이라 고치지 않는다.** 2단계 해시 dedup 의 대조 기준이므로 낡아 보여도 재작성하지 않고, 정정이 필요하면 새 Updates 항목으로 덧붙인다. "살아있는" 대상은 본문 STAR 만이다.
    - 이유: 스쿼시 머지라 dev 히스토리에 증분이 안 남아 **PR 본문이 유일한 원장**이다. 머지 후 blame 으로 오는 독자가 "초판 + 정오표"를 머릿속에서 리플레이하지 않고 본문만 읽으면 되게 한다. 본문이 늘 최종이므로 머지 시점의 별도 통합(fold) 단계도 필요 없다 — 언제 어디서 머지되든 본문은 이미 완결 서사다.
 6. **제목 변경 필요 검토**: 추가 변경으로 작업 의도/스코프가 바뀌었거나 기존 제목에 오타·부정확한 표현이 있으면 새 제목 제안. 그 외엔 제목 유지.
 7. 갱신본(최신화된 본문 + Updates)을 `/tmp/pr_body_$SLUG.md` 에 저장(Write)한 뒤 IDE 로 열어 확인받는다 (위 "본문 확인 — IDE 로 열기"). 새 제목이 있으면 채팅에 제목·변경 이유를 함께 짚는다.
@@ -261,9 +266,10 @@ fi
 10. **메타데이터 보정** — 이전 버전 스킬로 만든 PR 은 assignee / 라벨 / Project / Start date 가 비어 있을 수 있다. update 모드에서도 멱등하게 보정한다 (이미 설정돼 있으면 no-op). `item-add` 는 이미 등록된 PR 이면 기존 item id 를 그대로 반환한다.
     Status 는 **현재 값을 먼저 조회해, 리뷰 이전 단계(`Backlog` / `Ready` / `In progress`)일 때만** `In review` 로 올린다 — 이미 `Done` 등으로 옮긴 PR 을 되돌리지 않기 위함이다. Start date 도 멱등 — 이미 set 되어 있으면 건드리지 않는다 (사람이 수동으로 다른 의미로 박았을 수 있어 보존). Status / Start date 조회는 item 노드를 직접 부르는 GraphQL 이 안정적이다 (`gh project item-list` 는 단일 선택 필드 값을 신뢰성 있게 주지 않는다):
     ```bash
-    gh pr edit --add-assignee @me
-    # 라벨은 별도 호출로 — `${VAR:+--add-label "$VAR"}` 는 zsh 에서 한 단어로 붙어 unknown flag (3-A 와 동일 함정)
-    [ -n "$ISSUE_LABELS" ] && gh pr edit --add-label "$ISSUE_LABELS"
+    ISSUE_LABELS="{1단계 echo 로 확인한 값. '없음'이면 빈 값}"   # 셸 변수는 블록 간 미유지 — 블록 안에서 확정한다
+    EDIT_ARGS=(--add-assignee @me)                               # 조건부 플래그는 배열로 (3-A 와 동일한 zsh 함정 회피, 호출 1회)
+    [ -n "$ISSUE_LABELS" ] && EDIT_ARGS+=(--add-label "$ISSUE_LABELS")
+    gh pr edit "${EDIT_ARGS[@]}"
     ITEM_ID=$(gh project item-add 99 --owner depromeet --url {PR URL} --format json --jq '.id')
 
     # Status + Start date 현재 값 동시 조회. @tsv 출력이라 IFS 를 탭으로 고정한다.
