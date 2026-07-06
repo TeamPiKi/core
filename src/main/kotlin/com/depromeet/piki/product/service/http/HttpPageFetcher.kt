@@ -76,10 +76,12 @@ class HttpPageFetcher(
         } catch (e: RestClientResponseException) {
             log.warn("link fetch failed: status={} url={}", e.statusCode, current.safeLogString())
             throw when {
-                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않는다(SERVER_ERROR).
-                // 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도 대상(RETRYABLE)으로 둔다.
+                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않고(SERVER_ERROR), 헤드리스면 뚫릴 수 있어
+                // escalatable 로 던진다. 대형 몰은 상시 가용이라 우리가 받는 500/501 은 대개 봇 방어이고, body 유무로 장애/차단이
+                // 깔끔히 안 갈려 body 를 구분하지 않는다. 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도(RETRYABLE) 대상.
                 e.statusCode.value() in PERMANENT_SERVER_ERRORS -> PageFetchException.permanentUpstreamError(e)
                 e.statusCode.is5xxServerError -> PageFetchException.upstreamError(e)
+                // 그 외 4xx(403·404·410·429 등)는 봇 방어의 클로킹일 수 있어 clientError 가 escalatable 로 던진다(무조건 폴백).
                 else -> PageFetchException.clientError(e)
             }
         } catch (e: ResourceAccessException) {

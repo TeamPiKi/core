@@ -16,7 +16,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          TEAM=("sevineleven" "1o18z" "m-a-king")
+          # 리뷰어 자동 지정 풀. 1o18z 는 리뷰 요청이 노이즈가 될 수 있어 자동 지정에서 뺀다 — 필요하면 직접 리뷰 요청한다.
+          TEAM=("sevineleven" "m-a-king")
 
           # PR 작성자 제외한 리뷰어 목록 구성
           REVIEWERS=()

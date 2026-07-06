@@ -127,10 +127,6 @@ class AsyncItemParsingWorker(
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
     }
 
-    // 재시도해도 의미 있는 일시 오류인가. ErrorCategory.RETRYABLE 만 재시도 대상이다. HttpMappable 이 아닌
-    // 예상 못한 예외(코드 버그성)는 일시·영구를 단정할 수 없으니 보수적으로 재시도 대상(PROCESSING 유지)으로 둔다.
-    private fun isRetryable(e: Throwable): Boolean = e is HttpMappable && e.category == ErrorCategory.RETRYABLE
-
     // 확정 실패의 메트릭 reason. 상품 아님·추출값 신뢰 불가(ProductSnapshotException)는 not_product 로 따로 센다
     // (대시보드에서 "상품 아님"을 구분). 그 외 재시도 무의미 오류(호스트 차단·4xx·redirect 비정상·Gemini 영구)는 permanent_error.
     private fun reasonOf(e: Throwable): String =
@@ -156,5 +152,17 @@ class AsyncItemParsingWorker(
     companion object {
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.
         private const val PARSE_OBSERVATION = "item.parse"
+
+        // 재시도(일시)로 볼지 판정. 치명적 JVM 오류(Error: OutOfMemory·StackOverflow 등)는 재시도해도 소용없고
+        // runCatching 이 Throwable 을 다 잡아 여기로 들어오므로 먼저 제외한다(재시도 대상 아님, 즉시 종결). 분류 가능한
+        // HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), 그 외 예상 못한 예외(NPE·IllegalStateException 등)는
+        // 일시·영구를 단정할 수 없어 보수적으로 재시도 대상으로 둔다(즉시 FAILED 면 일시 오류를 영구로 오판해 사라지므로).
+        // recover 가 상한(MAX_ATTEMPTS)까지만 재실행해 bounded 이고 #461 retry-first 기조와 맞는다. 순수 함수라 단위 테스트로 망라한다.
+        internal fun isRetryable(e: Throwable): Boolean =
+            when (e) {
+                is Error -> false
+                is HttpMappable -> e.category == ErrorCategory.RETRYABLE
+                else -> true
+            }
     }
 }
