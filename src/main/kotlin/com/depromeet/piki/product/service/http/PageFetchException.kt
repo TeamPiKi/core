@@ -10,6 +10,12 @@ class PageFetchException private constructor(
     override val category: ErrorCategory,
     override val httpStatus: HttpStatus,
     cause: Throwable? = null,
+    // 정적 fetch 실패를 실제 브라우저(헤드리스)로 재시도(escalate)할지 표시한다. FallbackProductLinkExtractor 가 이 값으로 정한다
+    // (에스컬레이션 축은 outbox 재시도 축과 직교). 정책은 "무조건 폴백": SSRF(blockedHost, 보안)만 빼고 모든 fetch 실패가 escalatable
+    // 이다 — 봇 방어가 어떤 status 로도 위장해 status·body 로 차단/genuine 을 못 가른다. 일시 오류(502/503/504)를 헤드리스로 보내는
+    // 낭비까지 감수하되 escalate outcome 메트릭·로그(category별)로 "왜/어디서 낭비됐나" 를 조사한다. 기본 false(fail-closed): 새 팩토리는
+    // 명시적으로 true 를 줘야 escalate 되고, SSRF 만 default false 를 유지해 내부망을 실수로도 안 넘긴다.
+    val escalatable: Boolean = false,
 ) : BaseException(message, cause),
     HttpMappable {
     companion object {
@@ -20,38 +26,50 @@ class PageFetchException private constructor(
         // 접근 실패는 사용자에겐 같은 안내라 한 상수를 공유한다(어느 단계 실패인지는 호출 지점 로그로 구분).
         private const val LINK_UNREACHABLE = "링크에 접근하지 못했어요. 주소를 다시 확인해 주세요."
 
-        // 대상 페이지 서버가 502/503/504(게이트웨이 오류·과부하·타임아웃) 또는 연결 실패. 일시적일 수 있어
-        // 재시도로 복구 가능성이 있다(RETRYABLE).
+        // 대상 페이지 서버가 502/503/504(게이트웨이 오류·과부하·타임아웃) 또는 연결 실패. 일시적일 수 있어 RETRYABLE
+        // (flag off 시 워커가 plain 재시도). escalatable=true — "무조건 폴백" 이라 헤드리스도 태운다. 다만 헤드리스는 같은 서버를
+        // 때려 일시 오류엔 이득이 없을 수 있어, 그 낭비를 escalate outcome(category=RETRYABLE)로 조사한다.
         fun upstreamError(cause: Throwable): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.RETRYABLE, HttpStatus.BAD_GATEWAY, cause)
+            PageFetchException(LINK_UNREACHABLE, ErrorCategory.RETRYABLE, HttpStatus.BAD_GATEWAY, cause, escalatable = true)
 
-        // 대상 서버가 500/501 을 준 경우. 일부 쇼핑몰이 봇 차단을 500(no body)으로 응답하는데, 같은 요청을
-        // 재시도해도 결정론적으로 재실패한다. 502/503/504(일시) 와 달리 500/501 은 영구로 보아 재시도하지 않는다
-        // (SERVER_ERROR → 워커가 즉시 FAILED). status 는 외부 의존성 실패라 502.
+        // 대상 서버가 500/501 을 준 경우. 일부 쇼핑몰이 봇 차단을 500 으로 응답하고(크림 등), 우리가 fetch 하는 대형 몰은
+        // 사실상 상시 가용이라 우리가 받는 500/501 은 대개 진짜 장애가 아니라 봇 방어다. 502/503/504(일시 게이트웨이)와 달리
+        // 재시도해도 결정론적으로 재실패하는 영구(SERVER_ERROR → 워커가 즉시 FAILED)로 보고, escalatable=true 로 둔다(헤드리스면
+        // 뚫릴 수 있어 Fallback 이 에스컬레이트). body 유무로 봇차단/장애를 나누지 않는다: 봇 방어가 body(캡차·차단 페이지)를
+        // 실을 수 있어 구분이 불확실하고, 드문 genuine 500 에 헤드리스 1회 낭비는 감수한다. status 는 외부 의존성 실패라 502.
         fun permanentUpstreamError(cause: Throwable): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause)
+            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause, escalatable = true)
 
-        // 4xx (404, 403 로그인 벽, 410 등). 입력 URL 자체가 문제이므로 사용자에게 400 으로 노출.
+        // 4xx (403·404·410·429 등). 입력 URL 문제로 볼 수도 있어 사용자에겐 400 으로 노출하지만, 봇 방어가 404("없는 척")·
+        // 403(차단)·429(throttle)로 클로킹할 수 있어 escalatable=true 로 둔다 — 실제 브라우저(헤드리스)면 뚫릴 수 있다.
+        // 진짜 삭제된 상품(genuine 404)에도 헤드리스를 한 번 태우는 낭비가 있으나, "폴백했는데도 못 가져온" 비율을 메트릭·로그로
+        // 기록해 후속 per-host 튜닝의 근거로 삼는다(무조건 폴백).
         fun clientError(cause: Throwable): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.INVALID_INPUT, HttpStatus.BAD_REQUEST, cause)
+            PageFetchException(LINK_UNREACHABLE, ErrorCategory.INVALID_INPUT, HttpStatus.BAD_REQUEST, cause, escalatable = true)
 
+        // 응답 body 가 빈 경우. 일시적일 수 있어 RETRYABLE(flag off 시 plain 재시도)이되, 봇이 빈 응답으로 막는 것일 수도 있어
+        // escalatable=true(무조건 폴백).
         fun emptyBody(): PageFetchException =
             PageFetchException(
                 "해당 링크에서 정보를 가져오지 못했어요.",
                 ErrorCategory.RETRYABLE,
                 HttpStatus.BAD_GATEWAY,
+                escalatable = true,
             )
 
         // redirect 가 hop 상한을 넘어 무한·체인 의심. 대상 페이지의 고정된 비정상 상태라 재시도해도 결정론적으로
         // 재실패하므로 RETRYABLE(재시도 권유)이 아니라 SERVER_ERROR(재시도 불가). status 는 외부 의존성 실패라 502.
+        // redirect 기반 차단(챌린지로 튕김)일 수 있고 헤드리스는 redirect 를 네이티브로 다루므로 escalatable=true(무조건 폴백).
         fun tooManyRedirects(): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY)
+            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, escalatable = true)
 
         // 대상 서버가 3xx 를 주면서 Location 이 없거나 깨진 값을 준 비정상 redirect 응답. 재시도해도 영구 실패라 SERVER_ERROR.
+        // redirect 기반 차단일 수 있어 escalatable=true(무조건 폴백) — 헤드리스면 다르게 풀릴 수 있다.
         fun malformedRedirect(cause: Throwable? = null): PageFetchException =
-            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause)
+            PageFetchException(LINK_UNREACHABLE, ErrorCategory.SERVER_ERROR, HttpStatus.BAD_GATEWAY, cause, escalatable = true)
 
-        // host 가 사설/메타데이터/loopback 영역으로 resolve 될 때 SSRF 차단 신호.
+        // host 가 사설/메타데이터/loopback 영역으로 resolve 될 때 SSRF 차단 신호. escalatable=false(기본) — 내부망에 헤드리스를
+        // 겨누는 것 자체가 SSRF 취약점이라, "무조건 폴백" 의 유일한 예외다(recall 트레이드오프가 아니라 보안).
         fun blockedHost(): PageFetchException =
             PageFetchException(
                 "등록할 수 없는 링크예요.",
