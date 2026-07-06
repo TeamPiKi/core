@@ -55,7 +55,7 @@
 
 ### 2. 후보 카드 조회 (완료 아닌 카드)
 
-전체를 받아 클라이언트에서 `상태 != 완료` 만 추린다 (`파트` 필드는 보드에서 일관되지 않으므로 필터·판단에 쓰지 않는다 — 참고용으로만 표시):
+`상태 != 완료` 는 **서버측 filter 로 제외하고 받는다** — 전체를 받아 클라이언트에서 거르면 `page_size:100` 한도를 누적된 완료 카드가 잠식해, 정작 활성 후보가 조용히 잘린다. 빈 상태 카드는 후보에 남겨야 하므로 `is_empty` 를 or 로 함께 건다. 그래도 `has_more=True` 가 찍히면 `next_cursor` 를 `--data` 의 `"start_cursor"` 로 넘겨 이어 받는다 (`파트` 필드는 보드에서 일관되지 않으므로 필터·판단에 쓰지 않는다 — 참고용으로만 표시):
 
 ```bash
 [ -z "$NOTION_TOKEN" ] && eval "$(grep '^export NOTION_TOKEN=' ~/.zshrc 2>/dev/null)"
@@ -64,7 +64,8 @@ find /tmp/ -maxdepth 1 -name 'nb_*.json' -mmin +10080 -delete 2>/dev/null   # �
 DB=5a0c800c-72cf-8307-8297-8124d888ca79
 code=$(curl -s -X POST "https://api.notion.com/v1/databases/$DB/query" \
   -H "Authorization: Bearer $NOTION_TOKEN" -H "Notion-Version: 2022-06-28" -H "Content-Type: application/json" \
-  --data '{"page_size":100}' -o /tmp/nb_cards_$SLUG.json -w "%{http_code}")
+  --data '{"page_size":100,"filter":{"or":[{"property":"상태","status":{"does_not_equal":"완료"}},{"property":"상태","status":{"is_empty":true}}]}}' \
+  -o /tmp/nb_cards_$SLUG.json -w "%{http_code}")
 [ "$code" = "200" ] || { echo "Notion query 실패 (HTTP $code) — 보드 반영 생략"; exit 0; }
 python3 - "/tmp/nb_cards_$SLUG.json" <<'PY'
 import json, sys
@@ -73,9 +74,10 @@ for p in d.get('results',[]):
     pr=p['properties']
     title=''.join(t['plain_text'] for t in pr['프로젝트명']['title'])
     st=pr['상태']['status']; st=st['name'] if st else '-'
-    if st=='완료': continue
+    if st=='완료': continue   # 서버 filter 가 이미 거르지만 이중 방어로 유지
     part=pr['파트']['select']; part=part['name'] if part else '-'
     print(f"{st:<5} {part:<7} {p['id']}  {title}")
+if d.get('has_more'): print('HAS_MORE next_cursor=', d.get('next_cursor'), '- start_cursor 로 이어 조회해 후보를 마저 모을 것')
 PY
 ```
 
