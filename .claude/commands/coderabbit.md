@@ -53,8 +53,10 @@ gh api graphql --paginate -f query='
 PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 (셸 변수 미유지 — 비면 pulls//reviews 404 가 된다)
 # --paginate 필수 — 기본은 30건/페이지라, CodeRabbit 이 푸시마다 리뷰를 새로 다는 특성상
 # 리뷰 왕복이 길어지면 첫 30개 이후의 review body(nitpick 포함)가 조용히 누락된다.
+# 길이 필터를 두지 않는다 — 짧은 body 도 유효한 코멘트일 수 있어 비어있지 않으면 전부 수집하고,
+# nitpick 여부는 길이가 아니라 본문 마커(`🧹 Nitpick comments` 등)로 가른다.
 gh api --paginate repos/depromeet/PIKI-Server/pulls/$PR/reviews \
-  --jq '.[] | select(((.user.login // "") | startswith("coderabbitai")) and (.body | length) > 100) | .body'
+  --jq '.[] | select(((.user.login // "") | startswith("coderabbitai")) and ((.body // "") | length > 0)) | .body'
 ```
 
 출력된 body 를 읽고 `🧹 Nitpick comments` 등 접힌 코멘트를 건별 평가한다. nitpick 은 thread 가 아니라 **resolve 대상이 아니므로**, 반영하면 커밋 + PR `## Updates`(또는 PR 일반 코멘트)로 처리 사실을 남긴다.
