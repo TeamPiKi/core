@@ -100,23 +100,27 @@ jobs:
           ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
           echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
           if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            # 실패 사유를 step output 으로 남겨 요약·Slack 이 정확한 원인을 표시하게 한다(exit 전 기록).
+            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
             echo "reason=[$ENVIRONMENT] 배포 대상 EC2_HOST($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — 환경 secret 오설정(dev/prod 교차배선) 의심" >> "$GITHUB_OUTPUT"
             echo "::error::배포 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 환경 secret 오설정 의심, 중단."
             exit 1
           fi
 
       # dev/staging 은 ENV_ACCESS_GATE=true 라 도메인 전체가 allowlist IP 로만 열린다. 그 IP 를 등록하는 유일한 경로가
-      # 슬랙(/admin-access)인데, SLACK_ADMIN_SIGNING_SECRET 이 비면 서명 검증이 전부 실패해 IP 를 못 열어 도메인째 잠긴다(브릭).
-      # 빈 secret 으로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
-      - name: Guard — env gate 환경은 Slack signing secret 필수
+      # Discord 슬래시커맨드(/admin-access/discord)인데, 아래 넷 중 하나라도 비면 진입이 전부 막혀 IP 를 못 열어 도메인째
+      # 잠긴다(브릭): DISCORD_PUBLIC_KEY(서명검증)·DISCORD_ADMIN_USER_IDS(allowlist)·DISCORD_ADMIN_CHANNEL_ID(채널)·ADMIN_GRANT_SIGNING_KEY(토큰서명).
+      # 빈 채로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
+      - name: Guard — env gate 환경은 Discord admin secret 필수
         id: secret_guard
         if: ${{ needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging' }}
         env:
-          SLACK_ADMIN_SIGNING_SECRET: ${{ secrets.SLACK_ADMIN_SIGNING_SECRET }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
+          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
+          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
         run: |
-          if [ -z "$SLACK_ADMIN_SIGNING_SECRET" ]; then
-            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 SLACK_ADMIN_SIGNING_SECRET 이 비어 있음 — 슬랙으로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
+          if [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; then
+            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 admin secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID·ADMIN_GRANT_SIGNING_KEY) 중 빈 값이 있음 — Discord 로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
             echo "reason=$REASON" >> "$GITHUB_OUTPUT"
             echo "::error::$REASON"
             exit 1
@@ -357,12 +361,18 @@ jobs:
           # Spring 프로파일 — prod·staging 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
           # prod·staging 에서 안 뜨게 하는 핵심. staging 은 진짜 pre-prod 라 prod 와 동일 동작(#498). dev 만 'dev'(=!prod).
           SPRING_PROFILES_ACTIVE: ${{ (needs.resolve.outputs.environment == 'prod' || needs.resolve.outputs.environment == 'staging') && 'prod' || 'dev' }}
-          # 운영 백오피스(#249) — 슬랙-IP 게이트(#526)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
+          # 운영 백오피스(#249) — Discord-IP 게이트(#526·#654)가 보호하므로 전 환경 on. 비민감 플래그라 secret 아님(inline).
           ADMIN_ENABLED: 'true'
-          # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 슬랙 세션 게이트).
+          # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
           ENV_ACCESS_GATE: ${{ (needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging') && 'true' || 'false' }}
-          # 슬랙 슬래시커맨드 HMAC 검증 키(민감) — 게이트를 여는 유일 진입(/admin-access)의 보호막. 비면 /admin 항상 404.
-          SLACK_ADMIN_SIGNING_SECRET: ${{ secrets.SLACK_ADMIN_SIGNING_SECRET }}
+          # Discord admin 진입(/admin-access/discord)의 보호막·게이트. 셋 다 필요(비면 /admin 항상 404):
+          # 공개키(Ed25519 서명검증)·allowlist(허용 userId)·채널 게이트(허용 채널 id).
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
+          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
+          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩. 서명키는 전 환경 동일 secret 이라 cross-env 검증된다.
+          ADMIN_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 에러 트래킹(#608) — staging·prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
@@ -380,12 +390,12 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,SLACK_ADMIN_SIGNING_SECRET,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE
+          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE
           script: |
-            # ADMIN_ENABLED=true 인데 서명 시크릿이 비면 /admin-access 서명 검증이 전부 실패해 allowlist 를 열 수 없고
+            # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
-            if [ "$ADMIN_ENABLED" = "true" ] && [ -z "$SLACK_ADMIN_SIGNING_SECRET" ]; then
-              echo "::error::SLACK_ADMIN_SIGNING_SECRET is empty while ADMIN_ENABLED=true"
+            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
+              echo "::error::admin secret(DISCORD_PUBLIC_KEY/DISCORD_ADMIN_USER_IDS/DISCORD_ADMIN_CHANNEL_ID/ADMIN_GRANT_SIGNING_KEY) empty while ADMIN_ENABLED=true"
               exit 1
             fi
             # APPLE_WEB_CALLBACK_URL 은 AppleProperties.webCallbackUrl(@NotBlank)로 필수다(#430). 비면 컨테이너 기동이
@@ -496,7 +506,11 @@ jobs:
               -e FIREBASE_SERVICE_ACCOUNT="$FIREBASE_SERVICE_ACCOUNT" \
               -e ADMIN_ENABLED="$ADMIN_ENABLED" \
               -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
-              -e SLACK_ADMIN_SIGNING_SECRET="$SLACK_ADMIN_SIGNING_SECRET" \
+              -e DISCORD_PUBLIC_KEY="$DISCORD_PUBLIC_KEY" \
+              -e DISCORD_ADMIN_USER_IDS="$DISCORD_ADMIN_USER_IDS" \
+              -e DISCORD_ADMIN_CHANNEL_ID="$DISCORD_ADMIN_CHANNEL_ID" \
+              -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
+              -e ADMIN_GRANT_SIGNING_KEY="$ADMIN_GRANT_SIGNING_KEY" \
               -e SENTRY_DSN="$SENTRY_DSN" \
               -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
               -e SENTRY_RELEASE="$SENTRY_RELEASE" \
@@ -579,7 +593,7 @@ jobs:
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
           elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            STATUS="❌ 중단 (Slack signing secret 누락 가드)"
+            STATUS="❌ 중단 (Discord admin secret 누락 가드)"
           elif [ "${{ steps.health.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
@@ -616,23 +630,31 @@ jobs:
             [ -n "$GUARD_REASON" ] && echo "| 중단 사유 | $GUARD_REASON |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Notify Slack on success
+      - name: Notify Discord on success
         if: success()
         continue-on-error: true
         shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ needs.resolve.outputs.ref }}
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
-          SLACK_USER_MAP='{"m-a-king":"U0AKAEF2K9U","1o18z":"U0AKQ6G8BT3","sevineleven":"U0AK6U2J62F"}'
-          ACTOR="${{ github.actor }}"
-          SLACK_ID=$(echo "$SLACK_USER_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
-          ACTOR_MENTION="${SLACK_ID:+<@$SLACK_ID>}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
+          # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
-          SHORT_SHA="${{ needs.resolve.outputs.ref }}"
+          SHORT_SHA="$REF"
           SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
-          # jq 안에서 첫 줄을 뽑는다 — `jq | head` 는 head 가 파이프를 닫을 때 jq 가 SIGPIPE(broken pipe)로 죽고,
-          # 이 step 쉘의 pipefail+set -e 가 그걸 실패로 잡아 step 이 exit 2 로 중단된다(슬랙 전송 누락). promotion 머지
-          # (dev→staging·dev→main)처럼 커밋 메시지가 거대하면 jq 출력 도중 head 가 닫혀 재현됐다(#586).
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/$REF"
+          # 커밋 메시지 첫 줄만. `jq | head` 는 head 가 파이프를 닫을 때 jq 가 SIGPIPE 로 죽어 step 이 exit 2 로
+          # 끊기므로(#586), split 로 jq 안에서 첫 줄을 뽑는다(거대 커밋 메시지 대비).
           COMMIT_MSG=$(jq -r '((.workflow_run.head_commit.message // .head_commit.message // "") | split("\n")[0])' "$GITHUB_EVENT_PATH")
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -642,32 +664,39 @@ jobs:
             staging) TARGET="PiKi-Staging" ;;
             *)       TARGET="PiKi-Dev" ;;
           esac
-          TEXT=$(printf '✅ `%s` 배포 성공!  ✅\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: <%s|%s>  %s\n• <%s|워크플로우 로그>' \
-            "$TARGET" "${{ needs.resolve.outputs.branch }}" "$TARGET" "${{ needs.resolve.outputs.domain }}" "$ACTOR_MENTION" "$COMMIT_URL" "$SHORT_SHA" "$COMMIT_MSG" "$RUN_URL")
+          # Discord 마크다운: 링크는 [text](url), 멘션은 <@id>. named 링크는 큰 임베드를 안 만든다.
+          TEXT=$(printf '✅ `%s` 배포 성공!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• [워크플로우 로그](%s)' \
+            "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$RUN_URL")
 
-          curl -s -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg channel "${{ secrets.SLACK_CHANNEL_ID }}" --arg text "$TEXT" \
-              '{channel:$channel,text:$text,unfurl_links:false,unfurl_media:false}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
-      - name: Notify Slack on failure
+      - name: Notify Discord on failure
         if: failure()
         continue-on-error: true
         shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ needs.resolve.outputs.ref }}
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
-          SLACK_USER_MAP='{"m-a-king":"U0AKAEF2K9U","1o18z":"U0AKQ6G8BT3","sevineleven":"U0AK6U2J62F"}'
-          ACTOR="${{ github.actor }}"
-          SLACK_ID=$(echo "$SLACK_USER_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
-          ACTOR_MENTION="${SLACK_ID:+<@$SLACK_ID>}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
+          # github 로그인 → discord user id. 매핑 없으면 로그인 이름으로 폴백(핑은 안 감).
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"
           ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
 
-          SHORT_SHA="${{ needs.resolve.outputs.ref }}"
+          SHORT_SHA="$REF"
           SHORT_SHA="${SHORT_SHA:0:7}"
-          COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
-          # jq 안에서 첫 줄을 뽑는다 — `jq | head` 는 head 가 파이프를 닫을 때 jq 가 SIGPIPE(broken pipe)로 죽고,
-          # 이 step 쉘의 pipefail+set -e 가 그걸 실패로 잡아 step 이 exit 2 로 중단된다(슬랙 전송 누락). promotion 머지
-          # (dev→staging·dev→main)처럼 커밋 메시지가 거대하면 jq 출력 도중 head 가 닫혀 재현됐다(#586).
+          COMMIT_URL="https://github.com/${{ github.repository }}/commit/$REF"
+          # 커밋 메시지 첫 줄만 (거대 메시지 대비 jq split — `jq | head` 의 SIGPIPE 중단 회피, #586).
           COMMIT_MSG=$(jq -r '((.workflow_run.head_commit.message // .head_commit.message // "") | split("\n")[0])' "$GITHUB_EVENT_PATH")
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -676,7 +705,7 @@ jobs:
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
           elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.secret_guard.outputs.reason }}"
-            CAUSE="${CAUSE:-SLACK_ADMIN_SIGNING_SECRET 누락 (dev/staging 도메인 잠금 방지 가드)}"
+            CAUSE="${CAUSE:-Discord admin secret 누락 (dev/staging 도메인 잠금 방지 가드)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
@@ -704,14 +733,13 @@ jobs:
             staging) TARGET="PiKi-Staging" ;;
             *)       TARGET="PiKi-Dev" ;;
           esac
-          TEXT=$(printf '❌ `%s` 배포 실패! ❌\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: <%s|%s>  %s\n• 원인: %s\n• <%s|워크플로우 로그 확인>' \
-            "$TARGET" "${{ needs.resolve.outputs.branch }}" "$TARGET" "${{ needs.resolve.outputs.domain }}" "$ACTOR_MENTION" "$COMMIT_URL" "$SHORT_SHA" "$COMMIT_MSG" "$CAUSE" "$RUN_URL")
+          TEXT=$(printf '❌ `%s` 배포 실패!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• 원인: %s\n• [워크플로우 로그 확인](%s)' \
+            "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$CAUSE" "$RUN_URL")
 
-          curl -s -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg channel "${{ secrets.SLACK_CHANNEL_ID }}" --arg text "$TEXT" \
-              '{channel:$channel,text:$text,unfurl_links:false,unfurl_media:false}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
   # main(prod) 배포 성공 후에만 GitHub Release 자동 생성 — 릴리스 = 실제로 라이브된 버전.
   # 배포 실패 시 release 가 needs(deploy) 실패로 skip 되어 "안 뜬 버전의 릴리스"가 안 남는다.
@@ -751,23 +779,27 @@ jobs:
           echo "url=https://github.com/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_OUTPUT"
 
       # prod 릴리즈가 실제로 만들어진 시점의 "버전이 몇이 됐는지" 알림 — 승격·배포 알림과 별개로 버전·릴리즈 노트를
-      # 권위 있게 announce 한다. deploy.yml 의 다른 Slack 과 동일 패턴(SLACK_BOT_TOKEN·SLACK_CHANNEL_ID, continue-on-error).
-      - name: Notify Slack on release
+      # 권위 있게 announce 한다. deploy.yml 의 다른 Discord 알림과 동일 패턴(DISCORD_WEBHOOK_URL, continue-on-error).
+      - name: Notify Discord on release
         if: success()
         continue-on-error: true
         shell: bash
         env:
           TAG: ${{ steps.release.outputs.tag }}
           RELEASE_URL: ${{ steps.release.outputs.url }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         run: |
-          SLACK_USER_MAP='{"m-a-king":"U0AKAEF2K9U","1o18z":"U0AKQ6G8BT3","sevineleven":"U0AK6U2J62F"}'
-          ACTOR="${{ github.actor }}"
-          SLACK_ID=$(echo "$SLACK_USER_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
-          ACTOR_MENTION="${SLACK_ID:+<@$SLACK_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
-          TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: <%s|%s 릴리즈 노트>\n• 배포자: %s' \
-            "$TAG" "${{ needs.resolve.outputs.domain }}" "$RELEASE_URL" "$TAG" "$ACTOR_MENTION")
-          curl -s -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
+          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
+          TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](%s)\n• 배포자: %s' \
+            "$TAG" "$DOMAIN" "$TAG" "$RELEASE_URL" "$ACTOR_MENTION")
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg channel "${{ secrets.SLACK_CHANNEL_ID }}" --arg text "$TEXT" \
-              '{channel:$channel,text:$text,unfurl_links:false,unfurl_media:false}')"
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
