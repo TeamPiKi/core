@@ -39,7 +39,8 @@ class RoutingProductLinkExtractor(
     // 점진 전환 게이트. 비어 있으면 아무것도 원격으로 가지 않고(안전 기본값 — enabled 만 켜고 목록을 깜빡해도
     // 컷오버가 터지지 않는다), 전량 전환은 ALL_HOSTS("*") 명시로만 연다. 도메인 단위 매칭(서브도메인 포함,
     // 대소문자·trailing dot 정규화)은 ProductLink.matchesAnyDomain 단일 술어가 진다 — 미지원 플랫폼 판정과 같은 규칙.
-    // host 가 없는 기형 URI 는 어느 목록과도 매칭되지 않아 항상 embedded 로 남는다(설정 유무와 무관하게 일관).
+    // host 가 없는 기형 URI 는 도메인 매칭에 걸리지 않아, host 목록으로 전환한 상태에선 embedded 로 남는다. 단
+    // "*"(전량) 전환에선 host 유무와 무관하게 모두 원격이라 그런 URI 도 원격으로 간다("모두"의 정의상 일관).
     private fun routesToRemote(link: ProductLink): Boolean {
         val hosts = properties.normalizedHosts
         if (hosts.isEmpty()) return false

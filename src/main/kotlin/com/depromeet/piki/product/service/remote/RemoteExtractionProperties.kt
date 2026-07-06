@@ -19,7 +19,7 @@ data class RemoteExtractionProperties(
     // 전량 전환은 "*" 명시로만 연다 — enabled 만 켜고 목록을 깜빡했을 때 100% 컷오버가 터지는 fail-open 을 막는다.
     val hosts: List<String> = emptyList(),
     val connectTimeoutMs: Int = 2_000,
-    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT=60s)보다 항상 작아야 recover 의 유령 중복 발주가 없다.
+    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 recover 의 유령 중복 발주가 없다.
     // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
     // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
     // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음). extractor 내부 예산과 함께
@@ -41,8 +41,11 @@ data class RemoteExtractionProperties(
     }
 
     companion object {
-        // ItemParsingScheduler.STALE_TIMEOUT 과 같은 값. 스케줄러 상수를 직접 참조하면 순환 의존(item→product 가
-        // 이미 있는데 product→item 을 더하는 꼴)이라 값을 복제하고 주석으로 결속한다 — 스케줄러 쪽 값을 바꾸면 여기도 함께 본다.
+        // ItemParsingScheduler.STALE_TIMEOUT_SECONDS(60L, 초) 를 ms 로 옮긴 복제값. 스케줄러 상수를 직접 참조하면
+        // 순환 의존(item→product 가 이미 있는데 product→item 을 더하는 꼴)이라 값을 복제하고 주석으로 결속한다.
+        // 한계: 이 결속은 기계 강제가 아니라 주석이라, 스케줄러 쪽 60L 을 바꾸면 여기 60_000 도 함께 봐야 한다
+        // (한쪽만 바꾸면 유령 중복 방지 불변식이 조용히 깨진다). 두 값을 공용 상수로 올리는 건 item↔product 패키지
+        // 경계를 건드리는 별도 작업이라 전환기엔 복제+주석으로 둔다.
         private const val STALE_TIMEOUT_MS = 60_000
 
         // 전량 원격 전환의 명시 마커. hosts 에 이 값이 있으면 모든 host 를 원격으로 보낸다.
