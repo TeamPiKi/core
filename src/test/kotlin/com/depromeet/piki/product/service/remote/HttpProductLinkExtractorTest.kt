@@ -21,10 +21,12 @@ import java.io.IOException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // 원격 추출 응답(계약 3갈래: 2xx / 422+code / 그 외)이 워커의 재시도 판정(category)과 정확히 맞물리게
-// 번역되는지 검증한다. 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpPageFetcher 테스트와 같은 방식).
+// 번역되는지, 그리고 2xx 값이 경계 정규화(fromExtracted — 모든 추출 경로의 단일 진실 원천)를 거치는지 검증한다.
+// 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpPageFetcher 테스트와 같은 방식).
 class HttpProductLinkExtractorTest {
     private val link = ProductLink.parse("https://shop.example.com/p/1")
 
@@ -59,6 +61,42 @@ class HttpProductLinkExtractorTest {
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
         assertEquals(99_000, snapshot.currentPrice)
         assertEquals("KRW", snapshot.currency)
+    }
+
+    @Test
+    fun `200 이어도 경계 정규화를 거친다 - non-https imageUrl 은 null 로, 소문자 currency 는 ISO 정규형으로`() {
+        // 원격 계약이 정상 값을 보장하더라도 신뢰 경계를 넘어온 값은 embedded 와 같은 fromExtracted 를 다시 거친다(다층 방어).
+        // http imageUrl 이 그대로 통과하면 XSS 사다리(클라이언트 <img src>)가 다시 열린다.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"나이키","imageUrl":"http://cdn.evil.com/x.png","currentPrice":99000,"currency":"krw"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val snapshot = extractor.extract(link)
+
+        assertNull(snapshot.imageUrl, "non-https imageUrl 은 정규화가 null 로 떨궈야 한다")
+        assertEquals("KRW", snapshot.currency, "currency 는 ISO 정규형으로 정규화돼야 한다")
+    }
+
+    @Test
+    fun `200 이어도 범위 위반(음수 가격)은 UNTRUSTWORTHY 확정 실패로 떨어진다 - embedded LLM 경로와 동일`() {
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":-1,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
+        assertFalse(AsyncItemParsingWorker.isRetryable(e))
     }
 
     @Test
@@ -120,7 +158,7 @@ class HttpProductLinkExtractorTest {
                 )
             }
 
-        val e = assertFailsWith<RemoteExtractionException> { extractor.extract(link) }
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
         assertFalse(AsyncItemParsingWorker.isRetryable(e))
     }
@@ -136,7 +174,7 @@ class HttpProductLinkExtractorTest {
                 )
             }
 
-        val e = assertFailsWith<RemoteExtractionException> { extractor.extract(link) }
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertFalse(AsyncItemParsingWorker.isRetryable(e))
     }
 
@@ -147,7 +185,7 @@ class HttpProductLinkExtractorTest {
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(withServerError())
             }
 
-        val e = assertFailsWith<RemoteExtractionException> { extractor.extract(link) }
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
         assertTrue(AsyncItemParsingWorker.isRetryable(e))
     }
@@ -161,7 +199,7 @@ class HttpProductLinkExtractorTest {
                 }
             }
 
-        val e = assertFailsWith<RemoteExtractionException> { extractor.extract(link) }
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
         assertTrue(AsyncItemParsingWorker.isRetryable(e))
     }

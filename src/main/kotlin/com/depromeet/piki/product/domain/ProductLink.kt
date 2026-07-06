@@ -18,11 +18,19 @@ class ProductLink private constructor(
         if (isFromUnsupportedPlatform()) throw ProductLinkException.unsupportedPlatform()
     }
 
-    // host 가 미지원 목록과 같거나 그 서브도메인이면 미지원. host 가 없으면(형식 이상은 parse 가 이미 처리) 판정 대상 아님.
-    // trailing dot(절대 도메인 표기, 예: "naver.com.")은 제거해 차단 우회를 막는다. Kotlin lowercase() 는 locale 무관(invariant).
-    private fun isFromUnsupportedPlatform(): Boolean {
+    // host 가 미지원 목록과 같거나 그 서브도메인이면 미지원. 판정은 matchesAnyDomain(단일 술어)이 진다.
+    private fun isFromUnsupportedPlatform(): Boolean = matchesAnyDomain(UNSUPPORTED_HOSTS)
+
+    // host 가 주어진 도메인 목록의 항목과 같거나 그 서브도메인이면 true 인 도메인 단위 매칭의 단일 술어.
+    // 미지원 플랫폼 판정과 원격 추출 라우팅(RoutingProductLinkExtractor)이 공유한다 — 정규화 규칙(trailing dot 제거,
+    // lowercase, 부분 문자열이 아닌 도메인 단위)이 바뀔 때 사본들이 갈라지지 않게 도메인이 규칙의 주인을 맡는다.
+    // host 가 없으면(형식 이상은 parse 가 이미 처리) 어느 목록과도 매칭되지 않는다.
+    // trailing dot(절대 도메인 표기, 예: "naver.com.")은 제거해 우회를 막는다. Kotlin lowercase() 는 locale 무관(invariant).
+    // domains 항목은 소문자·trailing dot 없는 정규형이어야 한다 (UNSUPPORTED_HOSTS 는 하드코딩 정규형,
+    // 외부 설정 출처는 호출자가 정규화해 넘긴다 — RemoteExtractionProperties.normalizedHosts).
+    fun matchesAnyDomain(domains: Collection<String>): Boolean {
         val host = value.host?.trimEnd('.')?.lowercase() ?: return false
-        return UNSUPPORTED_HOSTS.any { host == it || host.endsWith(".$it") }
+        return domains.any { host == it || host.endsWith(".$it") }
     }
 
     override fun equals(other: Any?): Boolean {
