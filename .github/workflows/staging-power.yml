@@ -1,5 +1,5 @@
 # staging EC2 전원 버튼 — staging 은 QA 할 때만 켠다(평소 stopped, 비용 절약).
-# Actions 탭에서 on/off/status 를 골라 실행하면 결과가 run summary 에 표로 남아
+# Actions 탭에서 start/stop/status 를 골라 실행하면 결과가 run summary 에 표로 남아
 # "지금 켜져 있나?" 를 코드·콘솔 없이 확인할 수 있다.
 #
 # 자격증명: EC2 start/stop 한정 최소권한 IAM 사용자(piki-staging-power)의 키를 repo secrets 로 주입.
@@ -15,7 +15,8 @@ on:
         description: "staging EC2 를 어떻게 할까"
         required: true
         type: choice
-        options: [status, on, off]
+        # on/off 는 YAML 1.1 불리언으로 파싱돼 허용값이 true/false 가 되는 함정(실측 422) — start/stop 으로 명명.
+        options: [status, start, stop]
         default: status
 
 permissions: {}
@@ -46,7 +47,7 @@ jobs:
           }
 
           case "${{ inputs.action }}" in
-            on)
+            start)
               aws ec2 start-instances --instance-ids "$INSTANCE_ID" > /dev/null
               aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
               # 컨테이너들은 --restart unless-stopped 라 부팅과 함께 자동 기동된다. 앱이 실제로 응답할 때까지
@@ -58,7 +59,7 @@ jobs:
                 sleep 10
               done
               ;;
-            off)
+            stop)
               aws ec2 stop-instances --instance-ids "$INSTANCE_ID" > /dev/null
               aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"
               HEALTH="-"
