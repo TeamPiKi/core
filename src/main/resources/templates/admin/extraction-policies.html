@@ -37,7 +37,7 @@
     <h1>추출 라우팅 정책</h1>
     <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).<br>
       <b>UNSUPPORTED</b> = 등록 자체를 거절 (봇 차단 등으로 추출 불가한 곳). <b>HEADLESS_FIRST</b> = 처음부터 브라우저로 추출
-      <span style="color:#92400e">(헤드리스 스위치가 켜지기 전까지는 지정해도 효과 없음 — 이관 7단계 예정)</span>.<br>
+      <span style="color:#92400e">(원격 추출(extractor) 경로에서 유효 — extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과 없음)</span>.<br>
       정책이 없는 도메인은 기본 추출(정적 fetch → 구조화/LLM)을 탑니다. <b>같은 도메인을 다시 추가하면 정책이 교체</b>됩니다.</p>
     <div class="ok" th:if="${param.updated}">정책이 저장됐습니다. (즉시 적용)</div>
     <div class="ok" th:if="${param.deleted}">정책이 삭제됐습니다. (즉시 적용)</div>
@@ -47,7 +47,7 @@
         <input name="domain" placeholder="도메인 (예: coupang.com)" th:value="${draftDomain}" maxlength="255" required>
         <select name="route">
           <option th:each="r : ${routes}" th:value="${r}" th:selected="${r == draftRoute}"
-                  th:text="${r.name() == 'HEADLESS_FIRST'} ? 'HEADLESS_FIRST (준비 중 - 아직 효과 없음)' : ${r}"></option>
+                  th:text="${r.name() == 'HEADLESS_FIRST'} ? 'HEADLESS_FIRST (원격 추출 경로에서 유효)' : ${r}"></option>
         </select>
         <input name="reason" placeholder="사유 메모 (예: 2026-07 실측 403 차단)" th:value="${draftReason}" maxlength="255">
         <button type="submit">추가</button>
