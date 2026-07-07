@@ -140,10 +140,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andReturn()
 
         val expiresAtStr = objectMapper.readTree(result.response.contentAsString)["data"]["inviteExpiresAt"].asText()
-        val expiresAt = java.time.OffsetDateTime.parse(expiresAtStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toLocalDateTime()
-        val expectedMin = before.plusMinutes(60)
-        val expectedMax = LocalDateTime.now().plusMinutes(60)
-        assertTrue(expiresAt >= expectedMin && expiresAt <= expectedMax)
+        // 모든 시각 응답은 KST(+09:00) 오프셋으로 직렬화된다. (contract 회귀 가드)
+        assertTrue(expiresAtStr.endsWith("+09:00"), "inviteExpiresAt 는 KST(+09:00) 오프셋으로 직렬화돼야 한다: $expiresAtStr")
+        // 서버는 저장값(LocalDateTime)을 UTC 로 해석해 직렬화한다. 기대값도 같은 UTC 해석으로 instant 를 만들어 비교하면
+        // JVM 기본 타임존(로컬 KST · CI UTC)과 무관하게 만료까지 실제 경과가 60분인지 검증된다.
+        val expiresAt = java.time.OffsetDateTime.parse(expiresAtStr, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
+        val expectedMin = before.toInstant(java.time.ZoneOffset.UTC).plus(java.time.Duration.ofMinutes(60))
+        val expectedMax = LocalDateTime.now().toInstant(java.time.ZoneOffset.UTC).plus(java.time.Duration.ofMinutes(60))
+        assertTrue(!expiresAt.isBefore(expectedMin) && !expiresAt.isAfter(expectedMax))
     }
 
     @Test
