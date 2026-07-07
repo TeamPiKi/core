@@ -71,6 +71,27 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `부모 도메인과 서브도메인 정책이 겹치면 더 구체적인(긴) 도메인의 정책이 이긴다`() {
+        // 최장 매치가 없으면 승자가 enum 선언 순서로 정해져, 서브도메인만 열어 주는 운영 시나리오
+        // (부모 차단 유지 + 서브도메인 직행)가 조용히 무시된다.
+        val parent = "overlap-${UUID.randomUUID()}.example.com"
+        val sub = "m.$parent"
+        try {
+            policyRepository.save(ExtractionPlatformPolicyEntity(domain = parent, route = ExtractionRoute.UNSUPPORTED.name, reason = null))
+            policyRepository.save(ExtractionPlatformPolicyEntity(domain = sub, route = ExtractionRoute.HEADLESS_FIRST.name, reason = null))
+            routingPolicy.reload()
+
+            assertEquals(ExtractionRoute.HEADLESS_FIRST, routingPolicy.routeOf(ProductLink.parse("https://$sub/p/1")))
+            assertEquals(ExtractionRoute.UNSUPPORTED, routingPolicy.routeOf(ProductLink.parse("https://$parent/p/1")))
+            assertEquals(ExtractionRoute.UNSUPPORTED, routingPolicy.routeOf(ProductLink.parse("https://www.$parent/p/1")))
+        } finally {
+            policyRepository.findById(parent).ifPresent { policyRepository.delete(it) }
+            policyRepository.findById(sub).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
     fun `UNSUPPORTED 정책을 추가하면 등록이 400 으로 거부되고, 삭제하면 같은 URL 이 다시 통과한다`() {
         val mockMvc = mockMvc()
         val userId = UUID.randomUUID()

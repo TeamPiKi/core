@@ -7,6 +7,7 @@ import com.depromeet.piki.product.routing.DbExtractionRoutingPolicy
 import com.depromeet.piki.product.routing.ExtractionPlatformPolicyEntity
 import com.depromeet.piki.product.routing.ExtractionPlatformPolicyJpaRepository
 import com.depromeet.piki.product.routing.ExtractionRoute
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -44,7 +45,13 @@ class AdminExtractionPolicyService(
         val trimmedReason = reason?.trim()?.ifBlank { null }
         validateLengths(domain, trimmedReason)
         val replaced = policyRepository.existsById(domain)
-        policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = route.name, reason = trimmedReason))
+        try {
+            policyRepository.saveAndFlush(ExtractionPlatformPolicyEntity(domain = domain, route = route.name, reason = trimmedReason))
+        } catch (e: DataIntegrityViolationException) {
+            // 같은 신규 도메인이 동시에 저장되면(수동 @Id 라 둘 다 INSERT 시도) 늦은 쪽이 PK 충돌로 떨어진다 —
+            // 전역 핸들러의 500 대신 목록 화면 에러로 흡수한다. flush 를 여기서 강제해 커밋 시점이 아니라 이 자리에서 잡는다.
+            throw IllegalArgumentException("같은 도메인이 방금 저장됐습니다. 목록을 확인하고 다시 시도해 주세요.")
+        }
         auditService.record(
             actor,
             AdminAuditAction.EXTRACTION_POLICY_UPDATE,
