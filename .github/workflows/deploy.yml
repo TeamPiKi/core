@@ -52,8 +52,9 @@ jobs:
           # t4g.small(1.8G), staging 만 906M 박스라 현행을 유지한다. blue-green overlap(전환 중 잠깐 2개 동시) 기준:
           #   prod 2×768=1536 < 1.8G, dev 2×512 + 동거(extractor 384 + mysql·alloy·redis 약 160) ≈ 1.57G < 1.8G,
           #   staging 2×400=800 < 906M 안에 들어가 swap thrash 를 막는다.
-          # dev 를 400m 에서 512m 로 올린 근거(2026-07-07 실측): 앱이 캡 400m 에 99.99% 로 상시 붙어 커널이
-          #   swap-out 으로 캡을 유지 중이었다(swapfile 1G 만석) — Xmx 256m 이어도 비힙을 더하면 400m 을 넘는 구조.
+          # dev 576m/288m 산정(2026-07-07 실측 2회): 캡 400m(Xmx256)·512m(Xmx320) 모두 anon 이 캡을 초과해 상시
+          #   swap-out 이었다. prod 실측(768m 캡에 실사용 720m, 힙 최대 512 제외 비힙 약 250m)으로 이 앱의 비힙을
+          #   약 250-300m 으로 확정 — 캡은 힙 + 300m 여유로 잡는다(576 = 288 + 288).
           # 힙(-Xmx)은 컨테이너 RAM 안에 비힙(metaspace·thread stack·code cache·direct buffer) 여유를 남겨 잡는다.
           # 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정한다.
           # GC 는 -XX:+UseG1GC 를 명시한다(환경 공통). JVM 은 컨테이너 메모리 한도를 가용 메모리로 인식하는데, G1 자동
@@ -69,9 +70,9 @@ jobs:
             echo "mem_swap=800m" >> "$GITHUB_OUTPUT"
             echo "jvm_opts=-Xmx256m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
           else
-            echo "mem_limit=512m" >> "$GITHUB_OUTPUT"
-            echo "mem_swap=1024m" >> "$GITHUB_OUTPUT"
-            echo "jvm_opts=-Xmx320m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
+            echo "mem_limit=576m" >> "$GITHUB_OUTPUT"
+            echo "mem_swap=1152m" >> "$GITHUB_OUTPUT"
+            echo "jvm_opts=-Xmx288m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
