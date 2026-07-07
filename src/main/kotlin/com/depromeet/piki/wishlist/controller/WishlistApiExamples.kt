@@ -39,7 +39,7 @@ class WishlistApiExamples(
                     )
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
-                    add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (KREAM·쿠팡·네이버·올리브영·에이블리)")
+                    add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 추출 라우팅 정책 기준)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                 }

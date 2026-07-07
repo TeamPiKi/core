@@ -209,9 +209,7 @@ class AdminAnnouncementController(
         return "redirect:/admin/announcements?deleted"
     }
 
-    // 감사 actor — Discord 게이트(#526·#654)가 세션에 바인딩한 신원. 게이트를 우회하는 로컬(admin.enabled)엔 세션이 없어 "운영자" 로 폴백.
-    private fun actor(request: HttpServletRequest): String =
-        request.getSession(false)?.let { AdminSession.actorName(it) } ?: "운영자"
+    private fun actor(request: HttpServletRequest): String = AdminSession.actorName(request)
 
     // 게이트와 동일한 안전 추출(X-Real-IP, 위조 불가)을 audit 에도 쓴다 — XFF 첫 hop 은 스푸핑 가능.
     private fun clientIp(request: HttpServletRequest): String = ClientIp.of(request)

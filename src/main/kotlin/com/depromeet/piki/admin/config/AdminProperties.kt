@@ -33,7 +33,7 @@ data class AdminProperties(
     val environment: String = "",
     val grantSigningKey: String = "",
     val grantHosts: Map<String, String> = emptyMap(),
-    val allowlistTtl: Duration = Duration.ofHours(24),
+    val allowlistTtl: Duration = Duration.ofHours(1),
     val grantTokenTtl: Duration = Duration.ofMinutes(3),
     val localBypass: Boolean = false,
     val scheduleGraceWindow: Duration = Duration.ofHours(1),

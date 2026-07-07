@@ -1,6 +1,8 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoute
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.product.service.FallbackProductLinkExtractor
 import com.depromeet.piki.product.service.HeadlessExtractionProperties
 import com.depromeet.piki.product.service.LinkExtractionStrategy
@@ -22,7 +24,13 @@ class RoutingProductLinkExtractorTest {
 
     // HttpProductLinkExtractor 는 @Component 라 all-open 으로 열려 있어 fake 서브클래스로 결과만 주입한다
     // (실 구현은 네트워크를 요구해 단위로 세울 수 없다 — FallbackProductLinkExtractorTest 의 FakeStrategy 와 같은 접근).
-    private inner class FakeRemote : HttpProductLinkExtractor(RestClient.builder().build()) {
+    private inner class FakeRemote : HttpProductLinkExtractor(
+        RestClient.builder().build(),
+        // extract 를 통째로 override 하므로 정책은 닿지 않는다 — 생성자 시그니처만 채운다.
+        object : ExtractionRoutingPolicy {
+            override fun routeOf(link: ProductLink): ExtractionRoute? = null
+        },
+    ) {
         var calls = 0
 
         override fun extract(link: ProductLink): ProductSnapshot {
@@ -58,6 +66,10 @@ class RoutingProductLinkExtractorTest {
                 headless,
                 SimpleMeterRegistry(),
                 HeadlessExtractionProperties(enabled = false),
+                // headless 가 꺼져 있어 정책 분기에 도달하지 않는다 — 정책 없음(null) 고정으로 충분.
+                object : ExtractionRoutingPolicy {
+                    override fun routeOf(link: ProductLink): ExtractionRoute? = null
+                },
             )
         return RoutingProductLinkExtractor(
             remote,

@@ -2,6 +2,8 @@ package com.depromeet.piki.product.service
 
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoute
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.product.service.http.PageFetchException
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -24,6 +26,7 @@ class FallbackProductLinkExtractor(
     @Qualifier(LinkExtractionStrategy.HEADLESS) private val headless: LinkExtractionStrategy,
     private val meterRegistry: MeterRegistry,
     private val headlessProperties: HeadlessExtractionProperties,
+    private val routingPolicy: ExtractionRoutingPolicy,
 ) : ProductLinkExtractor {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -31,8 +34,14 @@ class FallbackProductLinkExtractor(
         // 헤드리스가 꺼져 있으면(기본값) plain 에 그대로 위임한다 — 결과도 예외도 그대로 전파돼 현재 동작과 동일하다.
         if (!headlessProperties.enabled) return plain.extract(link)
 
-        // (확장 지점) 호출량 x 느린-실패 낭비가 큰 host 는 여기서 plain 을 건너뛰고 headless 로 직행하되, 소량(canary)만
-        // plain 으로 흘려 차단 해제를 감시한다. host 별 정책·canary 비율은 헤드리스 구현·운영 메트릭이 확정할 때 붙인다.
+        // 운영자가 지정한 브라우저 직행 플랫폼(DB 정책, 백오피스에서 배포 없이 변경) — plain 이 항상 차단되는 host 의
+        // 느린-실패(fetch 타임아웃 후 에스컬레이트) 낭비를 없앤다. 직행 실패는 plain 으로 되돌리지 않고 그대로 전파한다
+        // (재시도는 outbox recover 축이, 정책 오지정은 백오피스 롤백이 진다). 차단 해제 감시용 canary(소량 plain)는
+        // 헤드리스 운영 메트릭이 쌓인 뒤 붙인다.
+        if (routingPolicy.routeOf(link) == ExtractionRoute.HEADLESS_FIRST) {
+            log.info("extract route=headless_first url={}", link.safeLogString())
+            return headless.extract(link)
+        }
 
         return try {
             plain.extract(link)

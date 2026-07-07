@@ -3,6 +3,8 @@ package com.depromeet.piki.product.service.remote
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.item.service.AsyncItemParsingWorker
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoute
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.product.service.ProductSnapshotException
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
@@ -30,15 +32,22 @@ import kotlin.test.assertTrue
 class HttpProductLinkExtractorTest {
     private val link = ProductLink.parse("https://shop.example.com/p/1")
 
-    private fun extractorWith(server: (MockRestServiceServer) -> Unit): HttpProductLinkExtractor {
+    private class FakeRoutingPolicy(private val route: ExtractionRoute? = null) : ExtractionRoutingPolicy {
+        override fun routeOf(link: ProductLink): ExtractionRoute? = route
+    }
+
+    private fun extractorWith(
+        route: ExtractionRoute? = null,
+        server: (MockRestServiceServer) -> Unit,
+    ): HttpProductLinkExtractor {
         val builder = RestClient.builder().baseUrl("http://extractor.test")
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
-        return HttpProductLinkExtractor(builder.build())
+        return HttpProductLinkExtractor(builder.build(), FakeRoutingPolicy(route))
     }
 
     @Test
-    fun `200 응답의 추출 결과를 ProductSnapshot 으로 매핑한다`() {
+    fun `200 응답의 추출 결과를 ProductSnapshot 으로 매핑한다 - 정책 없는 도메인은 headlessFirst=false 로 보낸다`() {
         val extractor =
             extractorWith { server ->
                 server
@@ -46,6 +55,7 @@ class HttpProductLinkExtractorTest {
                     .andExpect(method(HttpMethod.POST))
                     .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                     .andExpect(jsonPath("$.url").value("https://shop.example.com/p/1"))
+                    .andExpect(jsonPath("$.headlessFirst").value(false))
                     .andRespond(
                         withSuccess(
                             """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
@@ -61,6 +71,47 @@ class HttpProductLinkExtractorTest {
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
         assertEquals(99_000, snapshot.currentPrice)
         assertEquals("KRW", snapshot.currency)
+    }
+
+    @Test
+    fun `라우팅 정책이 HEADLESS_FIRST 인 도메인은 headlessFirst=true 힌트를 실어 보낸다`() {
+        // 정책(DB·백오피스)의 단일 진실은 이쪽 — extractor 는 이 힌트로 plain 을 건너뛰고 브라우저 직행한다(계약 §2).
+        val extractor =
+            extractorWith(route = ExtractionRoute.HEADLESS_FIRST) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessFirst").value(true))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"크림 상품","imageUrl":"https://cdn.example.com/k.png","currentPrice":209000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        val snapshot = extractor.extract(link)
+
+        assertEquals("크림 상품", snapshot.name)
+    }
+
+    @Test
+    fun `라우팅 정책이 UNSUPPORTED 여도 힌트는 headlessFirst=false 다 - 직행 힌트는 HEADLESS_FIRST 한정`() {
+        // UNSUPPORTED 는 등록 경계(verifyRegistrable)가 막는 정책이라 여기 닿는 건 기존 저장 행의 재파싱 등 —
+        // 그 경우에도 브라우저 직행으로 격상하지 않고 기본 체인에 맡긴다.
+        val extractor =
+            extractorWith(route = ExtractionRoute.UNSUPPORTED) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessFirst").value(false))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        extractor.extract(link)
     }
 
     @Test
