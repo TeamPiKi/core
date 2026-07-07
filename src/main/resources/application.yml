@@ -28,7 +28,7 @@ admin:
     staging: https://staging.api.piki.day
     prod: https://api.piki.day
   # 허용 IP sliding TTL(무활동 만료, IP 변동 흡수). grant-token 은 원타임 링크 수명.
-  allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:24h}
+  allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:1h}
   grant-token-ttl: 3m
   # 로컬에서만 /admin 게이트(AdminAccessFilter) 우회. 배포 환경은 항상 false.
   local-bypass: ${ADMIN_LOCAL_BYPASS:false}
