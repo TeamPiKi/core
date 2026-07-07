@@ -2,7 +2,7 @@ package com.depromeet.piki.image.service
 
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubProductImageExtractor
+import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.wishlist.service.WishlistService
 import org.awaitility.Awaitility.await
@@ -33,7 +33,7 @@ class PendingUploadClaimConcurrencyIntegrationTest : IntegrationTestSupport() {
     private lateinit var pollingScheduler: PendingUploadPollingScheduler
 
     @Autowired
-    private lateinit var stubProductImageExtractor: StubProductImageExtractor
+    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -119,11 +119,8 @@ class PendingUploadClaimConcurrencyIntegrationTest : IntegrationTestSupport() {
     // ---- 헬퍼 ----
 
     private fun seedExtractor() {
-        stubProductImageExtractor.build = {
-            ImageExtraction(
-                snapshot = ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"),
-                boundingBox = null,
-            )
+        stubImageSnapshotExtractor.build = {
+            ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
         }
     }
 

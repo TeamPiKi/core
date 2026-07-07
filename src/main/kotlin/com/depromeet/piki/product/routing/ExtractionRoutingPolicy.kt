@@ -9,11 +9,9 @@ import org.springframework.stereotype.Component
 
 // 플랫폼(host)별 추출 라우팅의 단일 결정 지점(디스패처). "이 링크를 어떻게 다룰까"의 host 축 정책이 전부 여기로
 // 모인다 — 등록 경계의 미지원 거절(UNSUPPORTED)과 추출 체인의 브라우저 직행(HEADLESS_FIRST).
-// 인터페이스/구현 분리는 알림의 NotificationTemplateProvider 와 같은 구조 — 소비자(등록 경계·Fallback)의 단위
-// 테스트가 DB 없이 정책을 대체할 수 있게 한다.
-//
-// 원격 라우팅(EXTRACT_REMOTE_HOSTS)은 여기 합치지 않는다 — 그건 "어떻게 추출하나"가 아니라 전환기(strangler)의
-// "어디서 추출하나" 인프라 축이라 배포 파이프라인(GitHub Actions Variable)이 주인이고, 이관 8단계에서 소멸한다.
+// 인터페이스/구현 분리는 알림의 NotificationTemplateProvider 와 같은 구조 — 소비자(등록 경계·원격 클라이언트)의
+// 단위 테스트가 DB 없이 정책을 대체할 수 있게 한다. (전환기의 원격 라우팅 축 EXTRACT_REMOTE_HOSTS 는 이관
+// 8단계에서 embedded 경로와 함께 소멸했다 — 파싱은 전량 원격이다.)
 interface ExtractionRoutingPolicy {
     // 이 링크의 host 에 지정된 정책. 정책 행이 없으면 null — 기본 추출 체인(구조화 → LLM, 차단 시 헤드리스 에스컬레이트).
     fun routeOf(link: ProductLink): ExtractionRoute?

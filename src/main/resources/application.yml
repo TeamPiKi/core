@@ -111,34 +111,14 @@ oauth:
     redirect-uri: ${APPLE_REDIRECT_URI:}
     web-callback-url: ${APPLE_WEB_CALLBACK_URL:}
 
-gemini:
-  api-key: ${GEMINI_API_KEY:}
-  # 기본 모델은 GeminiProperties.DEFAULT_MODEL 한 곳에서만 정의한다 (drift 방지). 여기엔 리터럴을 두지 않는다.
-  # 운영에서 모델을 바꾸려면 GEMINI_MODEL 환경변수로 override (relaxed binding: GEMINI_MODEL -> gemini.model).
-  retry:
-    # max-attempts 는 총 시도 횟수(초기 호출 + 재시도). 기본 1 = 재시도 없음.
-    # URL 파싱 재시도를 outbox recover(ItemParsingScheduler) 한 곳으로 모았다(#461) — Gemini 내부 재시도를 켜면
-    # 단건 파싱이 재시도 1회당 약 +35s 늘어 60s 를 넘기고 "단건 ≤60s, 절대 3분 초과 금지" 보장이 깨진다. 올리기 전 그 영향을 반드시 확인.
-    # 한 요청이 유발하는 billed API 호출 횟수 상한이기도 해 비용·quota 와도 직결된다.
-    max-attempts: ${GEMINI_RETRY_MAX_ATTEMPTS:1}
-    initial-delay-ms: ${GEMINI_RETRY_INITIAL_DELAY_MS:1000}
-
 product:
   extract:
     remote:
-      # 원격 추출 서비스(PIKI-Extractor) 라우팅 스위치 (strangler 전환기). 값은 정확히 true/false 만 인식한다 —
-      # yes·on·1 은 스위치를 켜지 않는다(@ConditionalOnProperty 정확 매칭, 독자 단일화로 relaxed 바인딩 분열 차단).
-      # false(기본)면 원격 빈 자체가 뜨지 않아 기존 embedded 경로(FallbackProductLinkExtractor)가 그대로 쓰인다.
-      # 켜려면 base-url 이 필수다(부팅 시 검증).
-      enabled: ${EXTRACT_REMOTE_ENABLED:false}
+      # 파싱(링크·이미지)의 유일 경로인 원격 추출 서비스(PIKI-Extractor) 주소. 기본값을 두지 않는다 —
+      # env 누락이 localhost 등으로 조용히 흘러 모든 파싱이 런타임에만 실패하는 침묵 창을 만들지 않고,
+      # 부팅에서 즉시 실패시킨다(RemoteExtractionHttpClientConfig). 로컬 dual-boot 는 .env 의
+      # EXTRACT_REMOTE_BASE_URL=http://localhost:8090 으로 명시한다(.env.example 참고).
       base-url: ${EXTRACT_REMOTE_BASE_URL:}
-      # 원격으로 보낼 host 목록(콤마 구분, 도메인 단위 suffix 매칭·서브도메인 포함·대소문자 무관). 비면 아무것도
-      # 원격으로 가지 않는다(안전 기본값 — enabled 만 켜도 컷오버가 터지지 않는다). 전량 전환은 "*" 명시로만.
-      hosts: ${EXTRACT_REMOTE_HOSTS:}
-      # 이미지(OCR) 파싱의 원격 전환 게이트. 링크(hosts)와 독립적으로 켜고 끈다 — 이미지는 host 차원이 없어
-      # 이진 스위치다(켜면 전량 원격). enabled 와 이 키가 모두 true 여야 원격 이미지 빈이 뜬다(enabled=false 면
-      # 이 키와 무관하게 전부 embedded — enabled 한 줄이 링크·이미지 공통 롤백). 값 인식 규칙은 enabled 와 동일.
-      image-enabled: ${EXTRACT_REMOTE_IMAGE_ENABLED:false}
 
 s3:
   # 크롭한 상품 이미지 저장 버킷. 자격증명은 EC2 instance role / 로컬 환경변수(DefaultCredentialsProvider).

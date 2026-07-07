@@ -98,7 +98,7 @@ class AsyncItemParsingWorker(
             // 일시 외부 오류(네트워크·timeout·5xx 게이트웨이 등) — 다시 하면 될 수도 있으므로 FAILED 로 종결하지 않고
             // PROCESSING 그대로 둔다. recover 가 stale 로 잡아 상한까지 재실행한다(execution at-least-once, #461).
             // 종결이 아니라 메트릭은 여기서 세지 않고(recover 가 종결 시 retry_exhausted/ready 로 집계, 중복 방지),
-            // 풀 stack_trace 대신 logfmt 한 줄만 남긴다. fetch 실패 상세는 HttpPageFetcher 가 같은 traceId 로 남기지만,
+            // 풀 stack_trace 대신 logfmt 한 줄만 남긴다. 추출 실패 상세는 extractor 서비스가 같은 traceId 로 남기지만,
             // 재시도 로그만으로도 일시 오류 종류(network·timeout·5xx 등)를 분류할 수 있게 errorType·category·status 는 남긴다.
             val mappable = e as? HttpMappable
             log.warn(
@@ -128,7 +128,7 @@ class AsyncItemParsingWorker(
     }
 
     // 확정 실패의 메트릭 reason. 상품 아님·추출값 신뢰 불가(ProductSnapshotException)는 not_product 로 따로 센다
-    // (대시보드에서 "상품 아님"을 구분). 그 외 재시도 무의미 오류(호스트 차단·4xx·redirect 비정상·Gemini 영구)는 permanent_error.
+    // (대시보드에서 "상품 아님"을 구분). 그 외 재시도 무의미 오류(원격 422 확정 실패 — 호스트 차단·4xx 등의 원격 번역)는 permanent_error.
     private fun reasonOf(e: Throwable): String =
         when (e) {
             is ProductSnapshotException -> ItemParsingMetrics.REASON_NOT_PRODUCT

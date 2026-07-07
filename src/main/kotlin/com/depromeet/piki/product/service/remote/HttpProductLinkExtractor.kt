@@ -3,9 +3,9 @@ package com.depromeet.piki.product.service.remote
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoute
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
+import com.depromeet.piki.product.service.ProductLinkExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
 import org.springframework.beans.factory.annotation.Qualifier
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
@@ -17,15 +17,15 @@ import org.springframework.web.client.RestClient
 // 이쪽(DB) 이고, 무상태인 extractor 는 요청 단위로만 받는다(계약 §2). extractor 의 headless 스위치가 꺼져
 // 있으면 저쪽에서 무시되므로 여기서 따로 게이트하지 않는다 — 스위치는 능력을 가진 쪽(extractor) 한 곳에 둔다.
 //
-// ProductLinkExtractor 를 구현하지 않는다 — 진입점(ProductLinkExtractor) 주입 후보가 둘(Fallback + 이 빈)이 되는
-// 모호성을 피한다. 호출자는 RoutingProductLinkExtractor 뿐이며, 원격 서브시스템과 함께 같은 키로 뜨고 꺼진다.
+// 링크 파싱의 유일한 ProductLinkExtractor 구현이다 — embedded 체인(Fallback/Default/Headless)과 전환기
+// 라우팅(RoutingProductLinkExtractor)은 이관 8단계에서 삭제됐다. 워커(AsyncItemParsingWorker)는 이 경계 뒤에서
+// 파싱이 어디서 일어나는지 모른다.
 @Component
-@ConditionalOnProperty(prefix = "product.extract.remote", name = ["enabled"], havingValue = "true")
 class HttpProductLinkExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,
     private val routingPolicy: ExtractionRoutingPolicy,
-) {
-    fun extract(link: ProductLink): ProductSnapshot =
+) : ProductLinkExtractor {
+    override fun extract(link: ProductLink): ProductSnapshot =
         RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
             path = LINK_EXTRACTION_PATH,

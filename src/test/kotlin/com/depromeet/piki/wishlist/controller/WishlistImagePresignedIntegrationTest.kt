@@ -1,13 +1,12 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.image.service.ImageExtraction
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductImageExtractor
+import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.awaitility.Awaitility.await
@@ -42,7 +41,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     private lateinit var objectMapper: ObjectMapper
 
     @Autowired
-    private lateinit var stubProductImageExtractor: StubProductImageExtractor
+    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
@@ -161,8 +160,8 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로, 깨끗한 추출 결과를 세팅해 둔다.
-            stubProductImageExtractor.build = {
-                ImageExtraction(ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"), boundingBox = null)
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -195,8 +194,8 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"), boundingBox = null)
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -286,8 +285,8 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW"), boundingBox = null)
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))

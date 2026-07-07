@@ -113,12 +113,12 @@ internal data class RemoteExtractionResponse(
     val currentPrice: Int? = null,
     val currency: String? = null,
 ) {
-    // 외부 응답 → 도메인 매핑은 DTO 자신이 진다 (CLAUDE.md, GeminiExtractionResult.toProductSnapshot 과 같은 패턴).
+    // 외부 응답 → 도메인 매핑은 DTO 자신이 진다 (CLAUDE.md, embedded 시절의 외부 결과→도메인 매핑과 같은 패턴).
     // fromExtracted 를 반드시 경유한다 — https-only imageUrl(XSS 사다리 차단)·currency ISO 정규화·범위 검증은
     // 모든 추출 경로가 공유하는 단일 진실 원천이고, 원격 계약이 정상 값을 보장하더라도 신뢰 경계(외부 서비스)를
     // 넘어온 값은 우리 경계에서 다시 검증한다(다층 방어). 범위 위반은 embedded 의 LLM 경로와 동일하게
     // untrustworthyValue(→ 워커 reason=not_product)로 떨어진다.
-    // link 는 이미지 추출엔 원본 URL 이 없어 null 이다 — embedded 이미지 경로(GeminiImageResult)와 같은 계약.
+    // link 는 이미지 추출엔 원본 URL 이 없어 null 이다 — 이미지 경로의 계약(원본 URL 없음 — extractor 계약 §2).
     fun toProductSnapshot(link: ProductLink?): ProductSnapshot =
         ProductSnapshot.fromExtracted(
             link = link,

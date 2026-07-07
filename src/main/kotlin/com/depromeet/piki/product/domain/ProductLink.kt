@@ -11,12 +11,12 @@ class ProductLink private constructor(
     fun safeLogString(): String = "${value.host ?: "?"}${value.rawPath ?: ""}"
 
     // host 가 주어진 도메인 목록의 항목과 같거나 그 서브도메인이면 true 인 도메인 단위 매칭의 단일 술어.
-    // 미지원 플랫폼 판정(ExtractionRoutingPolicy)과 원격 추출 라우팅(RoutingProductLinkExtractor)이 공유한다 —
+    // 플랫폼 라우팅 정책 판정(ExtractionRoutingPolicy)이 쓰는 도메인 매칭 술어다 —
     // 정규화 규칙(trailing dot 제거, lowercase, 부분 문자열이 아닌 도메인 단위)이 바뀔 때 사본들이 갈라지지 않게
     // 도메인이 규칙의 주인을 맡는다. host 가 없으면(형식 이상은 parse 가 이미 처리) 어느 목록과도 매칭되지 않는다.
     // trailing dot(절대 도메인 표기, 예: "naver.com.")은 제거해 우회를 막는다. Kotlin lowercase() 는 locale 무관(invariant).
-    // domains 항목은 소문자·trailing dot 없는 정규형이어야 한다 — 출처(DB 정책은 admin 경계와 엔티티 불변식,
-    // env 출처는 RemoteExtractionProperties.normalizedHosts)가 정규화를 책임진다.
+    // domains 항목은 소문자·trailing dot 없는 정규형이어야 한다 — 출처(DB 정책의 admin 경계와 엔티티 불변식)가
+    // 정규화를 책임진다. 새 출처가 생기면 그 출처가 같은 정규화를 진다.
     fun matchesAnyDomain(domains: Collection<String>): Boolean {
         val host = value.host?.trimEnd('.')?.lowercase() ?: return false
         return domains.any { host == it || host.endsWith(".$it") }
