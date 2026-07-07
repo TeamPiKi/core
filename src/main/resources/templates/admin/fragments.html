@@ -89,8 +89,11 @@
       }
       btn.addEventListener('click', function () {
         btn.disabled = true;
-        fetch('/admin/session/extend', { method: 'POST' }).then(function (r) { return r.json(); })
+        // 실패(비 2xx·네트워크)면 기존 카운트다운을 유지한다 — 응답 실패를 "만료됨"으로 오표시하지 않는다.
+        fetch('/admin/session/extend', { method: 'POST' })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
           .then(function (d) { start(d.remainingSeconds); })
+          .catch(function () {})
           .finally(function () { btn.disabled = false; });
       });
       load();

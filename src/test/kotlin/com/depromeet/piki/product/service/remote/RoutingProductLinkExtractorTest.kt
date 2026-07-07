@@ -24,7 +24,13 @@ class RoutingProductLinkExtractorTest {
 
     // HttpProductLinkExtractor 는 @Component 라 all-open 으로 열려 있어 fake 서브클래스로 결과만 주입한다
     // (실 구현은 네트워크를 요구해 단위로 세울 수 없다 — FallbackProductLinkExtractorTest 의 FakeStrategy 와 같은 접근).
-    private inner class FakeRemote : HttpProductLinkExtractor(RestClient.builder().build()) {
+    private inner class FakeRemote : HttpProductLinkExtractor(
+        RestClient.builder().build(),
+        // extract 를 통째로 override 하므로 정책은 닿지 않는다 — 생성자 시그니처만 채운다.
+        object : ExtractionRoutingPolicy {
+            override fun routeOf(link: ProductLink): ExtractionRoute? = null
+        },
+    ) {
         var calls = 0
 
         override fun extract(link: ProductLink): ProductSnapshot {
