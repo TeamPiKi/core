@@ -705,8 +705,9 @@ jobs:
             staging) TARGET="PiKi-Staging" ;;
             *)       TARGET="PiKi-Dev" ;;
           esac
-          # Discord 마크다운: 링크는 [text](url), 멘션은 <@id>. named 링크는 큰 임베드를 안 만든다.
-          TEXT=$(printf '✅ `%s` 배포 성공!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• [워크플로우 로그](%s)' \
+          # Discord 마크다운: 링크는 [text](url), 멘션은 <@id>. named 링크도 임베드 카드를 만들므로,
+          # 카드가 안 뜨게 URL 을 <> 로 감싼다(하이퍼링크 클릭은 유지). 배포 알림은 카드 없이 링크만 둔다.
+          TEXT=$(printf '✅ `%s` 배포 성공!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](<%s>)  %s\n• [워크플로우 로그](<%s>)' \
             "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$RUN_URL")
 
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
@@ -774,7 +775,7 @@ jobs:
             staging) TARGET="PiKi-Staging" ;;
             *)       TARGET="PiKi-Dev" ;;
           esac
-          TEXT=$(printf '❌ `%s` 배포 실패!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](%s)  %s\n• 원인: %s\n• [워크플로우 로그 확인](%s)' \
+          TEXT=$(printf '❌ `%s` 배포 실패!\n• 경로: `%s` 브랜치 → %s (%s)\n• 배포자: %s\n• 커밋: [%s](<%s>)  %s\n• 원인: %s\n• [워크플로우 로그 확인](<%s>)' \
             "$TARGET" "$BRANCH" "$TARGET" "$DOMAIN" "$ACTOR_MENTION" "$SHORT_SHA" "$COMMIT_URL" "$COMMIT_MSG" "$CAUSE" "$RUN_URL")
 
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
@@ -838,7 +839,7 @@ jobs:
           DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
           DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
-          TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](%s)\n• 배포자: %s' \
+          TEXT=$(printf '🏷️ Production 릴리즈 `%s` 배포 완료!\n• 도메인: %s\n• 릴리즈: [%s 릴리즈 노트](<%s>)\n• 배포자: %s' \
             "$TAG" "$DOMAIN" "$TAG" "$RELEASE_URL" "$ACTOR_MENTION")
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
