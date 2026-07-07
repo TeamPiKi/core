@@ -14,4 +14,14 @@ class StubImageSnapshotExtractor : ImageSnapshotExtractor {
     }
 
     override fun extract(imageKey: String): ProductSnapshot = build(imageKey)
+
+    companion object {
+        // 시나리오가 값 자체에 관심 없는 테스트용 기본 성공 스냅샷 — READY 불변식(name·price·imageUrl)을 채운다.
+        // 스냅샷 필드가 바뀌면 여기 한 곳만 고치면 된다 (같은 모양 람다가 테스트마다 복붙되는 것을 막는다).
+        fun defaultSnapshot(
+            name: String = "상품",
+            currentPrice: Int = 1_000,
+            imageUrl: String = "https://img.example.com/p.png",
+        ): ProductSnapshot = ProductSnapshot(link = null, name = name, currentPrice = currentPrice, currency = "KRW", imageUrl = imageUrl)
+    }
 }

@@ -15,8 +15,7 @@ import org.springframework.web.client.RestClient
 // bucket 을 요청에 싣는 이유: 버킷은 환경(dev/staging/prod)마다 다른데 그 구분은 본 서버 설정(S3Properties)이
 // 이미 쥐고 있다 — extractor 는 버킷 무관(무상태)으로 두고 호출자가 자기 버킷을 알려준다.
 //
-// 이미지 파싱의 유일한 ImageSnapshotExtractor 구현이다 — embedded 경로(EmbeddedImageSnapshotExtractor)와
-// 전환기 게이트(enabled·image-enabled)는 이관 8단계에서 삭제됐다.
+// 이미지 파싱의 유일한 ImageSnapshotExtractor 구현이다.
 @Component
 class HttpImageSnapshotExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,
@@ -26,7 +25,7 @@ class HttpImageSnapshotExtractor(
 
     override fun extract(imageKey: String): ProductSnapshot {
         // 이미지 파싱 발주 원장. key 는 내부 식별자(items/raw/{uuid})라 로그에 안전하다.
-        // (route=remote 토큰은 전환기 대시보드 호환용으로 유지 — 이제 원격이 유일 경로다.)
+        // route=remote 토큰은 기존 로그 쿼리 호환용이다.
         log.info("image extract route=remote key={}", imageKey)
         // 이미지 추출엔 원본 URL 이 없어 link=null (extractor 계약 §2 image 와 동일).
         return RemoteExtractionContract.postForSnapshot(

@@ -17,9 +17,8 @@ import org.springframework.web.client.RestClient
 // 이쪽(DB) 이고, 무상태인 extractor 는 요청 단위로만 받는다(계약 §2). extractor 의 headless 스위치가 꺼져
 // 있으면 저쪽에서 무시되므로 여기서 따로 게이트하지 않는다 — 스위치는 능력을 가진 쪽(extractor) 한 곳에 둔다.
 //
-// 링크 파싱의 유일한 ProductLinkExtractor 구현이다 — embedded 체인(Fallback/Default/Headless)과 전환기
-// 라우팅(RoutingProductLinkExtractor)은 이관 8단계에서 삭제됐다. 워커(AsyncItemParsingWorker)는 이 경계 뒤에서
-// 파싱이 어디서 일어나는지 모른다.
+// 링크 파싱의 유일한 ProductLinkExtractor 구현이다. 워커(AsyncItemParsingWorker)는 이 경계 뒤의
+// 원격 호출을 모른다 — 파싱은 전부 PIKI-Extractor(Java 서비스)가 한다.
 @Component
 class HttpProductLinkExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,

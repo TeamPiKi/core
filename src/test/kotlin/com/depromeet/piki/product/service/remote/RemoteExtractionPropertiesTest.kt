@@ -4,10 +4,16 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-// RemoteExtractionProperties 의 불변식(타임아웃 경계)을 주석이 아니라 테스트로 고정한다.
+// RemoteExtractionProperties 의 불변식(base-url 필수·타임아웃 경계)을 주석이 아니라 테스트로 고정한다.
 // read-timeout < stale(60s) 은 recover 유령 중복 발주를 막는 크로스모듈 계약이고, 0/음수 타임아웃은
 // HttpURLConnection 에서 무한 대기라 워커 스레드를 영구 블록한다 — 둘 다 부팅에서 거부돼야 한다.
 class RemoteExtractionPropertiesTest {
+    @Test
+    fun `base-url 이 비어 있으면 부팅에서 거부한다 - 원격 추출은 유일한 파싱 경로다`() {
+        assertFailsWith<IllegalArgumentException> { RemoteExtractionProperties(baseUrl = "") }
+        assertFailsWith<IllegalArgumentException> { RemoteExtractionProperties(baseUrl = "  ") }
+    }
+
     @Test
     fun `read-timeout 이 stale 판정(60s) 이상이면 부팅에서 거부한다`() {
         assertFailsWith<IllegalArgumentException> {

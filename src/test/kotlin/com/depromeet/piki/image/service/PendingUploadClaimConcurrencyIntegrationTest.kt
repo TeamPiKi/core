@@ -1,6 +1,5 @@
 package com.depromeet.piki.image.service
 
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
@@ -119,9 +118,7 @@ class PendingUploadClaimConcurrencyIntegrationTest : IntegrationTestSupport() {
     // ---- 헬퍼 ----
 
     private fun seedExtractor() {
-        stubImageSnapshotExtractor.build = {
-            ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
-        }
+        stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
     }
 
     // 발급 직후 createdAt 은 now 라 POLL_GRACE 안이다. 폴링 대상이 되도록 발급 시각을 과거로 밀어 grace 를 통과시킨다.

@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 // 보수적으로 재시도 대상으로 두는 것 — 즉시 FAILED 로 떨어뜨리면 일시 오류를 영구로 오판해 사라진다.
 // recover 상한이 무한 재시도를 막으므로 bounded 하다(#461 retry-first 기조).
 // (예외 표본은 원격 파싱 경계의 실제 산출물 — 일시 실패는 transientFailure(원격 5xx·연결 실패),
-//  확정 실패는 permanentFailure(422)·ProductSnapshotException 이다. 이관 8단계에서 embedded 예외 표본을 대체.)
+//  확정 실패는 permanentFailure(422)·ProductSnapshotException 이다.)
 class AsyncItemParsingWorkerTest {
     @Test
     fun `RETRYABLE 인 HttpMappable 예외는 재시도 대상이다`() {

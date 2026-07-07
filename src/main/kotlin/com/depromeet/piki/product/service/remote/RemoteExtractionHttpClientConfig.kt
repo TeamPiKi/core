@@ -18,8 +18,7 @@ class RemoteExtractionHttpClientConfig {
         observationRegistry: ObservationRegistry,
         properties: RemoteExtractionProperties,
     ): RestClient {
-        // 파싱의 유일 경로라 base-url 없인 모든 파싱이 연결 실패로 위장된다 — 부팅에서 즉시 드러낸다.
-        require(properties.baseUrl.isNotBlank()) { "product.extract.remote.base-url 이 비어 있다 — 원격 추출은 유일한 파싱 경로다." }
+        // base-url 검증은 RemoteExtractionProperties.init 이 진다(검증 단일 지점 — 타임아웃 불변식과 같은 자리).
         return RestClient
             .builder()
             .baseUrl(properties.baseUrl)

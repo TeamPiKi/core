@@ -160,9 +160,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로, 깨끗한 추출 결과를 세팅해 둔다.
-            stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
-            }
+            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 
@@ -194,9 +192,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
-            }
+            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 
