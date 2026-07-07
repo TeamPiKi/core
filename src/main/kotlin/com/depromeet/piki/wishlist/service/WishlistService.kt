@@ -9,6 +9,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -27,6 +28,7 @@ import java.util.UUID
 @Service
 class WishlistService(
     private val wishPersistenceService: WishPersistenceService,
+    private val extractionRoutingPolicy: ExtractionRoutingPolicy,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
@@ -54,7 +56,8 @@ class WishlistService(
         requireMember(userId)
         val link = ProductLink.parse(rawUrl)
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
-        link.verifySupportedPlatform()
+        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
+        extractionRoutingPolicy.verifyRegistrable(link)
         return wishPersistenceService.persist(userId, Item(link))
     }
 

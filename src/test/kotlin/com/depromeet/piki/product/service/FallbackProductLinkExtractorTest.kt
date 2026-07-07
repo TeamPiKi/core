@@ -1,6 +1,8 @@
 package com.depromeet.piki.product.service
 
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoute
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.product.service.http.PageFetchException
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -26,16 +28,23 @@ class FallbackProductLinkExtractorTest {
         }
     }
 
+    // 정책은 DB 기반(DbExtractionRoutingPolicy)이라 단위에선 고정 응답 fake 로 대체한다 — 라우팅 로직이 검증 대상.
+    private class FakeRoutingPolicy(private val route: ExtractionRoute? = null) : ExtractionRoutingPolicy {
+        override fun routeOf(link: ProductLink): ExtractionRoute? = route
+    }
+
     private fun fallback(
         headlessEnabled: Boolean,
         plain: FakeStrategy,
         headless: FakeStrategy,
         meterRegistry: MeterRegistry = SimpleMeterRegistry(),
+        route: ExtractionRoute? = null,
     ) = FallbackProductLinkExtractor(
         plain,
         headless,
         meterRegistry,
         HeadlessExtractionProperties(enabled = headlessEnabled),
+        FakeRoutingPolicy(route),
     )
 
     @Test
@@ -139,6 +148,31 @@ class FallbackProductLinkExtractorTest {
         assertFailsWith<PageFetchException> {
             fallback(headlessEnabled = true, plain, headless).extract(link)
         }
+        assertEquals(0, headless.calls)
+    }
+
+    @Test
+    fun `HEADLESS_FIRST 정책인 host 는 plain 을 건너뛰고 처음부터 headless 로 추출한다`() {
+        val plain = FakeStrategy { error("plain 은 호출되면 안 됨") }
+        val headless = FakeStrategy { snapshot }
+
+        val result = fallback(headlessEnabled = true, plain = plain, headless = headless, route = ExtractionRoute.HEADLESS_FIRST).extract(link)
+
+        assertEquals(snapshot, result)
+        assertEquals(0, plain.calls)
+        assertEquals(1, headless.calls)
+    }
+
+    @Test
+    fun `HEADLESS_FIRST 정책이어도 headless 스위치가 꺼져 있으면 plain 으로 위임한다 - 스위치가 상위 게이트`() {
+        // 헤드리스 구현이 붙기 전(이관 7단계) 정책만 먼저 지정돼도 안전해야 한다 — 꺼진 스위치가 직행보다 우선.
+        val plain = FakeStrategy { snapshot }
+        val headless = FakeStrategy { error("headless 는 호출되면 안 됨") }
+
+        val result = fallback(headlessEnabled = false, plain = plain, headless = headless, route = ExtractionRoute.HEADLESS_FIRST).extract(link)
+
+        assertEquals(snapshot, result)
+        assertEquals(1, plain.calls)
         assertEquals(0, headless.calls)
     }
 }

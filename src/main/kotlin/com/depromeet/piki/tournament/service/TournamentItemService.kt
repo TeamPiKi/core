@@ -7,6 +7,7 @@ import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import org.springframework.stereotype.Service
@@ -16,6 +17,7 @@ import java.util.UUID
 @Service
 class TournamentItemService(
     private val tournamentItemPersistenceService: TournamentItemPersistenceService,
+    private val extractionRoutingPolicy: ExtractionRoutingPolicy,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
@@ -29,7 +31,8 @@ class TournamentItemService(
     ): Long {
         val link = ProductLink.parse(url)
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다(400).
-        link.verifySupportedPlatform()
+        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
+        extractionRoutingPolicy.verifyRegistrable(link)
         // URL 경로는 PENDING snapshot 을 커밋만 하고(outbox 적재) 즉시 반환한다. 파싱은 디스패처(@Scheduled)가
         // PENDING 을 집어 워커에 넘긴다 — @Async 유실과 무관하게 최소 1회는 claim 된다(at-least-once).
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
