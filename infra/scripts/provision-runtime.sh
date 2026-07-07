@@ -138,6 +138,7 @@ else
     -e GRAFANA_TRACES_URL="${GRAFANA_TRACES_URL:-}" \
     -e GRAFANA_TRACES_USER="${GRAFANA_TRACES_USER:-}" \
     -e GRAFANA_CLOUD_TOKEN="${GRAFANA_CLOUD_TOKEN:-}" \
+    -e EXTRACTOR_METRICS_TARGET="${EXTRACTOR_METRICS_TARGET:-}" \
     grafana/alloy:v1.16.1 \
       run --server.http.listen-addr=127.0.0.1:12345 /etc/alloy/config.alloy
 fi

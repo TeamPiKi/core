@@ -48,9 +48,13 @@ jobs:
             echo "domain=dev.api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=dev.api.piki.day.conf" >> "$GITHUB_OUTPUT"
           fi
-          # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod 만 t4g.small(1.8G)로 스케일업(#596)했고
-          # dev/staging 은 906M 박스라 현행을 유지한다. blue-green overlap(전환 중 잠깐 2개 동시) 기준:
-          #   prod 2×768=1536 < 1.8G RAM, dev/staging 2×400=800 < 906M RAM 안에 들어가 swap thrash 를 막는다.
+          # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod(#596)와 dev(#680 동거 대비 리사이즈)는
+          # t4g.small(1.8G), staging 만 906M 박스라 현행을 유지한다. blue-green overlap(전환 중 잠깐 2개 동시) 기준:
+          #   prod 2×768=1536 < 1.8G, dev 2×512 + 동거(extractor 384 + mysql·alloy·redis 약 160) ≈ 1.57G < 1.8G,
+          #   staging 2×400=800 < 906M 안에 들어가 swap thrash 를 막는다.
+          # dev 576m/288m 산정(2026-07-07 실측 2회): 캡 400m(Xmx256)·512m(Xmx320) 모두 anon 이 캡을 초과해 상시
+          #   swap-out 이었다. prod 실측(768m 캡에 실사용 720m, 힙 최대 512 제외 비힙 약 250m)으로 이 앱의 비힙을
+          #   약 250-300m 으로 확정 — 캡은 힙 + 300m 여유로 잡는다(576 = 288 + 288).
           # 힙(-Xmx)은 컨테이너 RAM 안에 비힙(metaspace·thread stack·code cache·direct buffer) 여유를 남겨 잡는다.
           # 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정한다.
           # GC 는 -XX:+UseG1GC 를 명시한다(환경 공통). JVM 은 컨테이너 메모리 한도를 가용 메모리로 인식하는데, G1 자동
@@ -61,10 +65,14 @@ jobs:
             echo "mem_limit=768m" >> "$GITHUB_OUTPUT"
             echo "mem_swap=1536m" >> "$GITHUB_OUTPUT"
             echo "jvm_opts=-Xmx512m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$BRANCH" = "staging" ]; then
             echo "mem_limit=400m" >> "$GITHUB_OUTPUT"
             echo "mem_swap=800m" >> "$GITHUB_OUTPUT"
             echo "jvm_opts=-Xmx256m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
+          else
+            echo "mem_limit=576m" >> "$GITHUB_OUTPUT"
+            echo "mem_swap=1152m" >> "$GITHUB_OUTPUT"
+            echo "jvm_opts=-Xmx288m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
@@ -313,11 +321,16 @@ jobs:
           GRAFANA_TRACES_URL: ${{ secrets.GRAFANA_TRACES_URL }}
           GRAFANA_TRACES_USER: ${{ secrets.GRAFANA_TRACES_USER }}
           GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+          # piki-extractor(파싱 분리 이관) 메트릭 scrape 대상 — Alloy(--network host)가 이 주소를 긁는다.
+          # dev=동거 컨테이너(localhost:8090), prod=전용 박스(secrets.EXTRACTOR_PROD_ADDRESS, 앱 SG→8090 허용). staging 은
+          # 빈 값 → config.alloy 가 discard 포트로 fallback(prod extractor 는 prod Alloy 가 이미 수집, 환경 라벨 오염 방지).
+          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다).
+          EXTRACTOR_METRICS_TARGET: ${{ needs.resolve.outputs.environment == 'dev' && 'localhost:8090' || (needs.resolve.outputs.environment == 'prod' && secrets.EXTRACTOR_PROD_ADDRESS || '') }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT,DB_NAME,DB_USERNAME,DB_PASSWORD,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN
+          envs: ENVIRONMENT,DB_NAME,DB_USERNAME,DB_PASSWORD,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
           script: |
             chmod +x /tmp/team3-provision/provision-runtime.sh
             /tmp/team3-provision/provision-runtime.sh
@@ -386,11 +399,23 @@ jobs:
           # 흐려지는 걸 막는다. release 잡의 GitHub Release 도 prod 한정이라, prod 에선 Sentry release == GitHub Release(v1.0.1)로
           # 맞고 suspect commit·regression 이 그 태그 커밋으로 이어진다(GitHub 연동 승인 후). github.sha(deploy.yml HEAD)는 안 쓴다.
           SENTRY_RELEASE: ${{ (needs.resolve.outputs.environment == 'prod' && inputs.version != '') && inputs.version || needs.resolve.outputs.ref }}
+          # 원격 추출(PIKI-Extractor) 라우팅 스위치 (#680). 코드 변경 없이 GitHub Actions Variable 로 롤아웃을 제어한다:
+          #   vars.EXTRACT_REMOTE_ENABLED (기본 false, inert) — true 로 켜면 원격 빈이 뜬다. 켜기 전 base-url 이 필수라 아래를 함께 둔다.
+          #   vars.EXTRACT_REMOTE_HOSTS  (기본 빈값=아무것도 원격 안 감) — 점진 전환 시 'musinsa.com' 처럼 소수 host, 전량은 '*'.
+          #   vars.EXTRACT_REMOTE_IMAGE_ENABLED (기본 false) — 이미지(OCR) 파싱의 원격 게이트. 링크(hosts)와 독립, ENABLED 와 둘 다 true 여야 켜진다.
+          # enabled=true + hosts 빈값이면 원격 빈은 뜨나 어떤 링크도 원격으로 안 가는 안전 상태(no-op). 롤백은 enabled=false 한 줄(링크·이미지 공통).
+          EXTRACT_REMOTE_ENABLED: ${{ vars.EXTRACT_REMOTE_ENABLED || 'false' }}
+          EXTRACT_REMOTE_HOSTS: ${{ vars.EXTRACT_REMOTE_HOSTS }}
+          EXTRACT_REMOTE_IMAGE_ENABLED: ${{ vars.EXTRACT_REMOTE_IMAGE_ENABLED || 'false' }}
+          # base-url 은 환경별 고정 — dev=동거 컨테이너(앱 컨테이너는 --add-host host.docker.internal 로 호스트에 닿는다),
+          # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용). enabled=false 면 미사용.
+          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
+          EXTRACT_REMOTE_BASE_URL: ${{ needs.resolve.outputs.environment == 'dev' && 'http://host.docker.internal:8090' || format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE
+          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_ENABLED,EXTRACT_REMOTE_HOSTS,EXTRACT_REMOTE_BASE_URL,EXTRACT_REMOTE_IMAGE_ENABLED
           script: |
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
@@ -403,6 +428,18 @@ jobs:
             if [ -z "$APPLE_WEB_CALLBACK_URL" ]; then
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
+            fi
+            # 원격 추출(#680)을 켰는데(EXTRACT_REMOTE_ENABLED=true) base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS
+            # secret 미설정 → base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는
+            # 통과해 배포는 성공하나 원격 호출이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
+            if [ "$EXTRACT_REMOTE_ENABLED" = "true" ] && { [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; }; then
+              echo "::error::EXTRACT_REMOTE_ENABLED=true 인데 base-url host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
+              exit 1
+            fi
+            # 이미지 게이트만 켜고 마스터 스위치가 꺼진 반쪽 켜짐은 앱이 조용히 embedded 로 남는다(부팅 오류 없음).
+            # 배포는 유효한 상태라 막지 않되(enabled=false 는 링크·이미지 공통 롤백 경로), 켰다고 믿는 오설정을 로그로 드러낸다.
+            if [ "$EXTRACT_REMOTE_IMAGE_ENABLED" = "true" ] && [ "$EXTRACT_REMOTE_ENABLED" != "true" ]; then
+              echo "::warning::EXTRACT_REMOTE_IMAGE_ENABLED=true 인데 EXTRACT_REMOTE_ENABLED 가 꺼져 있어 이미지 원격 게이트가 무효 (전량 embedded 로 동작)"
             fi
 
             IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
@@ -480,6 +517,10 @@ jobs:
               -e TRACING_OTLP_ENABLED="true" \
               -e SPRING_PROFILES_ACTIVE="$SPRING_PROFILES_ACTIVE" \
               -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+              -e EXTRACT_REMOTE_ENABLED="$EXTRACT_REMOTE_ENABLED" \
+              -e EXTRACT_REMOTE_HOSTS="$EXTRACT_REMOTE_HOSTS" \
+              -e EXTRACT_REMOTE_BASE_URL="$EXTRACT_REMOTE_BASE_URL" \
+              -e EXTRACT_REMOTE_IMAGE_ENABLED="$EXTRACT_REMOTE_IMAGE_ENABLED" \
               -e DB_HOST="$DB_HOST" \
               -e DB_PORT="$DB_PORT" \
               -e DB_NAME="$DB_NAME" \

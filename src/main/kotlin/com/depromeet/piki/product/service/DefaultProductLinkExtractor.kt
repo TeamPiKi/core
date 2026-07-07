@@ -9,20 +9,21 @@ import org.jsoup.Jsoup
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
-// 상품 URL 추출의 오케스트레이터. fetch 를 1회 수행하고, 구조화 데이터(JSON-LD/OpenGraph)로 먼저 파싱한다.
-// 필수 필드가 검증을 통과하면 LLM 을 건너뛰고, 미달이면 같은 HTML 을 Gemini 로 넘겨 추출한다(재fetch 없음).
-// 진입점은 ProductLinkExtractor 단일 빈이라 AsyncItemParsingWorker 의 호출·통합 테스트 stub 구조가 그대로 유지된다.
+// 정적 HTTP fetch 기반 추출 "전략"(LinkExtractionStrategy)이다. fetch 를 1회 수행하고, 구조화 데이터(JSON-LD/OpenGraph)로
+// 먼저 파싱한다. 필수 필드가 검증을 통과하면 LLM 을 건너뛰고, 미달이면 같은 HTML 을 Gemini 로 넘겨 추출한다(재fetch 없음).
+// 공개 진입점은 FallbackProductLinkExtractor(ProductLinkExtractor 구현)이고, 이 빈은 그 "plain" 전략으로 주입된다 —
+// AsyncItemParsingWorker·통합 테스트 stub 은 여전히 진입점(ProductLinkExtractor)만 보므로 호출·격리 구조가 그대로 유지된다.
 //
 // 추출 방법을 product.extract 카운터로 집계한다 — via=structured(직접 파싱) 대 via=llm(LLM fallback) 의 비율이
 // 곧 비싼 LLM 호출을 얼마나 줄였는지의 비용 지표다. fallback 은 reason 라벨로 사유(no_data/missing_field/invalid_value)를
 // 분해해 "직접 파싱 적중률을 올리려면 어디를 보강할지"를 본다. application 태그는 management.metrics.tags 가 자동 부착한다.
-@Component
+@Component(LinkExtractionStrategy.PLAIN)
 class DefaultProductLinkExtractor(
     private val pageFetcher: PageFetcher,
     private val structuredDataExtractor: StructuredDataExtractor,
     private val geminiHtmlExtractor: GeminiHtmlExtractor,
     private val meterRegistry: MeterRegistry,
-) : ProductLinkExtractor {
+) : LinkExtractionStrategy {
     private val log = LoggerFactory.getLogger(javaClass)
 
     override fun extract(link: ProductLink): ProductSnapshot {

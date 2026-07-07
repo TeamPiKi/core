@@ -5,6 +5,7 @@ import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.service.PageContent
 import com.depromeet.piki.product.service.PageFetcher
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.client.ResourceAccessException
@@ -23,7 +24,9 @@ import java.nio.charset.Charset
 // 연결도 이뤄지게(IP pin) 해 DNS rebinding/TOCTOU 를 닫는다. 한 fetch 가 끝나면 clear() 로 캐시를 비운다.
 @Component
 class HttpPageFetcher(
-    private val restClient: RestClient,
+    // RestClient 빈이 둘(pageFetchRestClient·remoteExtractionRestClient)이라 대상을 명시한다 —
+    // 타입 단일 후보에 기대던 기존 주입은 빈 추가만으로 조용히 깨지는 잠재 결함이었다.
+    @Qualifier("pageFetchRestClient") private val restClient: RestClient,
     private val dnsResolver: RequestScopedDnsResolver,
 ) : PageFetcher {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -76,10 +79,12 @@ class HttpPageFetcher(
         } catch (e: RestClientResponseException) {
             log.warn("link fetch failed: status={} url={}", e.statusCode, current.safeLogString())
             throw when {
-                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않는다(SERVER_ERROR).
-                // 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도 대상(RETRYABLE)으로 둔다.
+                // 500/501 은 봇 차단처럼 결정론적 영구 실패가 흔해 재시도하지 않고(SERVER_ERROR), 헤드리스면 뚫릴 수 있어
+                // escalatable 로 던진다. 대형 몰은 상시 가용이라 우리가 받는 500/501 은 대개 봇 방어이고, body 유무로 장애/차단이
+                // 깔끔히 안 갈려 body 를 구분하지 않는다. 502/503/504 는 일시(게이트웨이·과부하·타임아웃)일 수 있어 재시도(RETRYABLE) 대상.
                 e.statusCode.value() in PERMANENT_SERVER_ERRORS -> PageFetchException.permanentUpstreamError(e)
                 e.statusCode.is5xxServerError -> PageFetchException.upstreamError(e)
+                // 그 외 4xx(403·404·410·429 등)는 봇 방어의 클로킹일 수 있어 clientError 가 escalatable 로 던진다(무조건 폴백).
                 else -> PageFetchException.clientError(e)
             }
         } catch (e: ResourceAccessException) {

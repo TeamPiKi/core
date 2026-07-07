@@ -1,5 +1,7 @@
 package com.depromeet.piki.wishlist.service
 
+import com.depromeet.piki.image.domain.PendingUploadContext
+import com.depromeet.piki.image.service.PendingUploadClaimer
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -24,6 +26,7 @@ class WishPersistenceService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val pendingUploadClaimer: PendingUploadClaimer,
 ) {
     // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
     // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
@@ -40,10 +43,30 @@ class WishPersistenceService(
         return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
     }
 
-    // 이미지 다건 등록용 — 각 이미지의 S3 raw key 를 든 item 을 배치 저장하고, 각각에 PENDING snapshot·wish 를 건다.
+    // v1(multipart) 이미지 다건 등록 — 서버가 바이트를 받아 S3 에 올린 뒤 pending 매핑 없이 바로 적재한다.
     // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 outbox 에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
     @Transactional
     fun persistPendingImages(
+        userId: UUID,
+        imageKeys: List<String>,
+    ): List<WishWithItem> = persistImagesInternal(userId, imageKeys)
+
+    // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
+    // 잠가 삭제(claim)하고, claim 에 성공한(=이 트랜잭션이 가져간) WISH 매핑만 적재한다 — confirm·폴링이 같은 key 를
+    // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 user·토너먼트 맥락 매핑은 걸러낸다.
+    @Transactional
+    fun registerClaimedImages(
+        imageKeys: List<String>,
+        userId: UUID,
+    ): List<WishWithItem> {
+        val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.WISH, userId, tournamentId = null)
+        if (claimedKeys.isEmpty()) return emptyList()
+        return persistImagesInternal(userId, claimedKeys)
+    }
+
+    // 이미지 key 들을 item(정체성) → PENDING snapshot(outbox 적재) → wish 순서로 배치 적재하는 공통 코어.
+    // 트랜잭션은 호출부(persistPendingImages·registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
+    private fun persistImagesInternal(
         userId: UUID,
         imageKeys: List<String>,
     ): List<WishWithItem> {

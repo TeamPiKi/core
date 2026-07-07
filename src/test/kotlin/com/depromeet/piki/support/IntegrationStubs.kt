@@ -17,6 +17,11 @@ import org.springframework.context.annotation.Primary
 // 파라미터명이 우연히 일치하는 데 기대지 않으므로, 파라미터명을 리팩터링해도 격리가 깨지지 않는다.
 @TestConfiguration(proxyBeanMethods = false)
 class IntegrationStubs {
+    // 주의: product.extract.remote.enabled 를 테스트 프로퍼티로 켜면 RoutingProductLinkExtractor(@Primary)가 함께 떠
+    // 이 stub(@Primary)과 충돌해 컨텍스트 부팅이 깨진다. image-enabled 도 같다 — 함께 켜면 HttpImageSnapshotExtractor
+    // (@Primary)가 embedded 를 가로채 StubProductImageExtractor·StubImageStorage 격리를 조용히 우회한다.
+    // 원격 모드 검증은 통합 컨텍스트가 아니라 단위(HttpProductLinkExtractorTest·RoutingProductLinkExtractorTest·
+    // HttpImageSnapshotExtractorTest)로 한다.
     @Bean
     @Primary
     fun productLinkExtractor(): StubProductLinkExtractor = StubProductLinkExtractor()

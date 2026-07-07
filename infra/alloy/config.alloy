@@ -18,6 +18,23 @@ prometheus.scrape "app" {
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
+// ── 메트릭: piki-extractor(파싱 분리 이관) /actuator/prometheus → 같은 Grafana Cloud ──
+// 대상 주소는 환경별로 다르다(EXTRACTOR_METRICS_TARGET, deploy.yml 이 주입):
+//   dev  = localhost:8090   (dev 박스 동거 컨테이너 — 이 Alloy 가 --network host 라 localhost 로 닿는다)
+//   prod = extractor 전용 박스의 private host:port (secret EXTRACTOR_PROD_ADDRESS, 앱 SG→8090 허용이라 크로스 scrape)
+//   staging/미설정 = 빈 값 → coalesce 로 127.0.0.1:9(discard 포트)로 fallback. staging 은 prod extractor 를
+//     바라보지만 그 메트릭은 prod Alloy 가 이미 수집하므로 여기선 스크레이프하지 않는다(환경 라벨 오염 방지).
+//   fallback 타깃은 아무도 안 듣는 포트라 scrape 가 down 으로만 잡히고 무해하다(죽은 blue/green 포트와 동일).
+// environment 라벨은 remote_write external_labels(sys.env ENVIRONMENT)가 붙여 dev/prod 시계열이 갈린다.
+prometheus.scrape "extractor" {
+  targets = [
+    {"__address__" = coalesce(sys.env("EXTRACTOR_METRICS_TARGET"), "127.0.0.1:9"), "instance" = "piki-extractor"},
+  ]
+  metrics_path    = "/actuator/prometheus"
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
 prometheus.remote_write "grafana_cloud" {
   // dev/prod EC2 가 같은 Grafana Cloud 로 push 하므로 environment 라벨로 시계열을 가른다.
   // 없으면 instance=team3-blue/green 이 양쪽 동일해 dev·prod 메트릭이 한 시계열로 충돌한다.

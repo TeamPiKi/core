@@ -1,6 +1,9 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
@@ -606,5 +609,144 @@ interface WishlistApi {
     fun registerFromImages(
         @Parameter(hidden = true) userId: UUID,
         images: List<MultipartFile>?,
+    ): ApiResponseBody<List<WishItemResponse>>
+
+    @Operation(
+        summary = "위시리스트 이미지 등록 v2 - presigned 업로드 URL 발급",
+        description = """
+            이미지 등록 v2 의 1단계. 올릴 이미지들의 content-type(1~5개)을 받아, 클라가 S3 에 직접 PUT 할 presigned URL 을 발급한다.
+            v1(multipart)이 서버로 이미지 바이트를 받아 S3 에 올리던 것을 클라→S3 직접 업로드로 바꿔 서버 대역·메모리를 아낀다.
+            클라는 각 uploadUrl 로 응답의 contentType 을 Content-Type 헤더에 실어 PUT 한 뒤, imageKey 들을 2단계(/images/confirm)로 되돌려준다.
+            발급 시점에는 pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않는다(확정 단계에서 생성).
+        """,
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "발급 성공 — 각 이미지의 uploadUrl·imageKey·contentType 반환",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description =
+                    "잘못된 요청 (content-type 개수 1~5 위반 · content-type 미지정 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "502",
+                description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun presignImageUploads(
+        @Parameter(hidden = true) userId: UUID,
+        request: PresignedImageUploadRequest,
+    ): ApiResponseBody<PresignedImageUploadResponse>
+
+    @Operation(
+        summary = "위시리스트 이미지 등록 v2 - 업로드 확정",
+        description = """
+            이미지 등록 v2 의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PENDING 위시로 즉시 등록하고 목록을 반환한다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 outbox 에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
+            결과 모양(WishItemResponse)은 v1 이미지 등록과 동일하다 — URL 이 없어 sourceUrl 이 null 이며,
+            추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 복구한다.
+        """,
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "201",
+                description = "이미지 등록 접수 — 각 항목이 PENDING 상태로 생성되고 비동기 파싱이 시작된다",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description =
+                    "잘못된 요청 (imageKey 개수 1~5 위반 · 발급 형식이 아닌 key · 아직 업로드되지 않은 이미지)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "502",
+                description = "이미지 존재 확인 실패 (S3 HEAD 중 스토리지 장애 — 클라이언트는 재시도)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun confirmImageRegistration(
+        @Parameter(hidden = true) userId: UUID,
+        request: ConfirmImageUploadRequest,
     ): ApiResponseBody<List<WishItemResponse>>
 }

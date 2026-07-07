@@ -2,6 +2,9 @@ package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
+import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
+import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
@@ -51,6 +54,27 @@ class WishlistController(
         // images 파트를 아예 안 보내면(0장) Spring 이 컨트롤러 진입 전 MissingServletRequestPartException 으로
         // 끊어 캐치올(500)로 떨어진다. required=false + orEmpty 로 항상 서비스 검증(invalidImageCount, 400)에 닿게 한다.
         val results = wishlistService.registerFromImages(images = images.orEmpty(), userId = userId)
+        return ApiResponseBody.created(results.map { WishItemResponse.from(it.wish, it.item, it.snapshot) })
+    }
+
+    // 이미지 등록 v2 1단계 — presigned 업로드 URL 발급. pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않으므로 200 OK.
+    @PostMapping("/images/presigned")
+    override fun presignImageUploads(
+        @AuthenticationPrincipal userId: UUID,
+        @RequestBody request: PresignedImageUploadRequest,
+    ): ApiResponseBody<PresignedImageUploadResponse> {
+        val uploads = wishlistService.presignImageUploads(contentTypes = request.contentTypes, userId = userId)
+        return ApiResponseBody.ok(PresignedImageUploadResponse.from(uploads))
+    }
+
+    // 이미지 등록 v2 2단계 — 업로드 확정. PENDING 위시를 생성하므로 v1(registerFromImages)과 같은 201 CREATED.
+    @PostMapping("/images/confirm")
+    @ResponseStatus(HttpStatus.CREATED)
+    override fun confirmImageRegistration(
+        @AuthenticationPrincipal userId: UUID,
+        @RequestBody request: ConfirmImageUploadRequest,
+    ): ApiResponseBody<List<WishItemResponse>> {
+        val results = wishlistService.confirmImageRegistration(imageKeys = request.imageKeys, userId = userId)
         return ApiResponseBody.created(results.map { WishItemResponse.from(it.wish, it.item, it.snapshot) })
     }
 

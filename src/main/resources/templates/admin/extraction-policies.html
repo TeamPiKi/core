@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>추출 라우팅 정책 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --violet:#6d28d9; --violet-soft:#ede9fe; }
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
+    .wrap{max-width:880px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 22px;}
+    .ok{background:#dcfce7;color:#15803d;border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    table{width:100%;border-collapse:collapse;font-size:13.5px;}
+    th{background:#fafbfc;color:var(--muted);font-weight:700;text-align:left;padding:11px 16px;border-bottom:1px solid var(--border);font-size:12px;}
+    td{padding:12px 16px;border-bottom:1px solid #f1f3f5;vertical-align:middle;}
+    tr:last-child td{border-bottom:none;} tr:hover td{background:#fcfcfd;}
+    .domain{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;color:#384049;}
+    .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+    .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+    .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
+    .reason{color:var(--muted);font-size:12.5px;}
+    .del{background:none;border:none;color:var(--danger);font-weight:700;font-size:12.5px;cursor:pointer;padding:0;}
+    form.add{display:flex;gap:8px;padding:14px 16px;flex-wrap:wrap;align-items:center;}
+    form.add input,form.add select{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;}
+    form.add input[name=domain]{width:200px;} form.add input[name=reason]{flex:1;min-width:220px;}
+    form.add button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
+  <div class="wrap">
+    <h1>추출 라우팅 정책</h1>
+    <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).<br>
+      <b>UNSUPPORTED</b> = 등록 자체를 거절 (봇 차단 등으로 추출 불가한 곳). <b>HEADLESS_FIRST</b> = 처음부터 브라우저로 추출
+      <span style="color:#92400e">(원격 추출(extractor) 경로에서 유효 — extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과 없음)</span>.<br>
+      정책이 없는 도메인은 기본 추출(정적 fetch → 구조화/LLM)을 탑니다. <b>같은 도메인을 다시 추가하면 정책이 교체</b>됩니다.</p>
+    <div class="ok" th:if="${param.updated}">정책이 저장됐습니다. (즉시 적용)</div>
+    <div class="ok" th:if="${param.deleted}">정책이 삭제됐습니다. (즉시 적용)</div>
+    <div class="err" th:if="${error}" th:text="${error}"></div>
+    <div class="card">
+      <form class="add" method="post" th:action="@{/admin/extraction-policies}">
+        <input name="domain" placeholder="도메인 (예: coupang.com)" th:value="${draftDomain}" maxlength="255" required>
+        <select name="route">
+          <option th:each="r : ${routes}" th:value="${r}" th:selected="${r == draftRoute}"
+                  th:text="${r.name() == 'HEADLESS_FIRST'} ? 'HEADLESS_FIRST (원격 추출 경로에서 유효)' : ${r}"></option>
+        </select>
+        <input name="reason" placeholder="사유 메모 (예: 2026-07 실측 403 차단)" th:value="${draftReason}" maxlength="255">
+        <button type="submit">추가</button>
+      </form>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>도메인</th><th>정책</th><th>사유</th><th>수정</th><th></th></tr></thead>
+        <tbody>
+          <tr th:each="p : ${policies}">
+            <td class="domain" th:text="${p.domain}"></td>
+            <td><span class="badge" th:classappend="${p.route}" th:text="${p.route}"></span></td>
+            <td class="reason" th:text="${p.reason} ?: '-'"></td>
+            <td class="reason" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></td>
+            <td style="text-align:right">
+              <form method="post" th:action="@{/admin/extraction-policies/delete}" style="display:inline"
+                    onsubmit="return confirm('이 도메인의 정책을 삭제할까요? 삭제하면 기본 추출을 탑니다.')">
+                <input type="hidden" name="domain" th:value="${p.domain}">
+                <button class="del" type="submit">삭제</button>
+              </form>
+            </td>
+          </tr>
+          <tr th:if="${#lists.isEmpty(policies)}"><td colspan="5" class="reason">등록된 정책이 없습니다 — 모든 도메인이 기본 추출을 탑니다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

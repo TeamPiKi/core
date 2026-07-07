@@ -123,6 +123,23 @@ gemini:
     max-attempts: ${GEMINI_RETRY_MAX_ATTEMPTS:1}
     initial-delay-ms: ${GEMINI_RETRY_INITIAL_DELAY_MS:1000}
 
+product:
+  extract:
+    remote:
+      # 원격 추출 서비스(PIKI-Extractor) 라우팅 스위치 (strangler 전환기). 값은 정확히 true/false 만 인식한다 —
+      # yes·on·1 은 스위치를 켜지 않는다(@ConditionalOnProperty 정확 매칭, 독자 단일화로 relaxed 바인딩 분열 차단).
+      # false(기본)면 원격 빈 자체가 뜨지 않아 기존 embedded 경로(FallbackProductLinkExtractor)가 그대로 쓰인다.
+      # 켜려면 base-url 이 필수다(부팅 시 검증).
+      enabled: ${EXTRACT_REMOTE_ENABLED:false}
+      base-url: ${EXTRACT_REMOTE_BASE_URL:}
+      # 원격으로 보낼 host 목록(콤마 구분, 도메인 단위 suffix 매칭·서브도메인 포함·대소문자 무관). 비면 아무것도
+      # 원격으로 가지 않는다(안전 기본값 — enabled 만 켜도 컷오버가 터지지 않는다). 전량 전환은 "*" 명시로만.
+      hosts: ${EXTRACT_REMOTE_HOSTS:}
+      # 이미지(OCR) 파싱의 원격 전환 게이트. 링크(hosts)와 독립적으로 켜고 끈다 — 이미지는 host 차원이 없어
+      # 이진 스위치다(켜면 전량 원격). enabled 와 이 키가 모두 true 여야 원격 이미지 빈이 뜬다(enabled=false 면
+      # 이 키와 무관하게 전부 embedded — enabled 한 줄이 링크·이미지 공통 롤백). 값 인식 규칙은 enabled 와 동일.
+      image-enabled: ${EXTRACT_REMOTE_IMAGE_ENABLED:false}
+
 s3:
   # 크롭한 상품 이미지 저장 버킷. 자격증명은 EC2 instance role / 로컬 환경변수(DefaultCredentialsProvider).
   bucket: ${S3_BUCKET:}

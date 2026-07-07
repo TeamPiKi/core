@@ -26,5 +26,11 @@ class ImageStorageException private constructor(
 
         fun downloadFailed(cause: Throwable? = null): ImageStorageException =
             ImageStorageException("이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.", ErrorCategory.RETRYABLE, cause)
+
+        fun presignFailed(cause: Throwable? = null): ImageStorageException =
+            ImageStorageException("이미지 업로드 URL 을 발급하지 못했어요. 잠시 후 다시 시도해 주세요.", ErrorCategory.RETRYABLE, cause)
+
+        fun existsCheckFailed(cause: Throwable? = null): ImageStorageException =
+            ImageStorageException("이미지 업로드 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", ErrorCategory.RETRYABLE, cause)
     }
 }

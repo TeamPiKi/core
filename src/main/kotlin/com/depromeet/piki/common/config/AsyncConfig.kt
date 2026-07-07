@@ -65,8 +65,31 @@ class AsyncConfig {
             initialize()
         }
 
+    // 이미지 등록 v2 폴링 백스톱(PendingUploadPollingScheduler)을 공유 스케줄러 스레드에서 분리하기 위한 executor.
+    // 폴링은 pending 마다 S3 HEAD(외부 호출)를 치므로 그대로 스케줄러 스레드에서 돌면 파싱 dispatch·SSE heartbeat 등
+    // 다른 @Scheduled 를 굶긴다(ItemParsingScheduler 가 파싱을 @Async 로 빼는 것과 같은 결). 한 번에 한 폴링만 돌면 되므로
+    // 풀·큐를 1·0 으로 두고, 겹친 제출은 스케줄러의 재진입 가드가 먼저 막지만 만일을 대비해 거부는 버린다(다음 주기가 재시도).
+    @Bean(IMAGE_POLLING_EXECUTOR)
+    fun imagePollingExecutor(): Executor =
+        ThreadPoolTaskExecutor().apply {
+            corePoolSize = 1
+            maxPoolSize = 1
+            queueCapacity = 0
+            setThreadNamePrefix("image-polling-")
+            setTaskDecorator(ContextPropagatingTaskDecorator())
+            setRejectedExecutionHandler { _, executor ->
+                log.warn(
+                    "이미지 폴링 executor 포화 — 이번 주기 건너뜀 (activeCount={}, queueSize={})",
+                    executor.activeCount,
+                    executor.queue.size,
+                )
+            }
+            initialize()
+        }
+
     companion object {
         const val ITEM_PARSING_EXECUTOR = "itemParsingExecutor"
         const val NOTIFICATION_EXECUTOR = "notificationExecutor"
+        const val IMAGE_POLLING_EXECUTOR = "imagePollingExecutor"
     }
 }

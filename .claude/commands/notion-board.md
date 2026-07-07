@@ -55,7 +55,7 @@
 
 ### 2. 후보 카드 조회 (완료 아닌 카드)
 
-전체를 받아 클라이언트에서 `상태 != 완료` 만 추린다 (`파트` 필드는 보드에서 일관되지 않으므로 필터·판단에 쓰지 않는다 — 참고용으로만 표시):
+`상태 != 완료` 는 **서버측 filter 로 제외하고 받는다** — 전체를 받아 클라이언트에서 거르면 `page_size:100` 한도를 누적된 완료 카드가 잠식해, 정작 활성 후보가 조용히 잘린다. 빈 상태 카드는 후보에 남겨야 하므로 `is_empty` 를 or 로 함께 건다. 그래도 출력에 `HAS_MORE` 가 찍히면 **같은 filter 를 그대로 유지한** `--data` 에 `"start_cursor":"<next_cursor>"` 만 추가해 이어 받는다 — filter 를 빼면 filter 된 쿼리에서 발급된 커서가 무필터 쿼리에 적용돼 완료 카드가 후보에 다시 섞인다 (`파트` 필드는 보드에서 일관되지 않으므로 필터·판단에 쓰지 않는다 — 참고용으로만 표시):
 
 ```bash
 [ -z "$NOTION_TOKEN" ] && eval "$(grep '^export NOTION_TOKEN=' ~/.zshrc 2>/dev/null)"
@@ -64,8 +64,10 @@ find /tmp/ -maxdepth 1 -name 'nb_*.json' -mmin +10080 -delete 2>/dev/null   # �
 DB=5a0c800c-72cf-8307-8297-8124d888ca79
 code=$(curl -s -X POST "https://api.notion.com/v1/databases/$DB/query" \
   -H "Authorization: Bearer $NOTION_TOKEN" -H "Notion-Version: 2022-06-28" -H "Content-Type: application/json" \
-  --data '{"page_size":100}' -o /tmp/nb_cards_$SLUG.json -w "%{http_code}")
-[ "$code" = "200" ] || { echo "Notion query 실패 (HTTP $code) — 보드 반영 생략"; exit 0; }
+  --data '{"page_size":100,"filter":{"or":[{"property":"상태","status":{"does_not_equal":"완료"}},{"property":"상태","status":{"is_empty":true}}]}}' \
+  -o /tmp/nb_cards_$SLUG.json -w "%{http_code}")
+# 400 은 일시 장애가 아니라 filter 와 보드 스키마('상태' property)의 불일치 신호 — best-effort 스킵으로 삼키지 말고 스킬 수정이 필요함을 알린다.
+[ "$code" = "200" ] || { echo "Notion query 실패 (HTTP $code) — 보드 반영 생략"; [ "$code" = "400" ] && echo "400 = filter·스키마 불일치 가능성. /tmp/nb_cards_$SLUG.json 의 에러 메시지를 확인해 스킬을 고칠 것"; exit 0; }
 python3 - "/tmp/nb_cards_$SLUG.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
@@ -73,9 +75,10 @@ for p in d.get('results',[]):
     pr=p['properties']
     title=''.join(t['plain_text'] for t in pr['프로젝트명']['title'])
     st=pr['상태']['status']; st=st['name'] if st else '-'
-    if st=='완료': continue
+    if st=='완료': continue   # 서버 filter 가 이미 거르지만 이중 방어로 유지
     part=pr['파트']['select']; part=part['name'] if part else '-'
     print(f"{st:<5} {part:<7} {p['id']}  {title}")
+if d.get('has_more'): print('HAS_MORE next_cursor=', d.get('next_cursor'), '- 같은 filter 유지 + start_cursor 추가로 재조회')
 PY
 ```
 
