@@ -57,6 +57,20 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
             .build()
 
     @Test
+    fun `시드된 미지원 플랫폼 7곳이 실제 정책 경로(마이그레이션 시드 → 캐시)로 전부 UNSUPPORTED 로 판정된다`() {
+        // 시드 SQL 의 도메인 오타·누락은 컴파일·단위 테스트로 안 드러난다 — 실제 출처(Flyway 시드)를 여기서 고정해
+        // 차단이 조용히 풀리는 회귀를 CI 빨간불로 만든다. 서브도메인 포함(www.) 매칭도 함께 본다.
+        val seeded = listOf("kream.co.kr", "coupang.com", "naver.com", "naver.me", "oliveyoung.co.kr", "oy.run", "a-bly.com")
+        seeded.forEach { domain ->
+            assertEquals(
+                ExtractionRoute.UNSUPPORTED,
+                routingPolicy.routeOf(ProductLink.parse("https://www.$domain/p/1")),
+                "$domain 시드 누락 또는 오타",
+            )
+        }
+    }
+
+    @Test
     fun `UNSUPPORTED 정책을 추가하면 등록이 400 으로 거부되고, 삭제하면 같은 URL 이 다시 통과한다`() {
         val mockMvc = mockMvc()
         val userId = UUID.randomUUID()
@@ -67,7 +81,7 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
         stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", currentPrice = 9_900) }
         try {
             // 정책 추가 + reload — 배포 없이 곧바로 등록이 거부된다(백오피스 저장 → afterCommit reload 와 같은 경로).
-            policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.UNSUPPORTED, reason = "테스트"))
+            policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.UNSUPPORTED.name, reason = "테스트"))
             routingPolicy.reload()
 
             mockMvc
@@ -120,7 +134,7 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
                 .andExpect(redirectedUrl("/admin/extraction-policies?updated"))
 
             val saved = policyRepository.findById(domain).orElseThrow()
-            assertEquals(ExtractionRoute.UNSUPPORTED, saved.route)
+            assertEquals(ExtractionRoute.UNSUPPORTED.name, saved.route)
             assertEquals("테스트 사유", saved.reason)
             assertEquals(ExtractionRoute.UNSUPPORTED, routingPolicy.routeOf(ProductLink.parse("https://$domain/p")))
         } finally {
