@@ -1,6 +1,8 @@
 name: Discord PR Bot
 
 on:
+  # 기존 PR 스레드를 현재 정책으로 일괄 통일(팀원 추가·닫힘 상태)하는 수동 실행용. Actions → Run workflow.
+  workflow_dispatch:
   pull_request:
     types:
       - opened
@@ -136,7 +138,9 @@ jobs:
               state=$(echo "$res" | jq -r '.state // "unknown"')
               if [ "$state" = "open" ]; then emoji="🟢"; elif [ "$state" = "closed" ]; then emoji="⚫"; else emoji="❓"; fi
               link="https://github.com/$REPO/issues/$num"
-              line="$emoji [#$num]($link)"
+              # URL 을 <> 로 감싸 Discord 임베드 카드를 억제한다(클릭은 유지). 이슈 카드가 커서 부모 카드 본문을
+              # 밀어내므로, 연관 이슈는 링크만 남기고 카드는 PR(부모 타이틀 링크)만 뜨게 한다.
+              line="$emoji [#$num](<$link>)"
               if [ -z "$issue_text" ]; then issue_text="$line"; else issue_text=$(printf "%s\n%s" "$issue_text" "$line"); fi
             done <<< "$issues"
             [ -z "$issue_text" ] && issue_text="없음"
@@ -273,6 +277,14 @@ jobs:
           if [ -z "$THREAD_ID" ]; then
             echo "Discord thread create failed"; echo "$TRESP"; exit 1
           fi
+
+          # 팀 전원을 스레드 멤버로 추가 — 공개 스레드는 멤버만 사이드바에 뜨므로, DISCORD_USER_MAP 의 모든
+          # discord id 를 넣어 팀 전원 사이드바에 노출한다(멘션과 달리 조용히 목록에만 올림). 실패해도 무해.
+          echo "$DISCORD_USER_MAP" | jq -r '.[]?' | while read -r uid; do
+            [ -z "$uid" ] && continue
+            curl -s -o /dev/null -X PUT "$DISCORD_API/channels/$THREAD_ID/thread-members/$uid" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN"
+          done
 
           echo "message_id=$MESSAGE_ID" >> "$GITHUB_OUTPUT"
           echo "thread_id=$THREAD_ID" >> "$GITHUB_OUTPUT"
@@ -507,7 +519,8 @@ jobs:
               -H "Authorization: Bot $DISCORD_BOT_TOKEN"
           fi
 
-          # 스레드: 이름 앞에 결과 프리픽스 + archive + lock. 이름은 100자 제한이라 90자로 자른다.
+          # 스레드: 이름 앞에 결과 프리픽스 + archive(닫힘). lock 은 하지 않아 머지 후에도 글을 쓸 수 있게 둔다.
+          # (archived 만이라 글을 쓰면 다시 열린다.) 이름은 100자 제한이라 90자로 자른다.
           if [ -n "$THREAD_ID" ]; then
             if [ "$MERGED" = "true" ]; then PREFIX="✅"; else PREFIX="🗑️"; fi
             NEW_NAME=$(printf '%s PR #%s %s' "$PREFIX" "${{ steps.pr.outputs.pr_number }}" "$PR_TITLE" | cut -c1-90)
@@ -515,7 +528,7 @@ jobs:
               "$DISCORD_API/channels/$THREAD_ID" \
               -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
               -H "Content-Type: application/json; charset=utf-8" \
-              --data "$(jq -n --arg name "$NEW_NAME" '{name:$name, archived:true, locked:true}')")
+              --data "$(jq -n --arg name "$NEW_NAME" '{name:$name, archived:true, locked:false}')")
             [ "$CODE" = "200" ] && echo "스레드 정리됨: $NEW_NAME" || echo "::warning::스레드 정리 실패 (HTTP $CODE)"
           fi
 
@@ -582,3 +595,60 @@ jobs:
           if [ -z "$OK" ]; then
             echo "Discord post failed: $RESP"; exit 1
           fi
+
+  backfill-threads:
+    # 기존 PR 스레드를 현재 정책으로 일괄 통일하는 수동 백필. Actions → Run workflow.
+    #  - 열린 PR:        unarchive + 팀원(DISCORD_USER_MAP) 전원 스레드 멤버 추가(사이드바 노출)
+    #  - 머지된 PR:      이름에 ✅ 프리픽스 + archived(닫힘). lock 은 안 함(글 쓰기 가능)
+    #  - 머지 없이 닫힘: 이름에 🗑️ 프리픽스 + archived
+    # 과거 find_meta 버그(#674 이전)로 close 정리가 스킵돼 안 닫힌 스레드까지 소급 정리한다. 멱등(재실행 안전).
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+    env:
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+      DISCORD_API: https://discord.com/api/v10
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Backfill existing PR threads (members + close state)
+        shell: bash
+        run: |
+          [ -n "$DISCORD_USER_MAP" ] || DISCORD_USER_MAP='{}'
+          # 최근 100개 PR(열림+닫힘). 스레드 메타가 있는 PR 만 처리한다.
+          PRS=$(gh api "repos/$REPO/pulls?state=all&per_page=100&sort=updated&direction=desc")
+          echo "$PRS" | jq -c '.[] | {num:.number, title:.title, state:.state, merged:(.merged_at != null)}' | while read -r pr; do
+            NUM=$(echo "$pr" | jq -r '.num')
+            TITLE=$(echo "$pr" | jq -r '.title')
+            STATE=$(echo "$pr" | jq -r '.state')
+            MERGED=$(echo "$pr" | jq -r '.merged')
+            # 메타 주석에서 thread_id (find_meta 와 같은 JSON 마커 매칭)
+            COMMENTS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/issues/$NUM/comments")
+            META=$(echo "$COMMENTS" | jq -r '.[]? | objects | select((.body // "") | test("discord-pr-bot:\\s*\\{")) | .body' | tail -n 1)
+            THREAD_ID=$(echo "$META" | grep -oP 'discord-pr-bot:\s*\K\{[^}]*\}' | jq -r '.thread_id // empty' 2>/dev/null || true)
+            if [ -z "$THREAD_ID" ]; then echo "PR #$NUM: 스레드 메타 없음, skip"; continue; fi
+            if [ "$STATE" = "open" ]; then
+              # 열린 PR: 열림 유지 + 팀원 전원 추가
+              curl -s -o /dev/null -X PATCH "$DISCORD_API/channels/$THREAD_ID" \
+                -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H "Content-Type: application/json; charset=utf-8" \
+                --data '{"archived":false}'
+              echo "$DISCORD_USER_MAP" | jq -r '.[]?' | while read -r uid; do
+                [ -z "$uid" ] && continue
+                curl -s -o /dev/null -X PUT "$DISCORD_API/channels/$THREAD_ID/thread-members/$uid" \
+                  -H "Authorization: Bot $DISCORD_BOT_TOKEN"
+              done
+              echo "PR #$NUM (open): 팀원 추가 + 열림"
+            else
+              # 닫힘: 결과 프리픽스 + archived(닫힘), lock 안 함
+              if [ "$MERGED" = "true" ]; then PREFIX="✅"; else PREFIX="🗑️"; fi
+              NEW_NAME=$(printf '%s PR #%s %s' "$PREFIX" "$NUM" "$TITLE" | cut -c1-90)
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$DISCORD_API/channels/$THREAD_ID" \
+                -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H "Content-Type: application/json; charset=utf-8" \
+                --data "$(jq -n --arg name "$NEW_NAME" '{name:$name, archived:true, locked:false}')")
+              echo "PR #$NUM ($PREFIX 닫힘): HTTP $CODE"
+            fi
+          done
