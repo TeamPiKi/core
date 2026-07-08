@@ -1,9 +1,6 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.storage.StoredImage
-import com.depromeet.piki.image.domain.BoundingBox
-import com.depromeet.piki.image.service.ImageExtraction
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
@@ -13,11 +10,10 @@ import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
-import com.depromeet.piki.product.service.gemini.GeminiApiException
-import com.depromeet.piki.product.service.http.PageFetchException
+import com.depromeet.piki.product.service.remote.ProductExtractorException
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductImageExtractor
+import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubProductLinkExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
@@ -40,13 +36,10 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.awt.image.BufferedImage
-import java.io.ByteArrayOutputStream
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -65,7 +58,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
 
     @Autowired
-    private lateinit var stubProductImageExtractor: StubProductImageExtractor
+    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Autowired
     private lateinit var itemRepository: ItemRepository
@@ -235,11 +228,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(
-                    snapshot = ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW"),
-                    boundingBox = null,
-                )
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -260,44 +250,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지에 bbox 가 있으면 비동기 파싱이 크롭 이미지를 올려 imageUrl 이 채워진다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(
-                    snapshot = ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000),
-                    boundingBox = BoundingBox(yMin = 100, xMin = 100, yMax = 500, xMax = 500),
-                )
-            }
-            // 크롭이 동작하려면 실제 디코딩 가능한 PNG 여야 한다 (ImageCropper 는 실제 빈, 업로드만 stub).
-            val pngBytes =
-                ByteArrayOutputStream().use { out ->
-                    ImageIO.write(BufferedImage(800, 800, BufferedImage.TYPE_INT_RGB), "png", out)
-                    out.toByteArray()
-                }
-            val image = MockMultipartFile("images", "p.png", "image/png", pngBytes)
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
-
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.READY
-            }
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(true, snapshot.imageUrl?.startsWith(StubImageStorage.BASE_URL))
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
     fun `이미지 파싱이 확정 실패(상품 아님)면 item 이 FAILED 로 전이한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             // 확정 실패(상품 아님)는 다시 해도 결과가 같아 즉시 FAILED 로 종결한다 (일시 외부 오류는 PROCESSING 유지 — 아래 별도 테스트).
-            stubProductImageExtractor.build = { throw ProductSnapshotException.notProductPage() }
+            stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
 
@@ -314,12 +273,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `이미지 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // URL 경로와 동일 — 일시 외부 오류(Gemini 5xx 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다.
+        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다.
         // 이미지 입력은 S3 raw 로 durable 하므로 recover 가 그 key 로 원본을 다시 읽어 재실행한다(#461).
         val calls = AtomicInteger(0)
-        stubProductImageExtractor.build = {
+        stubImageSnapshotExtractor.build = {
             calls.incrementAndGet()
-            throw GeminiApiException.upstreamError(RuntimeException("transient 503"))
+            throw ProductExtractorException.transientFailure(RuntimeException("원격 503"))
         }
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
@@ -342,11 +301,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(
-                    snapshot = ProductSnapshot(link = null, name = "상품", currentPrice = 1_000),
-                    boundingBox = null,
-                )
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, imageUrl = "https://img.example.com/p.png")
             }
             val request = multipart("/api/v1/wishlists/images")
             (1..5).forEach { i ->
@@ -388,11 +344,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductImageExtractor.build = {
-                ImageExtraction(
-                    snapshot = ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"),
-                    boundingBox = null,
-                )
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -403,30 +356,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val rawKey = itemRepository.findById(itemId)?.sourceImageKey ?: error("item $itemId 의 sourceImageKey 가 없다")
             await().atMost(Duration.ofSeconds(2)).until { stubImageStorage.deletedKeys.contains(rawKey) }
         } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `download 가 content-type 메타를 못 줘도 key 확장자로 mimeType 을 복원해 READY 로 끝난다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            // S3 가 GetObject 응답에 content-type 을 안 싣는 상황 재현 — download 가 null content-type 을 돌려줘도
-            // 워커는 raw key 의 확장자(.png)로 mimeType 을 복원해 정상 파싱해야 한다(메타 결함이 비복구 FAILED 로 새지 않음).
-            stubImageStorage.downloadBehavior = { StoredImage(byteArrayOf(1), null) }
-            stubProductImageExtractor.build = {
-                ImageExtraction(
-                    snapshot = ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"),
-                    boundingBox = null,
-                )
-            }
-            val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
-        } finally {
-            stubImageStorage.downloadBehavior = stubImageStorage.defaultDownloadBehavior
             cleanup(userId)
         }
     }
@@ -491,11 +420,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     fun `imageKey 있는 stale PROCESSING 은 recover 가 재실행해 READY 로 되살린다`() {
         // 이미지 경로도 원본을 S3 raw 로 durable 적재하므로(link 와 대칭), 크래시로 stale 된 PROCESSING 을 recover 가 재실행해
         // 워커가 그 key 로 원본을 다시 읽어 완성시킨다 — 메모리 ByteArray 시절의 "이미지는 복구 불가" 비대칭이 사라졌다(#461).
-        stubProductImageExtractor.build = {
-            ImageExtraction(
-                snapshot = ProductSnapshot(link = null, name = "되살아난 이미지", currentPrice = 2_000, currency = "KRW"),
-                boundingBox = null,
-            )
+        stubImageSnapshotExtractor.build = {
+            ProductSnapshot(link = null, name = "되살아난 이미지", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
         }
         val item = itemRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
@@ -546,11 +472,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `URL 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // 일시 외부 오류(Gemini 5xx 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다 — 재시도 판정은 recover 몫(#461).
+        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다 — 재시도 판정은 recover 몫(#461).
         val calls = AtomicInteger(0)
         stubProductLinkExtractor.build = {
             calls.incrementAndGet()
-            throw GeminiApiException.upstreamError(RuntimeException("transient 503"))
+            throw ProductExtractorException.transientFailure(RuntimeException("원격 503"))
         }
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
@@ -572,9 +498,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 재시도해도 결정론적으로 재실패하는 영구 오류(호스트 차단·4xx 접근 불가 등)는 recover 를 기다리지 않고
+            // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
             // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다. recover 는 stale(60초) 후에야 돌므로 5초 내 FAILED 면 즉시 종결이다.
-            stubProductLinkExtractor.build = { throw PageFetchException.blockedHost() }
+            stubProductLinkExtractor.build = { throw ProductExtractorException.permanentFailure() }
             val permanentBefore = parseCount("failed", "permanent_error")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 
