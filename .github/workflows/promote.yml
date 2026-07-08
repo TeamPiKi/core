@@ -200,10 +200,10 @@ jobs:
           [ "$TARGET_INPUT" = "prod" ] && VER_LINE=$(printf '\n• 버전: `%s` (배포 성공 시 릴리즈 생성)' "$VERSION")
 
           if [ "$SKIPPED" = "true" ]; then
-            TEXT=$(printf '🔁 Promote: `%s` → `%s` — 변경 없음(이미 동일), 배포 생략\n• 실행: %s\n• [워크플로우 로그](%s)' \
+            TEXT=$(printf '🔁 Promote: `%s` → `%s` — 변경 없음(이미 동일), 배포 생략\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
               "$SRC" "$DST" "$ACTOR_MENTION" "$RUN_URL")
           else
-            TEXT=$(printf '🚀 Promote 성공: `%s` → `%s`\n• 커밋: [%s](%s)%s\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](%s)' \
+            TEXT=$(printf '🚀 Promote 성공: `%s` → `%s`\n• 커밋: [%s](<%s>)%s\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](<%s>)' \
               "$SRC" "$DST" "$SHORT_SHA" "$COMMIT_URL" "$VER_LINE" "$ACTOR_MENTION" "$RUN_URL")
           fi
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
@@ -230,7 +230,7 @@ jobs:
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           # 분기(non-ff)·dispatch 실패 등. 경로는 입력 기준으로만 표기(ff 실패 시 plan 출력이 비어있을 수 있음).
-          TEXT=$(printf '❌ Promote 실패: target=`%s` (`%s` → `%s`)\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](%s)' \
+          TEXT=$(printf '❌ Promote 실패: target=`%s` (`%s` → `%s`)\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](<%s>)' \
             "$TARGET_INPUT" "${SRC:-?}" "${DST:-?}" "$ACTOR_MENTION" "$RUN_URL")
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \

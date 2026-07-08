@@ -30,7 +30,15 @@ class AdminSecurityConfig {
             // 결정적으로 이 체인에 묶인다(String 다중 패턴 조합에서 GET /admin-access/grant 가 메인 체인으로 새 401 나던 문제 차단).
             .securityMatcher(adminPathMatcher())
             .authorizeHttpRequests { it.anyRequest().permitAll() }
-            .csrf { it.ignoringRequestMatchers(ADMIN_PATHS.matcher("/admin-access/**")) }
+            .csrf {
+                // /admin-access/** 는 슬랙·디스코드 진입(서명검증으로 보호), /admin/session/** 는 폼이 아니라
+                // fetch(JSON) API(세션 남은시간·연장)라 CSRF 토큰을 실을 수 없다 — 둘 다 CSRF 제외한다.
+                // 나머지 /admin/** 폼(Thymeleaf)은 CSRF 를 유지한다(_csrf 히든).
+                it.ignoringRequestMatchers(
+                    ADMIN_PATHS.matcher("/admin-access/**"),
+                    ADMIN_PATHS.matcher("/admin/session/**"),
+                )
+            }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED) }
             .build()
 
