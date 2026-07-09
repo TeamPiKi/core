@@ -71,7 +71,7 @@ jobs:
                   }
                 }
               }' \
-              -F owner=depromeet -F repo=PIKI-Server -F num="$ISSUE_NUM" \
+              -F owner=TeamPiKi -F repo=core -F num="$ISSUE_NUM" \
               --jq ".data.repository.issue.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
 
             if [[ -n "$ITEM_ID" ]]; then

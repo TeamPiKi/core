@@ -27,7 +27,7 @@ jobs:
           # 후보 이슈 전체 조회 후 본문을 직접 파싱
           # (Search API는 본문 어디든 #N이 언급되면 매칭되어 false positive 발생)
           CANDIDATES=$(gh issue list \
-            --repo depromeet/PIKI-Server \
+            --repo TeamPiKi/core \
             --state all \
             --limit 500 \
             --json number,state,body,labels)
@@ -55,9 +55,9 @@ jobs:
           if [[ "$CLOSED" -eq "$TOTAL" ]]; then
             gh issue comment "$EPIC_NUM" \
               --body "🎉 모든 이슈가 완료되었습니다! ($CLOSED/$TOTAL)" \
-              --repo depromeet/PIKI-Server
+              --repo TeamPiKi/core
           else
             gh issue comment "$EPIC_NUM" \
               --body "✅ 이슈 #$ISSUE_NUMBER 완료 — 진행률: **$CLOSED / $TOTAL**" \
-              --repo depromeet/PIKI-Server
+              --repo TeamPiKi/core
           fi

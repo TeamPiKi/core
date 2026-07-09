@@ -55,7 +55,7 @@ PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 (셸 �
 # 리뷰 왕복이 길어지면 첫 30개 이후의 review body(nitpick 포함)가 조용히 누락된다.
 # 길이 필터를 두지 않는다 — 짧은 body 도 유효한 코멘트일 수 있어 비어있지 않으면 전부 수집하고,
 # nitpick 여부는 길이가 아니라 본문 마커(`🧹 Nitpick comments` 등)로 가른다.
-gh api --paginate repos/depromeet/PIKI-Server/pulls/$PR/reviews \
+gh api --paginate repos/TeamPiKi/core/pulls/$PR/reviews \
   --jq '.[] | select(((.user.login // "") | startswith("coderabbitai")) and ((.body // "") | length > 0)) | .body'
 ```
 
@@ -91,5 +91,5 @@ gh api graphql -f query='
 
 ## 주의
 
-- owner/repo 는 `depromeet/PIKI-Server` 고정. 레포가 바뀌면 갱신한다.
+- owner/repo 는 `TeamPiKi/core` 고정. 레포가 바뀌면 갱신한다.
 - nitpick 반영 여부·범위는 선택적이다. actionable thread 와 달리 강제가 아니므로, 반영할지 사용자와 합의하고 진행한다.

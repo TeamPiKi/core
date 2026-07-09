@@ -2,5 +2,5 @@ blank_issues_enabled: false
 
 contact_links:
   - name: 💬 Discussions (질문 / 논의)
-    url: https://github.com/depromeet/PIKI-Server/discussions
+    url: https://github.com/TeamPiKi/core/discussions
     about: 기능 제안, 질문, 기술 논의는 Discussions를 이용해주세요.

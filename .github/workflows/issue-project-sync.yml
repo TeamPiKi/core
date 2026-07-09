@@ -111,6 +111,6 @@ jobs:
           if echo "$ASSIGNEES" | jq -e 'length == 0' > /dev/null; then
             gh issue edit "$ISSUE_NUMBER" \
               --add-assignee "$CREATOR" \
-              --repo depromeet/PIKI-Server
+              --repo TeamPiKi/core
             echo "Auto-assigned to creator: $CREATOR"
           fi
