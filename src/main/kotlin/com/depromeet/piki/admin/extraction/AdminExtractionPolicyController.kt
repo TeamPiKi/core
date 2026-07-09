@@ -26,11 +26,13 @@ import org.springframework.web.bind.annotation.RequestParam
 class AdminExtractionPolicyController(
     private val adminExtractionPolicyService: AdminExtractionPolicyService,
 ) {
+    // guide: 상세 화면이 "정책 종류 설명" 링크로 보낼 때 그 설명을 펼친 채 연다.
     @GetMapping
     fun board(
         @RequestParam(required = false) route: String?,
+        @RequestParam(required = false) guide: String?,
         model: Model,
-    ): String = boardView(route, model)
+    ): String = boardView(route, model, guideOpen = !guide.isNullOrBlank())
 
     @PostMapping
     fun add(
@@ -101,14 +103,17 @@ class AdminExtractionPolicyController(
     // (한쪽만 갱신돼 에러 화면에서 모델이 비는 함정 방지).
     // selectedRoute 기본값이 SUPPORTED 인 이유: 추가 폼의 기본 선택이 곧 오조작 시 저장되는 값이라,
     // 라우팅을 바꾸지 않는 값(기록용)을 기본에 둔다. UNSUPPORTED 가 기본이면 실수 한 번이 등록 차단이 된다.
+    // guideOpen 은 모델로 넘긴다. 템플릿의 th:attr 안에서는 요청 파라미터(param) 접근이 막혀 있다.
     private fun boardView(
         filter: String?,
         model: Model,
         selectedRoute: String? = null,
+        guideOpen: Boolean = false,
     ): String {
         model.addAttribute("board", adminExtractionPolicyService.board(parseRoute(filter)))
         model.addAttribute("routes", ExtractionRoute.entries)
         model.addAttribute("selectedRoute", selectedRoute ?: ExtractionRoute.SUPPORTED.name)
+        model.addAttribute("guideOpen", guideOpen)
         return "admin/extraction-policies"
     }
 

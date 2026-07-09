@@ -21,7 +21,7 @@
     form.add input[name=domain]{width:200px;} form.add input[name=reason]{flex:1;min-width:220px;}
     form.add button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;}
 
-    /* 갈래가 셋뿐이라 펼쳐 둔다 — 드롭다운과 달리 열지 않아도 선택지가 다 보이고, 고른 칸이 목록 배지와 같은 색으로
+    /* 갈래가 셋뿐이라 펼쳐 둔다. 드롭다운과 달리 열지 않아도 선택지가 다 보이고, 고른 칸이 목록 배지와 같은 색으로
        차서 시각이 이어진다. radio 라 화살표 키 이동·라벨 클릭이 기본 동작이다. */
     .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
     .segopt{display:inline-flex;position:relative;margin:0;}
@@ -39,21 +39,39 @@
     .badge.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
     .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
     .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
-    /* 정책 행이 없는 도메인 — 목록에 나타날 수 없으므로 범례에서만 쓰는 배지. 점선으로 "행이 없음"을 드러낸다. */
+    /* 정책 행이 없는 도메인. 목록에 나타날 수 없으므로 범례에서만 쓰는 배지. 점선으로 "행이 없음"을 드러낸다. */
     .badge.none{background:#fff;color:#9aa1aa;border:1px dashed #ccd2d9;}
+    .badge.unk{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border);}
 
-    /* 네 가지 상태를 한 자리에서 비교한다. SUPPORTED 와 "정책 없음"이 라우팅 결과가 같고 차이는 "확인했는가"
-       뿐이라는 점은 산문으로 흩어 놓으면 읽히지 않는다 — 같은 열에 나란히 두면 한눈에 보인다. */
-    .legend{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
-    .legend .lrow{display:grid;grid-template-columns:134px 104px 1fr;gap:14px;align-items:center;
-      padding:11px 16px;border-bottom:1px solid #f1f3f5;font-size:12.5px;}
-    .legend .lrow:last-child{border-bottom:none;}
-    .legend .eff{font-weight:700;color:#384049;white-space:nowrap;}
-    .legend .desc{color:var(--muted);line-height:1.55;}
-    @media (max-width:640px){
-      .legend .lrow{grid-template-columns:134px 1fr;gap:8px;}
-      .legend .eff{grid-column:2;} .legend .desc{grid-column:1 / -1;}
-    }
+    /* 정책 종류 설명. 늘 펼쳐 두면 정작 보러 온 목록이 아래로 밀리므로 접어 둔다(details 라 JS 없이 동작).
+       내용은 개조식 - 각 항목의 "라우팅 / 언제 / 주의" 라벨을 세로로 정렬해 갈래 사이를 눈으로 비교하게 한다. */
+    .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:#384049;
+      display:flex;align-items:center;gap:9px;}
+    .guide>summary::-webkit-details-marker{display:none;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:#9aa1aa;font-size:12px;transition:transform .15s;}
+    .guide[open]>summary::before{transform:rotate(90deg);}
+    .guide>summary:hover{background:#fafbfc;}
+    .guide>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+    .guide .sub{font-weight:500;color:var(--muted);font-size:12px;}
+    /* 좁은 화면에서 표가 페이지를 밀지 않고 자기 안에서 가로 스크롤되게 감싼다. */
+    .gbody{border-top:1px solid var(--border);overflow-x:auto;}
+    .gtable{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .gtable th{background:#fafbfc;color:var(--muted);font-weight:700;font-size:11.5px;text-align:left;
+      padding:9px 15px;border-bottom:1px solid var(--border);white-space:nowrap;}
+    .gtable td{padding:11px 15px;border-bottom:1px solid #f1f3f5;vertical-align:top;color:var(--muted);line-height:1.65;}
+    .gtable tr:last-child td{border-bottom:none;}
+    /* 세로 구분선. 첫 칸에는 긋지 않으므로 인접 형제 선택자를 쓴다. 병합된 칸도 자기 왼쪽 선을 그대로 가진다. */
+    .gtable th + th,.gtable td + td{border-left:1px solid #f1f3f5;}
+    /* 열 폭·스타일을 nth-child 로 잡지 않는다. 아래 rowspan 병합 때문에 둘째 행은 셀이 하나 적어
+       nth-child(2) 가 다른 열을 가리킨다. */
+    .gtable .c-policy{width:148px;}
+    .gtable .c-how{width:214px;color:#384049;font-weight:600;}
+    /* "정책 없음"과 SUPPORTED 는 추출 방법이 같아 한 칸으로 묶는다. 같다는 사실을 문장으로 반복하지 않고
+       표 구조로 드러낸다. 병합 칸은 두 행에 걸치므로 가운데 정렬이 자연스럽다. */
+    .gtable td[rowspan]{vertical-align:middle;}
+    .gtable .same{display:block;margin-top:6px;font-weight:500;font-size:11.5px;color:var(--muted);}
+    .gtable .cau{color:var(--warn);}
 
     .filterbar{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);margin-bottom:12px;}
     .filterbar a{color:var(--accent);font-weight:700;text-decoration:none;}
@@ -80,11 +98,13 @@
     @media (hover:none){.row .go{opacity:1;}}
     .empty{padding:13px 14px;font-size:12.5px;color:var(--muted);}
 
-    .unknown{margin-top:20px;background:var(--warn-soft);border:1px solid var(--warn-border);border-radius:14px;overflow:hidden;}
-    .unknown .t{padding:12px 14px;font-size:12.5px;color:var(--warn);border-bottom:1px solid var(--warn-border);line-height:1.6;}
-    .unknown .t b{font-weight:800;}
-    .unknown .row{border-bottom-color:#fde68a;}
-    .unknown .row .rt{white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;font-weight:700;color:var(--warn);}
+    /* 이 서버가 모르는 route 값의 열. 별도 경고 박스로 화면을 압도하지 않고 다른 갈래와 같은 모양의 열로 붙인다.
+       세 갈래 어디에도 속하지 않아 열에서 빠뜨리면 백오피스에서 보이지도 지워지지도 않는 유령 행이 되므로,
+       조용하되 반드시 보이게 둔다. route 로 필터할 수 없으므로 헤더는 링크가 아니다. */
+    .col.unk{border-color:var(--warn-border);}
+    .colhead.static{cursor:default;background:var(--warn-soft);border-bottom-color:var(--warn-border);}
+    .colhead.static:hover{background:var(--warn-soft);}
+    .row .rt{white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:var(--warn);}
   </style>
 </head>
 <body>
@@ -93,31 +113,51 @@
     <h1>추출 라우팅 정책</h1>
     <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).
       <b>같은 도메인을 다시 추가하면 정책이 교체</b>되고, 수정·삭제는 항목을 눌러 상세에서 합니다.<br>
-      사유에는 <b>날짜를 적지 말고 관찰한 내용만</b> 남깁니다 — 언제 바뀌었는지는 수정일이 자동으로 기록합니다.</p>
+      사유에는 <b>날짜를 적지 말고 관찰한 내용만</b> 남깁니다. 언제 바뀌었는지는 수정일이 자동으로 기록합니다.</p>
 
-    <div class="legend">
-      <div class="lrow">
-        <span class="badge none">정책 없음</span>
-        <span class="eff">기본 추출</span>
-        <span class="desc">목록에 없는 모든 도메인. <b>아직 확인하지 않았다</b>는 뜻입니다 — 정적 fetch 로 가져와 구조화/LLM 으로 읽습니다.</span>
+    <!-- ?guide=1 로 오면 펼친 채 연다. 상세 화면이 "정책 종류 설명" 링크로 이 자리로 보낸다
+         (설명을 두 화면에 복사해 두면 한쪽만 고쳐져 어긋난다). -->
+    <details class="guide" id="guide" th:attr="open=${guideOpen} ? 'open' : null">
+      <summary>정책 종류 설명 <span class="sub">정책 없음 · SUPPORTED · HEADLESS_FIRST · UNSUPPORTED</span></summary>
+      <div class="gbody">
+        <table class="gtable">
+          <thead>
+            <tr><th>정책</th><th>추출을 어떻게 하나</th><th>언제 이 정책을 쓰나</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="c-policy"><span class="badge none">정책 없음</span></td>
+              <td class="c-how" rowspan="2">기본 추출<br>(정적 fetch → 구조화/LLM)
+                <span class="same">두 정책의 추출 방법은 완전히 같습니다.</span></td>
+              <td>아직 확인하지 않은 도메인. 목록에 없는 모든 도메인이 여기 해당합니다.</td>
+            </tr>
+            <tr>
+              <td class="c-policy"><span class="badge SUPPORTED">SUPPORTED</span></td>
+              <td>기본 추출로 잘 된다고 <b>실측으로 확인한 기록</b>입니다. 추출 방법을 바꾸지 않고 사실만 남깁니다.</td>
+            </tr>
+            <tr>
+              <td class="c-policy"><span class="badge HEADLESS_FIRST">HEADLESS_FIRST</span></td>
+              <td class="c-how">정적 fetch 를 건너뛰고<br>브라우저로 페이지를 열어 추출</td>
+              <td>정적 fetch 가 늘 차단되는 곳. 실패할 것이 뻔한 시도를 기다리지 않습니다.
+                <span class="cau">원격 추출(extractor) 경로에서만 유효하며, extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과가 없습니다.</span></td>
+            </tr>
+            <tr>
+              <td class="c-policy"><span class="badge UNSUPPORTED">UNSUPPORTED</span></td>
+              <td class="c-how">추출하지 않음<br>(등록 요청을 400 으로 거절)</td>
+              <td>봇 차단 등으로 어떤 방법으로도 상품 정보를 가져올 수 없는 곳.</td>
+            </tr>
+            <!-- 모르는 정책이 실제로 있을 때만 설명한다. 평소에는 존재하지 않는 상태라 늘 적어 두면 혼란만 준다. -->
+            <tr th:if="${!#lists.isEmpty(board.unknown)}">
+              <td class="c-policy"><span class="badge unk">알 수 없음</span></td>
+              <td class="c-how">기본 추출<br>(모르는 정책이라 정책 없음처럼 처리)</td>
+              <td>이 서버가 <b>모르는 정책</b>이 저장된 도메인입니다. 새 정책 종류를 추가한 버전에서 만든 뒤 서버를 그 이전 버전으로
+                되돌리면 생깁니다 (서버 코드는 되돌아가도 DB 의 행은 남습니다). 사용자 등록이 막히지는 않습니다.
+                항목을 눌러 아는 정책으로 바꾸거나 삭제하세요.</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div class="lrow">
-        <span class="badge SUPPORTED">SUPPORTED</span>
-        <span class="eff">기본 추출</span>
-        <span class="desc">라우팅은 위와 <b>똑같습니다.</b> 다른 것은 하나 — 기본 추출로 잘 된다고 <b>실측으로 확인했다</b>는 기록입니다.</span>
-      </div>
-      <div class="lrow">
-        <span class="badge HEADLESS_FIRST">HEADLESS_FIRST</span>
-        <span class="eff">브라우저 직행</span>
-        <span class="desc">정적 fetch 가 늘 막히는 곳. 헛된 실패를 건너뜁니다.
-          <span style="color:#92400e">원격 추출(extractor) 경로에서만 유효하며, extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과가 없습니다.</span></span>
-      </div>
-      <div class="lrow">
-        <span class="badge UNSUPPORTED">UNSUPPORTED</span>
-        <span class="eff">등록 거절</span>
-        <span class="desc">봇 차단 등으로 어떤 방법으로도 상품 정보를 가져올 수 없는 곳. 사용자의 등록 요청을 400 으로 거릅니다.</span>
-      </div>
-    </div>
+    </details>
 
     <div class="ok" th:if="${param.updated}">정책이 저장됐습니다. (즉시 적용)</div>
     <div class="ok" th:if="${param.deleted}">정책이 삭제됐습니다. (즉시 적용)</div>
@@ -157,23 +197,22 @@
         </a>
         <div class="empty" th:if="${#lists.isEmpty(c.policies)}">없음</div>
       </div>
+
+      <!-- 이 서버가 모르는 route 값의 행. 세 갈래 어디에도 속하지 않지만 열에서 빼면 보이지도 지워지지도 않는
+           유령 행이 되므로, 값이 있을 때만 열 하나로 조용히 붙인다. 설명은 위 범례 표의 마지막 행이 진다. -->
+      <div class="col unk" th:if="${!#lists.isEmpty(board.unknown)}">
+        <div class="colhead static">
+          <span class="badge unk">알 수 없음</span>
+          <span class="cnt" th:text="${#lists.size(board.unknown)}">0</span>
+        </div>
+        <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
+          <span class="d" th:text="${p.domain}"></span>
+          <span class="rt" th:text="${p.route}"></span>
+          <span class="go" aria-hidden="true">→</span>
+        </a>
+      </div>
     </div>
 
-    <!-- 이 서버가 모르는 route 문자열의 행. 신버전이 만든 정책을 구버전으로 롤백한 뒤에 생긴다(DB 는 forward-only).
-         라우팅은 tolerant 하게 기본 체인으로 떨어지지만, 열에서 빠뜨리면 백오피스에서 보이지도 지워지지도 않는다. -->
-    <div class="unknown" th:if="${!#lists.isEmpty(board.unknown)}">
-      <div class="t"><b>이 서버가 모르는 정책</b>입니다.
-        새 정책 종류가 생긴 버전에서 만든 행을, 그 종류를 모르는 이전 버전이 읽으면 이렇게 보입니다
-        (배포는 되돌려도 DB 는 되돌아가지 않아 행이 남습니다).
-        라우팅은 안전하게 <b>기본 추출</b>로 떨어지므로 당장 잘못 동작하지는 않지만, 위 세 갈래 어디에도 속하지 않아
-        여기 따로 모읍니다. 항목을 눌러 알려진 정책으로 바꾸거나 삭제하세요.</div>
-      <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
-        <span class="d" th:text="${p.domain}"></span>
-        <span class="rt" th:text="${p.route}"></span>
-        <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
-        <span class="go" aria-hidden="true">→</span>
-      </a>
-    </div>
   </div>
 </body>
 </html>

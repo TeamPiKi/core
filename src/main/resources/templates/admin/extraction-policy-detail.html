@@ -24,8 +24,11 @@
     input{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
     input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
     .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
+    /* 정책 설명은 목록 화면의 "정책 종류 설명" 한 곳에만 둔다. 여기 복사해 두면 한쪽만 고쳐져 어긋난다. */
+    .hint a{color:var(--accent);font-weight:700;text-decoration:none;}
+    .hint a:hover{text-decoration:underline;}
 
-    /* 보드의 추가 폼과 같은 세그먼트 컨트롤 — 갈래 셋을 펼쳐 두고 고른 칸만 배지 색으로 채운다.
+    /* 보드의 추가 폼과 같은 세그먼트 컨트롤. 갈래 셋을 펼쳐 두고 고른 칸만 배지 색으로 채운다.
        모르는 route(구버전 롤백) 행이면 어느 칸도 선택되지 않으므로, radio 의 required 가 저장을 막아
        운영자가 알려진 정책을 명시적으로 고르게 한다. */
     .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
@@ -44,7 +47,7 @@
     .err{margin-top:16px;background:var(--danger-soft);border:1px solid #fecaca;color:var(--danger);border-radius:8px;padding:9px 12px;font-size:13px;}
     .warn{margin-top:16px;background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.6;}
 
-    /* 파괴적 액션은 저장 폼과 시각적으로 분리한다 — 상세 진입 자체가 확인 단계라 confirm() 다이얼로그는 두지 않는다. */
+    /* 파괴적 액션은 저장 폼과 시각적으로 분리한다. 상세 진입 자체가 확인 단계라 confirm() 다이얼로그는 두지 않는다. */
     .danger{margin-top:18px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:18px;}
     .danger .t{font-size:13px;font-weight:800;color:var(--danger);}
     .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.6;}
@@ -64,9 +67,9 @@
     <div class="err" th:if="${error}" th:text="${error}">에러</div>
 
     <div class="warn" th:unless="${knownRoute}">
-      이 서버가 <b>모르는 정책</b>입니다. 새 정책 종류가 생긴 버전에서 만든 행을, 그 종류를 모르는 이전 버전이 읽을 때 나타납니다
-      (배포는 되돌려도 DB 는 되돌아가지 않아 행이 남습니다). 라우팅은 안전하게 <b>기본 추출</b>로 떨어집니다.
-      아래에서 알려진 정책을 골라 저장하거나, 이 행을 삭제하세요.
+      <b>이 서버가 모르는 정책입니다.</b> 저장된 정책이 이 서버가 아는 세 가지 중 어느 것도 아닙니다.
+      지금은 정책이 없는 것과 똑같이 <b>기본 추출</b>로 처리되며, 사용자 등록이 막히지는 않습니다.
+      아래에서 아는 정책을 골라 저장하거나, 필요 없으면 이 행을 삭제하세요.
     </div>
 
     <form class="card" method="post" th:action="@{/admin/extraction-policies/{d}(d=${policy.domain})}">
@@ -77,19 +80,15 @@
           <span th:classappend="${r}" th:text="${r}"></span>
         </label>
       </div>
-      <div class="hint">
-        <b>SUPPORTED</b> 는 기본 추출(정적 fetch → 구조화/LLM)을 탑니다. 정책이 아예 없는 도메인과 라우팅이 같고,
-        다른 것은 하나 — 실측으로 확인했다는 기록이 남는다는 점입니다.<br>
-        <b>HEADLESS_FIRST</b> 는 처음부터 브라우저로 추출하며 원격 추출(extractor) 경로에서만 유효합니다.
-        <b>UNSUPPORTED</b> 는 사용자의 등록 요청을 400 으로 거릅니다.
-      </div>
+      <div class="hint">정책마다 추출 방법이 어떻게 다른지는
+        <a th:href="@{/admin/extraction-policies(guide=1)}" target="_blank" rel="noopener">정책 종류 설명</a>에서 볼 수 있습니다.</div>
 
       <label for="reason">사유 메모</label>
       <input id="reason" name="reason" type="text" maxlength="255" autocomplete="off"
              placeholder="예: 403 봇 차단"
              th:value="${draftReason} ?: ${policy.reason}">
       <div class="hint">정책을 바꿀 때 근거도 함께 고쳐 주세요. 사유가 옛 정책의 것으로 남으면 다음 사람이 잘못된 근거를 믿게 됩니다.<br>
-        <b>날짜는 적지 않습니다</b> — 언제 바뀌었는지는 위의 수정일이 답합니다.</div>
+        <b>날짜는 적지 않습니다.</b> 언제 바뀌었는지는 위의 수정일이 답합니다.</div>
 
       <button class="btn" type="submit">저장</button>
       <a class="btn ghost" th:href="@{/admin/extraction-policies}">취소</a>

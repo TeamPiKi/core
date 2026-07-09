@@ -24,17 +24,20 @@ class AdminExtractionPolicyService(
     private val routingPolicy: DbExtractionRoutingPolicy,
     private val auditService: AdminAuditService,
 ) {
-    // 화면용 3열 보드. filter 를 주면 그 열만 남긴다(열 헤더 링크 = ?route=X).
-    // unknown 은 filter 와 무관하게 항상 싣는다 — 이 바이너리가 모르는 route 행(신버전이 만든 뒤 롤백된
-    // 경우)을 열에서 누락시키면 백오피스에서 보이지도 지워지지도 않는 유령 행이 된다.
+    // 화면용 갈래별 보드. filter 를 주면 그 열만 남긴다(열 헤더 링크 = ?route=X).
+    //
+    // unknown(이 바이너리가 모르는 route 값)은 전체 보기에서만 싣는다. 열에서 아주 빼면 백오피스에서 보이지도
+    // 지워지지도 않는 유령 행이 되지만, 필터를 건 화면에까지 끼워 넣으면 "그 갈래만 본다"는 약속이 깨진다
+    // (모르는 값은 route 로 지목할 수 없어 어떤 필터에도 속하지 않는다). 전체 보기가 그 값을 만나는 자리다.
     @Transactional(readOnly = true)
     fun board(filter: ExtractionRoute?): ExtractionPolicyBoard {
         val byRoute = policyRepository.findAll().map { it.toView() }.groupBy { it.route }
         val known = ExtractionRoute.entries.map { it.name }.toSet()
         val shown: List<ExtractionRoute> = filter?.let { listOf(it) } ?: ExtractionRoute.entries
+        val unknown = byRoute.filterKeys { it !in known }.values.flatten().sortedBy { it.domain }
         return ExtractionPolicyBoard(
             columns = shown.map { ExtractionPolicyColumn(route = it, policies = byRoute[it.name].orEmpty().sortedBy { p -> p.domain }) },
-            unknown = byRoute.filterKeys { it !in known }.values.flatten().sortedBy { it.domain },
+            unknown = filter?.let { emptyList() } ?: unknown,
             filter = filter,
         )
     }

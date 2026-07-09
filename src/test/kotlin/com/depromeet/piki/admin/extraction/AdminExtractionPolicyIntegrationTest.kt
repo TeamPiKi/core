@@ -102,6 +102,26 @@ class AdminExtractionPolicyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `모르는 정책은 전체 보기에만 나오고 필터를 걸면 숨는다`() {
+        // 모르는 정책은 route 로 지목할 수 없어 어떤 필터에도 속하지 않는다. 필터를 건 화면에까지 끼워 넣으면
+        // "그 갈래만 본다"는 약속이 깨진다. 반대로 전체 보기에서도 빠지면 보이지도 지워지지도 않는 유령 행이 된다.
+        val mockMvc = mockMvc()
+        val domain = "filtered-unknown-${UUID.randomUUID()}.example.com"
+        try {
+            policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = "FUTURE_ROUTE", reason = null))
+
+            assertContains(html(mockMvc, "/admin/extraction-policies"), domain)
+            assertFalse(
+                html(mockMvc, "/admin/extraction-policies?route=SUPPORTED").contains(domain),
+                "필터를 건 화면에는 모르는 정책이 나오면 안 된다",
+            )
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
     fun `추가 폼은 대문자·trailing dot 입력을 정규형으로 저장하고 즉시 반영한다`() {
         val mockMvc = mockMvc()
         val suffix = UUID.randomUUID()
