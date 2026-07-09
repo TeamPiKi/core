@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -f .claude/hooks/commit-msg ] && cp .claude/hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg || true"
+            "command": "bash -c 'tmp=$(mktemp); if gh api -H \"Accept: application/vnd.github.raw\" repos/TeamPiKi/PIKI-Infra/contents/hooks/commit-msg >\"$tmp\" 2>/dev/null && [ -s \"$tmp\" ]; then install -m 755 \"$tmp\" \"$(git rev-parse --git-common-dir)/hooks/commit-msg\"; fi; rm -f \"$tmp\"; exit 0'"
           }
         ]
       }
