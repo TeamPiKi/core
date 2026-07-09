@@ -32,7 +32,7 @@ PR=$(gh pr view --json number --jq '.number')   # 블록마다 재도출 — 셸
 # --paginate 가 커서 페이지네이션을 자동 처리한다 (gh 규약: 변수명 $endCursor + pageInfo{hasNextPage endCursor} 선택).
 # 수동 재호출 루프를 두지 않는 이유: hasNext 신호를 실행자가 놓치면 100개 초과 thread 가 조용히 누락된다 — --paginate 는 호출 1회로 결정론적으로 전부 모은다.
 gh api graphql --paginate -f query='
-  query($endCursor: String) { repository(owner: "depromeet", name: "PIKI-Server") {
+  query($endCursor: String) { repository(owner: "TeamPiKi", name: "core") {
     pullRequest(number: '"$PR"') {
       reviewThreads(first: 100, after: $endCursor) {
         pageInfo { hasNextPage endCursor }
