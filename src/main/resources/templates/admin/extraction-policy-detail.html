@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;--danger:#b91c1c;--danger-soft:#fee2e2;--violet:#6d28d9;--violet-soft:#ede9fe;--ok:#15803d;--ok-soft:#dcfce7;--warn:#92400e;--warn-soft:#fffbeb;--warn-border:#fde68a;}
-    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
+    /* keep-all: 한국어가 어절 중간에서 꺾이지 않게 한다. 공백 없는 긴 토큰이 칸을 밀어내지 않도록
+       anywhere 를 안전판으로 함께 둔다 (.domain 의 break-all 은 그대로 우선한다). */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
     .wrap{max-width:640px;margin:0 auto;padding:26px 24px;}
     .domain{font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:800;color:#1f2937;word-break:break-all;}
     .meta{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:12.5px;color:var(--muted);}
@@ -96,8 +98,14 @@
 
     <div class="danger">
       <div class="t">정책 삭제</div>
-      <div class="d">삭제하면 이 도메인은 정책 없음으로 돌아가 <b>기본 추출</b>을 탑니다.
-        지금이 <b>UNSUPPORTED</b> 라면 삭제 즉시 사용자 등록이 다시 열립니다. 되돌리려면 정책을 새로 추가해야 합니다.</div>
+      <!-- 삭제의 결과는 현재 정책에 따라 다르다. "지금이 X 라면" 조건문을 독자가 머리로 평가하게 두지 않고,
+           이 행의 정책에 해당하는 결과만 박아 보여준다. -->
+      <div class="d" th:switch="${policy.route}">
+        <th:block th:case="'SUPPORTED'">삭제해도 추출 방법은 지금과 같은 <b>기본 추출</b>입니다. 잘 된다고 실측으로 확인한 기록만 사라집니다.</th:block>
+        <th:block th:case="'HEADLESS_FIRST'">삭제하면 이 도메인은 정책 없음으로 돌아가, 브라우저로 여는 대신 <b>기본 추출</b>(정적 fetch 부터)을 탑니다.</th:block>
+        <th:block th:case="'UNSUPPORTED'">삭제 즉시 이 도메인의 <b>사용자 등록이 다시 열립니다</b>. 정책 없음으로 돌아가 기본 추출을 탑니다.</th:block>
+        <th:block th:case="*">삭제해도 추출 동작은 그대로입니다 (모르는 정책은 이미 정책 없음처럼 처리됩니다). 남아 있던 이 행만 사라집니다.</th:block>
+        되돌리려면 정책을 새로 추가해야 합니다.</div>
       <form method="post" th:action="@{/admin/extraction-policies/{d}/delete(d=${policy.domain})}">
         <button type="submit">이 정책 삭제</button>
       </form>

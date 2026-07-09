@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --violet:#6d28d9; --violet-soft:#ede9fe; --ok:#15803d; --ok-soft:#dcfce7; --warn:#92400e; --warn-soft:#fffbeb; --warn-border:#fde68a; }
-    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
+    /* keep-all: 한국어가 어절 중간("버전으/로")에서 꺾이지 않게 한다. 공백 없는 긴 토큰(도메인 등)이
+       칸을 밀어내지 않도록 anywhere 를 안전판으로 함께 둔다. */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
     .wrap{max-width:980px;margin:0 auto;padding:28px 24px;}
     h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
     .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
@@ -76,15 +78,18 @@
     .filterbar{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);margin-bottom:12px;}
     .filterbar a{color:var(--accent);font-weight:700;text-decoration:none;}
 
-    /* 갈래별 3열. 좁은 화면·필터 적용(열 1개) 모두 auto-fit 이 알아서 접는다. */
-    .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;align-items:start;}
+    /* 갈래별 열. 좁은 화면·필터 적용(열 1개) 모두 auto-fit 이 알아서 접는다.
+       min 210px 는 "알 수 없음" 열이 더해진 4열까지 컨테이너(980px - 패딩) 한 줄에 들어가는 폭이다 —
+       250px 면 4열째가 둘째 줄 왼쪽에 혼자 떨어져, 의도된 열이 아니라 우연히 접힌 것처럼 보인다. */
+    .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;align-items:start;}
     .col{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;}
     .colhead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border);background:#fafbfc;text-decoration:none;}
     .colhead:hover{background:#f4f6f8;}
     .colhead .cnt{margin-left:auto;font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums;}
     .colhead:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
 
-    /* 한 줄 고정: 도메인은 ellipsis, 수정일·화살표는 nowrap. 어떤 값이 들어와도 행 높이가 벌어지지 않는다. */
+    /* 한 줄 고정: 도메인은 ellipsis, 수정일·화살표는 nowrap. 어떤 값이 들어와도 행 높이가 벌어지지 않는다.
+       ellipsis 로 잘린 도메인의 전문은 행의 title(hover 툴팁)이 보여준다. */
     .row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #f1f3f5;text-decoration:none;color:inherit;}
     .row:last-child{border-bottom:none;}
     .row:hover{background:#fcfcfd;}
@@ -111,7 +116,8 @@
   <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
   <div class="wrap">
     <h1>추출 라우팅 정책</h1>
-    <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).
+    <!-- 한 줄이 한 주제에 답한다: 무엇을 하나 / 교체·수정 규칙 / 사유 작성 규칙. -->
+    <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).<br>
       <b>같은 도메인을 다시 추가하면 정책이 교체</b>되고, 수정·삭제는 항목을 눌러 상세에서 합니다.<br>
       사유에는 <b>날짜를 적지 말고 관찰한 내용만</b> 남깁니다. 언제 바뀌었는지는 수정일이 자동으로 기록합니다.</p>
 
@@ -190,7 +196,8 @@
           <span class="badge" th:classappend="${c.route}" th:text="${c.route}"></span>
           <span class="cnt" th:text="${#lists.size(c.policies)}">0</span>
         </a>
-        <a class="row" th:each="p : ${c.policies}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
+        <a class="row" th:each="p : ${c.policies}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}"
+           th:title="${p.domain}">
           <span class="d" th:text="${p.domain}"></span>
           <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
           <span class="go" aria-hidden="true">→</span>
@@ -205,7 +212,8 @@
           <span class="badge unk">알 수 없음</span>
           <span class="cnt" th:text="${#lists.size(board.unknown)}">0</span>
         </div>
-        <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
+        <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}"
+           th:title="${p.domain}">
           <span class="d" th:text="${p.domain}"></span>
           <span class="rt" th:text="${p.route}"></span>
           <span class="go" aria-hidden="true">→</span>
