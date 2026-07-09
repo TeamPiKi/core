@@ -60,7 +60,7 @@ Epic 은 브랜치를 만들지 않고 상위 Epic 도 없다.
 분해된 제목으로 중복 이슈 사전 검사:
 
 ```bash
-gh issue list --repo depromeet/PIKI-Server --search "{제목 키워드}" --state open --json number,title,labels --limit 5
+gh issue list --repo TeamPiKi/PIKI-Server --search "{제목 키워드}" --state open --json number,title,labels --limit 5
 ```
 
 결과가 1개 이상이면 검수 단계에서 사용자에게 함께 보여줌.
@@ -93,7 +93,7 @@ gh issue list --repo depromeet/PIKI-Server --search "{제목 키워드}" --state
 
 ```bash
 gh issue create \
-  --repo depromeet/PIKI-Server \
+  --repo TeamPiKi/PIKI-Server \
   --title "{제목}" \
   --body "{본문}" \
   --label "epic" \
@@ -105,11 +105,11 @@ gh issue create \
 `gh issue create` 는 `--type` 을 지원하지 않으므로 GraphQL `updateIssueIssueType` mutation 으로 별도 부여한다. Epic 은 `Feature` type 매핑.
 
 ```bash
-ISSUE_ID=$(gh issue view {이슈번호} --repo depromeet/PIKI-Server --json id --jq '.id')
+ISSUE_ID=$(gh issue view {이슈번호} --repo TeamPiKi/PIKI-Server --json id --jq '.id')
 gh api graphql \
   -f query='mutation($issueId:ID!,$typeId:ID!){updateIssueIssueType(input:{issueId:$issueId,issueTypeId:$typeId}){issue{id issueType{name}}}}' \
   -F issueId=$ISSUE_ID \
-  -F typeId=IT_kwDOARZVGM4AJck6
+  -F typeId=IT_kwDOEfJ4WM4CE8Tb
 ```
 
 ### A-6. Project 추가
@@ -158,7 +158,7 @@ A-1 과 동일.
 
 **상위 Epic 추천**:
 ```bash
-gh issue list --repo depromeet/PIKI-Server --label epic --state open --json number,title --limit 20
+gh issue list --repo TeamPiKi/PIKI-Server --label epic --state open --json number,title --limit 20
 ```
 활성 epic 목록과 본문(제목+왜+무엇을)의 의미 비교로 가장 관련 있는 1개 추천. 없으면 추천 안 함.
 
@@ -198,7 +198,7 @@ gh issue list --repo depromeet/PIKI-Server --label epic --state open --json numb
 
 ```bash
 gh issue create \
-  --repo depromeet/PIKI-Server \
+  --repo TeamPiKi/PIKI-Server \
   --title "{제목}" \
   --body "{본문}" \
   --label "{선택된 분류 라벨}" \
@@ -209,19 +209,19 @@ gh issue create \
 
 `gh issue create` 는 `--type` 을 지원하지 않으므로 GraphQL `updateIssueIssueType` mutation 으로 별도 부여한다.
 
-**분류 → org type 매핑** (depromeet 조직 정의 type 3종 — Task / Bug / Feature):
+**분류 → org type 매핑** (TeamPiKi 조직 정의 type 3종 — Task / Bug / Feature):
 
 | 우리 라벨 | org type | type ID |
 |---|---|---|
-| `fix` | Bug | `IT_kwDOARZVGM4AJck3` |
-| `feat` | Feature | `IT_kwDOARZVGM4AJck6` |
-| `refactor` / `perf` / `chore` / `docs` / `test` / `infra` | Task | `IT_kwDOARZVGM4AJck0` |
-| (Epic 흐름) | Feature | `IT_kwDOARZVGM4AJck6` |
+| `fix` | Bug | `IT_kwDOEfJ4WM4CE8Ta` |
+| `feat` | Feature | `IT_kwDOEfJ4WM4CE8Tb` |
+| `refactor` / `perf` / `chore` / `docs` / `test` / `infra` | Task | `IT_kwDOEfJ4WM4CE8TZ` |
+| (Epic 흐름) | Feature | `IT_kwDOEfJ4WM4CE8Tb` |
 
 라벨이 단일이므로 분기 단순.
 
 ```bash
-ISSUE_ID=$(gh issue view {이슈번호} --repo depromeet/PIKI-Server --json id --jq '.id')
+ISSUE_ID=$(gh issue view {이슈번호} --repo TeamPiKi/PIKI-Server --json id --jq '.id')
 gh api graphql \
   -f query='mutation($issueId:ID!,$typeId:ID!){updateIssueIssueType(input:{issueId:$issueId,issueTypeId:$typeId}){issue{id issueType{name}}}}' \
   -F issueId=$ISSUE_ID \
@@ -242,7 +242,7 @@ gh api graphql \
 1. GitHub 브랜치 생성 + 이슈 연결. **`--checkout` 을 주지 않는다** — 현재 디렉토리를 끌고 가면 같은 브랜치를 워크트리에서 다시 체크아웃할 수 없어 충돌한다.
    ```bash
    gh issue develop {이슈번호} \
-     --repo depromeet/PIKI-Server \
+     --repo TeamPiKi/PIKI-Server \
      --base dev \
      --name "{prefix}/{이슈번호}-{slug}"
    ```
@@ -260,7 +260,7 @@ gh api graphql \
 
 ```bash
 gh issue develop {이슈번호} \
-  --repo depromeet/PIKI-Server \
+  --repo TeamPiKi/PIKI-Server \
   --base dev \
   --name "{prefix}/{이슈번호}-{slug}" \
   --checkout
@@ -294,10 +294,11 @@ gh project item-add 99 --owner depromeet --url {이슈 URL}
 - `gh issue develop` 은 `--name` (브랜치 이름 옵션) 을 명시 (인터랙티브 회피). `--branch-name` 은 존재하지 않는 옵션이니 주의. `--checkout` 은 **현재 브랜치 작업을 고른 경우에만** 붙인다 — 워크트리 작업이면 현재 디렉토리가 끌려가 충돌하므로 빼고, 체크아웃은 `EnterWorktree` 가 대신한다.
 - **워크트리 진입은 `EnterWorktree(path=...)` 로만.** `git worktree add` 로 먼저 만든 뒤 `path` 로 진입한다. `EnterWorktree(name=...)` 는 새 브랜치를 자체 생성하며 baseRef 기본값이 이 레포의 git default branch(`main`)를 가리켜 `dev` 분기 정책과 어긋난다. `path` 로 진입한 워크트리는 `ExitWorktree` 가 제거하지 않으므로, 정리는 `/session-close` 에 맡긴다.
 - `gh project item-add` 권한 부족 시 사용자에게 `gh auth refresh -h github.com -s project` 안내 (인터랙티브 디바이스 인증, 일회성).
+- **Project 99 번은 아직 depromeet org 소유라 cross-org 연결이다.** 이슈가 보드에 정상적으로 붙어도 `gh issue view --json projectItems` 는 빈 배열을 돌려주므로, 연결 확인은 `gh project item-list 99 --owner depromeet` 로 한다.
 - 본문에 `#{epic 번호}` 가 들어가면 GitHub 가 자동 cross-reference 링크 — 별도 sub-issue API 불필요.
 - 중복 이슈 검사 false positive 가능성 인지. 사용자가 "다른 이슈" 라 답하면 그대로 진행.
 - 이슈 템플릿(`.github/ISSUE_TEMPLATE/`)이 우선순위·일정을 required 로 정의해도 본문 자유 양식이라 강제받지 않는다. 이 스킬은 본질("왜/무엇을")만 받는 정책을 따른다.
 - **Assignee 는 `@me` 고정**. 이슈 만든 사람이 작업자라는 가정. 다른 사람에게 할당하려면 GitHub UI 에서 변경.
-- **Issue Type 은 GraphQL 별도 호출.** `gh issue create` 가 `--type` 미지원이라 `updateIssueIssueType` mutation 사용. depromeet org 의 type 은 Task / Bug / Feature 3종 — 우리 9개 라벨과 1:1 매핑이 안 되는 부분은 가장 가까운 type 으로 (refactor·perf·chore·docs·test·infra → Task, epic → Feature). org 가 type 을 추가/제거하면 본문의 type ID 도 갱신 필요.
+- **Issue Type 은 GraphQL 별도 호출.** `gh issue create` 가 `--type` 미지원이라 `updateIssueIssueType` mutation 사용. TeamPiKi org 의 type 은 Task / Bug / Feature 3종 — 우리 9개 라벨과 1:1 매핑이 안 되는 부분은 가장 가까운 type 으로 (refactor·perf·chore·docs·test·infra → Task, epic → Feature). org 가 type 을 추가/제거하면 본문의 type ID 도 갱신 필요.
 
 $ARGUMENTS
