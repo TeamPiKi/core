@@ -29,7 +29,7 @@ jobs:
 
           # 이미 리뷰어가 지정되어 있으면 스킵 (중복 방지)
           EXISTING=$(gh pr view "$PR_NUMBER" \
-            --repo depromeet/PIKI-Server \
+            --repo TeamPiKi/core \
             --json reviewRequests \
             --jq '.reviewRequests | length')
 
@@ -41,6 +41,6 @@ jobs:
           REVIEWER_STR=$(IFS=,; echo "${REVIEWERS[*]}")
           gh pr edit "$PR_NUMBER" \
             --add-reviewer "$REVIEWER_STR" \
-            --repo depromeet/PIKI-Server
+            --repo TeamPiKi/core
 
           echo "Assigned reviewers: $REVIEWER_STR"
