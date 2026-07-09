@@ -39,7 +39,7 @@ refactor: DB schema squash 와 테이블명 복수형 통일
 
 ## 허용 타입
 
-commit-msg 훅이 기계 강제한다. 훅의 **정본(SSOT)은 PIKI-Infra repo 의 `hooks/commit-msg`** 이고, SessionStart 훅(`.claude/settings.json`)이 세션 시작마다 원격 정본을 받아 `.git/hooks/commit-msg` 로 설치한다. 이 문서는 타입 목록을 열거하지 않는다 — 열거하면 정본과 두 곳이 되어 어긋난다. **현재 허용 타입은 설치된 훅(`.git/hooks/commit-msg`)을 읽어 확인**하고, 바꿀 땐 PIKI-Infra 정본을 고친다 (설치본·이 문서가 아니라).
+commit-msg 훅이 기계 강제한다. 훅의 **정본(SSOT)은 infra repo(TeamPiKi/infra) 의 `hooks/commit-msg`** 이고, SessionStart 훅(`.claude/settings.json`)이 세션 시작마다 원격 정본을 받아 `.git/hooks/commit-msg` 로 설치한다. 이 문서는 타입 목록을 열거하지 않는다 — 열거하면 정본과 두 곳이 되어 어긋난다. **현재 허용 타입은 설치된 훅(`.git/hooks/commit-msg`)을 읽어 확인**하고, 바꿀 땐 infra 정본을 고친다 (설치본·이 문서가 아니라).
 
 ## 커밋 분리 원칙
 
