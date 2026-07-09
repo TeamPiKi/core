@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'tmp=$(mktemp); if gh api -H \"Accept: application/vnd.github.raw\" repos/TeamPiKi/PIKI-Infra/contents/install.sh >\"$tmp\" 2>/dev/null && [ -s \"$tmp\" ] && bash -n \"$tmp\" 2>/dev/null; then bash \"$tmp\"; fi; rm -f \"$tmp\"; exit 0'"
+            "command": "bash -c 'tmp=$(mktemp); if gh api -H \"Accept: application/vnd.github.raw\" repos/TeamPiKi/infra/contents/install.sh >\"$tmp\" 2>/dev/null && [ -s \"$tmp\" ] && bash -n \"$tmp\" 2>/dev/null; then bash \"$tmp\"; fi; rm -f \"$tmp\"; exit 0'"
           }
         ]
       }
