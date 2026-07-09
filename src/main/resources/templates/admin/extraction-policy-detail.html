@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title th:text="${policy.domain} + ' · 추출 라우팅 정책'">추출 라우팅 정책</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;--danger:#b91c1c;--danger-soft:#fee2e2;--violet:#6d28d9;--violet-soft:#ede9fe;--ok:#15803d;--ok-soft:#dcfce7;--warn:#92400e;--warn-soft:#fffbeb;--warn-border:#fde68a;}
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
+    .wrap{max-width:640px;margin:0 auto;padding:26px 24px;}
+    .domain{font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:800;color:#1f2937;word-break:break-all;}
+    .meta{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:12.5px;color:var(--muted);}
+    .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+    .badge.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
+    .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
+    .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+    .badge.unknown{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border);}
+
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px;margin-top:18px;}
+    .lbl,label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 6px;}
+    .lbl:first-child{margin-top:0;}
+    input{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
+    input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
+    .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
+
+    /* 보드의 추가 폼과 같은 세그먼트 컨트롤 — 갈래 셋을 펼쳐 두고 고른 칸만 배지 색으로 채운다.
+       모르는 route(구버전 롤백) 행이면 어느 칸도 선택되지 않으므로, radio 의 required 가 저장을 막아
+       운영자가 알려진 정책을 명시적으로 고르게 한다. */
+    .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+    .segopt{display:inline-flex;position:relative;margin:0;}
+    .segopt input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;padding:0;border:none;cursor:pointer;}
+    .segopt span{padding:10px 14px;font-size:11.5px;font-weight:700;color:#8a929c;background:#fff;
+      border-left:1px solid var(--border);white-space:nowrap;cursor:pointer;transition:background .12s,color .12s;}
+    .segopt:first-child span{border-left:none;}
+    .segopt span:hover{background:#f7f8fa;}
+    .segopt input:checked + span.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
+    .segopt input:checked + span.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
+    .segopt input:checked + span.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+    .segopt input:focus-visible + span{outline:2px solid var(--accent);outline-offset:-2px;}
+    .btn{margin-top:18px;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--border);margin-left:8px;text-decoration:none;display:inline-block;padding:11px 18px;}
+    .err{margin-top:16px;background:var(--danger-soft);border:1px solid #fecaca;color:var(--danger);border-radius:8px;padding:9px 12px;font-size:13px;}
+    .warn{margin-top:16px;background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.6;}
+
+    /* 파괴적 액션은 저장 폼과 시각적으로 분리한다 — 상세 진입 자체가 확인 단계라 confirm() 다이얼로그는 두지 않는다. */
+    .danger{margin-top:18px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:18px;}
+    .danger .t{font-size:13px;font-weight:800;color:var(--danger);}
+    .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.6;}
+    .danger button{margin-top:14px;background:#fff;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .danger button:hover{background:var(--danger);color:#fff;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin/extraction-policies', '← 정책 목록')}"></div>
+  <div class="wrap">
+    <div class="domain" th:text="${policy.domain}">example.com</div>
+    <div class="meta">
+      <span class="badge" th:classappend="${knownRoute} ? ${policy.route} : 'unknown'" th:text="${policy.route}">ROUTE</span>
+      <span>마지막 수정 <b th:text="${#temporals.format(policy.updatedAt, 'yyyy-MM-dd HH:mm')}">-</b></span>
+    </div>
+
+    <div class="err" th:if="${error}" th:text="${error}">에러</div>
+
+    <div class="warn" th:unless="${knownRoute}">
+      이 서버가 <b>모르는 정책</b>입니다. 새 정책 종류가 생긴 버전에서 만든 행을, 그 종류를 모르는 이전 버전이 읽을 때 나타납니다
+      (배포는 되돌려도 DB 는 되돌아가지 않아 행이 남습니다). 라우팅은 안전하게 <b>기본 추출</b>로 떨어집니다.
+      아래에서 알려진 정책을 골라 저장하거나, 이 행을 삭제하세요.
+    </div>
+
+    <form class="card" method="post" th:action="@{/admin/extraction-policies/{d}(d=${policy.domain})}">
+      <div class="lbl">정책</div>
+      <div class="seg" role="radiogroup" aria-label="정책">
+        <label class="segopt" th:each="r : ${routes}">
+          <input type="radio" name="route" th:value="${r}" th:checked="${r.name() == selectedRoute}" required>
+          <span th:classappend="${r}" th:text="${r}"></span>
+        </label>
+      </div>
+      <div class="hint">
+        <b>SUPPORTED</b> 는 기본 추출(정적 fetch → 구조화/LLM)을 탑니다. 정책이 아예 없는 도메인과 라우팅이 같고,
+        다른 것은 하나 — 실측으로 확인했다는 기록이 남는다는 점입니다.<br>
+        <b>HEADLESS_FIRST</b> 는 처음부터 브라우저로 추출하며 원격 추출(extractor) 경로에서만 유효합니다.
+        <b>UNSUPPORTED</b> 는 사용자의 등록 요청을 400 으로 거릅니다.
+      </div>
+
+      <label for="reason">사유 메모</label>
+      <input id="reason" name="reason" type="text" maxlength="255" autocomplete="off"
+             placeholder="예: 403 봇 차단"
+             th:value="${draftReason} ?: ${policy.reason}">
+      <div class="hint">정책을 바꿀 때 근거도 함께 고쳐 주세요. 사유가 옛 정책의 것으로 남으면 다음 사람이 잘못된 근거를 믿게 됩니다.<br>
+        <b>날짜는 적지 않습니다</b> — 언제 바뀌었는지는 위의 수정일이 답합니다.</div>
+
+      <button class="btn" type="submit">저장</button>
+      <a class="btn ghost" th:href="@{/admin/extraction-policies}">취소</a>
+    </form>
+
+    <div class="danger">
+      <div class="t">정책 삭제</div>
+      <div class="d">삭제하면 이 도메인은 정책 없음으로 돌아가 <b>기본 추출</b>을 탑니다.
+        지금이 <b>UNSUPPORTED</b> 라면 삭제 즉시 사용자 등록이 다시 열립니다. 되돌리려면 정책을 새로 추가해야 합니다.</div>
+      <form method="post" th:action="@{/admin/extraction-policies/{d}/delete(d=${policy.domain})}">
+        <button type="submit">이 정책 삭제</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

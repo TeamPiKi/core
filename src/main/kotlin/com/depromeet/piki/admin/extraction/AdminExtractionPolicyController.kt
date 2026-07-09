@@ -9,12 +9,16 @@ import jakarta.servlet.http.HttpServletRequest
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 
-// 추출 라우팅 정책 관리 화면(#9 디스패처). 목록·저장(upsert)·삭제(SSR) — AdminTemplateController 와 같은 토대
-// (게이트는 슬랙-세션 #526, actor 폴백은 AdminSession.actorName(request)).
+// 추출 라우팅 정책 관리 화면(#9 디스패처). 갈래별 3열 보드(목록·필터)와 상세(수정·삭제) 두 화면의 SSR —
+// AdminTemplateController 의 목록 → 편집 진입과 같은 토대 (게이트는 슬랙-세션 #526,
+// actor 폴백은 AdminSession.actorName(request)).
+// 파괴적 액션(삭제)은 보드에 두지 않는다. 상세로 들어와 도메인·정책·사유를 확인한 뒤 실행한다 —
+// 목록 인라인 삭제 + confirm() 은 오클릭이 곧 즉시 적용(차단 해제)이라 되돌릴 창이 없었다.
 @Hidden
 @Controller
 @ConditionalOnAdminEnabled
@@ -23,10 +27,13 @@ class AdminExtractionPolicyController(
     private val adminExtractionPolicyService: AdminExtractionPolicyService,
 ) {
     @GetMapping
-    fun list(model: Model): String = listView(model)
+    fun board(
+        @RequestParam(required = false) route: String?,
+        model: Model,
+    ): String = boardView(route, model)
 
     @PostMapping
-    fun save(
+    fun add(
         @RequestParam domain: String,
         @RequestParam route: ExtractionRoute,
         @RequestParam(required = false) reason: String?,
@@ -37,17 +44,48 @@ class AdminExtractionPolicyController(
             adminExtractionPolicyService.save(domain, route, reason, actor = AdminSession.actorName(request), clientIp = ClientIp.of(request))
             "redirect:/admin/extraction-policies?updated"
         } catch (e: IllegalArgumentException) {
-            // 정규화·길이 검증 실패 — 제출값(route 선택 포함)을 유지한 채 목록 화면에 에러를 표시한다(400 JSON 대신 SSR).
+            // 정규화·길이 검증 실패 — 제출값(route 선택 포함)을 유지한 채 보드 화면에 에러를 표시한다(400 JSON 대신 SSR).
             model.addAttribute("error", e.message)
             model.addAttribute("draftDomain", domain)
-            model.addAttribute("draftRoute", route)
             model.addAttribute("draftReason", reason)
-            listView(model)
+            boardView(filter = null, model = model, selectedRoute = route.name)
         }
 
-    @PostMapping("/delete")
+    @GetMapping("/{domain}")
+    fun detail(
+        @PathVariable domain: String,
+        model: Model,
+    ): String =
+        try {
+            detailView(adminExtractionPolicyService.find(domain), model)
+        } catch (e: IllegalArgumentException) {
+            // 다른 운영자가 방금 지웠거나 URL 을 손으로 친 경우 — 띄울 대상이 없으므로 보드로 돌린다.
+            "redirect:/admin/extraction-policies?missing"
+        }
+
+    // 상세의 정책·사유 수정. save 가 upsert 라 추가 폼과 같은 경로를 탄다 (도메인은 PK 라 상세에서 바꾸지 않는다).
+    // 정책과 사유를 한 폼으로 받는 이유: 정책이 바뀌는 순간이 곧 근거가 새로 필요한 순간이라, 둘이 따로 저장되면
+    // "403 봇 차단" 사유가 SUPPORTED 행에 남는 식으로 근거가 정책과 어긋난다.
+    @PostMapping("/{domain}")
+    fun update(
+        @PathVariable domain: String,
+        @RequestParam route: ExtractionRoute,
+        @RequestParam(required = false) reason: String?,
+        request: HttpServletRequest,
+        model: Model,
+    ): String =
+        try {
+            adminExtractionPolicyService.save(domain, route, reason, actor = AdminSession.actorName(request), clientIp = ClientIp.of(request))
+            "redirect:/admin/extraction-policies?updated"
+        } catch (e: IllegalArgumentException) {
+            model.addAttribute("error", e.message)
+            model.addAttribute("draftReason", reason)
+            detailView(adminExtractionPolicyService.find(domain), model, selectedRoute = route.name)
+        }
+
+    @PostMapping("/{domain}/delete")
     fun delete(
-        @RequestParam domain: String,
+        @PathVariable domain: String,
         request: HttpServletRequest,
         model: Model,
     ): String =
@@ -56,14 +94,39 @@ class AdminExtractionPolicyController(
             "redirect:/admin/extraction-policies?deleted"
         } catch (e: IllegalArgumentException) {
             model.addAttribute("error", e.message)
-            listView(model)
+            boardView(filter = null, model = model)
         }
 
-    // 목록 화면의 모델 채우기 단일 지점 — 정상 목록과 두 에러 재표시 경로가 공유한다
+    // 보드 화면의 모델 채우기 단일 지점 — 정상 목록과 두 에러 재표시 경로가 공유한다
     // (한쪽만 갱신돼 에러 화면에서 모델이 비는 함정 방지).
-    private fun listView(model: Model): String {
-        model.addAttribute("policies", adminExtractionPolicyService.list())
+    // selectedRoute 기본값이 SUPPORTED 인 이유: 추가 폼의 기본 선택이 곧 오조작 시 저장되는 값이라,
+    // 라우팅을 바꾸지 않는 값(기록용)을 기본에 둔다. UNSUPPORTED 가 기본이면 실수 한 번이 등록 차단이 된다.
+    private fun boardView(
+        filter: String?,
+        model: Model,
+        selectedRoute: String? = null,
+    ): String {
+        model.addAttribute("board", adminExtractionPolicyService.board(parseRoute(filter)))
         model.addAttribute("routes", ExtractionRoute.entries)
+        model.addAttribute("selectedRoute", selectedRoute ?: ExtractionRoute.SUPPORTED.name)
         return "admin/extraction-policies"
     }
+
+    // knownRoute: 저장된 route 문자열이 이 바이너리의 enum 에 있는가. 없으면(신버전이 만든 값 → 구버전 롤백)
+    // select 에 고를 항목이 없으므로 화면이 경고를 띄우고 운영자가 알려진 정책으로 교체하거나 삭제하게 한다.
+    private fun detailView(
+        policy: ExtractionPolicyView,
+        model: Model,
+        selectedRoute: String? = null,
+    ): String {
+        model.addAttribute("policy", policy)
+        model.addAttribute("routes", ExtractionRoute.entries)
+        model.addAttribute("selectedRoute", selectedRoute ?: policy.route)
+        model.addAttribute("knownRoute", ExtractionRoute.entries.any { it.name == policy.route })
+        return "admin/extraction-policy-detail"
+    }
+
+    // ?route= 는 tolerant 하게 읽는다 — 모르는 값이면 400 대신 "필터 없음(전체)"으로 떨군다. 옛 링크를 눌렀거나
+    // URL 을 손으로 고쳤을 때 화면이 깨지는 것보다, 전체 보드를 보여주는 편이 백오피스에서 덜 위험하다.
+    private fun parseRoute(raw: String?): ExtractionRoute? = ExtractionRoute.entries.find { it.name == raw }
 }

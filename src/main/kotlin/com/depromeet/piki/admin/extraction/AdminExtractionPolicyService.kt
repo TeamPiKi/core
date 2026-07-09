@@ -14,8 +14,9 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime
 
-// 백오피스 추출 라우팅 정책 관리(#9 디스패처). 배포 없이 도메인별 차단(UNSUPPORTED)·브라우저 직행(HEADLESS_FIRST)을
-// 저장(upsert)·삭제한다. 수정 시: 도메인 정규화·검증 → 저장/삭제 → 캐시 reload(커밋 후) → 감사 기록 (AdminTemplateService 패턴).
+// 백오피스 추출 라우팅 정책 관리(#9 디스패처). 배포 없이 도메인별 지원 표기(SUPPORTED)·차단(UNSUPPORTED)·
+// 브라우저 직행(HEADLESS_FIRST)을 저장(upsert)·삭제한다.
+// 수정 시: 도메인 정규화·검증 → 저장/삭제 → 캐시 reload(커밋 후) → 감사 기록 (AdminTemplateService 패턴).
 @Service
 @ConditionalOnAdminEnabled
 class AdminExtractionPolicyService(
@@ -23,12 +24,30 @@ class AdminExtractionPolicyService(
     private val routingPolicy: DbExtractionRoutingPolicy,
     private val auditService: AdminAuditService,
 ) {
+    // 화면용 3열 보드. filter 를 주면 그 열만 남긴다(열 헤더 링크 = ?route=X).
+    // unknown 은 filter 와 무관하게 항상 싣는다 — 이 바이너리가 모르는 route 행(신버전이 만든 뒤 롤백된
+    // 경우)을 열에서 누락시키면 백오피스에서 보이지도 지워지지도 않는 유령 행이 된다.
     @Transactional(readOnly = true)
-    fun list(): List<ExtractionPolicyView> =
+    fun board(filter: ExtractionRoute?): ExtractionPolicyBoard {
+        val byRoute = policyRepository.findAll().map { it.toView() }.groupBy { it.route }
+        val known = ExtractionRoute.entries.map { it.name }.toSet()
+        val shown: List<ExtractionRoute> = filter?.let { listOf(it) } ?: ExtractionRoute.entries
+        return ExtractionPolicyBoard(
+            columns = shown.map { ExtractionPolicyColumn(route = it, policies = byRoute[it.name].orEmpty().sortedBy { p -> p.domain }) },
+            unknown = byRoute.filterKeys { it !in known }.values.flatten().sortedBy { it.domain },
+            filter = filter,
+        )
+    }
+
+    @Transactional(readOnly = true)
+    fun find(rawDomain: String): ExtractionPolicyView =
         policyRepository
-            .findAll()
-            .sortedWith(compareBy({ it.route }, { it.domain }))
-            .map { ExtractionPolicyView(domain = it.domain, route = it.route, reason = it.reason, updatedAt = it.updatedAt) }
+            .findById(normalize(rawDomain))
+            .orElseThrow { IllegalArgumentException("정책이 없는 도메인입니다: $rawDomain") }
+            .toView()
+
+    private fun ExtractionPlatformPolicyEntity.toView() =
+        ExtractionPolicyView(domain = domain, route = route, reason = reason, updatedAt = updatedAt)
 
     // upsert — 같은 도메인이 있으면 정책을 교체한다. "삭제 후 재추가"로 수정하게 하면 그 사이 정책 공백 창이 생기고
     // (삭제 시점에 캐시가 즉시 갱신돼 기본 체인으로 열림), 중복 검사 후 저장의 check-then-act 레이스도 남는다 —
@@ -115,4 +134,17 @@ data class ExtractionPolicyView(
     val route: String,
     val reason: String?,
     val updatedAt: LocalDateTime,
+)
+
+// 한 갈래(route)와 거기 속한 정책들. 열 헤더가 개수를 보여주므로 빈 열도 열 자체는 렌더된다.
+data class ExtractionPolicyColumn(
+    val route: ExtractionRoute,
+    val policies: List<ExtractionPolicyView>,
+)
+
+// filter 는 현재 어느 갈래만 보고 있는지(null 이면 전체) — 화면이 "전체 보기" 링크와 열 강조를 여기서 판단한다.
+data class ExtractionPolicyBoard(
+    val columns: List<ExtractionPolicyColumn>,
+    val unknown: List<ExtractionPolicyView>,
+    val filter: ExtractionRoute?,
 )

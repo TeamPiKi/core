@@ -7,72 +7,172 @@
   <title>추출 라우팅 정책 · PiKi 백오피스</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
-    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --violet:#6d28d9; --violet-soft:#ede9fe; }
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --violet:#6d28d9; --violet-soft:#ede9fe; --ok:#15803d; --ok-soft:#dcfce7; --warn:#92400e; --warn-soft:#fffbeb; --warn-border:#fde68a; }
     *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
-    .wrap{max-width:880px;margin:0 auto;padding:28px 24px;}
+    .wrap{max-width:980px;margin:0 auto;padding:28px 24px;}
     h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
-    .lede{color:var(--muted);font-size:13.5px;margin:0 0 22px;}
-    .ok{background:#dcfce7;color:#15803d;border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .lede .r{font-weight:700;}
+    .ok{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
     .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
     .card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
-    table{width:100%;border-collapse:collapse;font-size:13.5px;}
-    th{background:#fafbfc;color:var(--muted);font-weight:700;text-align:left;padding:11px 16px;border-bottom:1px solid var(--border);font-size:12px;}
-    td{padding:12px 16px;border-bottom:1px solid #f1f3f5;vertical-align:middle;}
-    tr:last-child td{border-bottom:none;} tr:hover td{background:#fcfcfd;}
-    .domain{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;color:#384049;}
-    .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
-    .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
-    .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
-    .reason{color:var(--muted);font-size:12.5px;}
-    .del{background:none;border:none;color:var(--danger);font-weight:700;font-size:12.5px;cursor:pointer;padding:0;}
     form.add{display:flex;gap:8px;padding:14px 16px;flex-wrap:wrap;align-items:center;}
-    form.add input,form.add select{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;}
+    form.add input{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;}
     form.add input[name=domain]{width:200px;} form.add input[name=reason]{flex:1;min-width:220px;}
     form.add button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;}
+
+    /* 갈래가 셋뿐이라 펼쳐 둔다 — 드롭다운과 달리 열지 않아도 선택지가 다 보이고, 고른 칸이 목록 배지와 같은 색으로
+       차서 시각이 이어진다. radio 라 화살표 키 이동·라벨 클릭이 기본 동작이다. */
+    .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+    .segopt{display:inline-flex;position:relative;margin:0;}
+    .segopt input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;}
+    .segopt span{padding:8px 12px;font-size:11.5px;font-weight:700;color:#8a929c;background:#fff;
+      border-left:1px solid var(--border);white-space:nowrap;cursor:pointer;transition:background .12s,color .12s;}
+    .segopt:first-child span{border-left:none;}
+    .segopt span:hover{background:#f7f8fa;}
+    .segopt input:checked + span.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
+    .segopt input:checked + span.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
+    .segopt input:checked + span.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+    .segopt input:focus-visible + span{outline:2px solid var(--accent);outline-offset:-2px;}
+
+    .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+    .badge.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
+    .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
+    .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+    /* 정책 행이 없는 도메인 — 목록에 나타날 수 없으므로 범례에서만 쓰는 배지. 점선으로 "행이 없음"을 드러낸다. */
+    .badge.none{background:#fff;color:#9aa1aa;border:1px dashed #ccd2d9;}
+
+    /* 네 가지 상태를 한 자리에서 비교한다. SUPPORTED 와 "정책 없음"이 라우팅 결과가 같고 차이는 "확인했는가"
+       뿐이라는 점은 산문으로 흩어 놓으면 읽히지 않는다 — 같은 열에 나란히 두면 한눈에 보인다. */
+    .legend{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .legend .lrow{display:grid;grid-template-columns:134px 104px 1fr;gap:14px;align-items:center;
+      padding:11px 16px;border-bottom:1px solid #f1f3f5;font-size:12.5px;}
+    .legend .lrow:last-child{border-bottom:none;}
+    .legend .eff{font-weight:700;color:#384049;white-space:nowrap;}
+    .legend .desc{color:var(--muted);line-height:1.55;}
+    @media (max-width:640px){
+      .legend .lrow{grid-template-columns:134px 1fr;gap:8px;}
+      .legend .eff{grid-column:2;} .legend .desc{grid-column:1 / -1;}
+    }
+
+    .filterbar{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);margin-bottom:12px;}
+    .filterbar a{color:var(--accent);font-weight:700;text-decoration:none;}
+
+    /* 갈래별 3열. 좁은 화면·필터 적용(열 1개) 모두 auto-fit 이 알아서 접는다. */
+    .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;align-items:start;}
+    .col{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+    .colhead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border);background:#fafbfc;text-decoration:none;}
+    .colhead:hover{background:#f4f6f8;}
+    .colhead .cnt{margin-left:auto;font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums;}
+    .colhead:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+
+    /* 한 줄 고정: 도메인은 ellipsis, 수정일·화살표는 nowrap. 어떤 값이 들어와도 행 높이가 벌어지지 않는다. */
+    .row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #f1f3f5;text-decoration:none;color:inherit;}
+    .row:last-child{border-bottom:none;}
+    .row:hover{background:#fcfcfd;}
+    .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+    .row .d{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;color:#384049;}
+    .row .u{white-space:nowrap;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+    /* 화살표는 어포던스 힌트일 뿐이라 hover 로 숨긴다. display:none 이 아니라 opacity 로 숨겨야 키보드 포커스가 닿고,
+       hover 가 없는 터치 기기에서는 항상 보여야 한다. 행 전체가 링크라 화살표를 못 봐도 진입에는 지장이 없다. */
+    .row .go{white-space:nowrap;color:var(--accent);font-weight:700;opacity:0;transition:opacity .12s;}
+    .row:hover .go,.row:focus-visible .go,.row:focus-within .go{opacity:1;}
+    @media (hover:none){.row .go{opacity:1;}}
+    .empty{padding:13px 14px;font-size:12.5px;color:var(--muted);}
+
+    .unknown{margin-top:20px;background:var(--warn-soft);border:1px solid var(--warn-border);border-radius:14px;overflow:hidden;}
+    .unknown .t{padding:12px 14px;font-size:12.5px;color:var(--warn);border-bottom:1px solid var(--warn-border);line-height:1.6;}
+    .unknown .t b{font-weight:800;}
+    .unknown .row{border-bottom-color:#fde68a;}
+    .unknown .row .rt{white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;font-weight:700;color:var(--warn);}
   </style>
 </head>
 <body>
   <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
   <div class="wrap">
     <h1>추출 라우팅 정책</h1>
-    <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).<br>
-      <b>UNSUPPORTED</b> = 등록 자체를 거절 (봇 차단 등으로 추출 불가한 곳). <b>HEADLESS_FIRST</b> = 처음부터 브라우저로 추출
-      <span style="color:#92400e">(원격 추출(extractor) 경로에서 유효 — extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과 없음)</span>.<br>
-      정책이 없는 도메인은 기본 추출(정적 fetch → 구조화/LLM)을 탑니다. <b>같은 도메인을 다시 추가하면 정책이 교체</b>됩니다.</p>
+    <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).
+      <b>같은 도메인을 다시 추가하면 정책이 교체</b>되고, 수정·삭제는 항목을 눌러 상세에서 합니다.<br>
+      사유에는 <b>날짜를 적지 말고 관찰한 내용만</b> 남깁니다 — 언제 바뀌었는지는 수정일이 자동으로 기록합니다.</p>
+
+    <div class="legend">
+      <div class="lrow">
+        <span class="badge none">정책 없음</span>
+        <span class="eff">기본 추출</span>
+        <span class="desc">목록에 없는 모든 도메인. <b>아직 확인하지 않았다</b>는 뜻입니다 — 정적 fetch 로 가져와 구조화/LLM 으로 읽습니다.</span>
+      </div>
+      <div class="lrow">
+        <span class="badge SUPPORTED">SUPPORTED</span>
+        <span class="eff">기본 추출</span>
+        <span class="desc">라우팅은 위와 <b>똑같습니다.</b> 다른 것은 하나 — 기본 추출로 잘 된다고 <b>실측으로 확인했다</b>는 기록입니다.</span>
+      </div>
+      <div class="lrow">
+        <span class="badge HEADLESS_FIRST">HEADLESS_FIRST</span>
+        <span class="eff">브라우저 직행</span>
+        <span class="desc">정적 fetch 가 늘 막히는 곳. 헛된 실패를 건너뜁니다.
+          <span style="color:#92400e">원격 추출(extractor) 경로에서만 유효하며, extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과가 없습니다.</span></span>
+      </div>
+      <div class="lrow">
+        <span class="badge UNSUPPORTED">UNSUPPORTED</span>
+        <span class="eff">등록 거절</span>
+        <span class="desc">봇 차단 등으로 어떤 방법으로도 상품 정보를 가져올 수 없는 곳. 사용자의 등록 요청을 400 으로 거릅니다.</span>
+      </div>
+    </div>
+
     <div class="ok" th:if="${param.updated}">정책이 저장됐습니다. (즉시 적용)</div>
     <div class="ok" th:if="${param.deleted}">정책이 삭제됐습니다. (즉시 적용)</div>
+    <div class="err" th:if="${param.missing}">해당 도메인의 정책이 없습니다. (다른 운영자가 삭제했을 수 있습니다)</div>
     <div class="err" th:if="${error}" th:text="${error}"></div>
+
     <div class="card">
       <form class="add" method="post" th:action="@{/admin/extraction-policies}">
         <input name="domain" placeholder="도메인 (예: coupang.com)" th:value="${draftDomain}" maxlength="255" required>
-        <select name="route">
-          <option th:each="r : ${routes}" th:value="${r}" th:selected="${r == draftRoute}"
-                  th:text="${r.name() == 'HEADLESS_FIRST'} ? 'HEADLESS_FIRST (원격 추출 경로에서 유효)' : ${r}"></option>
-        </select>
-        <input name="reason" placeholder="사유 메모 (예: 2026-07 실측 403 차단)" th:value="${draftReason}" maxlength="255">
+        <div class="seg" role="radiogroup" aria-label="정책">
+          <label class="segopt" th:each="r : ${routes}">
+            <input type="radio" name="route" th:value="${r}" th:checked="${r.name() == selectedRoute}" required>
+            <span th:classappend="${r}" th:text="${r}"></span>
+          </label>
+        </div>
+        <input name="reason" placeholder="사유 메모 (예: 403 봇 차단)" th:value="${draftReason}" maxlength="255">
         <button type="submit">추가</button>
       </form>
     </div>
-    <div class="card">
-      <table>
-        <thead><tr><th>도메인</th><th>정책</th><th>사유</th><th>수정</th><th></th></tr></thead>
-        <tbody>
-          <tr th:each="p : ${policies}">
-            <td class="domain" th:text="${p.domain}"></td>
-            <td><span class="badge" th:classappend="${p.route}" th:text="${p.route}"></span></td>
-            <td class="reason" th:text="${p.reason} ?: '-'"></td>
-            <td class="reason" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></td>
-            <td style="text-align:right">
-              <form method="post" th:action="@{/admin/extraction-policies/delete}" style="display:inline"
-                    onsubmit="return confirm('이 도메인의 정책을 삭제할까요? 삭제하면 기본 추출을 탑니다.')">
-                <input type="hidden" name="domain" th:value="${p.domain}">
-                <button class="del" type="submit">삭제</button>
-              </form>
-            </td>
-          </tr>
-          <tr th:if="${#lists.isEmpty(policies)}"><td colspan="5" class="reason">등록된 정책이 없습니다 — 모든 도메인이 기본 추출을 탑니다.</td></tr>
-        </tbody>
-      </table>
+
+    <div class="filterbar" th:if="${board.filter}">
+      <span><b th:text="${board.filter}"></b> 만 보는 중</span>
+      <a th:href="@{/admin/extraction-policies}">전체 보기</a>
+    </div>
+
+    <div class="board">
+      <div class="col" th:each="c : ${board.columns}">
+        <a class="colhead" th:href="@{/admin/extraction-policies(route=${c.route})}"
+           th:title="|${c.route} 만 보기|">
+          <span class="badge" th:classappend="${c.route}" th:text="${c.route}"></span>
+          <span class="cnt" th:text="${#lists.size(c.policies)}">0</span>
+        </a>
+        <a class="row" th:each="p : ${c.policies}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
+          <span class="d" th:text="${p.domain}"></span>
+          <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
+          <span class="go" aria-hidden="true">→</span>
+        </a>
+        <div class="empty" th:if="${#lists.isEmpty(c.policies)}">없음</div>
+      </div>
+    </div>
+
+    <!-- 이 서버가 모르는 route 문자열의 행. 신버전이 만든 정책을 구버전으로 롤백한 뒤에 생긴다(DB 는 forward-only).
+         라우팅은 tolerant 하게 기본 체인으로 떨어지지만, 열에서 빠뜨리면 백오피스에서 보이지도 지워지지도 않는다. -->
+    <div class="unknown" th:if="${!#lists.isEmpty(board.unknown)}">
+      <div class="t"><b>이 서버가 모르는 정책</b>입니다.
+        새 정책 종류가 생긴 버전에서 만든 행을, 그 종류를 모르는 이전 버전이 읽으면 이렇게 보입니다
+        (배포는 되돌려도 DB 는 되돌아가지 않아 행이 남습니다).
+        라우팅은 안전하게 <b>기본 추출</b>로 떨어지므로 당장 잘못 동작하지는 않지만, 위 세 갈래 어디에도 속하지 않아
+        여기 따로 모읍니다. 항목을 눌러 알려진 정책으로 바꾸거나 삭제하세요.</div>
+      <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}">
+        <span class="d" th:text="${p.domain}"></span>
+        <span class="rt" th:text="${p.route}"></span>
+        <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
+        <span class="go" aria-hidden="true">→</span>
+      </a>
     </div>
   </div>
 </body>
