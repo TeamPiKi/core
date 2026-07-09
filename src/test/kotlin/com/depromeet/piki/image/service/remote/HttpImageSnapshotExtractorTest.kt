@@ -61,7 +61,7 @@ class HttpImageSnapshotExtractorTest {
 
         val snapshot = extractor.extract(imageKey)
 
-        assertNull(snapshot.link, "이미지 추출엔 원본 URL 이 없다 - embedded(GeminiImageResult)와 같은 계약")
+        assertNull(snapshot.link, "이미지 추출엔 원본 URL 이 없다 (계약 §2 image)")
         assertEquals("나이키 에어포스", snapshot.name)
         assertEquals("https://img.test/items/out.png", snapshot.imageUrl)
         assertEquals(129_000, snapshot.currentPrice)
