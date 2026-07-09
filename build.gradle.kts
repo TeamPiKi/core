@@ -64,16 +64,6 @@ dependencies {
     // 알림 템플릿 플레이스홀더 치환 (StringSubstitutor). Spring Boot BOM 미관리라 버전 명시 (Maven Central 최신 안정).
     implementation("org.apache.commons:commons-text:1.15.0")
 
-    // 상품 페이지 HTML 에서 구조화 데이터(JSON-LD <script type=ld+json>·OpenGraph <meta og:*>) 를 추출 (#425).
-    // LLM 호출 전 결정론적 우선 파싱용 — 마크업에서 script/meta 블록을 정확히 꺼내는 책임만 진다(값은 Jackson 3 트리).
-    // Spring Boot 4.0.5 BOM 미관리라 버전 명시 (Maven Central 최신 안정).
-    implementation("org.jsoup:jsoup:1.22.2")
-
-    // 상품 페이지 redirect 추적 시 "같은 회사 도메인(eTLD+1)" 판정에 guava InternetDomainName(Public Suffix List)을 쓴다 (#440).
-    // 단순 점 개수 어림은 a.co.kr↔b.co.kr 을 같은 회사로 오판해 SSRF 구멍이라 PSL 이 필요.
-    // guava 는 firebase-admin 으로 이미 transitive 하나, 그 버전 드리프트에 RedirectPolicy 가 깨지지 않게 직접 버전을 고정한다(Maven Central 최신 안정).
-    implementation("com.google.guava:guava:33.6.0-jre")
-
     // SSRF IP-pin: 가드가 검증한 IP 로만 연결하도록 HttpClient5 의 DnsResolver 를 끼운다 (#440).
     // JDK HttpURLConnection 은 IP pin 시 TLS SNI·인증서를 수동 복구해야 해 깨지기 쉬운데(JDK-8144566 등), HttpClient5 는
     // IP 만 바꾸고 SNI·인증서·Host 헤더는 원 도메인을 유지한다. 버전은 Spring Boot BOM 관리(이미 transitive).

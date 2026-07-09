@@ -36,9 +36,9 @@ class AsyncItemParsingWorker(
         snapshotId: Long,
         link: ProductLink,
     ) {
-        // 파싱 한 건을 "item.parse" span 하나로 묶는다 — fetch·structured·Gemini 호출이 그 자식 span 으로 붙어,
-        // 트레이스에서 단건 파이프라인(직접 파싱 → LLM fallback)을 끝까지 펼쳐 볼 수 있다. 디스패처가 @Scheduled 라
-        // 들어오는 trace 가 없어, 여기서 만들지 않으면 fetch·Gemini span 이 따로 떠 묶이지 않는다.
+        // 파싱 한 건을 "item.parse" span 하나로 묶는다 — 원격 extractor 호출이 그 자식 span 으로 붙고, extractor 내부의
+        // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
+        // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
         Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
             val started = System.nanoTime()
             runCatching { productLinkExtractor.extract(link) }

@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 
 // Google userinfo 응답 wire 모델. 우리가 쓰는 필드(id·picture·email·verified_email)만 모델링하고,
 // 나머지(name·locale 등)는 ignoreUnknown 으로 무시한다 — 운영 ObjectMapper 설정에
-// 의존하지 않고 DTO 자체가 부분 매핑을 명시한다(KakaoUserInfoResponse·GeminiGenerateContentResponse 와 동일).
+// 의존하지 않고 DTO 자체가 부분 매핑을 명시한다(KakaoUserInfoResponse 와 동일).
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class GoogleUserInfoResponse(
     val id: String,
