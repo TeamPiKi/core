@@ -1,4 +1,4 @@
-브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사, 없으면 브랜치 prefix) · Project(99) 도 자동 설정합니다. 마지막에 항상 `/notion-board` 를 호출해 Notion `프로젝트 일정 관리` 보드 반영을 시도합니다 — 무엇을 거를지(스킵·확인)는 `/notion-board` 가 판단합니다 (토큰이 없을 때만 자동 생략).
+브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사, 없으면 브랜치 prefix) · Project(99) 도 자동 설정합니다.
 
 ## PR 본문 작성 원칙
 
@@ -99,7 +99,7 @@ echo "ISSUE_LABELS=${ISSUE_LABELS:-없음}"
 ```
 
 - 라벨이 있으면 `### 3-A`(LABEL_ARGS 배열) / `### 3-B` 10단계(EDIT_ARGS 배열)에서 부여한다. 두 블록 모두 **위 echo 로 확인한 값을 인라인으로 박는다** — 셸 변수가 블록 간 유지되지 않아서다.
-- fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — `/notion-board` 호출 계약이 이 이름을 참조하고, 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
+- fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
 
 ### 2단계: STAR 본문 작성 — create 모드 한정
 
@@ -230,7 +230,7 @@ fi
    - ID 의미: project=99 노드 ID, Status 필드/`In review` 옵션 ID, Start date 필드 ID(`PVTF_..GA`, DATE 타입). 보드에서 필드/옵션이 바뀌면 이 ID 들도 갱신 필요.
    - Target date 와 Status `Done` 은 PR 머지 시점에 별도 CI workflow (`.github/workflows/pr-merge-project-sync.yml`) 가 자동 세팅. PR 스킬은 머지 이전 단계만 책임짐.
    - 권한 부족 시 사용자에게 `gh auth refresh -h github.com -s project,read:project` 안내 (일회성 디바이스 인증).
-5. PR URL 과 부여된 assignee / 라벨 / Project(Status: In review, Start date) 결과를 사용자에게 전달한 뒤, `### 4. Notion 보드 반영` 으로 이어진다.
+5. PR URL 과 부여된 assignee / 라벨 / Project(Status: In review, Start date) 결과를 사용자에게 전달한다.
 
 ### 3-B. Update 모드 — 기존 PR 본문 갱신
 
@@ -314,11 +314,7 @@ fi
         }'
     fi
     ```
-11. PR URL 재출력 후, `### 4. Notion 보드 반영` 으로 이어진다.
-
-### 4. Notion 보드 반영 (항상 호출)
-
-**create / update 양 모드 완료 후 (PR URL 확정 후), 이어서 항상 `/notion-board` 를 `mode=pr` 로 호출한다.** 입력·게이트·best-effort 규약은 모두 `/notion-board` 의 `## 호출 계약` 을 따른다 — `/pr` 은 라벨·토큰으로 거르지 않고 항상 호출만 하고, 무엇을 올릴지(스킵·확인·진행)는 `/notion-board` 가 정한다.
+11. PR URL 을 재출력한다.
 
 ### PR 제목 규칙
 - 70자 이내
