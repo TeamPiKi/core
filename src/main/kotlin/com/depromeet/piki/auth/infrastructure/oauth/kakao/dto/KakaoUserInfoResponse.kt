@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 
 // 카카오 /v2/user/me 응답 wire 모델. 우리가 쓰는 필드(profile_image_url·email·email 상태)만 모델링하고,
 // 나머지(has_email·email_needs_agreement·connected_at 등 다수)는 ignoreUnknown 으로 무시한다 —
-// 운영 RestClient 의 ObjectMapper 설정에 의존하지 않고 DTO 자체가 부분 매핑을 명시한다(GeminiGenerateContentResponse 와 동일).
+// 운영 RestClient 의 ObjectMapper 설정에 의존하지 않고 DTO 자체가 부분 매핑을 명시한다(GoogleUserInfoResponse 와 동일).
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class KakaoUserInfoResponse(
     val id: Long,

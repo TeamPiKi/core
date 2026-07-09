@@ -14,7 +14,7 @@ import java.time.LocalDateTime
 //
 // 보장은 execution at-least-once(#461): claim 직후 크래시(실행 0회)·실행 중 크래시·일시 외부 오류로 단건 실행이
 // 끝나지 않은 작업을 recover 가 재실행으로 되살린다. 핵심 불변식 두 가지:
-//   1. 단건 시도는 60s 안에 끝난다 — fetch(≤약 20s) + Gemini(≤약 35s, 내부 재시도 off) 외부 timeout 합이 ≤ 약 55s.
+//   1. 단건 시도는 60s 안에 끝난다 — 원격 extractor 호출 read timeout ≤ 약 55s(extractor 내부 재시도 off).
 //      그래서 updated_at 이 60s(STALE_TIMEOUT_SECONDS) 보다 오래된 PROCESSING 은 "워커가 더는 돌고 있지 않다" 로 단정할 수 있고,
 //      정상적으로 도는 시도를 stale 로 오판해 죽이지 않는다.
 //   2. 재실행 상한 2회(MAX_ATTEMPTS). 최악 총 시간 = 2 x (60s 윈도 + recover 주기 15s) = 약 150s 로, 절대 3분을 넘지 않는다.
