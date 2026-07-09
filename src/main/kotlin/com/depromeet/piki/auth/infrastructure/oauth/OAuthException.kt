@@ -55,7 +55,7 @@ class OAuthException private constructor(
             )
 
         // 우리 OAuth 설정/요청 오류(client_id/secret · client_secret JWT · 필수 인자 누락 등) — 외부 호출 경계에서
-        // provider 가 "네 자격/요청이 틀렸다"고 거부한 것. GeminiApiException.clientError 와 같은 결로 502 + SERVER_ERROR:
+        // provider 가 "네 자격/요청이 틀렸다"고 거부한 것 — 외부 호출 경계 실패라 502 + SERVER_ERROR 로 매핑한다:
         // status 502 = 외부 호출 경계 실패, category SERVER_ERROR = 재시도해도 무의미한 우리 서버 문제(알림 신호).
         // 정상 클라 요청으로 해소 불가. 원인은 cause 로만 보존하고 message 는 고정 문구(원문 비노출).
         fun misconfigured(cause: Throwable): OAuthException =

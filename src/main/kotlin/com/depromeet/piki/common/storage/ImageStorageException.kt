@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus
 
 // 이미지 저장(S3 등 외부 스토리지) 실패를 나타내는 계약 예외.
 // 멀쩡한 클라이언트의 정상 요청이라도 우리 밖 스토리지 장애로 떨어질 수 있어 도달 가능한 계약 응답이며,
-// GeminiApiException(502) 과 같은 결로 502 BAD_GATEWAY 로 매핑한다 — 클라이언트는 재시도로 처리한다.
+// 외부 의존성 실패답게 502 BAD_GATEWAY 로 매핑한다 — 클라이언트는 재시도로 처리한다.
 // message 는 고정 사용자 대면 문구로 두고, 원인은 cause 체인·로그로 남긴다(내부 정보 비노출).
 class ImageStorageException private constructor(
     message: String,
