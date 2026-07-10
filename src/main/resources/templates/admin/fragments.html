@@ -7,6 +7,8 @@
   backHref/backLabel 은 페이지별 뒤로가기 링크(홈·공지 목록·템플릿 목록 등). 없으면(홈·목록 루트) 생략한다.
   세션 남은시간·연장(#669): /admin/session/ttl 로 남은시간을 받아 카운트다운하고, 연장 버튼(명시적)만 TTL 을 갱신한다
   (게이트의 sliding 자동연장을 없앴으므로 배경 요청으로는 세션이 안 늘어난다).
+  로컬 우회(adminLocalBypass)에서는 세션이 없는 게 정상이라 "세션 만료됨"·연장 버튼·접속 IP 가 오해만 준다 — 감춘다
+  (스크립트는 요소가 없으면 알아서 빠진다).
 -->
 <th:block th:fragment="topbar(backHref, backLabel)">
   <style>
@@ -37,16 +39,18 @@
     <span class="pkbrand"><img src="/favicon.ico" alt="PiKi"
         style="width:19px;height:19px;border-radius:5px;vertical-align:-4px;margin-right:6px">PiKi<span class="pkdot">.</span> 백오피스</span>
     <span class="pksp"></span>
-    <span class="pksession" id="pk-session">
-      <span>세션 <b id="pk-session-remaining">-</b></span>
-      <button type="button" class="pkextend" id="pk-session-extend">연장</button>
-    </span>
-    <span class="pksep">·</span>
+    <th:block th:unless="${adminLocalBypass == true}">
+      <span class="pksession" id="pk-session">
+        <span>세션 <b id="pk-session-remaining">-</b></span>
+        <button type="button" class="pkextend" id="pk-session-extend">연장</button>
+      </span>
+      <span class="pksep">·</span>
+    </th:block>
     <span class="pkmeta">
       <span th:if="${adminEnv}">현재 접속하신 환경은
         <span class="pkenv" th:classappend="'env-'+${adminEnv}" th:text="${adminEnv}">DEV</span> 입니다</span>
-      <span class="pksep" th:if="${adminEnv != null and adminClientIp != null}">·</span>
-      <span th:if="${adminClientIp}">접속 IP <b th:text="${adminClientIp}">-</b></span>
+      <span class="pksep" th:if="${adminEnv != null and adminClientIp != null and adminLocalBypass != true}">·</span>
+      <span th:if="${adminClientIp != null and adminLocalBypass != true}">접속 IP <b th:text="${adminClientIp}">-</b></span>
     </span>
     <a class="pkhome" th:if="${backHref}" th:href="@{${backHref}}" th:text="${backLabel}">←</a>
   </div>
