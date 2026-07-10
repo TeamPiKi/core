@@ -20,6 +20,12 @@ variable "image_bucket_name" {
   # 계정번호를 포함하므로 default 를 두지 않는다(퍼블릭 repo). TF_VAR_image_bucket_name 또는 terraform.tfvars 로 주입.
   description = "크롭 상품 이미지 저장 버킷명. state 버킷(piki-tfstate-*)과 일관되게 piki-images-{account} 사용."
   type        = string
+
+  # placeholder(<ACCOUNT_ID>)·형식 오류가 plan/apply 까지 가면 엉뚱한 버킷 생성·교체를 유발하므로 plan 시점에 차단
+  validation {
+    condition     = can(regex("^piki-images-[0-9]{12}$", var.image_bucket_name))
+    error_message = "image_bucket_name 은 piki-images-<12자리 AWS 계정번호> 형식이어야 합니다."
+  }
 }
 
 variable "vpc_cidr" {

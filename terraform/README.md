@@ -121,7 +121,9 @@ export AWS_REGION="ap-northeast-2"
 
 ```bash
 cd terraform
-cp backend.hcl.example backend.hcl             # 최초 1 회 — <ACCOUNT_ID> 를 실제 계정번호로 교체 (gitignore, 커밋 금지)
+if [ ! -f backend.hcl ]; then                  # 이미 실값을 채운 backend.hcl 을 placeholder 로 덮지 않게 최초 1 회만 복사
+  cp backend.hcl.example backend.hcl           # 복사 후 <ACCOUNT_ID> 를 실제 계정번호로 교체 (gitignore, 커밋 금지)
+fi
 terraform init -backend-config=backend.hcl     # 첫 실행 시 또는 backend 설정 변경 시. provider 다운 + S3 backend 연결
 terraform plan   # state 읽고 AWS 와 비교, 변경 미리 보기
 ```
