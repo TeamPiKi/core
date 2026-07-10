@@ -82,6 +82,6 @@ gh pr list --head "$BR" --state merged --json number,headRefName \
 
 `/clear` 를 스킬이 직접 호출하려 시도하지 않는다(불가능하다).
 
-owner/repo는 `depromeet/PIKI-Server` 고정. 레포가 바뀌면 갱신한다.
+owner/repo는 `TeamPiKi/core` 고정. 레포가 바뀌면 갱신한다.
 
 $ARGUMENTS

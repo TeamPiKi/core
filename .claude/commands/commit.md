@@ -39,17 +39,7 @@ refactor: DB schema squash 와 테이블명 복수형 통일
 
 ## 허용 타입
 
-commit-msg 훅이 강제하는 목록과 1:1 이다. 훅의 **소스는 리포에 체크인된 `.claude/hooks/commit-msg`** 이고, SessionStart 훅(`.claude/settings.json`)이 세션 시작마다 이를 `.git/hooks/commit-msg` 로 복사한다. 바꿀 땐 `.git/hooks/` 사본이 아니라 소스를 고치고 이 목록도 함께 갱신한다 — 사본을 직접 수정하면 다음 세션 시작에 조용히 되돌려지고 다른 clone 에 전파되지도 않는다.
-
-- `feat:` — 새 기능
-- `fix:` — 버그 수정
-- `refactor:` — 동작 변경 없는 리팩토링
-- `perf:` — 성능 개선
-- `chore:` — 빌드, 설정 등 기타
-- `docs:` — 문서 변경
-- `test:` — 테스트 추가/수정
-- `infra:` — 인프라 (Terraform·AWS·배포 워크플로우·서버 설정)
-- `style:` — 코드 포맷, 세미콜론 등 로직 변경 없는 스타일
+commit-msg 훅이 기계 강제한다. 훅의 **정본(SSOT)은 infra repo(TeamPiKi/infra) 의 `hooks/commit-msg`** 이고, SessionStart 훅(`.claude/settings.json`)이 세션 시작마다 원격 정본을 받아 `.git/hooks/commit-msg` 로 설치한다. 이 문서는 타입 목록을 열거하지 않는다 — 열거하면 정본과 두 곳이 되어 어긋난다. **현재 허용 타입은 설치된 훅(`.git/hooks/commit-msg`)을 읽어 확인**하고, 바꿀 땐 infra 정본을 고친다 (설치본·이 문서가 아니라).
 
 ## 커밋 분리 원칙
 

@@ -1,4 +1,4 @@
-브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 `## Updates` 섹션에 증분을 append 하되, 기존 서술을 무효화하는 변경은 본문 STAR 도 최종 상태로 함께 고칩니다 (살아있는 본문 — `### 3-B` 5번). assignee(`@me`) · 라벨(연관 이슈에서 복사, 없으면 브랜치 prefix) · Project(99) 도 자동 설정합니다.
+브랜치에서 작업한 내용을 STAR 구조 PR로 정리하여 GitHub에 올립니다. 이미 PR이 있으면 본문 STAR 를 최종 상태로 직접 갱신합니다 (살아있는 본문 — `### 3-B`; 증분 원장은 본문이 아니라 PR 커밋 탭·본문 edit history 가 담당). assignee(`@me`) · 라벨(연관 이슈에서 복사, 없으면 브랜치 prefix) · Project(99) 도 자동 설정합니다.
 
 ## PR 본문 작성 원칙
 
@@ -88,7 +88,7 @@ PR 은 연관 이슈와 같은 분류를 갖는 것이 자연스러우므로 이
 
 ```bash
 # 한 블록에서 끝까지 계산하고 echo 로 값을 남긴다 — 셸 변수는 bash 호출 간 유지되지 않으므로,
-# 3-A·3-B 10단계 블록은 이 출력으로 확인한 값을 인라인으로 박아 쓴다 (SLUG 재도출과 같은 규칙).
+# 3-A 3번·3-B 메타데이터 보정 블록은 이 출력으로 확인한 값을 인라인으로 박아 쓴다 (SLUG 재도출과 같은 규칙).
 ISSUE_LABELS=$(gh issue view {번호} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)   # 이슈 번호 미매칭이면 이 줄은 건너뛴다
 if [ -z "$ISSUE_LABELS" ]; then
   PREFIX=$(git branch --show-current | cut -d/ -f1)
@@ -98,12 +98,12 @@ fi
 echo "ISSUE_LABELS=${ISSUE_LABELS:-없음}"
 ```
 
-- 라벨이 있으면 `### 3-A`(LABEL_ARGS 배열) / `### 3-B` 10단계(EDIT_ARGS 배열)에서 부여한다. 두 블록 모두 **위 echo 로 확인한 값을 인라인으로 박는다** — 셸 변수가 블록 간 유지되지 않아서다.
+- 라벨이 있으면 `### 3-A`(LABEL_ARGS 배열) / `### 3-B` 메타데이터 보정(EDIT_ARGS 배열)에서 부여한다. 두 블록 모두 **위 echo 로 확인한 값을 인라인으로 박는다** — 셸 변수가 블록 간 유지되지 않아서다.
 - fallback 까지 비면 그때만 라벨 없이 진행한다. (변수명은 `ISSUE_LABELS` 를 유지한다 — 출처가 어디든 "이 PR 의 분류 라벨" 이라는 의미는 같다.)
 
 ### 2단계: STAR 본문 작성 — create 모드 한정
 
-(update 모드는 `### 3-B` 의 자체 가이드를 따른다 — Updates 섹션에 짧은 STAR 항목을 append 하고, 이번 변경이 기존 본문을 낡게 만들면 그 자리도 함께 갱신)
+(update 모드는 `### 3-B` 의 자체 가이드를 따른다 — 본문 STAR 를 최종 상태로 직접 갱신)
 
 이번 대화에서 나눈 내용을 중심으로, 아래 템플릿을 채운다:
 
@@ -144,7 +144,7 @@ echo "ISSUE_LABELS=${ISSUE_LABELS:-없음}"
 - Task 섹션은 Discord PR 봇이 읽으므로, 핵심 작업을 간결하게 요약
 - 한국어로 작성, 기술 용어는 영어 허용
 - **제목·본문에 이모지·물결(`~`)·em dash(`—`)를 쓰지 않는다.** 이모지는 렌더링 환경에 따라 깨지고 미적 선호에도 어긋난다. `~text~` 는 GitHub-flavored markdown 이 취소선(strikethrough)으로 렌더링해 두 물결 사이 텍스트를 통째로 줄 그어버린다. em dash 는 가독성 선호상 쓰지 않는다. 대체: 곁가지·부연은 쉼표·괄호·콜론(`:`)이나 문장 분리로, approximately 는 "약", 범위는 "에서"나 하이픈(`-`)으로 표현한다.
-- **1단계에서 수집한 `git log` 의 모든 커밋이 STAR(특히 Action)에 빠짐없이 반영됐는지 최종 점검한다.** 해시 명기는 update 모드 전용이지만, "누락된 커밋이 없는지" 점검은 create 모드도 같은 레벨로 거친다 — 기억·추측이 아니라 로그와 대조한다.
+- **1단계에서 수집한 `git log` 의 모든 커밋이 STAR(특히 Action)에 빠짐없이 반영됐는지 최종 점검한다.** create·update 모드 공통 — 기억·추측이 아니라 로그와 대조한다.
 - **CI 가 보증하는 자명한 결과는 본문에 적지 않는다.** "전체 테스트 통과"·"컴파일 성공"·"그린"·"전체 회귀 통과" 같은 머지 전제 사실은 리뷰어에게 새 정보가 0 이므로 Result 에서 뺀다. 검증은 **결과가 아니라 "무엇을·어떻게·왜 그렇게 확인했나"가 비자명할 때만** 적는다 — 동시성·negative control(임시 제거 시 FAIL 확인 등)·실측으로 확정한 가정·분기 망라의 폭(예: 케이스 N건)·검증의 한계와 후속 같은 것. 단순 통과 단언과 비자명한 검증 설명을 구분하라. 테스트 결과 XML·로그 전문을 `<details>` 로 덤프하지 않는다 (필요하면 한 줄로 요약).
 
 **Action 섹션 그룹화 가이드:**
@@ -225,7 +225,7 @@ fi
        }) { projectV2Item { id } }
      }'
    ```
-   - PR 을 올린다는 것은 곧 리뷰 대기 상태이므로 `In review` 가 자연스럽다. create 모드는 방금 만든 PR 이라 Status 가 항상 기본값(`Backlog`)이므로 조건 없이 세팅한다 (update 모드 10단계는 기존 Status 를 확인 후 분기).
+   - PR 을 올린다는 것은 곧 리뷰 대기 상태이므로 `In review` 가 자연스럽다. create 모드는 방금 만든 PR 이라 Status 가 항상 기본값(`Backlog`)이므로 조건 없이 세팅한다 (update 모드의 메타데이터 보정은 기존 Status 를 확인 후 분기).
    - Start date 는 "이슈 생성일" 이 아니라 **첫 commit author date** 를 쓴다 — 이슈만 만들어 두고 작업 안 들어가는 백로그 케이스의 노이즈를 피하기 위해. 첫 commit 은 history rewrite 가 없는 한 바뀌지 않는 fact 라 create 모드에선 무조건 set.
    - ID 의미: project=99 노드 ID, Status 필드/`In review` 옵션 ID, Start date 필드 ID(`PVTF_..GA`, DATE 타입). 보드에서 필드/옵션이 바뀌면 이 ID 들도 갱신 필요.
    - Target date 와 Status `Done` 은 PR 머지 시점에 별도 CI workflow (`.github/workflows/pr-merge-project-sync.yml`) 가 자동 세팅. PR 스킬은 머지 이전 단계만 책임짐.
@@ -243,28 +243,22 @@ fi
    ```bash
    git log origin/$BASE..HEAD --oneline   # PR 의 전체 커밋
    ```
-   - PR 전체 커밋 중 기존 본문·`## Updates` 에 **이미 반영된 커밋(해시로 대조)** 을 제외해, 이번에 새로 추가된 커밋만 가려낸다.
-   - merge 커밋이 있으면 `--no-merges` 로 우리 커밋만, merge 사실 자체는 별도 항목으로 다룬다.
-   - 가려낸 커밋 목록과 실제 변경(`git diff`)을 대조해 누락이 없는지 확인한다.
-3. 가려낸 새 커밋들에 대해 짧은 STAR 형식 항목을 작성한다.
-   - **각 항목 끝에 해당 커밋의 short hash(7자리)를 `` (`a1b2c3d`) `` 형태로 명기**한다. 어떤 변경이 어떤 커밋인지 리뷰어가 추적할 수 있고, 다음 갱신 때 "무엇이 이미 반영됐는지" 대조 기준이 된다.
-   - 한 항목이 여러 커밋을 묶으면 해시를 모두 적는다 (예: `` (`d3e53ab`, `cbef613`) ``).
-   - 모든 새 커밋이 어느 항목엔가 반영됐는지 최종 점검한다 — 빠진 커밋이 없어야 한다.
-4. 기존 본문 끝에 `## Updates` 섹션이 없으면 새로 추가, 있으면 그 안에 새 항목 append.
-   - 항목은 날짜 또는 추가 변경의 의도를 sub-heading 으로 (`### CodeRabbit 리뷰 대응`, `### dev 머지 충돌 해결` 등)
-5. **본문 STAR 는 항상 최종 진실을 유지한다 (살아있는 본문).** 기준 한 줄: **"이번 변경으로 기존 본문이 거짓말을 하게 되는가."**
-   - **순수 추가 작업** (기존 서술을 무효화하지 않는 리뷰 반영·버그 수정·보강) → 기존 본문은 건드리지 않고 Updates 항목 추가만.
-   - **본문을 거짓으로 만드는 변경** (접근 전환·스코프 변경·응답 계약 변경 등) → Updates 항목 추가에 **더해**, 낡은 서술이 있는 본문 자리(Action·Result 등)를 최종 상태로 고친다. 큰 전환은 "처음 시도 → 전환한 흐름" 자체를 STAR 서사에 흡수한다 (`/commit` 본문 철학과 같은 결).
-   - 본문을 고친 update 는 해당 Updates 항목에 **"본문 Action 갱신"** 처럼 어느 섹션을 고쳤는지 한 줄 명기한다 — 증분(Updates)만 보는 리뷰어가 본문 변화를 놓치지 않게.
+   - 전체 커밋과 실제 변경(`git diff origin/$BASE...HEAD`)을 기존 본문과 대조해, **본문이 낡은 자리**(이번 변경으로 거짓이 된 서술, 아직 반영 안 된 작업)를 가려낸다.
+   - merge 커밋이 있으면 `--no-merges` 로 우리 커밋만 본다.
+3. **본문 STAR 를 최종 상태로 직접 고친다 (살아있는 본문).** 기준 한 줄: **"머지 후 이 본문만 읽은 독자가 최종 상태를 정확히 이해하는가."**
+   - **`## Updates` 같은 증분 append 섹션을 두지 않는다.** 증분 항목은 (a) 이미 최종으로 고친 본문, (b) 커밋 메시지와 삼중 중복이라 본문만 어지럽힌다. **증분 원장은 PR 커밋 탭과 본문 edit history 가 담당**한다 — 스쿼시 머지 후에도 PR 페이지에 둘 다 남는다.
+   - 낡은 서술이 있는 자리(Action·Result 등)만 **표적 수정**한다 — 본문 전체를 재생성하지 않는다. 반영 안 된 새 작업은 해당 섹션에 자연스럽게 흡수한다.
+   - 큰 전환(접근 전환·스코프 변경 등)은 "처음 시도 → 전환한 흐름" 자체를 STAR 서사에 흡수한다 (`/commit` 본문 철학과 같은 결).
    - **남이 쓴 본문은 건드리지 않는다.** 갱신 범위는 이 스킬이 쓴 STAR 로 한정한다. 사람이 GitHub 에서 직접 고친 문구는 그대로 보존하고, 봇 소유 블록(CodeRabbit 의 `<!-- ... auto-generated ... -->` 마커 쌍 등)은 마커째 통째로 유지한다 — `gh pr edit --body-file` 은 전체 덮어쓰기라 한 번 누락되면 복구되지 않는다.
-   - **`## Updates` 항목은 원장이라 고치지 않는다.** 2단계 해시 dedup 의 대조 기준이므로 낡아 보여도 재작성하지 않고, 정정이 필요하면 새 Updates 항목으로 덧붙인다. "살아있는" 대상은 본문 STAR 만이다.
-   - 이유: 스쿼시 머지라 dev 히스토리에 증분이 안 남아 **PR 본문이 유일한 원장**이다. 머지 후 blame 으로 오는 독자가 "초판 + 정오표"를 머릿속에서 리플레이하지 않고 본문만 읽으면 되게 한다. 본문이 늘 최종이므로 머지 시점의 별도 통합(fold) 단계도 필요 없다 — 언제 어디서 머지되든 본문은 이미 완결 서사다.
-6. **제목 변경 필요 검토**: 추가 변경으로 작업 의도/스코프가 바뀌었거나 기존 제목에 오타·부정확한 표현이 있으면 새 제목 제안. 그 외엔 제목 유지.
-7. 갱신본(최신화된 본문 + Updates)을 `/tmp/pr_body_$SLUG.md` 에 저장(Write)한 뒤 IDE 로 열어 확인받는다 (위 "본문 확인 — IDE 로 열기"). 새 제목이 있으면 채팅에 제목·변경 이유를 함께 짚는다.
-8. 확인 후 `gh pr edit --body-file /tmp/pr_body_$SLUG.md` 로 갱신 (1번과 같은 브랜치 경로 — 별도 bash 호출이라 `SLUG=$(git branch --show-current | tr '/' '_')` 를 다시 구한다). 제목 변경이 있으면 `--title "새 제목"` 추가.
-9. **CodeRabbit 리뷰 대응** — 이번 변경이 CodeRabbit 리뷰 대응이라면 commit + push 로 끝내지 않는다. CodeRabbit 리뷰(인라인 thread + review body nitpick) 조회·평가·reply·resolve 는 **`/coderabbit` 스킬**로 처리한다. 그 스킬이 author 매칭(GraphQL `reviewThreads` 는 `coderabbitai`, REST `reviews` 는 `coderabbitai[bot]` 이라 `coderabbitai` 로 시작하는지로 판별), nitpick 조회, accept/reject reply·resolve 정책을 담는다. (사람 리뷰 thread 는 작성자가 직접 답하므로 `/coderabbit` 도 건드리지 않는다.)
+   - 기존 PR 에 옛 방식의 `## Updates` 섹션이 남아 있으면, 그 내용이 본문 STAR 에 반영돼 있는지 확인한 뒤 섹션째 제거한다 (이행 정리).
+   - 리뷰어에게 "지난 리뷰 이후 무엇이 바뀌었나"를 알릴 필요가 있으면(리뷰 재요청 등) 본문이 아니라 **PR 코멘트**로 남긴다 — 코멘트는 타임라인이라 증분의 자연스러운 자리이고, 본문은 늘 최종 서사만 유지한다.
+   - 이유: 스쿼시 머지 후 blame 으로 오는 독자가 "초판 + 정오표"를 머릿속에서 리플레이하지 않고 본문만 읽으면 되게 한다. 본문이 늘 최종이므로 머지 시점의 별도 통합(fold) 단계도 필요 없다 — 언제 어디서 머지되든 본문은 이미 완결 서사다.
+4. **제목 변경 필요 검토**: 추가 변경으로 작업 의도/스코프가 바뀌었거나 기존 제목에 오타·부정확한 표현이 있으면 새 제목 제안. 그 외엔 제목 유지.
+5. 갱신본(최신화된 본문)을 `/tmp/pr_body_$SLUG.md` 에 저장(Write)한 뒤 IDE 로 열어 확인받는다 (위 "본문 확인 — IDE 로 열기"). 새 제목이 있으면 채팅에 제목·변경 이유를 함께 짚는다.
+6. 확인 후 `gh pr edit --body-file /tmp/pr_body_$SLUG.md` 로 갱신 (1번과 같은 브랜치 경로 — 별도 bash 호출이라 `SLUG=$(git branch --show-current | tr '/' '_')` 를 다시 구한다). 제목 변경이 있으면 `--title "새 제목"` 추가.
+7. **CodeRabbit 리뷰 대응** — 이번 변경이 CodeRabbit 리뷰 대응이라면 commit + push 로 끝내지 않는다. CodeRabbit 리뷰(인라인 thread + review body nitpick) 조회·평가·reply·resolve 는 **`/coderabbit` 스킬**로 처리한다. 그 스킬이 author 매칭(GraphQL `reviewThreads` 는 `coderabbitai`, REST `reviews` 는 `coderabbitai[bot]` 이라 `coderabbitai` 로 시작하는지로 판별), nitpick 조회, accept/reject reply·resolve 정책을 담는다. (사람 리뷰 thread 는 작성자가 직접 답하므로 `/coderabbit` 도 건드리지 않는다.)
 
-10. **메타데이터 보정** — 이전 버전 스킬로 만든 PR 은 assignee / 라벨 / Project / Start date 가 비어 있을 수 있다. update 모드에서도 멱등하게 보정한다 (이미 설정돼 있으면 no-op). `item-add` 는 이미 등록된 PR 이면 기존 item id 를 그대로 반환한다.
+8. **메타데이터 보정** — 이전 버전 스킬로 만든 PR 은 assignee / 라벨 / Project / Start date 가 비어 있을 수 있다. update 모드에서도 멱등하게 보정한다 (이미 설정돼 있으면 no-op). `item-add` 는 이미 등록된 PR 이면 기존 item id 를 그대로 반환한다.
     Status 는 **현재 값을 먼저 조회해, 리뷰 이전 단계(`Backlog` / `Ready` / `In progress`)일 때만** `In review` 로 올린다 — 이미 `Done` 등으로 옮긴 PR 을 되돌리지 않기 위함이다. Start date 도 멱등 — 이미 set 되어 있으면 건드리지 않는다 (사람이 수동으로 다른 의미로 박았을 수 있어 보존). Status / Start date 조회는 item 노드를 직접 부르는 GraphQL 이 안정적이다 (`gh project item-list` 는 단일 선택 필드 값을 신뢰성 있게 주지 않는다):
     ```bash
     ISSUE_LABELS="{1단계 echo 로 확인한 값. '없음'이면 빈 값}"   # 셸 변수는 블록 간 미유지 — 블록 안에서 확정한다
@@ -314,7 +308,7 @@ fi
         }'
     fi
     ```
-11. PR URL 을 재출력한다.
+9. PR URL 을 재출력한다.
 
 ### PR 제목 규칙
 - 70자 이내

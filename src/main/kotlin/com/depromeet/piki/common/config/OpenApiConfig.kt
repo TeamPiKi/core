@@ -33,7 +33,7 @@ class OpenApiConfig {
                         - 모든 응답은 공통 래퍼(`ApiResponseBody`)로 `application/json` 으로 내려간다. 필드는 `status`·`code`·`detail`·`data`·`pageResponse` 이며, 성공·실패가 같은 형태다. 실패 시 `data` 는 null 이고 `code`·`detail` 에 사유가 담긴다.
                         - 인증은 JWT 기반이다. 게스트 생성 또는 소셜 로그인으로 액세스·리프레시 토큰 쌍을 발급받고, 보호된 API 는 액세스 토큰을 `Authorization: Bearer {accessToken}` 헤더로 전달한다. 만료 시 리프레시 토큰으로 갱신한다.
                         """.trimIndent(),
-                    ).contact(Contact().name("PIKI").url("https://github.com/depromeet/PIKI-Server"))
+                    ).contact(Contact().name("PIKI").url("https://github.com/TeamPiKi/core"))
                     .license(License().name("Apache-2.0").url("https://www.apache.org/licenses/LICENSE-2.0")),
             )
             // JWT Bearer 인증 스킴을 스펙에 선언한다. 이게 없으면 문서 UI 가 "인증 필요" 를 알 수 없어
