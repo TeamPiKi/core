@@ -11,5 +11,5 @@ ssh_ingress_cidr = "203.0.113.1/32"
 # RDS 마스터 비밀번호 — 반드시 강한 값으로 교체
 db_password = "CHANGE_ME_STRONG_PASSWORD"
 
-# 이미지 버킷 실명 — 계정번호를 포함해 default 없음. 실값은 팀 공지 참고
+# 이미지 버킷 실명 — 계정번호 파생. <ACCOUNT_ID> 는 aws sts get-caller-identity --query Account 로 확인
 image_bucket_name = "piki-images-<ACCOUNT_ID>"

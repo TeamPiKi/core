@@ -21,7 +21,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 | 버킷 보안 | versioning ON / 퍼블릭 차단 / SSE-S3 | 롤백 가능, 외부 노출 차단 |
 | 접근 권한 | IAM 그룹 `PIKI-Infra` (BE 3 명) | 외부도, 다른 그룹도 state 못 봄 |
 
-이 문서와 코드의 `<ACCOUNT_ID>` 는 AWS 계정번호 자리다. public repo 라 계정번호를 커밋하지 않는 규율(infra `conventions/infra.md`)에 따라, 실값은 gitignore 된 `backend.hcl` 과 변수 주입으로만 쓴다 (아래 워크플로우).
+이 문서와 코드의 `<ACCOUNT_ID>` 는 AWS 계정번호 자리다. public repo 라 계정번호를 커밋하지 않는 규율(infra `conventions/infra.md`)에 따라, 실값은 자격증명에서 파생해(`aws sts get-caller-identity`) gitignore 된 `backend.hcl` 과 환경변수로 주입한다 (아래 워크플로우) — 계정번호를 어디에 따로 적어 둘 필요가 없다.
 
 대안과 비교:
 
@@ -68,7 +68,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 | 변수 | 종류 | 비고 |
 |---|---|---|
 | `db_password` | secret (필수) | `variables.tf` 에 default 없음 — 평문 커밋 방지 목적 |
-| `image_bucket_name` | 환경 설정 (필수) | default 없음 — 계정번호를 포함해 public repo 에 커밋 금지. 실값은 아래 공지 참고 |
+| `image_bucket_name` | 환경 설정 (필수) | default 없음 — 계정번호 포함이라 커밋 금지. 자격증명에서 파생 ("일상 워크플로우"의 도출 명령이 자동 세팅) |
 | `ssh_ingress_cidr` | 환경 설정 | default 는 placeholder (`203.0.113.1/32`). 실제 작업 IP 로 override |
 
 그 외 변수 (`project`, `environment`, `aws_region`, VPC CIDR, EC2 instance type 등) 는 `variables.tf` 의 default 그대로 쓴다.
@@ -83,7 +83,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 ```bash
 export TF_VAR_db_password='<공지에서 받은 값>'
-export TF_VAR_image_bucket_name='piki-images-<계정번호>'
+export TF_VAR_image_bucket_name="piki-images-$(aws sts get-caller-identity --query Account --output text)"   # 계정번호 파생 — 공지 불필요
 export TF_VAR_ssh_ingress_cidr='<본인 공인 IP>/32'
 ```
 
@@ -121,9 +121,12 @@ export AWS_REGION="ap-northeast-2"
 
 ```bash
 cd terraform
-if [ ! -f backend.hcl ]; then                  # 이미 실값을 채운 backend.hcl 을 placeholder 로 덮지 않게 최초 1 회만 복사
-  cp backend.hcl.example backend.hcl           # 복사 후 <ACCOUNT_ID> 를 실제 계정번호로 교체 (gitignore, 커밋 금지)
-fi
+# 버킷명은 전부 계정번호 파생(piki-*-<계정번호>)이라 자격증명에서 도출한다 — 값을 외우거나 공지에서 찾을 필요 없음.
+# 파생값이라 재실행해도 항상 현재 자격증명 계정 기준 같은 값이 나와 덮어써도 안전하다.
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+echo "bucket = \"piki-tfstate-$ACCOUNT\"" > backend.hcl   # gitignore 됨 — 커밋 금지
+export TF_VAR_image_bucket_name="piki-images-$ACCOUNT"
+
 terraform init -backend-config=backend.hcl     # 첫 실행 시 또는 backend 설정 변경 시. provider 다운 + S3 backend 연결
 terraform plan   # state 읽고 AWS 와 비교, 변경 미리 보기
 ```
@@ -237,7 +240,7 @@ S3 기본 30 일+ 보존이라 시간 거꾸로 돌릴 수 있음.
 | `terraform.tfstate` | ❌ → S3 | 비밀값 포함 + apply 마다 변경 + 진실 원천 1 개여야 |
 | `.terraform/` | ❌ | provider 플러그인 (~150MB, OS/arch별). `init` 으로 재생성 |
 | `*.tfvars` | ❌ | secret. 전용 저장소 (env var / Secrets Manager) |
-| `backend.hcl` | ❌ | 계정번호 포함 backend 설정. `backend.hcl.example` 템플릿만 커밋 |
+| `backend.hcl` | ❌ | 계정번호 포함 backend 설정. 자격증명에서 파생 생성 ("일상 워크플로우" 참고) |
 | `*.tfplan` | ❌ | 일회성 |
 
 → ignore 된 것 중 **state 만이 "공유는 필요하지만 git 에 두면 안 되는" 유일한 파일**. 그래서 별도 저장소 (S3) 가 필요.

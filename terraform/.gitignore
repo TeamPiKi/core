@@ -16,7 +16,7 @@ crash.*.log
 *.tfvars.json
 !*.tfvars.example
 
-# Backend 설정 — 계정번호 포함 (backend.hcl.example 템플릿만 커밋)
+# Backend 설정 — 계정번호 포함 (자격증명에서 파생 생성, README "일상 워크플로우" 참고)
 backend.hcl
 
 # CLI config
