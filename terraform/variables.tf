@@ -17,9 +17,9 @@ variable "aws_region" {
 }
 
 variable "image_bucket_name" {
+  # 계정번호를 포함하므로 default 를 두지 않는다(퍼블릭 repo). TF_VAR_image_bucket_name 또는 terraform.tfvars 로 주입.
   description = "크롭 상품 이미지 저장 버킷명. state 버킷(piki-tfstate-*)과 일관되게 piki-images-{account} 사용."
   type        = string
-  default     = "piki-images-250758375457"
 }
 
 variable "vpc_cidr" {

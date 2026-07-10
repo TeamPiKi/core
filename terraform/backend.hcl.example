@@ -1,0 +1,3 @@
+# backend.hcl 로 복사한 뒤 실제 값을 넣는다 (backend.hcl 은 gitignore — 계정번호가 들어가므로 커밋 금지).
+# terraform init -backend-config=backend.hcl
+bucket = "piki-tfstate-<ACCOUNT_ID>"

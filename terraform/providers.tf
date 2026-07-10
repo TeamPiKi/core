@@ -9,7 +9,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "piki-tfstate-250758375457"
+    # bucket 은 계정번호를 포함하므로 코드에 넣지 않는다(퍼블릭 repo).
+    # 값은 gitignore 된 backend.hcl 로 주입: terraform init -backend-config=backend.hcl
+    # (backend.hcl.example 참고.)
     key          = "terraform.tfstate"
     region       = "ap-northeast-2"
     encrypt      = true
