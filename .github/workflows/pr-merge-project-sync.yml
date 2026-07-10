@@ -34,14 +34,14 @@ jobs:
 
           # 프로젝트 + 필드 메타 동적 조회 (보드 변경에 자동 추종).
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
 
           FIELDS=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2Field { id name dataType }

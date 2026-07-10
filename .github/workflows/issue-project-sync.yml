@@ -17,8 +17,8 @@ jobs:
         run: |
           # 프로젝트 ID 조회
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
 
@@ -37,8 +37,8 @@ jobs:
 
           # 프로젝트 필드 ID 조회 (날짜, 우선순위)
           FIELDS=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2Field { id name dataType }
@@ -111,6 +111,6 @@ jobs:
           if echo "$ASSIGNEES" | jq -e 'length == 0' > /dev/null; then
             gh issue edit "$ISSUE_NUMBER" \
               --add-assignee "$CREATOR" \
-              --repo TeamPiKi/core
+              --repo ${{ github.repository }}
             echo "Auto-assigned to creator: $CREATOR"
           fi

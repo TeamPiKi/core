@@ -34,14 +34,14 @@ jobs:
 
           # 프로젝트 ID 및 Status 필드 조회
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
 
           STATUS_FIELD=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2SingleSelectField {
@@ -71,7 +71,7 @@ jobs:
                   }
                 }
               }' \
-              -F owner=TeamPiKi -F repo=core -F num="$ISSUE_NUM" \
+              -F owner=${{ github.repository_owner }} -F repo=${{ github.event.repository.name }} -F num="$ISSUE_NUM" \
               --jq ".data.repository.issue.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
 
             if [[ -n "$ITEM_ID" ]]; then
