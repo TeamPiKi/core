@@ -48,12 +48,14 @@
     /* 정책 종류 설명. 늘 펼쳐 두면 정작 보러 온 목록이 아래로 밀리므로 접어 둔다(details 라 JS 없이 동작).
        내용은 개조식 - 각 항목의 "라우팅 / 언제 / 주의" 라벨을 세로로 정렬해 갈래 사이를 눈으로 비교하게 한다. */
     .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
-    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:#384049;
+    /* 제목·화살표를 accent 로 둔다. 이 화면의 규약(파랑 = 누를 수 있음: 필터 링크, 상세의 설명 링크)에 맞춰
+       "눌러서 펼치는 것"임이 접힌 상태에서도 보이게 한다. 회색이면 정적인 카드 제목으로 읽혀 지나친다. */
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:var(--accent);
       display:flex;align-items:center;gap:9px;}
     .guide>summary::-webkit-details-marker{display:none;}
-    .guide>summary::before{content:"\25B8";display:inline-block;color:#9aa1aa;font-size:12px;transition:transform .15s;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:var(--accent);font-size:12px;transition:transform .15s;}
     .guide[open]>summary::before{transform:rotate(90deg);}
-    .guide>summary:hover{background:#fafbfc;}
+    .guide>summary:hover{background:var(--accent-soft);}
     .guide>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
     .guide .sub{font-weight:500;color:var(--muted);font-size:12px;}
     /* 좁은 화면에서 표가 페이지를 밀지 않고 자기 안에서 가로 스크롤되게 감싼다. */
