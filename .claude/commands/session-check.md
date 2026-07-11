@@ -135,6 +135,6 @@ git diff origin/dev...HEAD -- ':(exclude).claude/**' | grep -nE '^\+[^+].*(TODO|
    - 현재가 메인 체크아웃이거나 제거 대상 워크트리가 없으면(마무리할 게 없으면) 이 ask 를 생략한다.
    - 결론이 "닫아도 안전"이 아니면(주의 N건 남음) ask 하지 않는다 — 먼저 정리가 우선이다.
 
-owner/repo는 `TeamPiKi/core` 고정. 레포가 바뀌면 갱신한다.
+owner/repo 는 하드코딩하지 않는다 — 위 모든 `gh` 명령이 현재 워크트리의 origin 에서 레포를 자동 도출하므로, 어느 소비 repo(core·extractor·renderer)에서 호출해도 자기 레포를 가리킨다.
 
 $ARGUMENTS
