@@ -22,6 +22,9 @@ class AdminHeaderInterceptor(
         if (mav.viewName?.startsWith("redirect:") == true) return // 리다이렉트엔 헤더를 그리지 않는다
         mav.addObject("adminEnv", currentEnv())
         mav.addObject("adminClientIp", ClientIp.of(request))
+        // 로컬 우회에서는 세션이 없는 게 정상이고 접속 IP(게이트 allowlist 키)도 의미가 없다.
+        // 헤더가 "세션 만료됨"·loopback IP 를 보여주며 오해를 사지 않도록, fragment 가 이 플래그로 그 둘을 감춘다.
+        mav.addObject("adminLocalBypass", adminProperties.localBypass)
     }
 
     private fun currentEnv(): String =

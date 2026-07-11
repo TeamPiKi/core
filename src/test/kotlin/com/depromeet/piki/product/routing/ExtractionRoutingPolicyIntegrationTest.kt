@@ -7,20 +7,15 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubProductLinkExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
-import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
@@ -133,34 +128,32 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `백오피스 정책 화면이 시드 정책을 렌더하고, 추가 폼 POST 가 즉시 반영되는 정책을 만든다`() {
+    fun `SUPPORTED 정책은 라우팅을 바꾸지 않아 등록이 그대로 통과한다`() {
+        // SUPPORTED 는 판정이 아니라 기록용 값이다("실측으로 잘 됨을 확인"). 소비처가 UNSUPPORTED·HEADLESS_FIRST 와의
+        // 정확한 값 비교만 하므로 기본 체인을 타야 하는데, 누군가 verifyRegistrable 을 "정책 행이 있기만 하면 거절"로
+        // 고치면 SUPPORTED 도메인의 등록이 조용히 막힌다 — 그 회귀를 여기서 잡는다.
         val mockMvc = mockMvc()
-        val domain = "added-${UUID.randomUUID()}.example.com"
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val domain = "supported-${UUID.randomUUID()}.example.com"
+        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", currentPrice = 9_900) }
         try {
-            // Thymeleaf 에러는 렌더 시점에 드러난다 — 시드(coupang.com 등)가 목록에 실제로 나오는지로 렌더를 검증한다.
-            mockMvc
-                .perform(get("/admin/extraction-policies"))
-                .andExpect(status().isOk)
-                .andExpect(content().string(containsString("coupang.com")))
+            policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.SUPPORTED.name, reason = "실측 확인"))
+            routingPolicy.reload()
 
-            // 추가 폼 — 대문자·trailing dot 입력도 정규형으로 저장되고(admin 경계가 정규화), afterCommit reload 로 즉시 적용된다.
+            assertEquals(ExtractionRoute.SUPPORTED, routingPolicy.routeOf(ProductLink.parse("https://$domain/p/1")))
+
             mockMvc
                 .perform(
-                    post("/admin/extraction-policies")
-                        .with(csrf())
-                        .param("domain", "ADDED-${domain.removePrefix("added-").uppercase()}.")
-                        .param("route", "UNSUPPORTED")
-                        .param("reason", "테스트 사유"),
-                ).andExpect(status().is3xxRedirection)
-                .andExpect(redirectedUrl("/admin/extraction-policies?updated"))
-
-            val saved = policyRepository.findById(domain).orElseThrow()
-            assertEquals(ExtractionRoute.UNSUPPORTED.name, saved.route)
-            assertEquals("테스트 사유", saved.reason)
-            assertEquals(ExtractionRoute.UNSUPPORTED, routingPolicy.routeOf(ProductLink.parse("https://$domain/p")))
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                        .content("""{"url": "https://$domain/p/1"}"""),
+                ).andExpect(status().isCreated)
         } finally {
             policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
             routingPolicy.reload()
+            cleanup(userId)
         }
     }
 
