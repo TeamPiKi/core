@@ -294,6 +294,7 @@ gh project item-add 1 --owner TeamPiKi --url {이슈 URL}
 - `gh issue develop` 은 `--name` (브랜치 이름 옵션) 을 명시 (인터랙티브 회피). `--branch-name` 은 존재하지 않는 옵션이니 주의. `--checkout` 은 **현재 브랜치 작업을 고른 경우에만** 붙인다 — 워크트리 작업이면 현재 디렉토리가 끌려가 충돌하므로 빼고, 체크아웃은 `EnterWorktree` 가 대신한다.
 - **워크트리 진입은 `EnterWorktree(path=...)` 로만.** `git worktree add` 로 먼저 만든 뒤 `path` 로 진입한다. `EnterWorktree(name=...)` 는 새 브랜치를 자체 생성하며 baseRef 기본값이 이 레포의 git default branch(`main`)를 가리켜 `dev` 분기 정책과 어긋난다. `path` 로 진입한 워크트리는 `ExitWorktree` 가 제거하지 않으므로, 정리는 `/session-close` 에 맡긴다.
 - `gh project item-add` 권한 부족 시 사용자에게 `gh auth refresh -h github.com -s project` 안내 (인터랙티브 디바이스 인증, 일회성).
+- **Project 99 번은 아직 depromeet org 소유라 cross-org 연결이다.** 이슈가 보드에 정상적으로 붙어도 `gh issue view --json projectItems` 는 빈 배열을 돌려주므로, 연결 확인은 `gh project item-list 99 --owner depromeet` 로 한다.
 - 본문에 `#{epic 번호}` 가 들어가면 GitHub 가 자동 cross-reference 링크 — 별도 sub-issue API 불필요.
 - 중복 이슈 검사 false positive 가능성 인지. 사용자가 "다른 이슈" 라 답하면 그대로 진행.
 - 이슈 템플릿(`.github/ISSUE_TEMPLATE/`)이 우선순위·일정을 required 로 정의해도 본문 자유 양식이라 강제받지 않는다. 이 스킬은 본질("왜/무엇을")만 받는 정책을 따른다.
