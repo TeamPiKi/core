@@ -201,15 +201,15 @@ fi
    - `--assignee @me` — PR 작성자가 작업자라는 가정 (`issue` 스킬과 동일).
    - `--label` — 1단계에서 수집한 `$ISSUE_LABELS`(연관 이슈 라벨, 없으면 브랜치 prefix fallback)가 있을 때만 붙인다.
    - 라벨이 레포에 없어 실패하면 라벨 없이 재시도하고 사용자에게 보고한다.
-4. **Project 추가 + Status In review + Start date** — 생성된 PR 을 Project 99 에 등록하고 Status 를 `In review`, Start date 를 첫 commit author date 로 세팅한다. `item-add` 만 하면 기본값 `Backlog` 이 되므로, 반환된 item id 로 후속 mutation 들을 이어서 호출한다:
+4. **Project 추가 + Status In review + Start date** — 생성된 PR 을 Project 1 에 등록하고 Status 를 `In review`, Start date 를 첫 commit author date 로 세팅한다. `item-add` 만 하면 기본값 `Backlog` 이 되므로, 반환된 item id 로 후속 mutation 들을 이어서 호출한다:
    ```bash
-   ITEM_ID=$(gh project item-add 99 --owner depromeet --url {PR URL} --format json --jq '.id')
+   ITEM_ID=$(gh project item-add 1 --owner TeamPiKi --url {PR URL} --format json --jq '.id')
 
    # Status → In review
    gh project item-edit \
-     --project-id PVT_kwDOARZVGM4BVVRV \
+     --project-id PVT_kwDOEfJ4WM4BdAmx \
      --id "$ITEM_ID" \
-     --field-id PVTSSF_lADOARZVGM4BVVRVzhQxyAA \
+     --field-id PVTSSF_lADOEfJ4WM4BdAmxzhXlR8g \
      --single-select-option-id df73e18b
 
    # Start date → 첫 commit author date (작업이 실제로 시작된 시점의 fact)
@@ -218,16 +218,16 @@ fi
    gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
      mutation($itemId: ID!, $date: Date!) {
        updateProjectV2ItemFieldValue(input: {
-         projectId: "PVT_kwDOARZVGM4BVVRV"
+         projectId: "PVT_kwDOEfJ4WM4BdAmx"
          itemId: $itemId
-         fieldId: "PVTF_lADOARZVGM4BVVRVzhQxyGA"
+         fieldId: "PVTF_lADOEfJ4WM4BdAmxzhXlR9U"
          value: { date: $date }
        }) { projectV2Item { id } }
      }'
    ```
    - PR 을 올린다는 것은 곧 리뷰 대기 상태이므로 `In review` 가 자연스럽다. create 모드는 방금 만든 PR 이라 Status 가 항상 기본값(`Backlog`)이므로 조건 없이 세팅한다 (update 모드의 메타데이터 보정은 기존 Status 를 확인 후 분기).
    - Start date 는 "이슈 생성일" 이 아니라 **첫 commit author date** 를 쓴다 — 이슈만 만들어 두고 작업 안 들어가는 백로그 케이스의 노이즈를 피하기 위해. 첫 commit 은 history rewrite 가 없는 한 바뀌지 않는 fact 라 create 모드에선 무조건 set.
-   - ID 의미: project=99 노드 ID, Status 필드/`In review` 옵션 ID, Start date 필드 ID(`PVTF_..GA`, DATE 타입). 보드에서 필드/옵션이 바뀌면 이 ID 들도 갱신 필요.
+   - ID 의미: project=1 노드 ID, Status 필드/`In review` 옵션 ID, Start date 필드 ID(`PVTF_..GA`, DATE 타입). 보드에서 필드/옵션이 바뀌면 이 ID 들도 갱신 필요.
    - Target date 와 Status `Done` 은 PR 머지 시점에 별도 CI workflow (`.github/workflows/pr-merge-project-sync.yml`) 가 자동 세팅. PR 스킬은 머지 이전 단계만 책임짐.
    - 권한 부족 시 사용자에게 `gh auth refresh -h github.com -s project,read:project` 안내 (일회성 디바이스 인증).
 5. PR URL 과 부여된 assignee / 라벨 / Project(Status: In review, Start date) 결과를 사용자에게 전달한다.
@@ -265,7 +265,7 @@ fi
     EDIT_ARGS=(--add-assignee @me)                               # 조건부 플래그는 배열로 (3-A 와 동일한 zsh 함정 회피, 호출 1회)
     [ -n "$ISSUE_LABELS" ] && EDIT_ARGS+=(--add-label "$ISSUE_LABELS")
     gh pr edit "${EDIT_ARGS[@]}"
-    ITEM_ID=$(gh project item-add 99 --owner depromeet --url {PR URL} --format json --jq '.id')
+    ITEM_ID=$(gh project item-add 1 --owner TeamPiKi --url {PR URL} --format json --jq '.id')
 
     # Status + Start date 현재 값 동시 조회. @tsv 출력이라 IFS 를 탭으로 고정한다.
     # 기본 IFS(공백 포함)면 "In review"·"In progress" 같은 공백 포함 단일 선택 값이 첫 단어에서
@@ -287,9 +287,9 @@ fi
     # Status: 리뷰 이전 단계일 때만 In review 로 올림
     if [[ "$CURRENT_STATUS" == "Backlog" || "$CURRENT_STATUS" == "Ready" || "$CURRENT_STATUS" == "In progress" ]]; then
       gh project item-edit \
-        --project-id PVT_kwDOARZVGM4BVVRV \
+        --project-id PVT_kwDOEfJ4WM4BdAmx \
         --id "$ITEM_ID" \
-        --field-id PVTSSF_lADOARZVGM4BVVRVzhQxyAA \
+        --field-id PVTSSF_lADOEfJ4WM4BdAmxzhXlR8g \
         --single-select-option-id df73e18b
     fi
 
@@ -300,9 +300,9 @@ fi
       gh api graphql -F itemId="$ITEM_ID" -F date="$START_DATE" -f query='
         mutation($itemId: ID!, $date: Date!) {
           updateProjectV2ItemFieldValue(input: {
-            projectId: "PVT_kwDOARZVGM4BVVRV"
+            projectId: "PVT_kwDOEfJ4WM4BdAmx"
             itemId: $itemId
-            fieldId: "PVTF_lADOARZVGM4BVVRVzhQxyGA"
+            fieldId: "PVTF_lADOEfJ4WM4BdAmxzhXlR9U"
             value: { date: $date }
           }) { projectV2Item { id } }
         }'

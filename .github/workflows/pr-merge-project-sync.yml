@@ -34,14 +34,18 @@ jobs:
 
           # 프로젝트 + 필드 메타 동적 조회 (보드 변경에 자동 추종).
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
+          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
+            echo "::error::Project 동기화 중단: PROJECT_ID 조회 실패 — 프로젝트 접근 권한(PROJECT_TOKEN)과 보드 번호를 확인하세요."
+            exit 1
+          fi
 
           FIELDS=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2Field { id name dataType }
@@ -56,6 +60,10 @@ jobs:
           STATUS_FIELD=$(echo "$FIELDS" | jq -r '.[] | select(.name == "Status") | .id')
           DONE_OPTION=$(echo "$FIELDS" | jq -r '.[] | select(.name == "Status") | .options[] | select(.name == "Done") | .id')
           echo "TARGET_FIELD=$TARGET_FIELD STATUS_FIELD=$STATUS_FIELD DONE_OPTION=$DONE_OPTION"
+          if [ -z "$TARGET_FIELD" ] || [ -z "$STATUS_FIELD" ] || [ -z "$DONE_OPTION" ]; then
+            echo "::error::Project 동기화 중단: 필드/옵션 ID 조회 실패 (Target date / Status / Done) — 보드 필드 구성을 확인하세요."
+            exit 1
+          fi
 
           # PR 을 프로젝트에 추가 — 이미 있으면 기존 item id 리턴 (addProjectV2ItemById 의 멱등성).
           ITEM_ID=$(gh api graphql \

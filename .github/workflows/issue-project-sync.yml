@@ -17,10 +17,14 @@ jobs:
         run: |
           # 프로젝트 ID 조회
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
+          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
+            echo "::error::Project 동기화 중단: PROJECT_ID 조회 실패 — 프로젝트 접근 권한(PROJECT_TOKEN)과 보드 번호를 확인하세요."
+            exit 1
+          fi
 
           # 이슈를 프로젝트에 추가하고 item ID 획득
           ITEM_ID=$(gh api graphql \
@@ -37,8 +41,8 @@ jobs:
 
           # 프로젝트 필드 ID 조회 (날짜, 우선순위)
           FIELDS=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2Field { id name dataType }
@@ -53,6 +57,10 @@ jobs:
           DUE_FIELD=$(echo "$FIELDS" | jq -r '.[] | select(.name == "Target date" and .dataType == "DATE") | .id')
           PRIORITY_FIELD_ID=$(echo "$FIELDS" | jq -r '.[] | select(.name == "Priority") | .id')
           echo "START_FIELD=$START_FIELD DUE_FIELD=$DUE_FIELD PRIORITY_FIELD_ID=$PRIORITY_FIELD_ID"
+          if [ -z "$START_FIELD" ] || [ -z "$DUE_FIELD" ] || [ -z "$PRIORITY_FIELD_ID" ]; then
+            echo "::error::Project 동기화 중단: 필드 ID 조회 실패 (Start date / Target date / Priority) — 보드 필드 구성을 확인하세요."
+            exit 1
+          fi
 
           # 이슈 본문에서 날짜 파싱 (MMDD → YYYY-MM-DD 자동 변환, YYYY-MM-DD / YYYYMMDD도 허용)
           CURRENT_YEAR=$(date +%Y)
@@ -111,6 +119,6 @@ jobs:
           if echo "$ASSIGNEES" | jq -e 'length == 0' > /dev/null; then
             gh issue edit "$ISSUE_NUMBER" \
               --add-assignee "$CREATOR" \
-              --repo TeamPiKi/core
+              --repo ${{ github.repository }}
             echo "Auto-assigned to creator: $CREATOR"
           fi
