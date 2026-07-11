@@ -82,6 +82,6 @@ gh pr list --head "$BR" --state merged --json number,headRefName \
 
 `/clear` 를 스킬이 직접 호출하려 시도하지 않는다(불가능하다).
 
-owner/repo는 `TeamPiKi/core` 고정. 레포가 바뀌면 갱신한다.
+owner/repo 는 하드코딩하지 않는다 — 위 모든 `gh` 명령이 현재 워크트리의 origin 에서 레포를 자동 도출하므로, 어느 소비 repo(core·extractor·renderer)에서 호출해도 자기 레포를 가리킨다.
 
 $ARGUMENTS

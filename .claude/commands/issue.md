@@ -60,7 +60,7 @@ Epic 은 브랜치를 만들지 않고 상위 Epic 도 없다.
 분해된 제목으로 중복 이슈 사전 검사:
 
 ```bash
-gh issue list --repo TeamPiKi/core --search "{제목 키워드}" --state open --json number,title,labels --limit 5
+gh issue list --search "{제목 키워드}" --state open --json number,title,labels --limit 5
 ```
 
 결과가 1개 이상이면 검수 단계에서 사용자에게 함께 보여줌.
@@ -93,7 +93,6 @@ gh issue list --repo TeamPiKi/core --search "{제목 키워드}" --state open --
 
 ```bash
 gh issue create \
-  --repo TeamPiKi/core \
   --title "{제목}" \
   --body "{본문}" \
   --label "epic" \
@@ -105,7 +104,7 @@ gh issue create \
 `gh issue create` 는 `--type` 을 지원하지 않으므로 GraphQL `updateIssueIssueType` mutation 으로 별도 부여한다. Epic 은 `Feature` type 매핑.
 
 ```bash
-ISSUE_ID=$(gh issue view {이슈번호} --repo TeamPiKi/core --json id --jq '.id')
+ISSUE_ID=$(gh issue view {이슈번호} --json id --jq '.id')
 gh api graphql \
   -f query='mutation($issueId:ID!,$typeId:ID!){updateIssueIssueType(input:{issueId:$issueId,issueTypeId:$typeId}){issue{id issueType{name}}}}' \
   -F issueId=$ISSUE_ID \
@@ -158,7 +157,7 @@ A-1 과 동일.
 
 **상위 Epic 추천**:
 ```bash
-gh issue list --repo TeamPiKi/core --label epic --state open --json number,title --limit 20
+gh issue list --label epic --state open --json number,title --limit 20
 ```
 활성 epic 목록과 본문(제목+왜+무엇을)의 의미 비교로 가장 관련 있는 1개 추천. 없으면 추천 안 함.
 
@@ -198,7 +197,6 @@ gh issue list --repo TeamPiKi/core --label epic --state open --json number,title
 
 ```bash
 gh issue create \
-  --repo TeamPiKi/core \
   --title "{제목}" \
   --body "{본문}" \
   --label "{선택된 분류 라벨}" \
@@ -221,7 +219,7 @@ gh issue create \
 라벨이 단일이므로 분기 단순.
 
 ```bash
-ISSUE_ID=$(gh issue view {이슈번호} --repo TeamPiKi/core --json id --jq '.id')
+ISSUE_ID=$(gh issue view {이슈번호} --json id --jq '.id')
 gh api graphql \
   -f query='mutation($issueId:ID!,$typeId:ID!){updateIssueIssueType(input:{issueId:$issueId,issueTypeId:$typeId}){issue{id issueType{name}}}}' \
   -F issueId=$ISSUE_ID \
@@ -242,7 +240,6 @@ gh api graphql \
 1. GitHub 브랜치 생성 + 이슈 연결. **`--checkout` 을 주지 않는다** — 현재 디렉토리를 끌고 가면 같은 브랜치를 워크트리에서 다시 체크아웃할 수 없어 충돌한다.
    ```bash
    gh issue develop {이슈번호} \
-     --repo TeamPiKi/core \
      --base dev \
      --name "{prefix}/{이슈번호}-{slug}"
    ```
@@ -260,7 +257,6 @@ gh api graphql \
 
 ```bash
 gh issue develop {이슈번호} \
-  --repo TeamPiKi/core \
   --base dev \
   --name "{prefix}/{이슈번호}-{slug}" \
   --checkout
@@ -287,6 +283,7 @@ gh project item-add 1 --owner TeamPiKi --url {이슈 URL}
 
 ## 주의 사항
 
+- **owner/repo 는 하드코딩하지 않는다.** 모든 `gh issue` 명령이 `--repo` 를 생략해 현재 워크트리의 origin 에서 레포를 자동 도출한다 — 어느 소비 repo(core·extractor·renderer)에서 호출해도 자기 레포를 가리킨다. 반면 Project 보드는 org 수준 상수라 `--owner TeamPiKi` · Project `1` 을 명시 유지한다 (세 repo 가 같은 보드를 공유). Issue Type ID(`IT_...`)도 org 상수라 그대로 둔다.
 - **자유 입력이 너무 짧으면 follow-up.** 다만 1~2 번 안에 끝낸다. 무한 follow-up 금지.
 - **모델 분해 결과는 검수 필수.** 사용자가 거부하면 즉시 부분 수정 또는 원본 그대로.
 - 분류 자동 결정은 시그널이 명확할 때만. 모호하면 `chore` fallback (보수적).
