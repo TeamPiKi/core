@@ -147,7 +147,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TeamPiKi/infra
+          ref: main
           path: piki-infra
+          sparse-checkout: |
+            blocks
+          sparse-checkout-cone-mode: true
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
