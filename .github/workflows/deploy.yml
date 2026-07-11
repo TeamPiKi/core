@@ -180,8 +180,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:${{ needs.resolve.outputs.ref }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
 
       - name: Upload nginx config
         id: upload_nginx
@@ -429,7 +429,7 @@ jobs:
               exit 1
             fi
 
-            IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
+            IMAGE="$DOCKERHUB_USERNAME/piki-core:$IMAGE_TAG"
 
             # 옛 배포 이미지가 쌓여 EC2 디스크가 차면 containerd 가 새 이미지를 못 받아 배포가 실패한다(#336).
             # pull 전에 컨테이너 미참조 이미지를 정리해 누적을 막고, 이미 디스크가 찬 상태의 deadlock 도 깬다.
