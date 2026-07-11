@@ -12,7 +12,7 @@ import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 
-// 원격 추출 서비스(PIKI-Extractor) 계약(extractor repo docs/api-contract.md)의 공용 절반.
+// 원격 추출 서비스(extractor) 계약(extractor repo docs/api-contract.md)의 공용 절반.
 // link(HttpProductLinkExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResponse)과
 // 같은 3갈래 번역을 쓰므로 호출·번역 전체를 한 곳에 모은다 — 계약이 진화할 때 두 클라이언트가 조용히 어긋나는 것을 막는다.
 // 클라이언트별로 갈리는 건 요청 모양(URL vs bucket·key)과 로그 컨텍스트(target)뿐이다.

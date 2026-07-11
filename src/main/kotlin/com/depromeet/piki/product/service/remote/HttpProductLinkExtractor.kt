@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
-// 원격 추출 서비스(PIKI-Extractor)의 링크 추출 클라이언트. 계약은 extractor repo 의 docs/api-contract.md 가
+// 원격 추출 서비스(extractor)의 링크 추출 클라이언트. 계약은 extractor repo 의 docs/api-contract.md 가
 // single source 이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
 // (HttpImageSnapshotExtractor)와 공유하므로 RemoteExtractionContract 한 곳에 있다 — 여기는 링크 고유의 요청(URL)만 진다.
 //
@@ -18,7 +18,7 @@ import org.springframework.web.client.RestClient
 // 있으면 저쪽에서 무시되므로 여기서 따로 게이트하지 않는다 — 스위치는 능력을 가진 쪽(extractor) 한 곳에 둔다.
 //
 // 링크 파싱의 유일한 ProductLinkExtractor 구현이다. 워커(AsyncItemParsingWorker)는 이 경계 뒤의
-// 원격 호출을 모른다 — 파싱은 전부 PIKI-Extractor(Java 서비스)가 한다.
+// 원격 호출을 모른다 — 파싱은 전부 extractor(Java 서비스)가 한다.
 @Component
 class HttpProductLinkExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,

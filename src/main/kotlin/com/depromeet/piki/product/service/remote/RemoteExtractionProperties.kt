@@ -2,11 +2,11 @@ package com.depromeet.piki.product.service.remote
 
 import org.springframework.boot.context.properties.ConfigurationProperties
 
-// 파싱(링크·이미지)을 전담하는 원격 추출 서비스(PIKI-Extractor) 호출 설정.
+// 파싱(링크·이미지)을 전담하는 원격 추출 서비스(extractor) 호출 설정.
 // @ConfigurationPropertiesScan(PikiApplication)으로 자동 등록된다.
 @ConfigurationProperties(prefix = "product.extract.remote")
 data class RemoteExtractionProperties(
-    // PIKI-Extractor base URL. 운영은 배포(deploy.yml)가, 로컬은 .env 가 주입한다. 기본값이 없어
+    // extractor base URL. 운영은 배포(deploy.yml)가, 로컬은 .env 가 주입한다. 기본값이 없어
     // 비면 부팅에서 즉시 실패한다(RemoteExtractionHttpClientConfig — env 누락의 침묵 창 차단).
     val baseUrl: String = "",
     val connectTimeoutMs: Int = 2_000,

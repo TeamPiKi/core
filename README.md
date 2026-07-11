@@ -1,4 +1,4 @@
-# PIKI Server
+# core
 
 PIKI 백엔드 서버.
 

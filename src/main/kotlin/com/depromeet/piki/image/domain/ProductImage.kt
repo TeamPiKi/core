@@ -22,7 +22,7 @@ class ProductImage private constructor(
         get() = extensionOf(mimeType)
 
     companion object {
-        // 이미지 추출이 받아들이는 형식 ↔ 스토리지 key 확장자 단일 매핑. 근거는 OCR 실행 주체인 PIKI-Extractor 의
+        // 이미지 추출이 받아들이는 형식 ↔ 스토리지 key 확장자 단일 매핑. 근거는 OCR 실행 주체인 extractor 의
         // Gemini Vision 지원 목록(https://ai.google.dev/gemini-api/docs/vision)이다 — 실행이 원격으로 이관돼 이 목록은
         // 그 능력의 사본이므로, extractor 의 지원 포맷이 바뀌면 여기도 함께 갱신해야 업로드 허용과 파싱 능력이 안 어긋난다.
         // SUPPORTED_MIME_TYPES(keys)·EXTENSIONS(values)·extensionOf 가 모두 이 map 을 파생해, 지원 포맷 추가가 한 곳으로 끝난다.
