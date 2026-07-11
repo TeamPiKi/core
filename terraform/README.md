@@ -16,10 +16,12 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 | 결정 | 값 | 이유 |
 |---|---|---|
-| state 위치 | `s3://piki-tfstate-250758375457/terraform.tfstate` | 팀 공유 + 단일 진실 원천 |
+| state 위치 | `s3://piki-tfstate-<ACCOUNT_ID>/terraform.tfstate` | 팀 공유 + 단일 진실 원천 |
 | 락 메커니즘 | S3 native (`use_lockfile = true`) | Terraform 1.10+ 의 S3 conditional PUT 락. DynamoDB 추가 운영 부담 0 |
 | 버킷 보안 | versioning ON / 퍼블릭 차단 / SSE-S3 | 롤백 가능, 외부 노출 차단 |
 | 접근 권한 | IAM 그룹 `PIKI-Infra` (BE 3 명) | 외부도, 다른 그룹도 state 못 봄 |
+
+이 문서와 코드의 `<ACCOUNT_ID>` 는 AWS 계정번호 자리다. public repo 라 계정번호를 커밋하지 않는 규율(infra `conventions/infra.md`)에 따라, 실값은 자격증명에서 파생해(`aws sts get-caller-identity`) gitignore 된 `backend.hcl` 과 환경변수로 주입한다 (아래 워크플로우) — 계정번호를 어디에 따로 적어 둘 필요가 없다.
 
 대안과 비교:
 
@@ -34,7 +36,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 | 주체 | 가능한 일 | 권한 출처 |
 |---|---|---|
-| `PIKI-Infra` 그룹 (조재중 / qkrdmswl / parksevin98) | tfstate 버킷 읽기/쓰기, `terraform plan` | 커스텀 정책 `PIKITerraformStateAccess` (버킷 `piki-tfstate-250758375457` + 그 객체에 한정 — 다른 S3 버킷 접근 불가) |
+| `PIKI-Infra` 그룹 (조재중 / qkrdmswl / parksevin98) | tfstate 버킷 읽기/쓰기, `terraform plan` | 커스텀 정책 `PIKITerraformStateAccess` (버킷 `piki-tfstate-<ACCOUNT_ID>` + 그 객체에 한정 — 다른 S3 버킷 접근 불가) |
 | `AdministratorAccess` 부여된 사용자 (parksevin98) | 모든 AWS 리소스 변경 (= apply 가능) | `AdministratorAccess` 직접 부여 |
 | 그 외 | state 접근 자체 불가 | 정책 없음 |
 
@@ -46,12 +48,12 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 {
   "Effect": "Allow",
   "Action": "s3:ListBucket",
-  "Resource": "arn:aws:s3:::piki-tfstate-250758375457"
+  "Resource": "arn:aws:s3:::piki-tfstate-<ACCOUNT_ID>"
 }
 {
   "Effect": "Allow",
   "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-  "Resource": "arn:aws:s3:::piki-tfstate-250758375457/*"
+  "Resource": "arn:aws:s3:::piki-tfstate-<ACCOUNT_ID>/*"
 }
 ```
 
@@ -66,6 +68,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 | 변수 | 종류 | 비고 |
 |---|---|---|
 | `db_password` | secret (필수) | `variables.tf` 에 default 없음 — 평문 커밋 방지 목적 |
+| `image_bucket_name` | 환경 설정 (필수) | default 없음 — 계정번호 포함이라 커밋 금지. 자격증명에서 파생 ("일상 워크플로우"의 도출 명령이 자동 세팅) |
 | `ssh_ingress_cidr` | 환경 설정 | default 는 placeholder (`203.0.113.1/32`). 실제 작업 IP 로 override |
 
 그 외 변수 (`project`, `environment`, `aws_region`, VPC CIDR, EC2 instance type 등) 는 `variables.tf` 의 default 그대로 쓴다.
@@ -80,6 +83,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 ```bash
 export TF_VAR_db_password='<공지에서 받은 값>'
+export TF_VAR_image_bucket_name="piki-images-$(aws sts get-caller-identity --query Account --output text)"   # 계정번호 파생 — 공지 불필요
 export TF_VAR_ssh_ingress_cidr='<본인 공인 IP>/32'
 ```
 
@@ -117,7 +121,13 @@ export AWS_REGION="ap-northeast-2"
 
 ```bash
 cd terraform
-terraform init   # 첫 실행 시 또는 backend 설정 변경 시. provider 다운 + S3 backend 연결
+# 버킷명은 전부 계정번호 파생(piki-*-<계정번호>)이라 자격증명에서 도출한다 — 값을 외우거나 공지에서 찾을 필요 없음.
+# 파생값이라 재실행해도 항상 현재 자격증명 계정 기준 같은 값이 나와 덮어써도 안전하다.
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+echo "bucket = \"piki-tfstate-$ACCOUNT\"" > backend.hcl   # gitignore 됨 — 커밋 금지
+export TF_VAR_image_bucket_name="piki-images-$ACCOUNT"
+
+terraform init -backend-config=backend.hcl     # 첫 실행 시 또는 backend 설정 변경 시. provider 다운 + S3 backend 연결
 terraform plan   # state 읽고 AWS 와 비교, 변경 미리 보기
 ```
 
@@ -143,11 +153,11 @@ unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 ```bash
 # 객체 단건 확인
 aws s3api head-object \
-  --bucket piki-tfstate-250758375457 \
+  --bucket piki-tfstate-<ACCOUNT_ID> \
   --key terraform.tfstate
 
 # 또는 버킷의 객체 목록
-aws s3 ls s3://piki-tfstate-250758375457/
+aws s3 ls s3://piki-tfstate-<ACCOUNT_ID>/
 ```
 
 `head-object` 가 200 응답 + `ContentLength` 가 0 이 아닌 값이면 정상.
@@ -155,7 +165,7 @@ aws s3 ls s3://piki-tfstate-250758375457/
 ### 버킷 versioning 이 켜져 있는지 (반드시 Enabled)
 
 ```bash
-aws s3api get-bucket-versioning --bucket piki-tfstate-250758375457
+aws s3api get-bucket-versioning --bucket piki-tfstate-<ACCOUNT_ID>
 ```
 기대 출력:
 ```json
@@ -168,7 +178,7 @@ aws s3api get-bucket-versioning --bucket piki-tfstate-250758375457
 
 ```bash
 aws s3api list-object-versions \
-  --bucket piki-tfstate-250758375457 \
+  --bucket piki-tfstate-<ACCOUNT_ID> \
   --prefix terraform.tfstate
 ```
 
@@ -177,9 +187,9 @@ apply 횟수만큼 버전이 쌓여야 한다. 신규 부트스트랩 직후엔 
 ### 퍼블릭 차단 / 암호화 확인
 
 ```bash
-aws s3api get-public-access-block --bucket piki-tfstate-250758375457
+aws s3api get-public-access-block --bucket piki-tfstate-<ACCOUNT_ID>
 # 4 개 항목 다 true
-aws s3api get-bucket-encryption --bucket piki-tfstate-250758375457
+aws s3api get-bucket-encryption --bucket piki-tfstate-<ACCOUNT_ID>
 # AES256 (SSE-S3) 또는 aws:kms
 ```
 
@@ -213,8 +223,8 @@ terraform force-unlock <LOCK-ID>
 state 가 망가지거나 잘못된 apply 가 일어났을 때 — S3 versioning 으로 복구:
 
 ```bash
-aws s3api list-object-versions --bucket piki-tfstate-250758375457 --prefix terraform.tfstate
-aws s3api get-object --bucket piki-tfstate-250758375457 --key terraform.tfstate \
+aws s3api list-object-versions --bucket piki-tfstate-<ACCOUNT_ID> --prefix terraform.tfstate
+aws s3api get-object --bucket piki-tfstate-<ACCOUNT_ID> --key terraform.tfstate \
   --version-id <VERSION_ID> terraform.tfstate.recovery
 terraform state push terraform.tfstate.recovery
 ```
@@ -230,6 +240,7 @@ S3 기본 30 일+ 보존이라 시간 거꾸로 돌릴 수 있음.
 | `terraform.tfstate` | ❌ → S3 | 비밀값 포함 + apply 마다 변경 + 진실 원천 1 개여야 |
 | `.terraform/` | ❌ | provider 플러그인 (~150MB, OS/arch별). `init` 으로 재생성 |
 | `*.tfvars` | ❌ | secret. 전용 저장소 (env var / Secrets Manager) |
+| `backend.hcl` | ❌ | 계정번호 포함 backend 설정. 자격증명에서 파생 생성 ("일상 워크플로우" 참고) |
 | `*.tfplan` | ❌ | 일회성 |
 
 → ignore 된 것 중 **state 만이 "공유는 필요하지만 git 에 두면 안 되는" 유일한 파일**. 그래서 별도 저장소 (S3) 가 필요.
