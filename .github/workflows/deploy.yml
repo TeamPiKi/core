@@ -398,7 +398,7 @@ jobs:
           # 흐려지는 걸 막는다. release 잡의 GitHub Release 도 prod 한정이라, prod 에선 Sentry release == GitHub Release(v1.0.1)로
           # 맞고 suspect commit·regression 이 그 태그 커밋으로 이어진다(GitHub 연동 승인 후). github.sha(deploy.yml HEAD)는 안 쓴다.
           SENTRY_RELEASE: ${{ (needs.resolve.outputs.environment == 'prod' && inputs.version != '') && inputs.version || needs.resolve.outputs.ref }}
-          # 원격 추출(PIKI-Extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
+          # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
           # base-url 은 환경별 고정 — dev=동거 컨테이너(앱 컨테이너는 --add-host host.docker.internal 로 호스트에 닿는다),
           # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.

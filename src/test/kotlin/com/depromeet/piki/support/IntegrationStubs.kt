@@ -17,7 +17,7 @@ import org.springframework.context.annotation.Primary
 // 파라미터명이 우연히 일치하는 데 기대지 않으므로, 파라미터명을 리팩터링해도 격리가 깨지지 않는다.
 @TestConfiguration(proxyBeanMethods = false)
 class IntegrationStubs {
-    // 파싱(링크·이미지)의 외부 경계는 원격 PIKI-Extractor HTTP 호출 하나다 — 두 진입점 인터페이스를 stub 해
+    // 파싱(링크·이미지)의 외부 경계는 원격 extractor HTTP 호출 하나다 — 두 진입점 인터페이스를 stub 해
     // 통합 테스트가 실제 원격 호출 없이 파싱 결과를 제어한다. 원격 클라이언트 자체(3갈래 번역·계약 가드)는
     // 단위(HttpProductLinkExtractorTest·HttpImageSnapshotExtractorTest)가 검증한다.
     @Bean

@@ -5,7 +5,7 @@ import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
-// 원격 추출기(PIKI-Extractor, 도메인 용어 product 의 ProductExtractor) 호출 실패. 워커(AsyncItemParsingWorker.isRetryable)의
+// 원격 추출기(extractor, 도메인 용어 product 의 ProductExtractor) 호출 실패. 워커(AsyncItemParsingWorker.isRetryable)의
 // 재시도 판정이 category 만 보므로, extractor 계약의 3갈래 중 "일시(그 외 전부)"는 RETRYABLE 로, "확정(422)"는 SERVER_ERROR 로 번역한다.
 // (NOT_PRODUCT_PAGE·UNTRUSTWORTHY_VALUE 는 이 예외가 아니라 기존 ProductSnapshotException 으로 되돌려
 // 워커 메트릭 reason=not_product 의 의미를 보존한다 — HttpProductLinkExtractor.translate 참고.)

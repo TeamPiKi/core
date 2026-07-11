@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component
 
 // itemParsingExecutor 스레드에서 이미지 파싱 한 건을 수행한다. 입력은 등록 시 S3 에 durable 적재한 raw object key —
 // 그 key 로 원본을 다시 읽어 파싱하므로, 메모리 ByteArray 와 달리 재실행 시점에 원본이 살아 있다.
-// 추출 자체(download→OCR→crop→결과 업로드)는 ImageSnapshotExtractor 경계(원격 PIKI-Extractor 호출) 뒤로
+// 추출 자체(download→OCR→crop→결과 업로드)는 ImageSnapshotExtractor 경계(원격 extractor 호출) 뒤로
 // 위임하고, 이 워커는 상태 전이·재시도 정책·raw 회수만 진다.
 // 외부 호출은 트랜잭션 바깥에서 끝내고, 상태 전이 영속화만 ItemParsingService(@Transactional)에 위임한다.
 //
