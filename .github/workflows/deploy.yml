@@ -139,6 +139,20 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
+      # 배포 공용 블록(헬스체크 등)은 infra repo(TeamPiKi/infra)가 SSOT 다. main 을 checkout 해 blocks/ 를
+      # 받아온다. 이는 infra main 변경이 core 배포에 즉시 반영되는 결합이다 (SSOT 의도이나, infra main 이
+      # 바뀌면 core 재배포 없이도 다음 배포부터 새 블록이 적용됨을 인지할 것). public repo 라 기본
+      # GITHUB_TOKEN 으로 checkout 되어 별도 PAT 가 필요 없다.
+      - name: Checkout infra blocks
+        uses: actions/checkout@v4
+        with:
+          repository: TeamPiKi/infra
+          ref: main
+          path: piki-infra
+          sparse-checkout: |
+            blocks
+          sparse-checkout-cone-mode: true
+
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
@@ -180,8 +194,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:${{ needs.resolve.outputs.ref }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
 
       - name: Upload nginx config
         id: upload_nginx
@@ -297,6 +311,20 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           source: "infra/alloy/config.alloy"
           target: "/tmp/team3-alloy"
+          strip_components: 2
+
+      # infra 공용 블록을 박스로 올린다. 아래 Health check 스텝이 인라인 폴링 대신 이 블록을 호출한다.
+      # source 는 위 'Checkout infra blocks' 가 받은 piki-infra/blocks/ 아래 경로다. strip_components: 2 로
+      # piki-infra/blocks/ 를 떼어 /tmp/piki-blocks/healthcheck.sh 로 안착시킨다 (기존 scp 패턴과 동일).
+      - name: Upload healthcheck block
+        id: upload_healthcheck
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "piki-infra/blocks/healthcheck.sh"
+          target: "/tmp/piki-blocks"
           strip_components: 2
 
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
@@ -429,7 +457,7 @@ jobs:
               exit 1
             fi
 
-            IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
+            IMAGE="$DOCKERHUB_USERNAME/piki-core:$IMAGE_TAG"
 
             # 옛 배포 이미지가 쌓여 EC2 디스크가 차면 containerd 가 새 이미지를 못 받아 배포가 실패한다(#336).
             # pull 전에 컨테이너 미참조 이미지를 정리해 누적을 막고, 이미 디스크가 찬 상태의 deadlock 도 깬다.
@@ -556,38 +584,36 @@ jobs:
               ACTIVE="green" INACTIVE="blue" INACTIVE_PORT=8080
             fi
 
-            # 새로 뜬 컨테이너(INACTIVE) 헬스체크. 콜드 JVM + 빈 DB Flyway 에 더해, blue+green 공존 시
-            # swap 압박으로 부팅이 76초에서 120초+ 까지 늘어 기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628).
-            # 300초(60×5s)로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다. ssh-action command_timeout(기본 10m)
-            # 안에서 이후 switch·docker stop 여유까지 포함해 안전하다. 200 받으면 즉시 빠져나가므로 정상 배포 속도엔 영향 없다.
-            for i in $(seq 1 60); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$INACTIVE_PORT/health || echo "000")
-              if [ "$STATUS" = "200" ]; then
-                echo "================================================"
-                echo "  HEALTH CHECK PASSED on $INACTIVE (attempt $i)"
-                echo "================================================"
-                # Nginx upstream 전환
-                echo "server localhost:$INACTIVE_PORT;" | sudo tee /etc/nginx/team3-upstream.conf
-                sudo nginx -s reload
-                echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
-                # 구버전 종료 (team3-server 마이그레이션 포함) — switch 는 이미 끝났으므로 best-effort.
-                # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
-                # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
-                # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
-                timeout 60 docker stop -t 30 "team3-$ACTIVE" team3-server 2>/dev/null || true
-                timeout 30 docker rm -f "team3-$ACTIVE" team3-server 2>/dev/null || true
-                echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
-                echo "================================================"
-                exit 0
-              fi
-              echo "Attempt $i: status=$STATUS, retrying in 5s..."
-              sleep 5
-            done
-            echo "Health check failed — rolling back"
-            # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
-            timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
-            timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
-            exit 1
+            # 새로 뜬 컨테이너(INACTIVE) 헬스체크는 infra 공용 블록(blocks/healthcheck.sh)에 위임한다.
+            # 간격·횟수는 호출부가 소유한다 (블록은 값을 갖지 않는다). 왜 300초(60×5s)인가:
+            #   콜드 JVM + 빈 DB Flyway 에 더해 blue+green 공존 시 swap 압박으로 부팅이 76초에서 120초+ 까지 늘어
+            #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
+            #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
+            #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
+            if bash /tmp/piki-blocks/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
+              echo "================================================"
+              echo "  HEALTH CHECK PASSED on $INACTIVE"
+              echo "================================================"
+              # Nginx upstream 전환
+              echo "server localhost:$INACTIVE_PORT;" | sudo tee /etc/nginx/team3-upstream.conf
+              sudo nginx -s reload
+              echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
+              # 구버전 종료 (team3-server 마이그레이션 포함) — switch 는 이미 끝났으므로 best-effort.
+              # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
+              # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
+              # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
+              timeout 60 docker stop -t 30 "team3-$ACTIVE" team3-server 2>/dev/null || true
+              timeout 30 docker rm -f "team3-$ACTIVE" team3-server 2>/dev/null || true
+              echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
+              echo "================================================"
+              exit 0
+            else
+              echo "Health check failed — rolling back"
+              # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
+              timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
+              timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
+              exit 1
+            fi
 
       - name: Write deployment summary
         if: always()
@@ -624,7 +650,7 @@ jobs:
             STATUS="❌ 실패 (EC2 배포)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 파일 업로드)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (TLS 인증서 발급)"
@@ -737,7 +763,7 @@ jobs:
             CAUSE="Docker Hub 로그인 실패"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
             CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"
