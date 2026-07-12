@@ -114,25 +114,10 @@ jobs:
             exit 1
           fi
 
-      # dev/staging 은 ENV_ACCESS_GATE=true 라 도메인 전체가 allowlist IP 로만 열린다. 그 IP 를 등록하는 유일한 경로가
-      # Discord 슬래시커맨드(/admin-access/discord)인데, 아래 넷 중 하나라도 비면 진입이 전부 막혀 IP 를 못 열어 도메인째
-      # 잠긴다(브릭): DISCORD_PUBLIC_KEY(서명검증)·DISCORD_ADMIN_USER_IDS(allowlist)·DISCORD_ADMIN_CHANNEL_ID(채널)·ADMIN_GRANT_SIGNING_KEY(토큰서명).
-      # 빈 채로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
-      - name: Guard — env gate 환경은 Discord admin secret 필수
-        id: secret_guard
-        if: ${{ needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging' }}
-        env:
-          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
-          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
-          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
-          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
-        run: |
-          if [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; then
-            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 admin secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID·ADMIN_GRANT_SIGNING_KEY) 중 빈 값이 있음 — Discord 로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
-            echo "reason=$REASON" >> "$GITHUB_OUTPUT"
-            echo "::error::$REASON"
-            exit 1
-          fi
+      # (옛 러너측 'Discord admin secret 필수' 가드는 제거됐다 — 그 secret 들이 SSM 으로 옮겨가 러너의
+      #  GH secrets 검사가 더는 성립하지 않기 때문. 같은 브릭 조건(admin secret 빈 값 → 도메인 잠금)은
+      #  아래 Deploy 스텝의 box 측 가드가 SSM pull 직후 값으로 검사한다. 전 환경 공통이라 커버리지도 넓다.
+      #  대가로 fail-fast 시점이 빌드 전 → 배포 시점으로 늦춰진다(안전성 동일, 피드백만 늦음).)
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -367,37 +352,12 @@ jobs:
         id: deploy
         uses: appleboy/ssh-action@v1
         env:
-          # secrets 를 step env 로 한 번 거쳐 SSH 세션으로 안전하게 전달한다.
-          # docker run 명령 문자열에 직접 ${{ secrets.X }} 를 박으면 값에 $ / " / 공백 같은
-          # 특수문자가 있을 때 쉘이 다시 해석하면서 값이 손상될 수 있다.
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          REDIS_HOST: ${{ secrets.REDIS_HOST }}
-          REDIS_PORT: ${{ secrets.REDIS_PORT }}
-          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          KAKAO_REDIRECT_URI: ${{ secrets.KAKAO_REDIRECT_URI }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APPLE_CLIENT_ID: ${{ secrets.APPLE_CLIENT_ID }}
-          APPLE_BUNDLE_ID: ${{ secrets.APPLE_BUNDLE_ID }}
-          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
-          APPLE_REDIRECT_URI: ${{ secrets.APPLE_REDIRECT_URI }}
-          # Apple 웹 form_post 브릿지(#430)가 302 시킬 프론트 공용 콜백 URL (예: https://dev.piki.day/auth/callback/apple).
-          # APPLE_REDIRECT_URI(=BE 브릿지)와 짝. 환경별 secret. 비면 부팅 BindException(@NotBlank)이라 배포 전 3환경 모두 설정 필요.
-          APPLE_WEB_CALLBACK_URL: ${{ secrets.APPLE_WEB_CALLBACK_URL }}
-          S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_PUBLIC_BASE_URL: ${{ secrets.S3_PUBLIC_BASE_URL }}
-          # FCM 푸시(#242) — Firebase 서비스계정 키(JSON base64). dev/prod 가 같은 piki 프로젝트를 공유해 공통 secret.
-          # 미설정이면 FirebaseConfig 가 안 떠 발송이 no-op (부팅은 정상, 토큰 수집 API 는 계속 동작).
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # 앱 컨테이너 런타임 시크릿(DB·JWT·OAuth·Apple·S3·Firebase·Discord admin 등)은 더 이상 러너가
+          # SSH 로 밀어넣지 않는다 — 박스가 아래 script 에서 SSM(/piki-core/<env>/*)을 직접 pull 한다
+          # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값과, 컨테이너에 주입하지 않고
+          # 배포 기계가 쓰는 자격증명(DOCKERHUB_USERNAME)뿐이다.
+          # 박스가 어느 SSM 경로(/piki-core/<env>/)를 pull 할지 알려주는 환경명.
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           # Spring 프로파일 — prod·staging 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
           # prod·staging 에서 안 뜨게 하는 핵심. staging 은 진짜 pre-prod 라 prod 와 동일 동작(#498). dev 만 'dev'(=!prod).
           SPRING_PROFILES_ACTIVE: ${{ (needs.resolve.outputs.environment == 'prod' || needs.resolve.outputs.environment == 'staging') && 'prod' || 'dev' }}
@@ -405,14 +365,12 @@ jobs:
           ADMIN_ENABLED: 'true'
           # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
           ENV_ACCESS_GATE: ${{ (needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging') && 'true' || 'false' }}
-          # Discord admin 진입(/admin-access/discord)의 보호막·게이트. 셋 다 필요(비면 /admin 항상 404):
-          # 공개키(Ed25519 서명검증)·allowlist(허용 userId)·채널 게이트(허용 채널 id).
-          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
-          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
-          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
-          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩. 서명키는 전 환경 동일 secret 이라 cross-env 검증된다.
+          # Discord admin 진입 게이트 secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID)
+          # 과 ADMIN_GRANT_SIGNING_KEY 는 SSM 으로 옮겨 박스가 pull 한다(아래 script). 셋 다 필요(비면 /admin 항상
+          # 404)·서명키 전 환경 동일이라는 계약은 그대로다 — 값의 출처만 GH secrets → SSM 으로 바뀐다.
+          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩(값 자체는 SSM 에서 주입).
           ADMIN_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
+          # 이미지명($DOCKERHUB_USERNAME/piki-core) 구성용 — 컨테이너에 -e 로 주입하지 않는 배포 기계 자격증명이라 잔류.
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 에러 트래킹(#608) — staging·prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
@@ -435,8 +393,64 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
+          # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
           script: |
+            # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
+            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
+            # 에 -e 로 주입한다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는 공용 ECR 이미지로 실행
+            # (박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance role(IMDS) 자격증명에 닿는다
+            # (읽기 권한=terraform iam.tf 의 app_ssm_read). 값 운반은 base64 로 감싸 공백·따옴표·$·개행(APPLE_PRIVATE_KEY
+            # PEM)까지 바이트 그대로 옮기고, 임시 파일은 umask 600·즉시 삭제한다. 아래 가드가 이 값들을 검사하므로 순서상
+            # pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
+            # 태그는 patch 로 고정한다 - latest 는 아래 image prune 과 겹쳐 매 배포가 그 시점 latest 를 새로
+            # pull 하므로, 상류 변경이 이 repo 커밋 없이 배포를 깨뜨릴 수 있다. 갱신은 의도적 커밋으로만.
+            AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+            # 조회·파싱 실패를 각자 즉시 끊는다 - 안 끊으면 PARAM_COUNT 가 비어 아래 -eq 비교가 깨진 채
+            # 흘러갈 수 있다. (전역 set -e 는 이 스크립트의 의도된 fallback 경로들을 바꿔 쓰지 않는다.)
+            if ! PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
+              ssm get-parameters-by-path \
+              --path "/piki-core/$ENVIRONMENT/" --recursive --with-decryption \
+              --region ap-northeast-2 --output json)"; then
+              echo "::error::SSM get-parameters-by-path 호출 실패 — IAM 권한(app_ssm_read apply 여부)·네트워크(공용 ECR pull) 확인"
+              exit 1
+            fi
+            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"; then
+              echo "::error::SSM 응답 JSON 파싱 실패 — aws-cli 출력 형식 변화 여부 확인"
+              exit 1
+            fi
+            if [ "$PARAM_COUNT" -eq 0 ]; then
+              echo "::error::SSM /piki-core/$ENVIRONMENT/ 에서 파라미터를 못 받았다 — 마이그레이션 워크플로 선행(값 심기) 또는 IAM 권한 확인"
+              exit 1
+            fi
+            # NAME<TAB>base64(VALUE) 로 뽑아 파일에 쓴 뒤(파이프 서브셸의 export 유실을 피하려 파일 리다이렉트로 루프),
+            # UPPER_SNAKE 로 복원해 export + '-e KEY' 플래그(RUN_ENV_FLAGS)를 모은다. 플래그엔 값이 없어(-e KEY passthrough)
+            # 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
+            umask 077
+            SSM_KV="$(mktemp)"
+            printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
+            # 예약 변수 방어(denylist): SSM 키를 그대로 export 하므로, 배포 제어 값(ENVIRONMENT·IMAGE_TAG 등)이나
+            # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
+            # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
+            # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
+            RUN_ENV_FLAGS=""
+            TAB="$(printf '\t')"
+            while IFS="$TAB" read -r P_NAME P_B64; do
+              [ -n "$P_NAME" ] || continue
+              E_KEY="$(basename "$P_NAME" | tr 'a-z-' 'A-Z_')"
+              case "$RESERVED" in *" $E_KEY "*)
+                echo "::error::SSM 파라미터 $P_NAME 가 예약 변수 $E_KEY 와 충돌 — 배포 제어·내부 변수 이름은 /piki-core/ 아래에 두지 않는다"
+                exit 1;;
+              esac
+              # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
+              E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
+              export "$E_KEY=$E_VAL"
+              RUN_ENV_FLAGS="$RUN_ENV_FLAGS -e $E_KEY"
+            done < "$SSM_KV"
+            rm -f "$SSM_KV"
+            echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
+
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
             if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
@@ -532,37 +546,10 @@ jobs:
               -e TRACING_OTLP_ENABLED="true" \
               -e SPRING_PROFILES_ACTIVE="$SPRING_PROFILES_ACTIVE" \
               -e EXTRACT_REMOTE_BASE_URL="$EXTRACT_REMOTE_BASE_URL" \
-              -e DB_HOST="$DB_HOST" \
-              -e DB_PORT="$DB_PORT" \
-              -e DB_NAME="$DB_NAME" \
-              -e DB_USERNAME="$DB_USERNAME" \
-              -e DB_PASSWORD="$DB_PASSWORD" \
-              -e JWT_SECRET="$JWT_SECRET" \
-              -e REDIS_HOST="$REDIS_HOST" \
-              -e REDIS_PORT="$REDIS_PORT" \
-              -e KAKAO_CLIENT_ID="$KAKAO_CLIENT_ID" \
-              -e KAKAO_CLIENT_SECRET="$KAKAO_CLIENT_SECRET" \
-              -e KAKAO_REDIRECT_URI="$KAKAO_REDIRECT_URI" \
-              -e GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-              -e GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-              -e GOOGLE_REDIRECT_URI="$GOOGLE_REDIRECT_URI" \
-              -e APPLE_TEAM_ID="$APPLE_TEAM_ID" \
-              -e APPLE_KEY_ID="$APPLE_KEY_ID" \
-              -e APPLE_CLIENT_ID="$APPLE_CLIENT_ID" \
-              -e APPLE_BUNDLE_ID="$APPLE_BUNDLE_ID" \
-              -e APPLE_PRIVATE_KEY="$APPLE_PRIVATE_KEY" \
-              -e APPLE_REDIRECT_URI="$APPLE_REDIRECT_URI" \
-              -e APPLE_WEB_CALLBACK_URL="$APPLE_WEB_CALLBACK_URL" \
-              -e S3_BUCKET="$S3_BUCKET" \
-              -e S3_PUBLIC_BASE_URL="$S3_PUBLIC_BASE_URL" \
-              -e FIREBASE_SERVICE_ACCOUNT="$FIREBASE_SERVICE_ACCOUNT" \
               -e ADMIN_ENABLED="$ADMIN_ENABLED" \
               -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
-              -e DISCORD_PUBLIC_KEY="$DISCORD_PUBLIC_KEY" \
-              -e DISCORD_ADMIN_USER_IDS="$DISCORD_ADMIN_USER_IDS" \
-              -e DISCORD_ADMIN_CHANNEL_ID="$DISCORD_ADMIN_CHANNEL_ID" \
               -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
-              -e ADMIN_GRANT_SIGNING_KEY="$ADMIN_GRANT_SIGNING_KEY" \
+              $RUN_ENV_FLAGS \
               -e SENTRY_DSN="$SENTRY_DSN" \
               -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
               -e SENTRY_RELEASE="$SENTRY_RELEASE" \
@@ -642,8 +629,6 @@ jobs:
             STATUS="✅ 성공"
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
-          elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            STATUS="❌ 중단 (Discord admin secret 누락 가드)"
           elif [ "${{ steps.health.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
@@ -663,7 +648,7 @@ jobs:
           else
             STATUS="⚠️ 알 수 없음"
           fi
-          GUARD_REASON="${{ steps.guard.outputs.reason }}${{ steps.secret_guard.outputs.reason }}"
+          GUARD_REASON="${{ steps.guard.outputs.reason }}"
 
           {
             echo "## 배포 결과: $STATUS"
@@ -754,9 +739,6 @@ jobs:
           if [ "${{ steps.guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.guard.outputs.reason }}"
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
-          elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            CAUSE="${{ steps.secret_guard.outputs.reason }}"
-            CAUSE="${CAUSE:-Discord admin secret 누락 (dev/staging 도메인 잠금 방지 가드)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
