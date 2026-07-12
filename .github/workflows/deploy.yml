@@ -403,12 +403,22 @@ jobs:
             # (읽기 권한=terraform iam.tf 의 app_ssm_read). 값 운반은 base64 로 감싸 공백·따옴표·$·개행(APPLE_PRIVATE_KEY
             # PEM)까지 바이트 그대로 옮기고, 임시 파일은 umask 600·즉시 삭제한다. 아래 가드가 이 값들을 검사하므로 순서상
             # pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
-            AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
-            PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
+            # 태그는 patch 로 고정한다 - latest 는 아래 image prune 과 겹쳐 매 배포가 그 시점 latest 를 새로
+            # pull 하므로, 상류 변경이 이 repo 커밋 없이 배포를 깨뜨릴 수 있다. 갱신은 의도적 커밋으로만.
+            AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+            # 조회·파싱 실패를 각자 즉시 끊는다 - 안 끊으면 PARAM_COUNT 가 비어 아래 -eq 비교가 깨진 채
+            # 흘러갈 수 있다. (전역 set -e 는 이 스크립트의 의도된 fallback 경로들을 바꿔 쓰지 않는다.)
+            if ! PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
               ssm get-parameters-by-path \
               --path "/piki-core/$ENVIRONMENT/" --recursive --with-decryption \
-              --region ap-northeast-2 --output json)"
-            PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"
+              --region ap-northeast-2 --output json)"; then
+              echo "::error::SSM get-parameters-by-path 호출 실패 — IAM 권한(app_ssm_read apply 여부)·네트워크(공용 ECR pull) 확인"
+              exit 1
+            fi
+            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"; then
+              echo "::error::SSM 응답 JSON 파싱 실패 — aws-cli 출력 형식 변화 여부 확인"
+              exit 1
+            fi
             if [ "$PARAM_COUNT" -eq 0 ]; then
               echo "::error::SSM /piki-core/$ENVIRONMENT/ 에서 파라미터를 못 받았다 — 마이그레이션 워크플로 선행(값 심기) 또는 IAM 권한 확인"
               exit 1
@@ -419,11 +429,20 @@ jobs:
             umask 077
             SSM_KV="$(mktemp)"
             printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
+            # 예약 변수 방어(denylist): SSM 키를 그대로 export 하므로, 배포 제어 값(ENVIRONMENT·IMAGE_TAG 등)이나
+            # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
+            # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
+            # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
             RUN_ENV_FLAGS=""
             TAB="$(printf '\t')"
             while IFS="$TAB" read -r P_NAME P_B64; do
               [ -n "$P_NAME" ] || continue
               E_KEY="$(basename "$P_NAME" | tr 'a-z-' 'A-Z_')"
+              case "$RESERVED" in *" $E_KEY "*)
+                echo "::error::SSM 파라미터 $P_NAME 가 예약 변수 $E_KEY 와 충돌 — 배포 제어·내부 변수 이름은 /piki-core/ 아래에 두지 않는다"
+                exit 1;;
+              esac
               # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
               E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
               export "$E_KEY=$E_VAL"
