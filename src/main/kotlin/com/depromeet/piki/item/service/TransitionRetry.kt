@@ -11,12 +11,12 @@ import kotlin.random.Random
 /**
  * 파싱 결과의 상태 전이(markReady/markFailed) write 를 일시 DB 오류에 한해 인라인 재시도한다.
  *
- * 추출(fetch + Gemini)은 이미 성공한 뒤라, 전이 write 가 일시 DB 오류(데드락·lock timeout 등)로 실패했다고 추출까지 버리면
+ * 추출(원격 extractor 호출)은 이미 성공한 뒤라, 전이 write 가 일시 DB 오류(데드락·lock timeout 등)로 실패했다고 추출까지 버리면
  * 낭비다. PROCESSING 으로 두고 recover 가 잡으면 추출 전체를 재실행하므로(외부 의존성 재호출), 그 대신 추출 재실행 없이
  * 전이 write 만 짧게 N회 다시 시도한다. 상한까지 실패하면 예외를 그대로 전파해 호출부가 FAILED 로 종결한다.
  *
  * 재시도 대상은 "재시도하면 될 수 있는" 것뿐 — 영구 오류(도메인 검증 위반·sweeper 레이스로 이미 전이됨 등)는 즉시 전파한다.
- * [com.depromeet.piki.product.service.gemini.GeminiRetry] 와 같은 결(분류를 한 곳에 모음)이되, DB 예외는 category 가 없어
+ * extractor 서비스의 GeminiRetry(재시도 분류를 한 곳에 모음)와 같은 결이되, DB 예외는 category 가 없어
  * Spring DataAccessException 타입으로 가른다. dirty-checking UPDATE 는 일시 장애가 commit(flush) 시점에 터져
  * `TransactionSystemException` 으로 감싸지기도 하므로, cause 사슬에서 다음 타입을 찾는다:
  * Spring 의 [TransientDataAccessException](deadlock·lock timeout 등) · [RecoverableDataAccessException](복구 후 재시도 가능),

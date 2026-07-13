@@ -4,11 +4,8 @@ package com.depromeet.piki.image.domain
  * 추출 대상 이미지를 표현하는 값 객체.
  *
  * 빈 바이트 · 미지정 / 미지원 MIME 타입을 [of] 팩토리에서 차단한다.
- * 입력 형식 검증을 도메인 경계에 모아, GeminiProductImageExtractor 같은 외부 어댑터는
- * 항상 유효한 이미지만 받는다는 것을 시그니처 수준에서 보장한다.
- *
- * 현재는 업로드된 이미지 바이트를 메모리에 그대로 보관한다.
- * 추후 이미지 저장 방식이 S3 경로 참조로 대체될 수 있다.
+ * 입력 형식 검증을 도메인 경계에 모아, 등록 경계(multipart 업로드 → S3 raw 적재)가
+ * 항상 유효한 이미지만 다룬다는 것을 시그니처 수준에서 보장한다.
  */
 class ProductImage private constructor(
     private val rawBytes: ByteArray,
@@ -25,8 +22,9 @@ class ProductImage private constructor(
         get() = extensionOf(mimeType)
 
     companion object {
-        // 이미지 추출이 받아들이는 형식 ↔ 스토리지 key 확장자 단일 매핑. Gemini Vision 지원 목록 기준.
-        // https://ai.google.dev/gemini-api/docs/vision
+        // 이미지 추출이 받아들이는 형식 ↔ 스토리지 key 확장자 단일 매핑. 근거는 OCR 실행 주체인 extractor 의
+        // Gemini Vision 지원 목록(https://ai.google.dev/gemini-api/docs/vision)이다 — 실행이 원격으로 이관돼 이 목록은
+        // 그 능력의 사본이므로, extractor 의 지원 포맷이 바뀌면 여기도 함께 갱신해야 업로드 허용과 파싱 능력이 안 어긋난다.
         // SUPPORTED_MIME_TYPES(keys)·EXTENSIONS(values)·extensionOf 가 모두 이 map 을 파생해, 지원 포맷 추가가 한 곳으로 끝난다.
         private val MIME_TO_EXTENSION: Map<String, String> =
             mapOf(
@@ -41,18 +39,6 @@ class ProductImage private constructor(
 
         // raw key 검증(RAW_KEY_REGEX 등)이 파생하는 지원 확장자 집합 — MIME_TO_EXTENSION 의 치역이라 포맷 추가 시 자동 추종한다.
         val EXTENSIONS: Set<String> = MIME_TO_EXTENSION.values.toSet()
-
-        // 스토리지 object key 확장자에서 mimeType 을 복원한다 — extension getter 의 역. 이미지 outbox 워커가 S3 download 시
-        // content-type 메타를 못 받았을 때, 등록 때 우리가 key 에 박은 확장자로 mimeType 을 되살리는 fallback 으로 쓴다.
-        fun mimeTypeOfExtension(extension: String): String? =
-            when (extension.lowercase()) {
-                "png" -> "image/png"
-                "jpg", "jpeg" -> "image/jpeg"
-                "webp" -> "image/webp"
-                "heic" -> "image/heic"
-                "heif" -> "image/heif"
-                else -> null
-            }
 
         fun of(
             bytes: ByteArray,

@@ -8,8 +8,8 @@ import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import java.util.concurrent.Executor
 
-// 등록 시 item 파싱(외부 LLM 호출)을 HTTP 응답과 분리해 백그라운드로 돌리기 위한 executor.
-// 단건 파싱은 60s 안에 끝나도록 외부 timeout 을 잡아 둔다(#461, Gemini read 30s + 내부 재시도 off + fetch 약 20s ≤ 약 55s).
+// 등록 시 item 파싱(원격 extractor 호출)을 HTTP 응답과 분리해 백그라운드로 돌리기 위한 executor.
+// 단건 파싱은 60s 안에 끝나도록 원격 extractor 호출에 read timeout 을 잡아 둔다(#461, 원격 호출 read ≤ 약 55s < stale 60s).
 // 단일 인스턴스 MVP 기준의 보수적 풀 크기다. 운영 트래픽이 보이면 application.yml 로 빼 튜닝한다.
 @Configuration
 @EnableAsync

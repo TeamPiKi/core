@@ -12,36 +12,21 @@ import org.springframework.context.annotation.Primary
 // IntegrationTestSupport 가 import 하므로 모든 통합 테스트가 같은 컨텍스트를 공유한다.
 // 클래스별 @TestConfiguration / @Import 로 컨텍스트를 분기하면 캐시 적중률이 떨어지므로 금지.
 //
-// 각 stub 은 운영 @Component 빈(GeminiProductLinkExtractor·GeminiProductImageExtractor)과 타입이 같아
+// 각 stub 은 운영 @Component 빈(HttpProductLinkExtractor·HttpImageSnapshotExtractor 등)과 타입이 같아
 // 주입 후보가 2개가 된다. @Primary 로 stub 우선을 명시한다 — 빈 이름과 주입 지점
 // 파라미터명이 우연히 일치하는 데 기대지 않으므로, 파라미터명을 리팩터링해도 격리가 깨지지 않는다.
 @TestConfiguration(proxyBeanMethods = false)
 class IntegrationStubs {
-    // 주의: product.extract.remote.enabled 를 테스트 프로퍼티로 켜면 RoutingProductLinkExtractor(@Primary)가 함께 떠
-    // 이 stub(@Primary)과 충돌해 컨텍스트 부팅이 깨진다. image-enabled 도 같다 — 함께 켜면 HttpImageSnapshotExtractor
-    // (@Primary)가 embedded 를 가로채 StubProductImageExtractor·StubImageStorage 격리를 조용히 우회한다.
-    // 원격 모드 검증은 통합 컨텍스트가 아니라 단위(HttpProductLinkExtractorTest·RoutingProductLinkExtractorTest·
-    // HttpImageSnapshotExtractorTest)로 한다.
+    // 파싱(링크·이미지)의 외부 경계는 원격 extractor HTTP 호출 하나다 — 두 진입점 인터페이스를 stub 해
+    // 통합 테스트가 실제 원격 호출 없이 파싱 결과를 제어한다. 원격 클라이언트 자체(3갈래 번역·계약 가드)는
+    // 단위(HttpProductLinkExtractorTest·HttpImageSnapshotExtractorTest)가 검증한다.
     @Bean
     @Primary
     fun productLinkExtractor(): StubProductLinkExtractor = StubProductLinkExtractor()
 
-    // 상품 페이지 fetch(HTTP) 외부 경계. StructuredFirstExtractionIntegrationTest 가 구조화/LLM fallback 분기를
-    // 실제 오케스트레이터(DefaultProductLinkExtractor)로 검증할 때 HTML 을 제어하려고 격리한다.
-    // 위시 통합 테스트는 ProductLinkExtractor 진입점을 통째 stub 하므로 이 빈을 호출하지 않아 영향이 없다.
     @Bean
     @Primary
-    fun pageFetcher(): StubPageFetcher = StubPageFetcher()
-
-    // Gemini 호출 외부 경계. 호출 카운터로 "구조화 우선 파싱 성공 시 LLM 미호출"을 단언한다.
-    // GeminiHtmlExtractor·GeminiProductImageExtractor 가 주입받지만, 위 두 stub 으로 격리돼 평소엔 호출되지 않는다.
-    @Bean
-    @Primary
-    fun geminiClient(): StubGeminiClient = StubGeminiClient()
-
-    @Bean
-    @Primary
-    fun productImageExtractor(): StubProductImageExtractor = StubProductImageExtractor()
+    fun imageSnapshotExtractor(): StubImageSnapshotExtractor = StubImageSnapshotExtractor()
 
     @Bean
     @Primary

@@ -114,30 +114,29 @@ jobs:
             exit 1
           fi
 
-      # dev/staging 은 ENV_ACCESS_GATE=true 라 도메인 전체가 allowlist IP 로만 열린다. 그 IP 를 등록하는 유일한 경로가
-      # Discord 슬래시커맨드(/admin-access/discord)인데, 아래 넷 중 하나라도 비면 진입이 전부 막혀 IP 를 못 열어 도메인째
-      # 잠긴다(브릭): DISCORD_PUBLIC_KEY(서명검증)·DISCORD_ADMIN_USER_IDS(allowlist)·DISCORD_ADMIN_CHANNEL_ID(채널)·ADMIN_GRANT_SIGNING_KEY(토큰서명).
-      # 빈 채로 dev/staging 이 배포되는 걸 미리 끊는다(fail-fast).
-      - name: Guard — env gate 환경은 Discord admin secret 필수
-        id: secret_guard
-        if: ${{ needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging' }}
-        env:
-          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
-          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
-          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
-          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
-        run: |
-          if [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; then
-            REASON="[${{ needs.resolve.outputs.environment }}] ENV_ACCESS_GATE=true 인데 admin secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID·ADMIN_GRANT_SIGNING_KEY) 중 빈 값이 있음 — Discord 로 IP 를 못 열어 도메인 전체가 잠긴다(브릭). secret 설정 후 재배포."
-            echo "reason=$REASON" >> "$GITHUB_OUTPUT"
-            echo "::error::$REASON"
-            exit 1
-          fi
+      # (옛 러너측 'Discord admin secret 필수' 가드는 제거됐다 — 그 secret 들이 SSM 으로 옮겨가 러너의
+      #  GH secrets 검사가 더는 성립하지 않기 때문. 같은 브릭 조건(admin secret 빈 값 → 도메인 잠금)은
+      #  아래 Deploy 스텝의 box 측 가드가 SSM pull 직후 값으로 검사한다. 전 환경 공통이라 커버리지도 넓다.
+      #  대가로 fail-fast 시점이 빌드 전 → 배포 시점으로 늦춰진다(안전성 동일, 피드백만 늦음).)
 
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
+
+      # 배포 공용 블록(헬스체크 등)은 infra repo(TeamPiKi/infra)가 SSOT 다. main 을 checkout 해 blocks/ 를
+      # 받아온다. 이는 infra main 변경이 core 배포에 즉시 반영되는 결합이다 (SSOT 의도이나, infra main 이
+      # 바뀌면 core 재배포 없이도 다음 배포부터 새 블록이 적용됨을 인지할 것). public repo 라 기본
+      # GITHUB_TOKEN 으로 checkout 되어 별도 PAT 가 필요 없다.
+      - name: Checkout infra blocks
+        uses: actions/checkout@v4
+        with:
+          repository: TeamPiKi/infra
+          ref: main
+          path: piki-infra
+          sparse-checkout: |
+            blocks
+          sparse-checkout-cone-mode: true
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -180,8 +179,8 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/team3-server:${{ needs.resolve.outputs.ref }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
 
       - name: Upload nginx config
         id: upload_nginx
@@ -299,6 +298,20 @@ jobs:
           target: "/tmp/team3-alloy"
           strip_components: 2
 
+      # infra 공용 블록을 박스로 올린다. 아래 Health check 스텝이 인라인 폴링 대신 이 블록을 호출한다.
+      # source 는 위 'Checkout infra blocks' 가 받은 piki-infra/blocks/ 아래 경로다. strip_components: 2 로
+      # piki-infra/blocks/ 를 떼어 /tmp/piki-blocks/healthcheck.sh 로 안착시킨다 (기존 scp 패턴과 동일).
+      - name: Upload healthcheck block
+        id: upload_healthcheck
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "piki-infra/blocks/healthcheck.sh"
+          target: "/tmp/piki-blocks"
+          strip_components: 2
+
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
         id: provision
         uses: appleboy/ssh-action@v1
@@ -339,38 +352,12 @@ jobs:
         id: deploy
         uses: appleboy/ssh-action@v1
         env:
-          # secrets 를 step env 로 한 번 거쳐 SSH 세션으로 안전하게 전달한다.
-          # docker run 명령 문자열에 직접 ${{ secrets.X }} 를 박으면 값에 $ / " / 공백 같은
-          # 특수문자가 있을 때 쉘이 다시 해석하면서 값이 손상될 수 있다.
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          REDIS_HOST: ${{ secrets.REDIS_HOST }}
-          REDIS_PORT: ${{ secrets.REDIS_PORT }}
-          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          KAKAO_REDIRECT_URI: ${{ secrets.KAKAO_REDIRECT_URI }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APPLE_CLIENT_ID: ${{ secrets.APPLE_CLIENT_ID }}
-          APPLE_BUNDLE_ID: ${{ secrets.APPLE_BUNDLE_ID }}
-          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
-          APPLE_REDIRECT_URI: ${{ secrets.APPLE_REDIRECT_URI }}
-          # Apple 웹 form_post 브릿지(#430)가 302 시킬 프론트 공용 콜백 URL (예: https://dev.piki.day/auth/callback/apple).
-          # APPLE_REDIRECT_URI(=BE 브릿지)와 짝. 환경별 secret. 비면 부팅 BindException(@NotBlank)이라 배포 전 3환경 모두 설정 필요.
-          APPLE_WEB_CALLBACK_URL: ${{ secrets.APPLE_WEB_CALLBACK_URL }}
-          S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_PUBLIC_BASE_URL: ${{ secrets.S3_PUBLIC_BASE_URL }}
-          # FCM 푸시(#242) — Firebase 서비스계정 키(JSON base64). dev/prod 가 같은 piki 프로젝트를 공유해 공통 secret.
-          # 미설정이면 FirebaseConfig 가 안 떠 발송이 no-op (부팅은 정상, 토큰 수집 API 는 계속 동작).
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # 앱 컨테이너 런타임 시크릿(DB·JWT·OAuth·Apple·S3·Firebase·Discord admin 등)은 더 이상 러너가
+          # SSH 로 밀어넣지 않는다 — 박스가 아래 script 에서 SSM(/piki-core/<env>/*)을 직접 pull 한다
+          # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값과, 컨테이너에 주입하지 않고
+          # 배포 기계가 쓰는 자격증명(DOCKERHUB_USERNAME)뿐이다.
+          # 박스가 어느 SSM 경로(/piki-core/<env>/)를 pull 할지 알려주는 환경명.
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           # Spring 프로파일 — prod·staging 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
           # prod·staging 에서 안 뜨게 하는 핵심. staging 은 진짜 pre-prod 라 prod 와 동일 동작(#498). dev 만 'dev'(=!prod).
           SPRING_PROFILES_ACTIVE: ${{ (needs.resolve.outputs.environment == 'prod' || needs.resolve.outputs.environment == 'staging') && 'prod' || 'dev' }}
@@ -378,14 +365,12 @@ jobs:
           ADMIN_ENABLED: 'true'
           # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
           ENV_ACCESS_GATE: ${{ (needs.resolve.outputs.environment == 'dev' || needs.resolve.outputs.environment == 'staging') && 'true' || 'false' }}
-          # Discord admin 진입(/admin-access/discord)의 보호막·게이트. 셋 다 필요(비면 /admin 항상 404):
-          # 공개키(Ed25519 서명검증)·allowlist(허용 userId)·채널 게이트(허용 채널 id).
-          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
-          DISCORD_ADMIN_USER_IDS: ${{ secrets.DISCORD_ADMIN_USER_IDS }}
-          DISCORD_ADMIN_CHANNEL_ID: ${{ secrets.DISCORD_ADMIN_CHANNEL_ID }}
-          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩. 서명키는 전 환경 동일 secret 이라 cross-env 검증된다.
+          # Discord admin 진입 게이트 secret(DISCORD_PUBLIC_KEY·DISCORD_ADMIN_USER_IDS·DISCORD_ADMIN_CHANNEL_ID)
+          # 과 ADMIN_GRANT_SIGNING_KEY 는 SSM 으로 옮겨 박스가 pull 한다(아래 script). 셋 다 필요(비면 /admin 항상
+          # 404)·서명키 전 환경 동일이라는 계약은 그대로다 — 값의 출처만 GH secrets → SSM 으로 바뀐다.
+          # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩(값 자체는 SSM 에서 주입).
           ADMIN_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          ADMIN_GRANT_SIGNING_KEY: ${{ secrets.ADMIN_GRANT_SIGNING_KEY }}
+          # 이미지명($DOCKERHUB_USERNAME/piki-core) 구성용 — 컨테이너에 -e 로 주입하지 않는 배포 기계 자격증명이라 잔류.
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 에러 트래킹(#608) — staging·prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
@@ -399,24 +384,73 @@ jobs:
           # 흐려지는 걸 막는다. release 잡의 GitHub Release 도 prod 한정이라, prod 에선 Sentry release == GitHub Release(v1.0.1)로
           # 맞고 suspect commit·regression 이 그 태그 커밋으로 이어진다(GitHub 연동 승인 후). github.sha(deploy.yml HEAD)는 안 쓴다.
           SENTRY_RELEASE: ${{ (needs.resolve.outputs.environment == 'prod' && inputs.version != '') && inputs.version || needs.resolve.outputs.ref }}
-          # 원격 추출(PIKI-Extractor) 라우팅 스위치 (#680). 코드 변경 없이 GitHub Actions Variable 로 롤아웃을 제어한다:
-          #   vars.EXTRACT_REMOTE_ENABLED (기본 false, inert) — true 로 켜면 원격 빈이 뜬다. 켜기 전 base-url 이 필수라 아래를 함께 둔다.
-          #   vars.EXTRACT_REMOTE_HOSTS  (기본 빈값=아무것도 원격 안 감) — 점진 전환 시 'musinsa.com' 처럼 소수 host, 전량은 '*'.
-          #   vars.EXTRACT_REMOTE_IMAGE_ENABLED (기본 false) — 이미지(OCR) 파싱의 원격 게이트. 링크(hosts)와 독립, ENABLED 와 둘 다 true 여야 켜진다.
-          # enabled=true + hosts 빈값이면 원격 빈은 뜨나 어떤 링크도 원격으로 안 가는 안전 상태(no-op). 롤백은 enabled=false 한 줄(링크·이미지 공통).
-          EXTRACT_REMOTE_ENABLED: ${{ vars.EXTRACT_REMOTE_ENABLED || 'false' }}
-          EXTRACT_REMOTE_HOSTS: ${{ vars.EXTRACT_REMOTE_HOSTS }}
-          EXTRACT_REMOTE_IMAGE_ENABLED: ${{ vars.EXTRACT_REMOTE_IMAGE_ENABLED || 'false' }}
+          # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
           # base-url 은 환경별 고정 — dev=동거 컨테이너(앱 컨테이너는 --add-host host.docker.internal 로 호스트에 닿는다),
-          # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용). enabled=false 면 미사용.
+          # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
           EXTRACT_REMOTE_BASE_URL: ${{ needs.resolve.outputs.environment == 'dev' && 'http://host.docker.internal:8090' || format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: GEMINI_API_KEY,DB_HOST,DB_PORT,DB_NAME,DB_USERNAME,DB_PASSWORD,JWT_SECRET,REDIS_HOST,REDIS_PORT,KAKAO_CLIENT_ID,KAKAO_CLIENT_SECRET,KAKAO_REDIRECT_URI,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,APPLE_TEAM_ID,APPLE_KEY_ID,APPLE_CLIENT_ID,APPLE_BUNDLE_ID,APPLE_PRIVATE_KEY,APPLE_REDIRECT_URI,APPLE_WEB_CALLBACK_URL,S3_BUCKET,S3_PUBLIC_BASE_URL,FIREBASE_SERVICE_ACCOUNT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,DISCORD_PUBLIC_KEY,DISCORD_ADMIN_USER_IDS,DISCORD_ADMIN_CHANNEL_ID,ADMIN_ENVIRONMENT,ADMIN_GRANT_SIGNING_KEY,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_ENABLED,EXTRACT_REMOTE_HOSTS,EXTRACT_REMOTE_BASE_URL,EXTRACT_REMOTE_IMAGE_ENABLED
+          # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
           script: |
+            # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
+            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
+            # 에 -e 로 주입한다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는 공용 ECR 이미지로 실행
+            # (박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance role(IMDS) 자격증명에 닿는다
+            # (읽기 권한=terraform iam.tf 의 app_ssm_read). 값 운반은 base64 로 감싸 공백·따옴표·$·개행(APPLE_PRIVATE_KEY
+            # PEM)까지 바이트 그대로 옮기고, 임시 파일은 umask 600·즉시 삭제한다. 아래 가드가 이 값들을 검사하므로 순서상
+            # pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
+            # 태그는 patch 로 고정한다 - latest 는 아래 image prune 과 겹쳐 매 배포가 그 시점 latest 를 새로
+            # pull 하므로, 상류 변경이 이 repo 커밋 없이 배포를 깨뜨릴 수 있다. 갱신은 의도적 커밋으로만.
+            AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+            # 조회·파싱 실패를 각자 즉시 끊는다 - 안 끊으면 PARAM_COUNT 가 비어 아래 -eq 비교가 깨진 채
+            # 흘러갈 수 있다. (전역 set -e 는 이 스크립트의 의도된 fallback 경로들을 바꿔 쓰지 않는다.)
+            if ! PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
+              ssm get-parameters-by-path \
+              --path "/piki-core/$ENVIRONMENT/" --recursive --with-decryption \
+              --region ap-northeast-2 --output json)"; then
+              echo "::error::SSM get-parameters-by-path 호출 실패 — IAM 권한(app_ssm_read apply 여부)·네트워크(공용 ECR pull) 확인"
+              exit 1
+            fi
+            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"; then
+              echo "::error::SSM 응답 JSON 파싱 실패 — aws-cli 출력 형식 변화 여부 확인"
+              exit 1
+            fi
+            if [ "$PARAM_COUNT" -eq 0 ]; then
+              echo "::error::SSM /piki-core/$ENVIRONMENT/ 에서 파라미터를 못 받았다 — 마이그레이션 워크플로 선행(값 심기) 또는 IAM 권한 확인"
+              exit 1
+            fi
+            # NAME<TAB>base64(VALUE) 로 뽑아 파일에 쓴 뒤(파이프 서브셸의 export 유실을 피하려 파일 리다이렉트로 루프),
+            # UPPER_SNAKE 로 복원해 export + '-e KEY' 플래그(RUN_ENV_FLAGS)를 모은다. 플래그엔 값이 없어(-e KEY passthrough)
+            # 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
+            umask 077
+            SSM_KV="$(mktemp)"
+            printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
+            # 예약 변수 방어(denylist): SSM 키를 그대로 export 하므로, 배포 제어 값(ENVIRONMENT·IMAGE_TAG 등)이나
+            # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
+            # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
+            # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
+            RUN_ENV_FLAGS=""
+            TAB="$(printf '\t')"
+            while IFS="$TAB" read -r P_NAME P_B64; do
+              [ -n "$P_NAME" ] || continue
+              E_KEY="$(basename "$P_NAME" | tr 'a-z-' 'A-Z_')"
+              case "$RESERVED" in *" $E_KEY "*)
+                echo "::error::SSM 파라미터 $P_NAME 가 예약 변수 $E_KEY 와 충돌 — 배포 제어·내부 변수 이름은 /piki-core/ 아래에 두지 않는다"
+                exit 1;;
+              esac
+              # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
+              E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
+              export "$E_KEY=$E_VAL"
+              RUN_ENV_FLAGS="$RUN_ENV_FLAGS -e $E_KEY"
+            done < "$SSM_KV"
+            rm -f "$SSM_KV"
+            echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
+
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
             if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
@@ -429,20 +463,15 @@ jobs:
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
             fi
-            # 원격 추출(#680)을 켰는데(EXTRACT_REMOTE_ENABLED=true) base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS
-            # secret 미설정 → base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는
-            # 통과해 배포는 성공하나 원격 호출이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
-            if [ "$EXTRACT_REMOTE_ENABLED" = "true" ] && { [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; }; then
-              echo "::error::EXTRACT_REMOTE_ENABLED=true 인데 base-url host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
+            # 원격 추출은 파싱의 유일 경로다 — base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS secret 미설정 →
+            # base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는 통과해
+            # 배포는 성공하나 모든 파싱이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
+            if [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; then
+              echo "::error::EXTRACT_REMOTE_BASE_URL 의 host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
               exit 1
             fi
-            # 이미지 게이트만 켜고 마스터 스위치가 꺼진 반쪽 켜짐은 앱이 조용히 embedded 로 남는다(부팅 오류 없음).
-            # 배포는 유효한 상태라 막지 않되(enabled=false 는 링크·이미지 공통 롤백 경로), 켰다고 믿는 오설정을 로그로 드러낸다.
-            if [ "$EXTRACT_REMOTE_IMAGE_ENABLED" = "true" ] && [ "$EXTRACT_REMOTE_ENABLED" != "true" ]; then
-              echo "::warning::EXTRACT_REMOTE_IMAGE_ENABLED=true 인데 EXTRACT_REMOTE_ENABLED 가 꺼져 있어 이미지 원격 게이트가 무효 (전량 embedded 로 동작)"
-            fi
 
-            IMAGE="$DOCKERHUB_USERNAME/team3-server:$IMAGE_TAG"
+            IMAGE="$DOCKERHUB_USERNAME/piki-core:$IMAGE_TAG"
 
             # 옛 배포 이미지가 쌓여 EC2 디스크가 차면 containerd 가 새 이미지를 못 받아 배포가 실패한다(#336).
             # pull 전에 컨테이너 미참조 이미지를 정리해 누적을 막고, 이미 디스크가 찬 상태의 deadlock 도 깬다.
@@ -516,42 +545,11 @@ jobs:
               -e LOG_STRUCTURED="ecs" \
               -e TRACING_OTLP_ENABLED="true" \
               -e SPRING_PROFILES_ACTIVE="$SPRING_PROFILES_ACTIVE" \
-              -e GEMINI_API_KEY="$GEMINI_API_KEY" \
-              -e EXTRACT_REMOTE_ENABLED="$EXTRACT_REMOTE_ENABLED" \
-              -e EXTRACT_REMOTE_HOSTS="$EXTRACT_REMOTE_HOSTS" \
               -e EXTRACT_REMOTE_BASE_URL="$EXTRACT_REMOTE_BASE_URL" \
-              -e EXTRACT_REMOTE_IMAGE_ENABLED="$EXTRACT_REMOTE_IMAGE_ENABLED" \
-              -e DB_HOST="$DB_HOST" \
-              -e DB_PORT="$DB_PORT" \
-              -e DB_NAME="$DB_NAME" \
-              -e DB_USERNAME="$DB_USERNAME" \
-              -e DB_PASSWORD="$DB_PASSWORD" \
-              -e JWT_SECRET="$JWT_SECRET" \
-              -e REDIS_HOST="$REDIS_HOST" \
-              -e REDIS_PORT="$REDIS_PORT" \
-              -e KAKAO_CLIENT_ID="$KAKAO_CLIENT_ID" \
-              -e KAKAO_CLIENT_SECRET="$KAKAO_CLIENT_SECRET" \
-              -e KAKAO_REDIRECT_URI="$KAKAO_REDIRECT_URI" \
-              -e GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-              -e GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-              -e GOOGLE_REDIRECT_URI="$GOOGLE_REDIRECT_URI" \
-              -e APPLE_TEAM_ID="$APPLE_TEAM_ID" \
-              -e APPLE_KEY_ID="$APPLE_KEY_ID" \
-              -e APPLE_CLIENT_ID="$APPLE_CLIENT_ID" \
-              -e APPLE_BUNDLE_ID="$APPLE_BUNDLE_ID" \
-              -e APPLE_PRIVATE_KEY="$APPLE_PRIVATE_KEY" \
-              -e APPLE_REDIRECT_URI="$APPLE_REDIRECT_URI" \
-              -e APPLE_WEB_CALLBACK_URL="$APPLE_WEB_CALLBACK_URL" \
-              -e S3_BUCKET="$S3_BUCKET" \
-              -e S3_PUBLIC_BASE_URL="$S3_PUBLIC_BASE_URL" \
-              -e FIREBASE_SERVICE_ACCOUNT="$FIREBASE_SERVICE_ACCOUNT" \
               -e ADMIN_ENABLED="$ADMIN_ENABLED" \
               -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
-              -e DISCORD_PUBLIC_KEY="$DISCORD_PUBLIC_KEY" \
-              -e DISCORD_ADMIN_USER_IDS="$DISCORD_ADMIN_USER_IDS" \
-              -e DISCORD_ADMIN_CHANNEL_ID="$DISCORD_ADMIN_CHANNEL_ID" \
               -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
-              -e ADMIN_GRANT_SIGNING_KEY="$ADMIN_GRANT_SIGNING_KEY" \
+              $RUN_ENV_FLAGS \
               -e SENTRY_DSN="$SENTRY_DSN" \
               -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
               -e SENTRY_RELEASE="$SENTRY_RELEASE" \
@@ -573,38 +571,36 @@ jobs:
               ACTIVE="green" INACTIVE="blue" INACTIVE_PORT=8080
             fi
 
-            # 새로 뜬 컨테이너(INACTIVE) 헬스체크. 콜드 JVM + 빈 DB Flyway 에 더해, blue+green 공존 시
-            # swap 압박으로 부팅이 76초에서 120초+ 까지 늘어 기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628).
-            # 300초(60×5s)로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다. ssh-action command_timeout(기본 10m)
-            # 안에서 이후 switch·docker stop 여유까지 포함해 안전하다. 200 받으면 즉시 빠져나가므로 정상 배포 속도엔 영향 없다.
-            for i in $(seq 1 60); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$INACTIVE_PORT/health || echo "000")
-              if [ "$STATUS" = "200" ]; then
-                echo "================================================"
-                echo "  HEALTH CHECK PASSED on $INACTIVE (attempt $i)"
-                echo "================================================"
-                # Nginx upstream 전환
-                echo "server localhost:$INACTIVE_PORT;" | sudo tee /etc/nginx/team3-upstream.conf
-                sudo nginx -s reload
-                echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
-                # 구버전 종료 (team3-server 마이그레이션 포함) — switch 는 이미 끝났으므로 best-effort.
-                # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
-                # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
-                # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
-                timeout 60 docker stop -t 30 "team3-$ACTIVE" team3-server 2>/dev/null || true
-                timeout 30 docker rm -f "team3-$ACTIVE" team3-server 2>/dev/null || true
-                echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
-                echo "================================================"
-                exit 0
-              fi
-              echo "Attempt $i: status=$STATUS, retrying in 5s..."
-              sleep 5
-            done
-            echo "Health check failed — rolling back"
-            # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
-            timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
-            timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
-            exit 1
+            # 새로 뜬 컨테이너(INACTIVE) 헬스체크는 infra 공용 블록(blocks/healthcheck.sh)에 위임한다.
+            # 간격·횟수는 호출부가 소유한다 (블록은 값을 갖지 않는다). 왜 300초(60×5s)인가:
+            #   콜드 JVM + 빈 DB Flyway 에 더해 blue+green 공존 시 swap 압박으로 부팅이 76초에서 120초+ 까지 늘어
+            #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
+            #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
+            #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
+            if bash /tmp/piki-blocks/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
+              echo "================================================"
+              echo "  HEALTH CHECK PASSED on $INACTIVE"
+              echo "================================================"
+              # Nginx upstream 전환
+              echo "server localhost:$INACTIVE_PORT;" | sudo tee /etc/nginx/team3-upstream.conf
+              sudo nginx -s reload
+              echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
+              # 구버전 종료 (team3-server 마이그레이션 포함) — switch 는 이미 끝났으므로 best-effort.
+              # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
+              # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
+              # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
+              timeout 60 docker stop -t 30 "team3-$ACTIVE" team3-server 2>/dev/null || true
+              timeout 30 docker rm -f "team3-$ACTIVE" team3-server 2>/dev/null || true
+              echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
+              echo "================================================"
+              exit 0
+            else
+              echo "Health check failed — rolling back"
+              # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
+              timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
+              timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
+              exit 1
+            fi
 
       - name: Write deployment summary
         if: always()
@@ -633,15 +629,13 @@ jobs:
             STATUS="✅ 성공"
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
-          elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            STATUS="❌ 중단 (Discord admin secret 누락 가드)"
           elif [ "${{ steps.health.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 배포)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 파일 업로드)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (TLS 인증서 발급)"
@@ -654,7 +648,7 @@ jobs:
           else
             STATUS="⚠️ 알 수 없음"
           fi
-          GUARD_REASON="${{ steps.guard.outputs.reason }}${{ steps.secret_guard.outputs.reason }}"
+          GUARD_REASON="${{ steps.guard.outputs.reason }}"
 
           {
             echo "## 배포 결과: $STATUS"
@@ -745,16 +739,13 @@ jobs:
           if [ "${{ steps.guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.guard.outputs.reason }}"
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
-          elif [ "${{ steps.secret_guard.outcome }}" = "failure" ]; then
-            CAUSE="${{ steps.secret_guard.outputs.reason }}"
-            CAUSE="${CAUSE:-Discord admin secret 누락 (dev/staging 도메인 잠금 방지 가드)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
             CAUSE="Docker Hub 로그인 실패"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
             CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"

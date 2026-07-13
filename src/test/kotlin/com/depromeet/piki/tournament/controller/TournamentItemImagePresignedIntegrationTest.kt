@@ -1,11 +1,9 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.image.service.ImageExtraction
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductImageExtractor
+import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.awaitility.Awaitility.await
@@ -47,7 +45,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     private lateinit var stubImageStorage: StubImageStorage
 
     @Autowired
-    private lateinit var stubProductImageExtractor: StubProductImageExtractor
+    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Test
     fun `presigned 발급하면 요청한 개수만큼 uploadUrl 을 받는다`() {
@@ -106,9 +104,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
         var tournamentId = 0L
         try {
             // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로 깨끗한 추출 결과를 세팅해 둔다.
-            stubProductImageExtractor.build = {
-                ImageExtraction(ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"), boundingBox = null)
-            }
+            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             tournamentId = createTournament(mockMvc, ownerId)
             val keys = presignAndGetKeys(mockMvc, ownerId, tournamentId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))

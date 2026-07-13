@@ -76,7 +76,7 @@ class ItemParsingService(
     // stale PROCESSING(워커 크래시·실행 누락·일시 오류로 단건 실행이 끝나지 않은 행)을 집어 재실행 또는 종결한다.
     // claim-at-least-once 를 execution at-least-once 로 끌어올리는 핵심(#461) — 기존의 "무조건 FAILED" 를 "재실행 우선"으로 바꿨다.
     //
-    // 단건 시도는 워커가 60s 안에 끝내므로(외부 timeout 합 ≤ 약 55s, Gemini 내부 재시도 off), updated_at 이 60s 보다 오래된
+    // 단건 시도는 워커가 60s 안에 끝내므로(원격 extractor 호출 read ≤ 약 55s, extractor 내부 재시도 off), updated_at 이 60s 보다 오래된
     // PROCESSING 은 워커가 더는 돌고 있지 않다는 뜻이다. 그런 행을:
     //   - link·imageKey 가 둘 다 없으면(입력 없는 orphan) 되살릴 수 없으므로 즉시 FAILED. 이미지(imageKey)는 S3 raw 로 durable 해 link 처럼 재실행한다.
     //   - attempt 가 상한(maxAttempts)에 도달했으면 더 시도하지 않고 FAILED (무한 재큐잉 방지, 절대 3분 초과 금지).

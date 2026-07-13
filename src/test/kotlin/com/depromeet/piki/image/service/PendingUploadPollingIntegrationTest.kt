@@ -7,10 +7,9 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductImageExtractor
+import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
@@ -50,7 +49,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
     private lateinit var stubImageStorage: StubImageStorage
 
     @Autowired
-    private lateinit var stubProductImageExtractor: StubProductImageExtractor
+    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -338,12 +337,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
 
     // 폴링 등록 후 자동 dispatch(ItemParsingScheduler)가 파싱을 돌리므로, 깨끗한 추출 결과를 세팅해 워커 노이즈를 없앤다.
     private fun seedExtractor() {
-        stubProductImageExtractor.build = {
-            ImageExtraction(
-                snapshot = ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW"),
-                boundingBox = null,
-            )
-        }
+        stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
     }
 
     private fun createTournament(

@@ -34,14 +34,18 @@ jobs:
 
           # 프로젝트 ID 및 Status 필드 조회
           PROJECT_ID=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) { id }
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) { id }
             }
           }' --jq '.data.organization.projectV2.id')
+          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
+            echo "::error::Project 동기화 중단: PROJECT_ID 조회 실패 — 프로젝트 접근 권한(PROJECT_TOKEN)과 보드 번호를 확인하세요."
+            exit 1
+          fi
 
           STATUS_FIELD=$(gh api graphql -f query='{
-            organization(login: "depromeet") {
-              projectV2(number: 99) {
+            organization(login: "${{ github.repository_owner }}") {
+              projectV2(number: 1) {
                 fields(first: 30) {
                   nodes {
                     ... on ProjectV2SingleSelectField {
@@ -56,9 +60,13 @@ jobs:
           FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id')
           OPTION_ID=$(echo "$STATUS_FIELD" | jq -r --arg s "$TARGET_STATUS" '.options[] | select(.name == $s) | .id')
 
+          if [ -z "$FIELD_ID" ] || [ "$FIELD_ID" = "null" ]; then
+            echo "::error::Project 동기화 중단: Status 필드 ID 조회 실패 — 보드 필드 구성을 확인하세요."
+            exit 1
+          fi
           if [[ -z "$OPTION_ID" ]]; then
-            echo "Status option '$TARGET_STATUS' not found in project. Please create it."
-            exit 0
+            echo "::error::Project 동기화 중단: Status 옵션 '$TARGET_STATUS' 을 보드에서 찾지 못했습니다. 보드에 옵션을 추가하세요."
+            exit 1
           fi
 
           for ISSUE_NUM in $ISSUE_NUMS; do
@@ -71,7 +79,7 @@ jobs:
                   }
                 }
               }' \
-              -F owner=depromeet -F repo=PIKI-Server -F num="$ISSUE_NUM" \
+              -F owner=${{ github.repository_owner }} -F repo=${{ github.event.repository.name }} -F num="$ISSUE_NUM" \
               --jq ".data.repository.issue.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
 
             if [[ -n "$ITEM_ID" ]]; then

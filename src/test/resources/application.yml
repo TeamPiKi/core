@@ -34,12 +34,13 @@ oauth:
     redirect-uri: http://localhost/auth/callback/apple
     web-callback-url: https://test.piki.day/auth/callback/apple
 
-# 컨텍스트 로딩만 통과시키기 위한 더미 fallback. 실제 Gemini 호출 테스트는 @Disabled 또는
-# @EnabledIfEnvironmentVariable 로 별도 격리되어 있으므로 CI 에서 GEMINI_API_KEY 가 없어도
-# 컨텍스트 로딩 자체는 깨지지 않는다.
-gemini:
-  api-key: ${GEMINI_API_KEY:test-dummy-key}
-  # model 미지정 → GeminiProperties.DEFAULT_MODEL 적용. 테스트는 외부 호출을 stub 하므로 모델 문자열은 실제로 쓰이지 않는다.
+# 원격 추출(PIKI-Extractor) 주소 — RestClient 빈 생성용 더미. 파싱 경계(ProductLinkExtractor·
+# ImageSnapshotExtractor)는 IntegrationStubs 가 @Primary stub 으로 격리하므로 실제 호출은 없다.
+# test classpath 의 application.yml 이 main 을 통째로 대체해 main 의 기본값이 안 보인다 — 여기 명시한다.
+product:
+  extract:
+    remote:
+      base-url: http://localhost:8090
 
 # 운영 application.yml 은 JWT_SECRET env 를 강제하지만 테스트는 dummy secret 으로
 # 컨텍스트 로딩만 통과시킨다 (HS256 최소 키 길이 32 bytes 충족).

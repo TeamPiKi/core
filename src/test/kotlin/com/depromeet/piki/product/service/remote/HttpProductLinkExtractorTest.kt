@@ -116,7 +116,7 @@ class HttpProductLinkExtractorTest {
 
     @Test
     fun `200 이어도 경계 정규화를 거친다 - non-https imageUrl 은 null 로, 소문자 currency 는 ISO 정규형으로`() {
-        // 원격 계약이 정상 값을 보장하더라도 신뢰 경계를 넘어온 값은 embedded 와 같은 fromExtracted 를 다시 거친다(다층 방어).
+        // 원격 계약이 정상 값을 보장하더라도 신뢰 경계를 넘어온 값은 fromExtracted 정규화를 다시 거친다(다층 방어).
         // http imageUrl 이 그대로 통과하면 XSS 사다리(클라이언트 <img src>)가 다시 열린다.
         val extractor =
             extractorWith { server ->
@@ -135,7 +135,7 @@ class HttpProductLinkExtractorTest {
     }
 
     @Test
-    fun `200 이어도 범위 위반(음수 가격)은 UNTRUSTWORTHY 확정 실패로 떨어진다 - embedded LLM 경로와 동일`() {
+    fun `200 이어도 범위 위반(음수 가격)은 UNTRUSTWORTHY 확정 실패로 떨어진다`() {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
@@ -246,7 +246,7 @@ class HttpProductLinkExtractorTest {
 
     @Test
     fun `2xx 이어도 필수 필드가 빠진 계약 위반 응답은 일시 실패로 걸러진다`() {
-        // extractor 는 자기 쪽에서 필수 필드를 강제하지만, 초기 이관기 버그로 2xx + null 필드가 오면
+        // extractor 는 자기 쪽에서 필수 필드를 강제하지만, 버그로 2xx + null 필드가 오면
         // 불완전 스냅샷이 조용히 READY 로 새면 안 된다 — boundary 에서 일시 실패로 걸러 재시도 후 FAILED 로 종결.
         val extractor =
             extractorWith { server ->
