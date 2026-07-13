@@ -51,10 +51,10 @@ class TournamentRepositoryImpl(
         tournamentJpaRepository.findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId)
 
     override fun findTournamentByInviteCode(code: String): Tournament? =
-        tournamentJpaRepository.findFirstByInviteCodeAndDeletedAtIsNull(code)
+        tournamentJpaRepository.findFirstByActiveInviteCode(code)
 
     override fun existsTournamentByInviteCode(code: String): Boolean =
-        tournamentJpaRepository.existsByInviteCodeAndDeletedAtIsNull(code)
+        tournamentJpaRepository.existsByActiveInviteCode(code)
 
     override fun softDeleteTournament(tournamentId: Long) {
         tournamentJpaRepository.softDeleteById(tournamentId, LocalDateTime.now())
