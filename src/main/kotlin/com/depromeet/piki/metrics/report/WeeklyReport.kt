@@ -49,7 +49,7 @@ data class WeeklyReport(
     val parseFailRate: Int,
     val avgAttempts: Double?,
     val pushSent: Long,
-    val deliverySuccessRate: Int,
+    val deliverySuccessRate: Int?, // null = 금주 공지 발송 없음(0/0) — "0%" 로 오해되지 않게 구분
     val ctrApproxPct: Int,
     // 30일 요약
     val d30SignupNew: Long,
@@ -107,8 +107,11 @@ data class WeeklyReport(
                 parseFailRate = 100 - cur.wish.parseSuccessRate,
                 avgAttempts = avgAttempts,
                 pushSent = cur.push.notificationsTotal,
+                // 공지 발송이 0건이면(성공+실패=0) 성공률이 0/0 이라 "0%" 로 표시하면 "다 실패"로 오해된다 → null 로 두고 embed 가 "금주 발송 없음" 표시.
                 deliverySuccessRate =
-                    MetricsSnapshot.pct(cur.push.deliverySuccess, cur.push.deliverySuccess + cur.push.deliveryFailure),
+                    (cur.push.deliverySuccess + cur.push.deliveryFailure).let { total ->
+                        if (total == 0L) null else MetricsSnapshot.pct(cur.push.deliverySuccess, total)
+                    },
                 ctrApproxPct = cur.push.ctrApproxPct,
                 d30SignupNew = d30.signup.within,
                 d30WishTotal = d30.wish.total,

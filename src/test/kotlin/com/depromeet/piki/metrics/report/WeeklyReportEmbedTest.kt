@@ -12,6 +12,7 @@ class WeeklyReportEmbedTest {
         signupNewTrend: Trend = Trend(12, false),
         participants: Long = 140,
         avgAttempts: Double? = 1.2,
+        deliverySuccessRate: Int? = 97,
     ) = WeeklyReport(
         weekLabel = "07/06(월) ~ 07/12(일)",
         month30Label = "06/13 ~ 07/12",
@@ -45,7 +46,7 @@ class WeeklyReportEmbedTest {
         parseFailRate = 6,
         avgAttempts = avgAttempts,
         pushSent = 3,
-        deliverySuccessRate = 97,
+        deliverySuccessRate = deliverySuccessRate,
         ctrApproxPct = 12,
         d30SignupNew = 180,
         d30WishTotal = 640,
@@ -158,6 +159,20 @@ class WeeklyReportEmbedTest {
 
         val field = fieldValue(embeds[2], "파싱 실패율")
         assertTrue(field.contains("—"), "실제: $field")
+    }
+
+    @Test
+    fun `공지 발송이 없으면 전달 성공률을 0퍼센트가 아니라 금주 발송 없음으로 표시한다`() {
+        val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = null))
+
+        assertEquals("금주 발송 없음", fieldValue(embeds[2], "전달 성공률"))
+    }
+
+    @Test
+    fun `공지 발송이 있으면 전달 성공률을 퍼센트로 표시한다`() {
+        val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = 97))
+
+        assertEquals("97%", fieldValue(embeds[2], "전달 성공률"))
     }
 
     @Suppress("UNCHECKED_CAST")

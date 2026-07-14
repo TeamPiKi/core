@@ -50,7 +50,7 @@ object WeeklyReportEmbed {
             listOf(
                 field("파싱 실패율", "${r.parseFailRate}%\n평균 시도 $attempts"),
                 field("푸시 발송", "${r.pushSent}건"),
-                field("전달 성공률", "${r.deliverySuccessRate}%"),
+                field("전달 성공률", r.deliverySuccessRate?.let { "$it%" } ?: "금주 발송 없음"),
                 field("근사 CTR", "${r.ctrApproxPct}%"),
             )
         val footer = "📅 최근 30일 (${r.month30Label}) — 신규 ${r.d30SignupNew} · 위시 ${r.d30WishTotal} · 토너먼트 ${r.d30TournamentCreated}"
