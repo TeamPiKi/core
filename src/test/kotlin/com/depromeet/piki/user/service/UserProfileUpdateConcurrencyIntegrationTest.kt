@@ -4,6 +4,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.user.domain.UserException
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.Collections
 import java.util.UUID
@@ -50,7 +51,11 @@ class UserProfileUpdateConcurrencyIntegrationTest : IntegrationTestSupport() {
                     start.await()
                     runCatching { userService.updateProfile(userId, target, null) }
                         .onSuccess { successes.add(userId) }
-                        .onFailure { e -> if (e is UserException) conflicts.add(e) else others.add(e) }
+                        .onFailure { e ->
+                            // "나머지는 409" 를 정확히 검증한다 — 아무 UserException 이나 conflicts 로 넣으면
+                            // 409 아닌 다른 UserException 이 와도 통과해버려 회귀를 놓친다. httpStatus 까지 본다.
+                            if (e is UserException && e.httpStatus == HttpStatus.CONFLICT) conflicts.add(e) else others.add(e)
+                        }
                 }
             }
             // 모든 스레드가 시작 게이트에 도달했는지 강제 검증 — 안 하면 느린 CI 에서 일부가 준비 전에
@@ -71,6 +76,13 @@ class UserProfileUpdateConcurrencyIntegrationTest : IntegrationTestSupport() {
             val withTarget = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users WHERE nickname = ?", Int::class.java, target) ?: 0
             assertEquals(1, withTarget, "DB 에 target 닉네임 user 가 정확히 하나여야 한다")
         } finally {
+            // 실패 경로에서도 executor 를 반드시 종료한다 — ready.await 단언이 start.countDown 전에 실패하면
+            // worker 가 start.await() 에 non-daemon 스레드로 영원히 묶여 테스트 JVM 이 종료 못 한다. gate 를
+            // 풀어 대기 중인 worker 를 깨우고 shutdownNow + awaitTermination 으로 종료를 확인한 뒤 DB 를 정리한다.
+            // (happy path 는 이미 shutdown+terminated 라 no-op)
+            start.countDown()
+            pool.shutdownNow()
+            pool.awaitTermination(5, TimeUnit.SECONDS)
             // @Transactional 자동 롤백이 없으므로 만든 행을 직접 정리 (마커 닉네임 prefix 로 삭제 → UUID 바이너리 바인딩 회피)
             jdbcTemplate.update("DELETE FROM users WHERE nickname LIKE ?", "q$mk%")
         }
