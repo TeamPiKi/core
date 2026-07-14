@@ -70,16 +70,20 @@ if [ "${ENVIRONMENT:-}" = "dev" ] || [ "${ENVIRONMENT:-}" = "staging" ]; then
   # --network host: IMDSv2 hop limit(기본 1) 탓에 bridge 컨테이너는 인스턴스 role 자격증명을 못 받는다.
   # 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
   AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+  # --region 명시: docker run 은 호스트 리전 설정을 상속하지 않는다 (deploy.yml 의 SSM pull 과 동일 고정).
   ssm_param() {
     docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
       --name "/piki-core/${ENVIRONMENT}/$1" --with-decryption \
-      --query Parameter.Value --output text
+      --region ap-northeast-2 --query Parameter.Value --output text
   }
   DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM 권한(app_ssm_read)·파라미터 존재 확인"; exit 1; }
   DB_USERNAME="$(ssm_param db-username)" || { echo "[mysql] SSM db-username 조회 실패"; exit 1; }
   DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회 실패"; exit 1; }
   echo "[mysql] DB 자격증명 SSM 로드 완료 (/piki-core/${ENVIRONMENT}/db-*)"
 
+  # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
+  # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
+  # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
   if docker ps -a --format '{{.Names}}' | grep -qx 'team3-mysql'; then
     echo "[mysql] team3-mysql 이미 존재 — skip"
   else
