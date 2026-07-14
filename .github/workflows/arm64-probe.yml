@@ -1,0 +1,17 @@
+# 일회용 probe — GitHub-hosted arm64 러너(ubuntu-24.04-arm)가 이 org/repo 에서 잡히는지 확인용.
+# 이 브랜치 push 로만 돈다. 확인 끝나면 이 파일은 제거하고 deploy.yml 을 arm64 로 이관한다.
+name: ARM64 Runner Probe
+
+on:
+  push:
+    branches: [infra/deploy-arm64-runner]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 아키텍처 확인
+        run: |
+          echo "uname -m: $(uname -m)"
+          echo "RUNNER_OS=$RUNNER_OS RUNNER_ARCH=$RUNNER_ARCH"
+          test "$(uname -m)" = "aarch64" && echo "OK: arm64 러너 확보" || { echo "예상과 다른 아키텍처"; exit 1; }
