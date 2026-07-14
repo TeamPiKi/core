@@ -23,6 +23,7 @@ class WeeklyReportScheduler(
     fun poll() {
         if (!adminProperties.schedulerAutoDispatch) return
         log.info("주간 지표 리포트 자동 발송 시작")
-        weeklyReportService.sendLastCompleteWeek()
+        val outcome = weeklyReportService.sendLastCompleteWeek()
+        log.info("주간 지표 리포트 자동 발송 결과: {}", outcome)
     }
 }

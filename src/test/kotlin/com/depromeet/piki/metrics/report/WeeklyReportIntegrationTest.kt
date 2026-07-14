@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
@@ -45,6 +46,7 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `수동 엔드포인트가 실제 DB 집계로 카드 3장을 metrics 채널에 게시한다`() {
         stubSender.sent.clear()
+        stubSender.result = true // 공유 stub — 이 테스트의 성공 시나리오를 명시 세팅
 
         val kst = ZoneId.of("Asia/Seoul")
         val week = ReportWindow.lastCompleteWeek(LocalDateTime.now(kst))
@@ -77,6 +79,7 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
         mockMvc()
             .perform(post("/admin/metrics/weekly-report").with(csrf()))
             .andExpect(status().is3xxRedirection) // redirect-after-post → /admin/metrics
+            .andExpect(redirectedUrl("/admin/metrics?reportSent=1")) // 채널·토큰 설정 + stub 성공 → SENT
 
         assertEquals(1, stubSender.sent.size)
         val sent = stubSender.sent.first()
@@ -98,6 +101,18 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
         val footer = footerText(sent.embeds[0])
         assertTrue(footer.contains("카카오 100%"), "누적 provider 반영 안 됨: $footer")
         assertTrue(footer.contains("누적 1명"), "누적 가입자 반영 안 됨: $footer")
+    }
+
+    // Discord 전송이 실패하면 성공 배너가 아니라 실패(reportError) 로 리다이렉트해야 한다 — "발송했습니다" 거짓 표시 방지.
+    @Test
+    fun `Discord 전송이 실패하면 실패 배너로 리다이렉트한다`() {
+        stubSender.sent.clear()
+        stubSender.result = false // 전송 실패 시나리오
+
+        mockMvc()
+            .perform(post("/admin/metrics/weekly-report").with(csrf()))
+            .andExpect(status().is3xxRedirection)
+            .andExpect(redirectedUrl("/admin/metrics?reportError=1"))
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -9,11 +9,12 @@ import org.springframework.web.client.RestClient
 import java.time.Duration
 
 // Discord 채널에 embed 메시지를 게시하는 외부 호출 경계. 통합 테스트는 StubDiscordMessageSender 로 격리한다.
+// 게시 성공 여부를 boolean 으로 돌려준다 — 수동 발사 화면이 "발송했습니다" 를 실제 결과와 맞추기 위함(성공 시에만 true).
 interface DiscordMessageSender {
     fun send(
         channelId: String,
         embeds: List<Map<String, Any>>,
-    )
+    ): Boolean
 }
 
 // Discord Bot API(POST /channels/{id}/messages)로 게시. 인증은 Authorization: Bot <token>.
@@ -39,13 +40,14 @@ class HttpDiscordMessageSender(
     override fun send(
         channelId: String,
         embeds: List<Map<String, Any>>,
-    ) {
+    ): Boolean {
         val token = adminProperties.discordBotToken
         if (token.isBlank()) {
+            // 정상 흐름에선 서비스가 토큰 유무를 먼저 걸러 SKIPPED 로 끝내므로 여기 닿지 않는다(방어).
             log.warn("Discord 봇 토큰 미설정 — 주간 리포트 게시 skip")
-            return
+            return false
         }
-        try {
+        return try {
             client
                 .post()
                 .uri("/channels/{channelId}/messages", channelId)
@@ -55,9 +57,11 @@ class HttpDiscordMessageSender(
                 .retrieve()
                 .toBodilessEntity()
             log.info("주간 리포트 Discord 게시 완료 — channelId={}", channelId)
+            true
         } catch (e: Exception) {
             // 외부 의존성 실패 — 스케줄러·요청 스레드를 죽이지 않고 다음 주기/수동 재발송에 맡긴다. 토큰은 로그에 안 남긴다.
             log.warn("주간 리포트 Discord 게시 실패 — channelId={}, error={}", channelId, e.message)
+            false
         }
     }
 

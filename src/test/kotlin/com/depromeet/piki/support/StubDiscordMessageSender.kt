@@ -11,10 +11,14 @@ class StubDiscordMessageSender : DiscordMessageSender {
 
     val sent = mutableListOf<Sent>()
 
+    // 게시 성공/실패 시나리오를 테스트가 제어할 수 있게 결과를 필드로 둔다(기본 성공).
+    var result: Boolean = true
+
     override fun send(
         channelId: String,
         embeds: List<Map<String, Any>>,
-    ) {
+    ): Boolean {
         sent += Sent(channelId, embeds)
+        return result
     }
 }

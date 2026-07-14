@@ -11,6 +11,10 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
+// 주간 리포트 발송 결과 — 수동 발사 화면이 성공/미설정/실패를 구분해 표시한다.
+// SENT: 실제 게시 성공 · SKIPPED: 채널 id·봇 토큰 미설정으로 게시 안 함(설정 문제) · FAILED: Discord 전송 실패(전송 문제).
+enum class ReportOutcome { SENT, SKIPPED, FAILED }
+
 // 주간 지표 리포트 오케스트레이션. 지난 완결 주 기준으로 현재·전주·30일 스냅샷과 추가 지표를 모아 embed 로 조립해 Discord 에 게시한다.
 // 외부 호출(전송)은 트랜잭션 밖 — 스냅샷 조회(MetricsService 내부 짧은 readOnly)와 분리한다.
 // admin 켜진 환경에서만 뜬다 — outbound 경로(HttpDiscordMessageSender)가 @ConditionalOnAdminEnabled 라 이 서비스도 같은 조건이어야
@@ -26,11 +30,13 @@ class WeeklyReportService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     // 발송 시각(now, KST) 기준 지난 완결 주 리포트를 게시한다. 스케줄러·수동 엔드포인트 공통 진입점.
-    fun sendLastCompleteWeek(now: LocalDateTime = LocalDateTime.now(KST)) {
+    // 결과를 돌려줘 수동 발사 화면이 성공/미설정/실패를 정확히 표시하게 한다(성공 배너가 거짓말하지 않도록).
+    fun sendLastCompleteWeek(now: LocalDateTime = LocalDateTime.now(KST)): ReportOutcome {
         val channelId = adminProperties.discordMetricsChannelId
-        if (channelId.isBlank()) {
-            log.warn("Discord metrics 채널 id 미설정 — 주간 리포트 게시 skip")
-            return
+        // 채널 id·봇 토큰 중 하나라도 비면 게시 자체가 불가 — 전송 실패가 아니라 설정 누락이므로 SKIPPED 로 구분한다.
+        if (channelId.isBlank() || adminProperties.discordBotToken.isBlank()) {
+            log.warn("Discord metrics 채널 id 또는 봇 토큰 미설정 — 주간 리포트 게시 skip")
+            return ReportOutcome.SKIPPED
         }
 
         val week = ReportWindow.lastCompleteWeek(now)
@@ -60,7 +66,7 @@ class WeeklyReportService(
                 avgAttempts = avgAttempts,
             )
 
-        sender.send(channelId, WeeklyReportEmbed.build(report))
+        return if (sender.send(channelId, WeeklyReportEmbed.build(report))) ReportOutcome.SENT else ReportOutcome.FAILED
     }
 
     // "07/06(월) ~ 07/12(일)" — to 는 반열림 경계라 마지막 날은 to-1일.
