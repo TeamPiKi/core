@@ -87,4 +87,9 @@ class IntegrationStubs {
     @Bean
     @Primary
     fun announcementImageFetcher(): StubAnnouncementImageFetcher = StubAnnouncementImageFetcher()
+
+    // 주간 리포트 Discord 게시 외부 경계. 실제 Discord 호출을 막고 게시 payload 를 캡처한다.
+    @Bean
+    @Primary
+    fun discordMessageSender(): StubDiscordMessageSender = StubDiscordMessageSender()
 }
