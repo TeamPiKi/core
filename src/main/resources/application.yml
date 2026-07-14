@@ -35,7 +35,9 @@ admin:
 
 spring:
   application:
-    name: PIKI
+    # telemetry 식별자(메트릭 application 라벨·trace service.name 이 여기서 파생). 3서비스 스킴
+    # piki-core·piki-extractor·piki-renderer 로 통일(#724). 전환기 대시보드는 PIKI|piki-core 양쪽 매칭.
+    name: piki-core
   config:
     # .env 다음에 .env.local 을 읽어 로컬 개인 override 를 덮어쓴다(뒤가 우선). 둘 다 optional·gitignore.
     import:
@@ -114,7 +116,7 @@ oauth:
 product:
   extract:
     remote:
-      # 파싱(링크·이미지)의 유일 경로인 원격 추출 서비스(PIKI-Extractor) 주소. 기본값을 두지 않는다 —
+      # 파싱(링크·이미지)의 유일 경로인 원격 추출 서비스(extractor) 주소. 기본값을 두지 않는다 —
       # env 누락이 localhost 등으로 조용히 흘러 모든 파싱이 런타임에만 실패하는 침묵 창을 만들지 않고,
       # 부팅에서 즉시 실패시킨다(RemoteExtractionHttpClientConfig). 로컬 dual-boot 는 .env 의
       # EXTRACT_REMOTE_BASE_URL=http://localhost:8090 으로 명시한다(.env.example 참고).
@@ -201,7 +203,7 @@ logging:
     # 그래서 콘솔 패턴을 직접 정의한다:
     #  - 시각을 Asia/Seoul 로 고정해 Grafana 표시(KST)와 맞춘다 (JVM 타임존은 안 건드린다 — now() 등 도메인 시각에
     #    영향 주지 않도록 로그 출력에서만 KST 로 포맷. DB 는 serverTimezone=UTC 유지).
-    #  - PID·--- ·application name([PIKI])을 뺀다. 단일 컨테이너라 PID 는 항상 1 이고, 서비스 구분은 Loki 의
+    #  - PID·--- ·application name([piki-core])을 뺀다. 단일 컨테이너라 PID 는 항상 1 이고, 서비스 구분은 Loki 의
     #    container 라벨(team3-blue/green)이 이미 한다 — 줄마다 반복할 가치가 없다.
     #  - traceId/spanId 는 한 요청의 전체 로그를 묶는 추적 키라 유지한다 (sampling 1.0 이라 항상 채워진다).
     #  - userId(MDC, JwtAuthenticationFilter 가 인증 요청에 주입)는 한 유저의 여러 요청을 가로질러 묶는 키다 —

@@ -1,6 +1,7 @@
 spring:
   application:
-    name: PIKI-test
+    # main 의 piki-core 와 같은 스킴(#724). 로컬 테스트 telemetry 가 운영 시계열과 섞이지 않게 -test 접미.
+    name: piki-core-test
   config:
     import: optional:file:.env.test[.properties]
   # test classpath 의 application.yml 이 main 을 대체하므로, dicebear backfill 마이그레이션이 쓰는
@@ -34,7 +35,7 @@ oauth:
     redirect-uri: http://localhost/auth/callback/apple
     web-callback-url: https://test.piki.day/auth/callback/apple
 
-# 원격 추출(PIKI-Extractor) 주소 — RestClient 빈 생성용 더미. 파싱 경계(ProductLinkExtractor·
+# 원격 추출(extractor) 주소 — RestClient 빈 생성용 더미. 파싱 경계(ProductLinkExtractor·
 # ImageSnapshotExtractor)는 IntegrationStubs 가 @Primary stub 으로 격리하므로 실제 호출은 없다.
 # test classpath 의 application.yml 이 main 을 통째로 대체해 main 의 기본값이 안 보인다 — 여기 명시한다.
 product:
