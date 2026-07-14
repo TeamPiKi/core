@@ -40,6 +40,13 @@ class Tournament(
     @Column(name = "play_link_expires_at")
     var playLinkExpiresAt: LocalDateTime? = null
 
+    // active_invite_code 는 초대코드 조회 인덱스(uk_tournaments_active_invite_code)가 걸린
+    // generated STORED 컬럼(= IF(deleted_at IS NULL, invite_code, NULL))이다.
+    // DB 가 계산하므로 앱에서 쓰지 않고(read-only), 활성 초대코드 조회를 이 컬럼으로 태워
+    // 인덱스를 쓰기 위해 매핑만 둔다. base 컬럼 invite_code 로 조회하면 인덱스를 못 써 풀스캔이 된다.
+    @Column(name = "active_invite_code", insertable = false, updatable = false)
+    val activeInviteCode: String? = null
+
     fun assignOwner(tournamentUserId: Long) {
         _ownerTournamentUserId = tournamentUserId
     }

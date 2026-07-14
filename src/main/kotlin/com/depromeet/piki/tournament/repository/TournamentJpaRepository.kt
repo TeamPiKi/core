@@ -26,12 +26,15 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
 
     fun findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId: Long): List<Tournament>
 
-    // findBy 는 결과가 2개 이상이면 IncorrectResultSizeDataAccessException → 500 이므로
-    // findFirst 로 방어한다. uk_tournaments_active_invite_code 가 정상이면 활성 코드 중복은 없지만
-    // 마이그레이션 이전 레거시 데이터 등 예외 상황에서도 안전하게 동작한다.
-    fun findFirstByInviteCodeAndDeletedAtIsNull(inviteCode: String): Tournament?
+    // 활성 초대코드 조회는 base 컬럼 invite_code 가 아니라 generated 컬럼 active_invite_code 로 한다.
+    // uk_tournaments_active_invite_code 유니크 인덱스가 이 컬럼에만 걸려 있어, invite_code 로 조회하면
+    // MySQL 8 이 인덱스를 못 써 tournaments 풀스캔이 된다. 삭제행은 active_invite_code 가 NULL 이라
+    // deleted_at IS NULL 조건도 자연 흡수된다.
+    // findBy 는 결과가 2개 이상이면 IncorrectResultSizeDataAccessException → 500 이므로 findFirst 로
+    // 방어한다. 유니크 인덱스가 정상이면 활성 코드 중복은 없지만 레거시 데이터 등 예외 상황에서도 안전하다.
+    fun findFirstByActiveInviteCode(activeInviteCode: String): Tournament?
 
-    fun existsByInviteCodeAndDeletedAtIsNull(inviteCode: String): Boolean
+    fun existsByActiveInviteCode(activeInviteCode: String): Boolean
 
     @Modifying
     @Query("UPDATE Tournament t SET t.deletedAt = :now WHERE t.id = :id AND t.deletedAt IS NULL")

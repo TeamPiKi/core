@@ -24,7 +24,7 @@ jobs:
 
           # 상태 결정
           if [[ "${{ github.event.action }}" == "opened" ]]; then
-            TARGET_STATUS="In Review"
+            TARGET_STATUS="In review"
           elif [[ "$PR_MERGED" == "true" ]]; then
             TARGET_STATUS="Done"
           else

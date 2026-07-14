@@ -2293,6 +2293,22 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET by-invite-code 는 soft-delete 된 토너먼트의 코드이면 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        mockMvc.perform(
+            delete("/api/v1/tournaments/$tournamentId")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        ).andExpect(status().isOk)
+
+        // 조회는 active_invite_code(= IF(deleted_at IS NULL, invite_code, NULL)) 로 태운다.
+        // soft-delete 되면 active_invite_code 가 NULL 이 되어 코드로 조회되지 않아야 한다.
+        mockMvc
+            .perform(get("/api/v1/tournaments/by-invite-code").param("code", inviteCode))
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun `GET by-invite-code 는 PENDING 이 아닌 토너먼트이면 409 를 반환한다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
