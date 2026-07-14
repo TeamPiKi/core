@@ -370,6 +370,9 @@ jobs:
           # 404)·서명키 전 환경 동일이라는 계약은 그대로다 — 값의 출처만 GH secrets → SSM 으로 바뀐다.
           # 이 앱 환경(dev/staging/prod) — grant 토큰 env 바인딩(값 자체는 SSM 에서 주입).
           ADMIN_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          # API 레퍼런스 문서(springdoc spec·Stoplight UI·루트 리다이렉트) 노출 — dev 만 노출, staging/prod 는 404.
+          # 전 엔드포인트·스키마가 외부에 드러나지 않게 dev 외엔 문서 자체를 끈다. 비민감 플래그라 secret 아님(inline).
+          SPRINGDOC_ENABLED: ${{ needs.resolve.outputs.environment == 'dev' && 'true' || 'false' }}
           # 이미지명($DOCKERHUB_USERNAME/piki-core) 구성용 — 컨테이너에 -e 로 주입하지 않는 배포 기계 자격증명이라 잔류.
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
@@ -394,7 +397,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
@@ -433,7 +436,7 @@ jobs:
             # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
             # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
             # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
-            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
             RUN_ENV_FLAGS=""
             TAB="$(printf '\t')"
             while IFS="$TAB" read -r P_NAME P_B64; do
@@ -549,6 +552,7 @@ jobs:
               -e ADMIN_ENABLED="$ADMIN_ENABLED" \
               -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
               -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
+              -e SPRINGDOC_ENABLED="$SPRINGDOC_ENABLED" \
               $RUN_ENV_FLAGS \
               -e SENTRY_DSN="$SENTRY_DSN" \
               -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \

@@ -142,8 +142,14 @@ image:
     max-bytes: 5242880     # 5 MB
     timeout-seconds: 10
 
+# API 레퍼런스 문서 노출 게이트 — dev 만 노출, staging/prod 는 404 (deploy.yml 이 dev 만 SPRINGDOC_ENABLED=true).
+# spec(springdoc.api-docs.enabled)·static Stoplight UI·루트 리다이렉트(docs.enabled → WebConfig)가 이 플래그를 공유한다.
+# 로컬·test 는 미설정 기본 true 라 문서를 그대로 본다.
+docs:
+  enabled: ${SPRINGDOC_ENABLED:true}
 springdoc:
   api-docs:
+    enabled: ${SPRINGDOC_ENABLED:true}
     path: /v3/api-docs
   default-produces-media-type: application/json
 
