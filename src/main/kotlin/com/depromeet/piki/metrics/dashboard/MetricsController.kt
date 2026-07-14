@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
-import org.springframework.web.bind.annotation.ResponseBody
 import com.depromeet.piki.metrics.report.WeeklyReportService
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -80,11 +79,11 @@ class MetricsController(
 
     // 주간 지표 리포트를 지금 즉시 Discord metrics 채널에 게시한다(지난 완결 주 기준).
     // 스케줄(화 10시)과 별개의 수동 트리거 — 첫 발사·스케줄러 miss 시 재발송용. admin 세션 게이트로 보호(백오피스).
+    // redirect-after-post(다른 admin POST 액션과 동일) — 새로고침 재발송을 막고 대시보드로 돌아가 배너로 결과를 알린다.
     @PostMapping("/weekly-report")
-    @ResponseBody
     fun sendWeeklyReport(): String {
         weeklyReportService.sendLastCompleteWeek()
-        return "주간 리포트 게시를 요청했습니다. Discord metrics 채널을 확인하세요."
+        return "redirect:/admin/metrics?reportSent=1"
     }
 
     companion object {

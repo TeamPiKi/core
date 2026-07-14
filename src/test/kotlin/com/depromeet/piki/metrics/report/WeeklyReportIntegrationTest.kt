@@ -76,7 +76,7 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
 
         mockMvc()
             .perform(post("/admin/metrics/weekly-report").with(csrf()))
-            .andExpect(status().isOk)
+            .andExpect(status().is3xxRedirection) // redirect-after-post → /admin/metrics
 
         assertEquals(1, stubSender.sent.size)
         val sent = stubSender.sent.first()
