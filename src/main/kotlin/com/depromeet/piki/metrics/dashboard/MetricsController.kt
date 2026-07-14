@@ -9,8 +9,11 @@ import org.springframework.http.MediaType
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseBody
+import com.depromeet.piki.metrics.report.WeeklyReportService
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -23,6 +26,7 @@ import java.time.format.DateTimeFormatter
 @RequestMapping("/admin/metrics")
 class MetricsController(
     private val metricsService: MetricsService,
+    private val weeklyReportService: WeeklyReportService,
 ) {
     @GetMapping
     fun dashboard(
@@ -72,6 +76,15 @@ class MetricsController(
         val filename = "piki-metrics-${snapshot.from.format(FILE_TS)}_${snapshot.to.format(FILE_TS)}.html"
         response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"$filename\"")
         return "admin/metrics-export"
+    }
+
+    // 주간 지표 리포트를 지금 즉시 Discord metrics 채널에 게시한다(지난 완결 주 기준).
+    // 스케줄(화 10시)과 별개의 수동 트리거 — 첫 발사·스케줄러 miss 시 재발송용. admin 세션 게이트로 보호(백오피스).
+    @PostMapping("/weekly-report")
+    @ResponseBody
+    fun sendWeeklyReport(): String {
+        weeklyReportService.sendLastCompleteWeek()
+        return "주간 리포트 게시를 요청했습니다. Discord metrics 채널을 확인하세요."
     }
 
     companion object {
