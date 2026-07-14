@@ -291,6 +291,57 @@ class MetricsRepository(
         return result
     }
 
+    // ---- 리포트 전용 추가 집계 ----
+
+    // 누적 회원 provider 분포(asOf 시점까지 연결된 활성 user_details). 리포트에서 %로 환산한다.
+    fun countCumulativeByProvider(
+        asOf: LocalDateTime,
+        exclude: Boolean,
+    ): Map<String, Long> =
+        keyCounts(
+            "SELECT provider, COUNT(*) FROM user_details " +
+                "WHERE created_at < ? AND deleted_at IS NULL${notInternal(exclude, "user_id")} GROUP BY provider",
+            ts(asOf),
+        )
+
+    // WAU — 구간 내 DISTINCT 활성 유저 수. dau 리스트의 단순 합은 같은 유저의 여러 날을 중복 카운트하므로 별도 distinct.
+    fun countWeeklyActiveUsers(
+        fromDate: LocalDate,
+        toDate: LocalDate,
+        exclude: Boolean,
+    ): Long =
+        count(
+            "SELECT COUNT(DISTINCT user_id) FROM user_daily_activity " +
+                "WHERE active_date BETWEEN ? AND ?${notInternal(exclude, "user_id")}",
+            java.sql.Date.valueOf(fromDate),
+            java.sql.Date.valueOf(toDate),
+        )
+
+    // 구간 내 탈퇴 수(순증 계산용). users.deleted_at 이 구간에 든 행.
+    fun countWithdrawals(
+        from: LocalDateTime,
+        to: LocalDateTime,
+        exclude: Boolean,
+    ): Long =
+        count(
+            "SELECT COUNT(*) FROM users WHERE deleted_at >= ? AND deleted_at < ?${notInternal(exclude, "id")}",
+            ts(from),
+            ts(to),
+        )
+
+    // 파싱 평균 시도 횟수(추출 건강도). 확정 상태(READY/FAILED)만. 대상이 없으면 null.
+    fun avgParsingAttempts(
+        from: LocalDateTime,
+        to: LocalDateTime,
+    ): Double? =
+        jdbcTemplate.queryForObject(
+            "SELECT AVG(attempt_count) FROM item_snapshots " +
+                "WHERE created_at >= ? AND created_at < ? AND status IN ('READY','FAILED')",
+            Double::class.javaObjectType,
+            ts(from),
+            ts(to),
+        )
+
     // exclude=true 면 "AND <column> NOT IN (개발진 user_id)" 조각을, false(포함)면 빈 문자열을 돌려준다.
     // developers 가 비어 있으면 NOT IN (빈 집합)이라 아무도 제외되지 않는다(SQL 안전).
     private fun notInternal(
