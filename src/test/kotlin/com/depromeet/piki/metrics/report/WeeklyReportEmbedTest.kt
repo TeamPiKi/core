@@ -2,6 +2,7 @@ package com.depromeet.piki.metrics.report
 
 import com.depromeet.piki.metrics.dashboard.MetricsSnapshot
 import java.time.LocalDate
+import java.time.LocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -114,14 +115,42 @@ class WeeklyReportEmbedTest {
         assertTrue(footer.contains("카카오 62%") && footer.contains("누적 1,234"), "실제: $footer")
     }
 
+    // completionRate 를 손으로 박지 않고, 참가자 0 스냅샷을 WeeklyReport.of() 에 넣어 실제 계산 경로
+    // (pct(completed, participants) 의 0 분모 처리)가 예외 없이 0 을 내는지 검증한다.
     @Test
-    fun `참가자가 0이면 완료율 계산이 0으로 안전하다`() {
-        val report = sampleReport(participants = 0).copy(completionRate = 0)
+    fun `참가자가 0인 스냅샷으로도 완료율이 0으로 안전하게 계산돼 렌더된다`() {
+        val report =
+            WeeklyReport.of(
+                weekLabel = "07/06(월) ~ 07/12(일)",
+                month30Label = "06/13 ~ 07/12",
+                cur = zeroSnapshot(),
+                prev = zeroSnapshot(),
+                d30 = zeroSnapshot(),
+                cumulativeProvider = emptyMap(),
+                wau = 0,
+                withdrawals = 0,
+                avgAttempts = null,
+            )
+
+        assertEquals(0, report.completionRate) // 0 분모에도 예외 없이 0
 
         val embeds = WeeklyReportEmbed.build(report)
-
         assertEquals("0%", fieldValue(embeds[1], "완료율"))
     }
+
+    // 모든 지표가 0 인 스냅샷 — 참가자 0(분모 0) 계산 경로 검증용.
+    private fun zeroSnapshot() =
+        MetricsSnapshot(
+            from = LocalDateTime.of(2026, 7, 6, 0, 0),
+            to = LocalDateTime.of(2026, 7, 13, 0, 0),
+            signup = MetricsSnapshot.Signup(0, 0, 0, 0, emptyMap(), 0),
+            wish = MetricsSnapshot.Wish(0, 0, 0, 0, 0),
+            tournament = MetricsSnapshot.Tournament(0, 0, 0, 0, 0),
+            pushReachableUsers = 0,
+            retention = MetricsSnapshot.Retention(0, 0, emptyList()),
+            push = MetricsSnapshot.Push(emptyMap(), 0, 0, 0, 0, 0),
+            hourlySignups = emptyList(),
+        )
 
     @Test
     fun `파싱 평균 시도가 없으면 대시로 표시한다`() {

@@ -14,6 +14,7 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
+import java.sql.Date
 import java.sql.Timestamp
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -66,6 +67,12 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
             Timestamp.valueOf(createdAtUtc),
             Timestamp.valueOf(createdAtUtc),
         )
+        // 주간 활성(WAU) 집계용 — active_date 는 KST 날짜로 적재되므로 창 안의 KST 날짜를 그대로 넣는다.
+        jdbcTemplate.update(
+            "INSERT INTO user_daily_activity (user_id, active_date, created_at) VALUES (?, ?, NOW(6))",
+            uuidToBytes(userId),
+            Date.valueOf(week.from.plusDays(1).toLocalDate()),
+        )
 
         mockMvc()
             .perform(post("/admin/metrics/weekly-report").with(csrf()))
@@ -83,6 +90,14 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
         val signupField = fieldValue(sent.embeds[0], "👤 신규 가입")
         assertTrue(signupField.startsWith("1 "), "신규 가입 반영 안 됨: $signupField")
         assertTrue(signupField.contains("회원 1 · 게스트 0"), "회원/게스트 분해 틀림: $signupField")
+
+        // WAU 집계 쿼리(user_daily_activity distinct)가 심은 활동 1건을 반영한다.
+        assertEquals("1", fieldValue(sent.embeds[0], "📅 WAU"))
+
+        // 누적 provider 집계 쿼리(user_details)가 KAKAO 회원 1명을 100% 로 환산해 footer 에 싣는다.
+        val footer = footerText(sent.embeds[0])
+        assertTrue(footer.contains("카카오 100%"), "누적 provider 반영 안 됨: $footer")
+        assertTrue(footer.contains("누적 1명"), "누적 가입자 반영 안 됨: $footer")
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -90,4 +105,7 @@ class WeeklyReportIntegrationTest : IntegrationTestSupport() {
         embed: Map<String, Any>,
         name: String,
     ): String = (embed["fields"] as List<Map<String, Any>>).first { it["name"] == name }["value"] as String
+
+    @Suppress("UNCHECKED_CAST")
+    private fun footerText(embed: Map<String, Any>): String = (embed["footer"] as Map<String, Any>)["text"] as String
 }
