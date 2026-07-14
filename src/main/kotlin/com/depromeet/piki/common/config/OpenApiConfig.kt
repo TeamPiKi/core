@@ -17,7 +17,7 @@ import org.springframework.context.annotation.Configuration
 class OpenApiConfig {
     @Bean
     fun openAPI(
-        @Value("\${spring.application.name:PIKI}") applicationName: String,
+        @Value("\${spring.application.name:piki-core}") applicationName: String,
     ): OpenAPI =
         OpenAPI()
             .info(

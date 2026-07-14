@@ -286,14 +286,17 @@ class UserService(
                     add("profileImage")
                 }
             }
-        // existsByNicknameAndIdNot 체크와 save 사이에 다른 트랜잭션이 같은 nickname 으로 update / insert 하면
-        // DB unique constraint (uq_users_nickname) 위반이 떠 race 케이스에서 500 이 새어나갈 수 있다.
-        // createMember 와 같은 패턴으로 catch → 409 로 매핑.
+        // existsByNicknameAndIdNot 체크와 saveAndFlush 사이에 다른 트랜잭션이 같은 nickname 으로 update / insert
+        // 하면 DB unique constraint (uq_users_nickname) 위반이 떠 race 케이스가 생긴다. saveNewUser 와 같은 패턴 —
+        // save 만 하면 UPDATE 가 커밋까지 미뤄져 위반이 이 catch 밖(커밋)에서 터지므로 saveAndFlush 로 끌어와 잡는다.
+        // 닉네임 unique 충돌만 duplicateNickname(409)으로 변환하고, 그 외 DB 위반(NOT NULL·길이 등)은 원본 예외를
+        // 그대로 던져 진짜 서버 버그가 500 으로 드러나게 한다.
         val saved =
             try {
-                userRepository.save(user)
+                userRepository.saveAndFlush(user)
             } catch (e: DataIntegrityViolationException) {
-                throw UserException.duplicateNickname()
+                if (isNicknameUniqueViolation(e)) throw UserException.duplicateNickname()
+                throw e
             }
         log.info("내 정보 수정 userId={} 변경필드={}", userId, changedFields)
         return saved
