@@ -1,6 +1,5 @@
 package com.depromeet.piki.common.openapi
 
-import com.depromeet.piki.user.domain.UserErrorCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -9,8 +8,9 @@ import kotlin.test.assertTrue
 // Spring·Docker 없이 순수하게 검증한다.
 class ErrorCodeCatalogTest {
     @Test
-    fun `카탈로그는 code·HTTP·의미를 prefix(예외 클래스)별로 나열한다`() {
-        val md = errorCodeCatalogMarkdown(UserErrorCode.entries.toList())
+    fun `카탈로그는 운영 경로 ErrorCodeRegistry_all 로 code·HTTP·의미를 prefix(예외 클래스)별로 나열한다`() {
+        // 운영 경로(ErrorCodeCatalogConfig 가 쓰는 registry)로 생성 — registry 에서 User 등록이 빠지면 아래 행 단언이 깨져 catalog 누락을 잡는다.
+        val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
 
         assertTrue(md.contains("### USER"), md)
         assertTrue(md.contains("| USER-001 | 404 | 존재하지 않는 계정이에요. |"), md)
