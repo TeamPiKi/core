@@ -76,6 +76,14 @@ class WeeklyReportEmbedTest {
     }
 
     @Test
+    fun `음의 WoW 는 하락 화살표로 표시한다`() {
+        val embeds = WeeklyReportEmbed.build(sampleReport(signupNewTrend = Trend(-5, false)))
+
+        val signupField = fieldValue(embeds[0], "👤 신규 가입")
+        assertTrue(signupField.startsWith("42 ▼5%"), "실제: $signupField")
+    }
+
+    @Test
     fun `전주가 0이면 신규 배지를 붙인다`() {
         val embeds = WeeklyReportEmbed.build(sampleReport(signupNewTrend = Trend(null, true)))
 
