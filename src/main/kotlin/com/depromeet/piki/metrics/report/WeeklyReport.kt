@@ -74,6 +74,8 @@ data class WeeklyReport(
             withdrawals: Long,
             avgAttempts: Double?,
         ): WeeklyReport {
+            // 주의: cumulativeUsers 는 users(게스트 포함) 기준, provider % 는 user_details(회원 전용) 기준이라 모집단이 다르다.
+            // %는 provider 합 대비 비율이라 내부적으로 정합하며, "누적 N명"(전체 유저)을 partition 하지 않는다(회원 구성비일 뿐).
             val cumulativeTotal = PROVIDERS.sumOf { cumulativeProvider[it] ?: 0L }
             val cumulativePct =
                 PROVIDERS.associateWith { MetricsSnapshot.pct(cumulativeProvider[it] ?: 0L, cumulativeTotal) }

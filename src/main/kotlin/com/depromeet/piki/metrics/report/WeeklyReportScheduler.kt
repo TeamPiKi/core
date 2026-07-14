@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component
 // 주간 지표 리포트 자동 발송 — 매주 화요일 10:00 KST. 팀 주간 회의(화 22시) 전 리뷰용.
 // admin 켜진 환경(운영)에서만 뜬다. 테스트는 admin.scheduler-auto-dispatch=false 로 자동 실행을 끄고
 // WeeklyReportService.sendLastCompleteWeek() 를 직접 호출해 결정적으로 검증한다(AnnouncementScheduler 와 동일 패턴).
+// 단일 인스턴스 가정 — ShedLock 등 idempotency 가드가 없어, 여러 인스턴스가 동시 dispatch 하면 중복 게시된다.
+// 현재 배포는 단일 인스턴스라 무방하나, 다중 인스턴스로 확장되면 ShedLock 도입이 필요하다(ItemParsingScheduler 주석과 동일 전제).
 @Component
 @ConditionalOnAdminEnabled
 class WeeklyReportScheduler(

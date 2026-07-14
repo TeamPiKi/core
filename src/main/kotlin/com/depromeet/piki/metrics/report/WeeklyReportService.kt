@@ -1,6 +1,7 @@
 package com.depromeet.piki.metrics.report
 
 import com.depromeet.piki.admin.config.AdminProperties
+import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.metrics.dashboard.MetricsRepository
 import com.depromeet.piki.metrics.dashboard.MetricsService
 import org.slf4j.LoggerFactory
@@ -12,7 +13,10 @@ import java.time.format.DateTimeFormatter
 
 // 주간 지표 리포트 오케스트레이션. 지난 완결 주 기준으로 현재·전주·30일 스냅샷과 추가 지표를 모아 embed 로 조립해 Discord 에 게시한다.
 // 외부 호출(전송)은 트랜잭션 밖 — 스냅샷 조회(MetricsService 내부 짧은 readOnly)와 분리한다.
+// admin 켜진 환경에서만 뜬다 — outbound 경로(HttpDiscordMessageSender)가 @ConditionalOnAdminEnabled 라 이 서비스도 같은 조건이어야
+// admin 꺼진 부팅(ADMIN_ENABLED 미설정)에서 sender 빈 부재로 컨텍스트가 깨지지 않는다(다른 admin 서비스와 동일 패턴).
 @Service
+@ConditionalOnAdminEnabled
 class WeeklyReportService(
     private val metricsService: MetricsService,
     private val metricsRepository: MetricsRepository,
