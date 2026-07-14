@@ -22,6 +22,10 @@ class WeeklyReportScheduler(
     @Scheduled(cron = "0 0 10 * * TUE", zone = "Asia/Seoul")
     fun poll() {
         if (!adminProperties.schedulerAutoDispatch) return
+        // 자동 발송은 prod 만 — 팀 공용 Discord 채널이라 dev/staging 이 매주 중복·테스트 노이즈를 보내면 안 된다.
+        // 채널 id 미설정에 기대지 않고 환경으로 명시 차단한다(누가 dev/staging 채널 id 를 넣어도 자동 발송이 안 켜지게).
+        // 수동 발사 버튼은 전 환경에서 가능하나, 미설정 환경에선 SKIPPED 로 끝난다.
+        if (adminProperties.environment != "prod") return
         log.info("주간 지표 리포트 자동 발송 시작")
         val outcome = weeklyReportService.sendLastCompleteWeek()
         log.info("주간 지표 리포트 자동 발송 결과: {}", outcome)
