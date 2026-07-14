@@ -50,10 +50,13 @@ object WeeklyReportEmbed {
             listOf(
                 field("파싱 실패율", "${r.parseFailRate}%\n평균 시도 $attempts"),
                 field("푸시 발송", "${r.pushSent}건"),
-                field("전달 성공률", "${r.deliverySuccessRate}%"),
+                field("전달 성공률", r.deliverySuccessRate?.let { "$it%" } ?: "금주 발송 없음"),
                 field("근사 CTR", "${r.ctrApproxPct}%"),
             )
-        val footer = "📅 최근 30일 (${r.month30Label}) — 신규 ${r.d30SignupNew} · 위시 ${r.d30WishTotal} · 토너먼트 ${r.d30TournamentCreated}"
+        // 마지막 카드 footer(리포트 맨 아래 작은 글씨)에 증감 화살표 범례를 함께 둔다 — ▲▼ 가 전주 대비임을 독자가 알 수 있게.
+        val footer =
+            "📅 최근 30일 (${r.month30Label}) — 신규 ${r.d30SignupNew} · 위시 ${r.d30WishTotal} · 토너먼트 ${r.d30TournamentCreated}\n" +
+                "▲▼ 는 전주(직전 완결 주) 대비 증감률"
         return card(COLOR_HEALTH, "🔧 건강도 · 전달", fields, footer = footer)
     }
 
