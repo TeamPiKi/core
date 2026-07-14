@@ -22,6 +22,8 @@ import java.time.Duration
  * @property localBypass 로컬 개발에서 /admin 게이트(AdminAccessFilter)를 건너뛴다. 배포 환경은 false.
  * @property scheduleGraceWindow 예약 발송 유예시간. 예약시각을 이 시간보다 더 넘겨 도래하면(다운타임 등) 발송하지 않고 MISSED 로 정리한다.
  * @property schedulerAutoDispatch 스케줄러의 주기 폴링 자동 실행. 테스트는 false 로 끄고 dispatchDue() 를 직접 호출해 결정적으로 검증한다.
+ * @property discordBotToken Discord Bot API 인증 토큰(민감). 주간 지표 리포트를 채널에 게시할 때 Authorization: Bot 헤더로 쓴다. 비면 게시 skip.
+ * @property discordMetricsChannelId 주간 지표 리포트를 게시할 Discord 채널 id. 비면 게시 skip(fail-safe).
  */
 @ConfigurationProperties(prefix = "admin")
 data class AdminProperties(
@@ -38,12 +40,16 @@ data class AdminProperties(
     val localBypass: Boolean = false,
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
     val schedulerAutoDispatch: Boolean = true,
+    val discordBotToken: String = "",
+    val discordMetricsChannelId: String = "",
 ) {
-    // 공개키·채널·호스트는 민감치 않아 노출하되 userId 는 개수만. grantSigningKey 는 크리덴셜이라 set 여부만 마스킹한다.
+    // 공개키·채널·호스트는 민감치 않아 노출하되 userId 는 개수만. grantSigningKey·discordBotToken 은 크리덴셜이라 set 여부만 마스킹한다.
     override fun toString(): String =
         "AdminProperties(enabled=$enabled, environmentGate=$environmentGate, environment=$environment, " +
             "discordPublicKey=${if (discordPublicKey.isBlank()) "<none>" else "<set>"}, " +
             "discordAdminUserIds=${discordAdminUserIds.size} ids, discordAdminChannelId=$discordAdminChannelId, " +
+            "discordMetricsChannelId=$discordMetricsChannelId, " +
+            "discordBotToken=${if (discordBotToken.isBlank()) "<none>" else "<set>"}, " +
             "grantSigningKey=${if (grantSigningKey.isBlank()) "<none>" else "<set>"}, " +
             "allowlistTtl=$allowlistTtl, grantTokenTtl=$grantTokenTtl, localBypass=$localBypass)"
 }
