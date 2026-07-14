@@ -48,7 +48,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "404",
-                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우)",
+                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우) — code: USER-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -91,9 +91,9 @@ interface UserApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청\n\n" +
-                        "- **닉네임** — 공백 · 10자 초과 · '탈퇴' 예약 prefix 로 시작\n" +
-                        "- **이미지** — 빈 파일 · 타입 미지정 · 지원하지 않는 형식(`png`/`jpeg`/`webp`/`heic`/`heif` 만 허용) · " +
-                        "선언한 Content-Type 과 실제 파일 내용 불일치(헤더 위조·파일 손상)",
+                        "- **닉네임** — 공백 · 10자 초과 (형식 검증 400, code 없음) · '탈퇴' 예약 prefix 로 시작 (USER-013)\n" +
+                        "- **이미지** — 빈 파일 (USER-009) · 타입 미지정 · 지원하지 않는 형식(`png`/`jpeg`/`webp`/`heic`/`heif` 만 허용) (USER-010) · " +
+                        "선언한 Content-Type 과 실제 파일 내용 불일치(헤더 위조·파일 손상) (USER-011)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -113,7 +113,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (GUEST 가 프로필 이미지 수정을 시도 — 이미지 수정은 MEMBER 전용)",
+                description = "권한 없음 (GUEST 가 프로필 이미지 수정을 시도 — 이미지 수정은 MEMBER 전용) — code: USER-008",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -123,7 +123,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "404",
-                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우)",
+                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우) — code: USER-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -133,7 +133,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (닉네임 중복 · 탈퇴한 유저)",
+                description = "상태 충돌 (닉네임 중복 USER-004 · 탈퇴한 유저 USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -201,7 +201,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "게스트는 탈퇴할 수 없음 (탈퇴는 MEMBER 전용)",
+                description = "게스트는 탈퇴할 수 없음 (탈퇴는 MEMBER 전용) — code: USER-007",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -211,7 +211,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "404",
-                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우)",
+                description = "유저를 찾을 수 없음 (JWT 유효하지만 DB에서 유저가 삭제된 경우) — code: USER-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -245,7 +245,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "닉네임 형식 검증 실패",
+                description = "닉네임 형식 검증 실패 (공백 · 10자 초과 — Bean Validation 400, code 없음)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
