@@ -19,12 +19,13 @@ object WeeklyReportEmbed {
             listOf(
                 field("👤 신규 가입", "${r.signupNew} ${trend(r.signupNewTrend)}\n회원 ${r.members} · 게스트 ${r.guests}"),
                 field("🔄 전환", "${r.conversions}명\n게스트→회원"),
-                field("🌱 순증", "${signed(r.netGrowth)}\n신규 ${r.signupNew} · 탈퇴 ${r.withdrawals}"),
+                field("🌱 실질 증가", "${signed(r.netGrowth)}\n신규 ${r.signupNew} · 탈퇴 ${r.withdrawals}"),
                 field("📈 D1 리텐션", "${r.d1Rate}%"),
                 field("☀️ DAU peak", dauPeak(r.dauSeries)),
                 field("📅 WAU", "${r.wau}"),
                 field("📊 일별 DAU", dauTrend(r.dauSeries), inline = false),
-                field("🔑 주간 provider", providerCounts(r.weeklyProvider)),
+                // 전체 폭(inline=false)으로 둬 "카카오 N · 구글 N · 애플 N" 이 줄바꿈 없이 한 줄에 나온다.
+                field("🔑 주간 provider", providerCounts(r.weeklyProvider), inline = false),
             )
         return card(COLOR_GROWTH, "📊 PiKi 주간 리포트", fields, footer = cumulativeFooter(r))
             .plus("description" to "${r.weekLabel} · KST")
