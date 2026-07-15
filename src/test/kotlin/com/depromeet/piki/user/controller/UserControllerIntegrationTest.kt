@@ -244,6 +244,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.GUEST)}"),
             ).andExpect(status().isForbidden)
             .andExpect(jsonPath("$.detail").value("프로필 이미지는 회원만 바꿀 수 있어요."))
+            .andExpect(jsonPath("$.code").value("USER-008"))
     }
 
     @Test
@@ -295,6 +296,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.GUEST)}"),
             ).andExpect(status().isForbidden)
             .andExpect(jsonPath("$.detail").value("프로필 이미지는 회원만 바꿀 수 있어요."))
+            .andExpect(jsonPath("$.code").value("USER-008"))
     }
 
     @Test
@@ -354,6 +356,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .param("nickname", "점유닉네임")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId)}"),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
     }
 
     @Test
@@ -395,6 +398,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
             ).andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.detail").value(startsWith("지원하지 않는 이미지 형식이에요.")))
+            .andExpect(jsonPath("$.code").value("USER-010"))
     }
 
     @Test

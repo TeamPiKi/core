@@ -89,6 +89,7 @@ class TokenCookieResponseAdvice(
     ): ApiResponseBody<*> =
         ApiResponseBody(
             data = data.withoutBodyTokens(),
+            code = original.code,
             detail = original.detail,
             pageResponse = original.pageResponse,
         )

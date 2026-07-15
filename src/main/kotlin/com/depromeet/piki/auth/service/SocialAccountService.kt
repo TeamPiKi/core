@@ -56,25 +56,26 @@ class SocialAccountService(
         }
     }
 
-    // 기존 가입자로 로그인할 때마다 email 을 upsert 한다 (#442) — 재방문·동시 충돌 합류 모두 같은 경로를 타게 해
-    // "매 로그인 갱신"을 일관되게 보장한다. null 이면 UserDetail.updateEmail 이 기존 값을 보존한다.
-    // email 은 부가 정보라 upsert 실패(락 경합·일시 DB 오류 등)가 로그인 자체를 막아선 안 된다.
-    // updateEmail 은 REQUIRED 새 트랜잭션(호출자 비트랜잭션)이라 실패해도 rollback-only 오염 없이 흡수 가능하다.
-    // 실패는 warn 으로 남기고(email 값은 PII 라 미기록) 기존 user 로그인은 그대로 성공시킨다.
-    private fun loginExisting(userInfo: OAuthUserInfo): User? =
-        findExisting(userInfo)?.also { user ->
-            runCatching { socialAccountWriter.updateEmail(user.id, userInfo.email) }
-                .onFailure { e ->
-                    log.warn("소셜 로그인 email upsert 실패. userId={}, provider={}", user.id, userInfo.provider, e)
-                }
-        }
-
-    // 탈퇴(tombstone) 유저는 없는 것으로 취급해 신규 가입 경로를 타게 한다. 탈퇴 시 user_details 는 하드삭제되므로
-    // 보통 여기서 user_detail 자체가 안 잡히지만, 파기 전 잔존이나 경합 상황을 방어해 deletedAt 까지 확인한다 —
-    // tombstone 을 반환하면 탈퇴한 소셜계정으로 재로그인 시 죽은 계정을 되살리는 버그가 된다.
-    private fun findExisting(userInfo: OAuthUserInfo): User? =
-        userDetailRepository
-            .findByProviderAndSocialId(userInfo.provider.name, userInfo.socialId)
-            ?.let { userService.findById(it.getIdOrNull()) }
-            ?.takeIf { it.isActive() }
+    // 기존 가입자 재로그인 경로. email 은 provider 가 준 값으로 backfill·최신 유지하되(#442), "매 로그인 write"가
+    // 아니라 값이 실제로 바뀐 경우에만 upsert 한다 — findByProviderAndSocialId 로 이미 읽은 UserDetail 의 email 과
+    // 비교해, 동일하거나 provider 가 안 준(null) 재로그인(대부분)은 updateEmail 의 새 트랜잭션·SELECT·UPDATE 를
+    // 통째로 생략한다(재로그인 hot path).
+    // email 은 부가 정보라 upsert 실패(락 경합·일시 DB 오류 등)가 로그인 자체를 막아선 안 된다 — updateEmail 은
+    // REQUIRED 새 트랜잭션(호출자 비트랜잭션)이라 실패해도 rollback-only 오염 없이 흡수한다. 실패는 warn 으로
+    // 남기고(email 값은 PII 라 미기록) 기존 user 로그인은 그대로 성공시킨다.
+    private fun loginExisting(userInfo: OAuthUserInfo): User? {
+        // 탈퇴(tombstone) 유저는 없는 것으로 취급해 신규 가입 경로를 타게 한다. 탈퇴 시 user_details 는 하드삭제되므로
+        // 보통 detail 자체가 안 잡히지만, 파기 전 잔존·경합을 방어해 isActive 로 한 번 더 거른다 — tombstone 을
+        // 반환하면 탈퇴한 소셜계정 재로그인 시 죽은 계정을 되살리는 버그가 된다.
+        val detail = userDetailRepository.findByProviderAndSocialId(userInfo.provider.name, userInfo.socialId) ?: return null
+        val user = userService.findById(detail.getIdOrNull()).takeIf { it.isActive() } ?: return null
+        // 값이 실제로 바뀐 경우에만 write. null(미제공)이면 기존 값 보존 위해 생략, 동일하면 불필요한 tx·쿼리를 생략한다.
+        userInfo.email
+            ?.takeIf { it != detail.email }
+            ?.let { newEmail ->
+                runCatching { socialAccountWriter.updateEmail(user.id, newEmail) }
+                    .onFailure { e -> log.warn("소셜 로그인 email upsert 실패. userId={}, provider={}", user.id, userInfo.provider, e) }
+            }
+        return user
+    }
 }

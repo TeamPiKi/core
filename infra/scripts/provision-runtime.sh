@@ -61,9 +61,29 @@ else
 fi
 
 # 3) mysql (dev·staging 전용) — prod 는 RDS 를 쓰므로 dev/staging 일 때만 로컬 컨테이너로 기동.
-#    redis 와 동일하게 named 볼륨 + 있으면 skip 패턴. 앱의 DB_* 환경변수와 같은 값으로 초기화.
+#    redis 와 동일하게 named 볼륨 + 있으면 skip 패턴. 초기 자격증명은 앱이 쓰는 것과 같은 SSM 값에서 읽는다.
 #    포트는 172.17.0.1:3306 바인딩 — 앱 컨테이너가 docker bridge 를 통해 접근하고 외부엔 노출 안 함.
 if [ "${ENVIRONMENT:-}" = "dev" ] || [ "${ENVIRONMENT:-}" = "staging" ]; then
+  # DB 자격증명은 러너 GH secrets 주입 대신 박스에서 SSM 으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
+  # 컨테이너가 이미 있어 값이 안 쓰이는 배포에서도 pull 은 항상 실행한다 — 박스 재생성 때만 도는 경로로
+  # 두면 조용히 썩은 채 가장 필요한 순간(재생성)에 터지므로, 매 배포가 이 경로를 살아있게 검증한다.
+  # --network host: IMDSv2 hop limit(기본 1) 탓에 bridge 컨테이너는 인스턴스 role 자격증명을 못 받는다.
+  # 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
+  AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+  # --region 명시: docker run 은 호스트 리전 설정을 상속하지 않는다 (deploy.yml 의 SSM pull 과 동일 고정).
+  ssm_param() {
+    docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
+      --name "/piki-core/${ENVIRONMENT}/$1" --with-decryption \
+      --region ap-northeast-2 --query Parameter.Value --output text
+  }
+  DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM 권한(app_ssm_read)·파라미터 존재 확인"; exit 1; }
+  DB_USERNAME="$(ssm_param db-username)" || { echo "[mysql] SSM db-username 조회 실패"; exit 1; }
+  DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회 실패"; exit 1; }
+  echo "[mysql] DB 자격증명 SSM 로드 완료 (/piki-core/${ENVIRONMENT}/db-*)"
+
+  # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
+  # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
+  # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
   if docker ps -a --format '{{.Names}}' | grep -qx 'team3-mysql'; then
     echo "[mysql] team3-mysql 이미 존재 — skip"
   else
