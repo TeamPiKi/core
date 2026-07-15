@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.LocalDateTime
 import java.util.UUID
 
 interface NotificationJpaRepository : JpaRepository<Notification, Long> {
@@ -76,5 +77,24 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
     @Query("UPDATE Notification n SET n.isRead = true WHERE n.userId = :userId AND n.isRead = false")
     fun markAllReadByUserId(
         @Param("userId") userId: UUID,
+    ): Int
+
+    // 본인 소유(user_id) + 지정 id 만 하드삭제 (읽음 무관). user_id 가 WHERE 에 있어 타인/없는 id 는 무영향(소유 검증 겸용).
+    // 영향 건수를 돌려준다. 멱등(없는 id 는 0건). 벌크 DELETE 는 1차 캐시를 우회하므로 같은 트랜잭션의 이후
+    // 안읽음 재집계가 stale 값을 읽지 않도록 컨텍스트를 flush·clear 한다(markReadByUserIdAndIds 와 동일 이유).
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("DELETE FROM Notification n WHERE n.userId = :userId AND n.id IN :ids")
+    fun deleteByUserIdAndIds(
+        @Param("userId") userId: UUID,
+        @Param("ids") ids: Collection<Long>,
+    ): Int
+
+    // N일 자동삭제 — created_at 이 cutoff 미만인 알림을 유저 무관 전부 하드삭제(읽음 무관). 영향 건수 반환. 멱등.
+    // age 기준이라 blue-green 중복 실행에도 결과가 같다(commutative). (idx_notifications_created_at 이 풀스캔을 막는다)
+    // 벌크 DELETE 는 1차 캐시를 우회하므로, 삭제 전 pending insert 를 반영(flush)하고 삭제 후 stale 관리 엔티티를 비운다(clear).
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("DELETE FROM Notification n WHERE n.createdAt < :cutoff")
+    fun deleteByCreatedAtBefore(
+        @Param("cutoff") cutoff: LocalDateTime,
     ): Int
 }

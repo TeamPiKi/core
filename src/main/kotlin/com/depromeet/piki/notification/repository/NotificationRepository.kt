@@ -4,6 +4,7 @@ import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationCursor
 import com.depromeet.piki.notification.domain.NotificationType
+import java.time.LocalDateTime
 import java.util.UUID
 
 interface NotificationRepository {
@@ -33,4 +34,13 @@ interface NotificationRepository {
 
     // 본인 안읽음 전부 read. 영향 건수 반환. 멱등.
     fun markAllRead(userId: UUID): Int
+
+    // 지정 id 중 본인 소유만 하드삭제 (읽음 무관, 타인/없는 id 무영향). 영향 건수 반환. 멱등.
+    fun deleteByUserIdAndIds(
+        userId: UUID,
+        ids: List<Long>,
+    ): Int
+
+    // N일 자동삭제 — created_at 이 cutoff 미만인 알림을 유저 무관 전부 하드삭제. 영향 건수 반환. 멱등.
+    fun deleteByCreatedAtBefore(cutoff: LocalDateTime): Int
 }

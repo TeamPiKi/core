@@ -6,6 +6,7 @@ import com.depromeet.piki.notification.domain.NotificationCursor
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 import java.util.UUID
 
 @Repository
@@ -63,4 +64,11 @@ class NotificationRepositoryImpl(
     ): Int = notificationJpaRepository.markReadByUserIdAndIds(userId, ids)
 
     override fun markAllRead(userId: UUID): Int = notificationJpaRepository.markAllReadByUserId(userId)
+
+    override fun deleteByUserIdAndIds(
+        userId: UUID,
+        ids: List<Long>,
+    ): Int = notificationJpaRepository.deleteByUserIdAndIds(userId, ids)
+
+    override fun deleteByCreatedAtBefore(cutoff: LocalDateTime): Int = notificationJpaRepository.deleteByCreatedAtBefore(cutoff)
 }
