@@ -10,6 +10,7 @@ import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
+import org.springframework.web.util.UrlPathHelper
 
 // dev/staging 에서 API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만 allowlist IP 게이트로 막는다(#733). prod 는 off.
 // 과거엔 도메인 전체를 막았으나, 백엔드 API 는 열어두고(현상유지) "문서 노출 차단"으로 범위를 좁혔다 — dev 문서는
@@ -42,7 +43,7 @@ class EnvironmentAccessFilter(
 
     override fun shouldNotFilter(request: HttpServletRequest): Boolean {
         if (!adminProperties.environmentGate) return true // prod·로컬: 게이트 off
-        return !isGatedPath(request.requestURI)
+        return !isGatedRequest(request)
     }
 
     private fun isLocalhost(ip: String): Boolean = ip == "127.0.0.1" || ip == "::1" || ip == "0:0:0:0:0:0:0:1"
@@ -52,6 +53,14 @@ class EnvironmentAccessFilter(
         //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만, staging 은 springdoc off 로 404.
         //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 isLocalhost 로 내부 Alloy scrape 만 허용).
         private val GATED_ROOTS = listOf("/docs", "/v3/api-docs", "/actuator")
+
+        // 게이트 판정 경로를 Spring 라우팅과 동일하게 정규화한 뒤 매칭한다 — raw requestURI 로 판정하면
+        // Spring 은 정규화 경로로 라우팅하는데 판정은 원문이라 불일치가 생겨, `/v3/api-docs;x=1`(matrix param)·
+        // `/%64ocs/index.html`(percent-encoding) 처럼 필터는 안 걸고 dispatcher 는 서빙하는 우회가 뚫린다.
+        // UrlPathHelper(removeSemicolonContent·urlDecode 기본 on)로 matrix 제거·디코딩해 dispatcher 와 같은 경로를 본다.
+        private val PATH_HELPER = UrlPathHelper.defaultInstance
+
+        fun isGatedRequest(request: HttpServletRequest): Boolean = isGatedPath(PATH_HELPER.getPathWithinApplication(request))
 
         // 세그먼트 경계로 매칭한다 — root 자신, 하위 경로("$root/..."), 확장자 변형("$root.yaml" 등 spec 의 .yaml/.json)만 게이트.
         // startsWith 만 쓰면 /docs-private·/v3/api-docs-extra·/actuatorial 까지 과매칭하므로 경계를 명시한다.

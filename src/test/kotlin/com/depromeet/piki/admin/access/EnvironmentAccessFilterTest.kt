@@ -1,6 +1,7 @@
 package com.depromeet.piki.admin.access
 
 import org.junit.jupiter.api.Test
+import org.springframework.mock.web.MockHttpServletRequest
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -38,4 +39,23 @@ class EnvironmentAccessFilterTest {
         assertFalse(EnvironmentAccessFilter.isGatedPath("/v3/api-docs-extra"))
         assertFalse(EnvironmentAccessFilter.isGatedPath("/actuatorial"))
     }
+
+    @Test
+    fun `matrix parameter·percent-encoding 로 위장한 문서 경로도 정규화 후 게이트한다`() {
+        // raw requestURI 로 판정하면 필터는 안 걸고 dispatcher 는 정규화 경로로 서빙하는 우회가 뚫린다.
+        // isGatedRequest 는 UrlPathHelper 로 dispatcher 와 같은 경로를 봐야 하므로 아래가 모두 게이트돼야 한다.
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/v3/api-docs;x=1")))
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/docs;x=1/index.html")))
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/%64ocs/index.html"))) // %64 = 'd'
+    }
+
+    @Test
+    fun `정규화 후 문서·actuator 만 게이트하고 백엔드 API 는 통과한다`() {
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/v3/api-docs")))
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/docs/index.html")))
+        assertFalse(EnvironmentAccessFilter.isGatedRequest(req("/api/v1/wishlists")))
+        assertFalse(EnvironmentAccessFilter.isGatedRequest(req("/admin-access/grant")))
+    }
+
+    private fun req(uri: String) = MockHttpServletRequest().apply { requestURI = uri }
 }
