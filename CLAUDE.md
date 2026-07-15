@@ -111,6 +111,18 @@ class WishException private constructor(
 ### 한 줄 외울 것
 코드 모양 보지 말고 **"멀쩡한 클라이언트가 정상 요청으로 여기 닿을 수 있나?"** 만 물을 것. 닿으면 커스텀, 못 닿으면 `require` / `check` / `error`.
 
+### 에러 코드 (code 기반 에러 응답)
+
+에러 응답은 사용자 문구가 아니라 **code**(예: `USER-001`)로 사유를 식별한다 — 문구는 클라가 code 로 매핑해 소유한다. 도메인 예외를 만질 때:
+
+- **예외는 도메인 `*ErrorCode` enum 의 코드 하나를 참조**한다 — `code`·`category`·`message` 를 그 엔트리 한 곳에(single source), 팩토리는 코드만 넘긴다.
+- **번호는 append-only** — 재사용·재배치 금지, 결번 유지(코드가 클라 계약).
+- **status 는 `ErrorCategory` 가 소유**(category → HttpStatus 1:1) — 예외는 직접 안 들고 파생한다.
+- **성공 응답은 code 없음**(`null`) — code 는 에러 전용, 성공은 HTTP status + `data`.
+- **enum message 는 개발자·문서용 정본**(사용자 최종 문구는 클라 소유) — `detail` 로도 나갈 수 있어 사용자 톤 유지·내부 식별자 금지.
+- **`ApiResponseBody.code` 는 `String`**, enum 은 `fail(errorCode)` 경계에서만 받는다(enum 필드는 Jackson 이 이름을 뱉어 어긋남).
+- 새 code 는 `@ApiResponse` 설명·전역 카탈로그에 반영. 미배정 도메인 현황은 에픽 #728.
+
 ## 가까운 미래는 고려한다
 
 YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위한 추상화·일반화를 만들지 말라는 것이지, 모든 미래를 무시하라는 게 아니다.
