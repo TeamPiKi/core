@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
 # (swap / redis / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
-# swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 config 가 레포에서 오므로 매 배포 갱신·재기동한다. (#217)
+# swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
 set -euo pipefail
@@ -125,42 +125,21 @@ else
   echo "[nginx] default 없음 — skip"
 fi
 
-# 4) grafana-alloy — 앱 메트릭 scrape + team3-* 컨테이너 로그를 Grafana Cloud 로 보내는 단일 수집기.
-#    Alloy 는 stateless 이고 config 가 레포(infra/alloy/config.alloy)에서 오므로, redis 의 "있으면 skip" 과 달리
-#    매 배포마다 config 를 갱신하고 재기동한다 (restart 비용은 작고 scrape 공백도 수초 수준).
-#    자격증명(GRAFANA_*)이 없으면(secret 미등록) 기동을 skip 한다 — 빈 endpoint 로 부팅하면 config 검증 실패로
-#    crash loop 가 나기 때문. secret 등록 후 다음 배포에 자동 기동된다.
-#    --network host: 앱 포트가 127.0.0.1 바인딩(#290)이라 localhost:8080/8081 을 scrape 하려면 필요.
-#    --server.http.listen-addr=127.0.0.1: host 네트워크라 debug UI(12345)를 루프백에만 묶어 외부 노출을 막는다.
-#    /proc·/sys·/ 마운트: node_exporter(config 의 prometheus.exporter.unix)가 컨테이너 안에서 호스트
-#    메모리·swap·디스크를 읽으려면 필요하다. config 의 *_path 가 /host/* 를 가리킨다. ro,rslave 로 읽기전용.
-if [ -z "${GRAFANA_METRICS_URL:-}" ]; then
-  echo "[alloy] GRAFANA_* 미설정 — skip (secret 등록 후 다음 배포에 기동)"
-else
-  echo "[alloy] config 갱신 후 (재)기동"
-  sudo mkdir -p /etc/alloy-team3
-  sudo cp /tmp/team3-alloy/config.alloy /etc/alloy-team3/config.alloy
-  docker rm -f team3-alloy 2>/dev/null || true
-  docker run -d \
-    --name team3-alloy \
-    --restart unless-stopped \
-    --network host \
-    -v /etc/alloy-team3/config.alloy:/etc/alloy/config.alloy:ro \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -v /proc:/host/proc:ro,rslave \
-    -v /sys:/host/sys:ro,rslave \
-    -v /:/host/root:ro,rslave \
-    -e ENVIRONMENT="${ENVIRONMENT:-}" \
-    -e GRAFANA_METRICS_URL="${GRAFANA_METRICS_URL:-}" \
-    -e GRAFANA_METRICS_USER="${GRAFANA_METRICS_USER:-}" \
-    -e GRAFANA_LOGS_URL="${GRAFANA_LOGS_URL:-}" \
-    -e GRAFANA_LOGS_USER="${GRAFANA_LOGS_USER:-}" \
-    -e GRAFANA_TRACES_URL="${GRAFANA_TRACES_URL:-}" \
-    -e GRAFANA_TRACES_USER="${GRAFANA_TRACES_USER:-}" \
-    -e GRAFANA_CLOUD_TOKEN="${GRAFANA_CLOUD_TOKEN:-}" \
-    -e EXTRACTOR_METRICS_TARGET="${EXTRACTOR_METRICS_TARGET:-}" \
-    grafana/alloy:v1.16.1 \
-      run --server.http.listen-addr=127.0.0.1:12345 /etc/alloy/config.alloy
-fi
+# 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
+#    deploy.yml 의 'Upload alloy block' 이 /tmp/piki-blocks/alloy/ 로 올려둔다. 여기는 core 박스 값
+#    (--environment/--box)으로 호출만 한다. skip 가드(GRAFANA_METRICS_URL 미주입 시 exit 0)·기동 전
+#    validate 게이트·--network host·호스트 마운트·Running 확인은 전부 블록이 책임진다.
+#    자격증명(GRAFANA_*)은 deploy.yml 이 env 로 이미 export 해 뒀다(블록이 env 로 소비 — ps 노출 방지).
+#    수집 대상은 컨테이너 label opt-in(piki.observe 등, contracts/observability.md) — 서비스 열거 regex 와
+#    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
+# 전환기 잔재 정리: 구 수집기(team3-alloy)·구 config 경로가 남으면 새 수집기(piki-alloy, 블록이 기동)와
+# 이중 수집된다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
+docker rm -f team3-alloy 2>/dev/null || true
+sudo rm -rf /etc/alloy-team3
+bash /tmp/piki-blocks/alloy/provision-alloy.sh \
+  --config /tmp/piki-blocks/alloy/config.alloy \
+  --name piki-alloy \
+  --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
+  --box piki-core
 
 echo "런타임 프로비저닝 완료"

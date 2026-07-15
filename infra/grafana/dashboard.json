@@ -1398,7 +1398,7 @@
     {
       "id": 106,
       "type": "row",
-      "title": "로그 (team3-blue / team3-green)",
+      "title": "로그 (piki-core-blue / piki-core-green)",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1435,7 +1435,7 @@
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "{container=~\"team3-(blue|green)\", environment=\"$environment\"} |~ \"(?i)(error|exception|warn|fail)\""
+          "expr": "{container=~\"(team3|piki-core)-(blue|green)\", environment=\"$environment\"} |~ \"(?i)(error|exception|warn|fail)\""
         }
       ]
     },
@@ -1468,7 +1468,7 @@
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "{container=~\"team3-(blue|green)\", environment=\"$environment\"}"
+          "expr": "{container=~\"(team3|piki-core)-(blue|green)\", environment=\"$environment\"}"
         }
       ]
     },
@@ -1590,7 +1590,7 @@
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "sum by (result) (count_over_time({container=~\"team3-(blue|green)\", environment=\"$environment\"} |= \"item.parse.result\" | logfmt | __error__=\"\" [$__interval]))",
+          "expr": "sum by (result) (count_over_time({container=~\"(team3|piki-core)-(blue|green)\", environment=\"$environment\"} |= \"item.parse.result\" | logfmt | __error__=\"\" [$__interval]))",
           "legendFormat": "{{result}}"
         }
       ]
@@ -1640,7 +1640,7 @@
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "sum by (via) (count_over_time({container=~\"team3-(blue|green)\", environment=\"$environment\"} |= \"extract via=\" | logfmt | __error__=\"\" [$__interval]))",
+          "expr": "sum by (via) (count_over_time({container=~\"(team3|piki-core)-(blue|green)\", environment=\"$environment\"} |= \"extract via=\" | logfmt | __error__=\"\" [$__interval]))",
           "legendFormat": "{{via}}"
         }
       ]
@@ -1675,7 +1675,7 @@
             "type": "loki",
             "uid": "${DS_LOKI}"
           },
-          "expr": "{container=~\"team3-(blue|green)\", environment=\"$environment\"} |~ \"item.parse.result|item.parse.error|extract via=|파싱 실패\""
+          "expr": "{container=~\"(team3|piki-core)-(blue|green)\", environment=\"$environment\"} |~ \"item.parse.result|item.parse.error|extract via=|파싱 실패\""
         }
       ]
     }
