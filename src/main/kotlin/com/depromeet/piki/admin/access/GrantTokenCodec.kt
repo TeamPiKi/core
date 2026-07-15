@@ -59,10 +59,11 @@ class GrantTokenCodec(
                 name = json.path("n").takeIf { it.isString }?.asString() ?: return null,
                 env = json.path("e").takeIf { it.isString }?.asString() ?: return null,
                 nonce = json.path("id").takeIf { it.isString }?.asString() ?: return null,
-                // 기존(d 없는)·미상값 토큰은 ADMIN 으로 폴백해 하위호환.
+                // d 가 아예 없는 레거시 토큰만 ADMIN 으로 폴백해 하위호환한다. d 가 있는데 알 수 없는 값이면
+                // fail-open(구버전이 새 목적지를 ADMIN 세션으로 처리) 을 막기 위해 토큰을 거부한다(null).
                 dest =
                     json.path("d").takeIf { it.isString }?.asString()
-                        ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() }
+                        ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() ?: return null }
                         ?: GrantDest.ADMIN,
             )
         }.getOrElse { e ->
