@@ -21,6 +21,13 @@ interface NotificationRepository {
         types: List<NotificationType>?,
     ): List<Notification>
 
+    // SSE 재연결 replay — afterId(클라이언트가 마지막으로 받은 알림 id) 초과분을 발생 순서(id asc)로 최대 limit 건.
+    fun findAfterId(
+        userId: UUID,
+        afterId: Long,
+        limit: Int,
+    ): List<Notification>
+
     // 카테고리별 안읽음 수(탭별 badge). 모든 카테고리를 키로 포함하며 해당 없는 카테고리는 0 이다.
     // 전체 안읽음 수(앱 badge)는 이 맵의 값 합으로 도출한다 — 두 수치가 어긋날 여지를 없앤다.
     fun countUnreadByCategory(userId: UUID): Map<NotificationCategory, Long>

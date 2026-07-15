@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.sse
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
+import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationKind
@@ -34,6 +35,7 @@ import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -53,6 +55,8 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var registry: SseEmitterRegistry
 
     @Autowired private lateinit var sseNotificationChannel: SseNotificationChannel
+
+    @Autowired private lateinit var localSseDelivery: LocalSseDelivery
 
     @Autowired private lateinit var channels: List<NotificationChannel>
 
@@ -158,6 +162,8 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
             assertEquals("나이키 에어맥스가 추가됐어요", payload.body)
             // SSE 이벤트 name 이 notification 으로 실린다.
             assertTrue(emitter.sentData.any { it is String && it.contains("event:notification") })
+            // SSE id 필드에 알림 id 가 실린다 — 클라이언트 재연결(Last-Event-ID) 복구의 기준점.
+            assertTrue(emitter.sentData.any { it is String && it.contains("id:${notification.getId()}\n") })
         } finally {
             registry.unregister(userId, emitter)
         }
@@ -289,6 +295,141 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         assertEquals(DEFAULT_PUSH_IMAGE_URL, node.get("imageUrl").asString())
         // Jackson3+kotlin module 은 isRead 필드명으로 직렬화한다(모듈 없는 Jackson2 였으면 "read" 라 이 키가 없다).
         assertTrue(node.has("isRead"))
+    }
+
+    // --- Last-Event-ID 재연결 replay (#750) ---
+    // replay 는 구독 시점에 컨트롤러 스레드에서 동기로 일어나므로, asyncStarted 상태의 응답 버퍼(contentAsString)로
+    // 실제 와이어(text/event-stream)에 흐른 이벤트를 그대로 단언한다. SSE id 필드 라인은 "id:{알림id}\n" 형식이라
+    // data JSON 의 "id":{알림id} 와 substring 이 겹치지 않는다.
+
+    @Test
+    fun `Last-Event-ID 를 실어 재연결하면 놓친 알림만 발생 순서대로 replay 된다`() {
+        val userId = UUID.randomUUID()
+        val received =
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_JOINED, "이미 받은 알림", "", 1L))
+        val missedFirst =
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_ITEM_ADDED, "놓친 알림 1", "", 2L))
+        val missedSecond =
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_STARTED, "놓친 알림 2", "", 3L))
+
+        try {
+            val content =
+                buildMockMvc()
+                    .perform(
+                        get("/api/v1/notifications/subscribe")
+                            .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                            .header("Last-Event-ID", received.getId().toString()),
+                    ).andExpect(request().asyncStarted())
+                    .andReturn()
+                    .response.contentAsString
+
+            // 놓친 두 건만 replay 된다 — 이미 받은 알림(Last-Event-ID 그 자체)은 다시 오지 않는다.
+            assertEquals(2, "event:notification".toRegex().findAll(content).count())
+            assertFalse(content.contains("id:${received.getId()}\n"))
+            // 발생 순서(오래된 것부터, id asc)대로 흐른다.
+            val firstIndex = content.indexOf("id:${missedFirst.getId()}\n")
+            val secondIndex = content.indexOf("id:${missedSecond.getId()}\n")
+            assertTrue(firstIndex >= 0 && secondIndex >= 0 && firstIndex < secondIndex)
+        } finally {
+            registry.emittersOf(userId).toList().forEach { registry.unregister(userId, it) }
+        }
+    }
+
+    @Test
+    fun `Last-Event-ID 이후 알림이 없으면 replay 없이 connect 만 온다`() {
+        val userId = UUID.randomUUID()
+        val latest =
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_JOINED, "마지막 알림", "", 1L))
+
+        try {
+            val content =
+                buildMockMvc()
+                    .perform(
+                        get("/api/v1/notifications/subscribe")
+                            .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                            .header("Last-Event-ID", latest.getId().toString()),
+                    ).andExpect(request().asyncStarted())
+                    .andReturn()
+                    .response.contentAsString
+
+            assertTrue(content.contains("event:connect"))
+            assertFalse(content.contains("event:notification"))
+        } finally {
+            registry.emittersOf(userId).toList().forEach { registry.unregister(userId, it) }
+        }
+    }
+
+    @Test
+    fun `숫자가 아닌 Last-Event-ID 는 첫 연결로 취급돼 replay 없이 정상 구독된다`() {
+        val userId = UUID.randomUUID()
+        notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_JOINED, "기존 알림", "", 1L))
+
+        try {
+            val content =
+                buildMockMvc()
+                    .perform(
+                        get("/api/v1/notifications/subscribe")
+                            .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                            .header("Last-Event-ID", "not-a-number"),
+                    ).andExpect(request().asyncStarted())
+                    .andReturn()
+                    .response.contentAsString
+
+            // 재연결 루프를 400 으로 깨지 않고 무시한다 — 연결은 성립하고 replay 만 없다.
+            assertTrue(content.contains("event:connect"))
+            assertFalse(content.contains("event:notification"))
+        } finally {
+            registry.emittersOf(userId).toList().forEach { registry.unregister(userId, it) }
+        }
+    }
+
+    @Test
+    fun `놓친 알림이 replay 상한을 초과하면 replay 를 통째로 생략한다`() {
+        val userId = UUID.randomUUID()
+        val baseline =
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_JOINED, "기준점", "", 1L))
+        repeat(SseReconnectReplayer.REPLAY_LIMIT + 1) {
+            notificationRepository.save(Notification(userId, NotificationType.TOURNAMENT_ITEM_ADDED, "밀린 알림", "", 1L))
+        }
+
+        try {
+            val content =
+                buildMockMvc()
+                    .perform(
+                        get("/api/v1/notifications/subscribe")
+                            .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                            .header("Last-Event-ID", baseline.getId().toString()),
+                    ).andExpect(request().asyncStarted())
+                    .andReturn()
+                    .response.contentAsString
+
+            // 일부만 보내면 replay 구간 뒤에 조용한 구멍이 남으므로 통째로 생략하고 목록 재조회 계약에 맡긴다.
+            assertTrue(content.contains("event:connect"))
+            assertFalse(content.contains("event:notification"))
+        } finally {
+            registry.emittersOf(userId).toList().forEach { registry.unregister(userId, it) }
+        }
+    }
+
+    @Test
+    fun `silent-sync 이벤트에는 SSE id 가 실리지 않는다`() {
+        val userId = UUID.randomUUID()
+        val emitter = RecordingSseEmitter()
+        registry.register(userId, emitter)
+
+        try {
+            localSseDelivery.deliverSilentSync(
+                listOf(userId),
+                UnreadCountChanged.of(mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 0L)),
+            )
+
+            // id 없는 이벤트는 클라이언트 lastEventId 를 갱신하지 않는다 — 비영속이라 replay 불가능한 silent-sync 가
+            // 재연결 복구 기준점을 오염시키지 않는 프로토콜 계약.
+            assertTrue(emitter.sentData.any { it is String && it.contains("event:silent-sync") })
+            assertTrue(emitter.sentData.filterIsInstance<String>().none { it.contains("id:") })
+        } finally {
+            registry.unregister(userId, emitter)
+        }
     }
 }
 

@@ -28,13 +28,32 @@ class LocalSseDelivery(
         userId: UUID,
         notification: Notification,
     ) {
-        val event =
-            SseEmitter
-                .event()
-                .name(EVENT_NOTIFICATION)
-                .data(NotificationSsePayload.from(notification, defaultPushImage.url))
+        val event = notificationEvent(notification)
         registry.emittersOf(userId).forEach { sendOrEvict(userId, it, event) }
     }
+
+    // 재연결한 특정 연결 하나에만 놓친 알림들을 발생 순서대로 다시 흘려보낸다(라이브 deliver 와 같은 이벤트 셰입).
+    // write 실패 = 그 연결이 죽은 것이므로 sendOrEvict 가 정리하고, 나머지 replay 는 의미가 없어 중단한다.
+    fun replayTo(
+        userId: UUID,
+        emitter: SseEmitter,
+        notifications: List<Notification>,
+    ) {
+        for (notification in notifications) {
+            if (!sendOrEvict(userId, emitter, notificationEvent(notification))) return
+        }
+    }
+
+    // notification 이벤트 한 건 — 라이브(deliver)와 replay 가 같은 셰입을 쓰도록 빌드를 한 곳에 모은다.
+    // SSE id 필드에 알림 PK 를 싣는다: 클라이언트(EventSource)가 마지막 수신 id 를 기억했다가 재연결 시
+    // Last-Event-ID 로 보내 놓친 구간을 replay 받는 키다. id 없는 이벤트(connect·silent-sync·하트비트)는
+    // SSE 프로토콜상 클라의 lastEventId 를 갱신하지 않으므로, 비영속이라 replay 불가능한 이벤트가 복구 대상에서 자연 제외된다.
+    private fun notificationEvent(notification: Notification): SseEmitter.SseEventBuilder =
+        SseEmitter
+            .event()
+            .id(notification.getId().toString())
+            .name(EVENT_NOTIFICATION)
+            .data(NotificationSsePayload.from(notification, defaultPushImage.url))
 
     // 조용한(silent) 화면 갱신 신호를 대상 유저들 연결에 실시간 흘려보낸다(알림 아님 — 토스트·알림센터·FCM 표시 푸시 없이 SSE 로만).
     // notification 전달과 같은 emitter write 경로(sendOrEvict)를 공유하되 이벤트 name 만 다르다(클라가 name 으로 구분).
@@ -72,11 +91,12 @@ class LocalSseDelivery(
     // write 실패 = 죽은 연결(클라이언트가 끊겼는데 onError/onCompletion 콜백이 아직 안 탄 경우 등).
     // 레지스트리에서 빼 더 흘려보내지 않게 하고 completeWithError 로 정리를 마무리한다. completeWithError 가
     // onError 콜백(컨트롤러의 unregister)을 다시 깨울 수 있으나 unregister 는 멱등이라 중복 호출이 무해하다.
+    // 성공 여부를 돌려줘 한 연결에 연속 write 하는 replay 가 죽은 연결에 헛 write 를 반복하지 않게 한다.
     private fun sendOrEvict(
         userId: UUID,
         emitter: SseEmitter,
         event: SseEmitter.SseEventBuilder,
-    ) {
+    ): Boolean =
         runCatching { emitter.send(event) }
             .onFailure { e ->
                 // 클라이언트가 연결을 끊은 정상 종료는 SSE 의 일상적 라이프사이클이라 DEBUG 로 둔다.
@@ -89,8 +109,7 @@ class LocalSseDelivery(
                 }
                 registry.unregister(userId, emitter)
                 runCatching { emitter.completeWithError(e) }
-            }
-    }
+            }.isSuccess
 
     companion object {
         // SSE 이벤트 name. 클라이언트는 이 이름으로 알림 이벤트와 connect/하트비트를 구분한다.

@@ -47,6 +47,13 @@ class NotificationRepositoryImpl(
         return notificationJpaRepository.findByUserIdAndIdLessThanAndTypeInOrderByIdDesc(userId, cursor.lastNotificationId, types, limited)
     }
 
+    override fun findAfterId(
+        userId: UUID,
+        afterId: Long,
+        limit: Int,
+    ): List<Notification> =
+        notificationJpaRepository.findByUserIdAndIdGreaterThanOrderByIdAsc(userId, afterId, Limit.of(limit))
+
     // type 별 group-by 결과를 카테고리로 접는다. 모든 카테고리를 0 으로 깔고 해당 type 의 수를 카테고리에 누적해,
     // 안읽음이 없는 카테고리도 키로 0 을 보장한다(FE 가 탭 badge 를 항상 읽을 수 있게).
     override fun countUnreadByCategory(userId: UUID): Map<NotificationCategory, Long> {

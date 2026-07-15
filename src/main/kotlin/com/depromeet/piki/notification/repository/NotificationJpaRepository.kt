@@ -45,6 +45,14 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
         limit: Limit,
     ): List<Notification>
 
+    // SSE 재연결 replay — Last-Event-ID(마지막 수신 알림 id) 초과분을 오래된 것부터(id asc) limit 건.
+    // 발생 순서대로 다시 흘려보내야 하므로 목록 페이지(desc)와 정렬이 반대다. (idx_notifications_user_id_id 커버)
+    fun findByUserIdAndIdGreaterThanOrderByIdAsc(
+        userId: UUID,
+        id: Long,
+        limit: Limit,
+    ): List<Notification>
+
     // type 별 안읽음 수 — 전체 badge + 탭별(활동/시스템) badge 를 한 쿼리(group by)로 집계한다.
     // closed projection(type·count alias)으로 받아 RepositoryImpl 이 카테고리로 접는다. (idx (user_id, is_read) 커버)
     @Query(
