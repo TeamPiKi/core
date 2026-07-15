@@ -38,7 +38,9 @@ object WeeklyReportEmbed {
                 field("파싱 성공률", "${r.parseSuccessRate}%"),
                 field("토너먼트 생성", "${r.tournamentCreated} ${trend(r.tournamentCreatedTrend)}"),
                 field("참가자", "${r.participants}"),
-                field("완료율", "${r.completionRate}%"),
+                // "완료" = 참가자가 자기 토너먼트를 끝까지 완주(tournament_users.completed_at). 토너먼트 우승 확정이 아니라 참가자 단위다.
+                // 분자(완료: completed_at 기준 행 수)와 분모(참가: created_at 기준 distinct 유저)의 앵커·단위가 달라 근사치라 라벨에 명시한다.
+                field("참가자 완주율", "${r.completionRate}%\n완주 기준·근사"),
                 field("플레이", "${r.plays}"),
             )
         return card(COLOR_ACTIVITY, "🛍️ 활동", fields)
@@ -49,9 +51,11 @@ object WeeklyReportEmbed {
         val fields =
             listOf(
                 field("파싱 실패율", "${r.parseFailRate}%\n평균 시도 $attempts"),
-                field("푸시 발송", "${r.pushSent}건"),
-                field("전달 성공률", r.deliverySuccessRate?.let { "$it%" } ?: "금주 발송 없음"),
-                field("근사 CTR", "${r.ctrApproxPct}%"),
+                // 개인 푸시(notifications 테이블) — 발송 수·근사 CTR 은 같은 대상이라 한 필드로 묶는다.
+                // 아래 "공지 전달"(announcements 테이블)과는 다른 발송이므로 라벨로 명확히 가른다(같은 카드에 나란히 둬 오독되던 것 정정).
+                field("푸시 알림", "${r.pushSent}건 발송\n근사 CTR ${r.ctrApproxPct}%"),
+                // 공지(announcements)는 위 개인 푸시와 다른 브로드캐스트 발송이다. 0건이면 "0%"(전부 실패) 오해를 피해 "금주 공지 없음".
+                field("공지 전달 성공률", r.deliverySuccessRate?.let { "$it%" } ?: "금주 공지 없음"),
             )
         // 마지막 카드 footer(리포트 맨 아래 작은 글씨)에 증감 화살표 범례를 함께 둔다 — ▲▼ 가 전주 대비임을 독자가 알 수 있게.
         val footer =
@@ -82,7 +86,8 @@ object WeeklyReportEmbed {
 
     private fun cumulativeFooter(r: WeeklyReport): String {
         val p = r.cumulativeProviderPct
-        return "누적 ${"%,d".format(r.cumulativeUsers)}명 · 카카오 ${p["KAKAO"] ?: 0}% 구글 ${p["GOOGLE"] ?: 0}% 애플 ${p["APPLE"] ?: 0}%"
+        // "누적 N명"은 게스트 포함 전체 유저, provider %는 회원(user_details) 구성비라 모집단이 다르다 — "회원 구성"으로 % 기준을 명시한다.
+        return "누적 ${"%,d".format(r.cumulativeUsers)}명 · 회원 구성 카카오 ${p["KAKAO"] ?: 0}% 구글 ${p["GOOGLE"] ?: 0}% 애플 ${p["APPLE"] ?: 0}%"
     }
 
     private fun weekday(d: DayOfWeek): String =

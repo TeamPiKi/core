@@ -119,7 +119,7 @@ class WeeklyReportEmbedTest {
     // completionRate 를 손으로 박지 않고, 참가자 0 스냅샷을 WeeklyReport.of() 에 넣어 실제 계산 경로
     // (pct(completed, participants) 의 0 분모 처리)가 예외 없이 0 을 내는지 검증한다.
     @Test
-    fun `참가자가 0인 스냅샷으로도 완료율이 0으로 안전하게 계산돼 렌더된다`() {
+    fun `참가자가 0인 스냅샷으로도 완주율이 0으로 안전하게 계산돼 렌더된다`() {
         val report =
             WeeklyReport.of(
                 weekLabel = "07/06(월) ~ 07/12(일)",
@@ -136,7 +136,7 @@ class WeeklyReportEmbedTest {
         assertEquals(0, report.completionRate) // 0 분모에도 예외 없이 0
 
         val embeds = WeeklyReportEmbed.build(report)
-        assertEquals("0%", fieldValue(embeds[1], "완료율"))
+        assertTrue(fieldValue(embeds[1], "참가자 완주율").startsWith("0%"), "0 분모는 0% 로 렌더돼야 한다")
     }
 
     // 모든 지표가 0 인 스냅샷 — 참가자 0(분모 0) 계산 경로 검증용.
@@ -162,17 +162,17 @@ class WeeklyReportEmbedTest {
     }
 
     @Test
-    fun `공지 발송이 없으면 전달 성공률을 0퍼센트가 아니라 금주 발송 없음으로 표시한다`() {
+    fun `공지 발송이 없으면 전달 성공률을 0퍼센트가 아니라 금주 공지 없음으로 표시한다`() {
         val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = null))
 
-        assertEquals("금주 발송 없음", fieldValue(embeds[2], "전달 성공률"))
+        assertEquals("금주 공지 없음", fieldValue(embeds[2], "공지 전달 성공률"))
     }
 
     @Test
     fun `공지 발송이 있으면 전달 성공률을 퍼센트로 표시한다`() {
         val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = 97))
 
-        assertEquals("97%", fieldValue(embeds[2], "전달 성공률"))
+        assertEquals("97%", fieldValue(embeds[2], "공지 전달 성공률"))
     }
 
     @Suppress("UNCHECKED_CAST")
