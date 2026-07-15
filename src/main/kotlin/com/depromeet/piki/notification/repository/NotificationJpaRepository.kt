@@ -64,6 +64,23 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
         val count: Long
     }
 
+    // 여러 유저의 안읽음 수를 (userId, type) 별로 한 쿼리에 집계 — 자동삭제 배지 재계산의 N+1 을 없앤다(유저마다 쿼리 대신 IN + GROUP BY 한 번).
+    // 안읽음이 0 인 유저는 결과 행에 안 나오므로, 호출부가 affectedUsers 전체를 0 으로 깔고 이 결과를 덮어 계약(모든 대상 유저 키 포함)을 유지한다.
+    @Query(
+        "SELECT n.userId AS userId, n.type AS type, COUNT(n) AS count FROM Notification n " +
+            "WHERE n.userId IN :userIds AND n.isRead = false GROUP BY n.userId, n.type",
+    )
+    fun countUnreadByUserAndType(
+        @Param("userIds") userIds: Collection<UUID>,
+    ): List<UserTypeUnreadCount>
+
+    // group by 결과 한 행 — userId·type 과 그 안읽음 수. Spring Data closed projection(SELECT alias 와 게터명 일치).
+    interface UserTypeUnreadCount {
+        val userId: UUID
+        val type: NotificationType
+        val count: Long
+    }
+
     // 본인 소유(user_id) + 지정 id + 아직 안읽음만 read 로. user_id 가 WHERE 에 있어 타인/없는 id 는 무영향(소유 검증 겸용).
     // 영향 건수를 돌려준다. 멱등(이미 읽음·없는 id 는 0건).
     // 벌크 UPDATE 는 1차 캐시를 우회하므로, 같은 트랜잭션에서 이후 재조회가 stale 값을 읽지 않도록 컨텍스트를 flush·clear 한다.
