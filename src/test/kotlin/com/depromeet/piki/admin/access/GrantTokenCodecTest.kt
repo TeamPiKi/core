@@ -94,6 +94,15 @@ class GrantTokenCodecTest {
         assertNull(codec().verify(signedToken(basePayload().apply { put("d", "SUPERADMIN") })))
     }
 
+    @Test
+    fun `d 가 null·숫자·객체 등 비문자열이면 토큰을 거부한다`() {
+        // d 키가 존재하지만 문자열이 아니면(파싱 불가) missing 과 달리 fail-closed 로 거부해야 한다 —
+        // non-string d 를 ADMIN 으로 폴백하면 목적지 파싱 실패가 admin 세션 발급으로 이어진다(fail-open).
+        assertNull(codec().verify(signedToken(payloadWithD(null))))
+        assertNull(codec().verify(signedToken(payloadWithD(123))))
+        assertNull(codec().verify(signedToken(payloadWithD(emptyMap<String, String>()))))
+    }
+
     // d 를 넣지 않는 등 임의 payload 를 GrantTokenCodec 과 동일한 방식(base64url(json).HMAC-SHA256 hex)으로 서명한다.
     private fun basePayload(): MutableMap<String, String> =
         mutableMapOf(
@@ -101,7 +110,14 @@ class GrantTokenCodecTest {
             "x" to (Instant.now().epochSecond + 300).toString(), "id" to "nonce1",
         )
 
-    private fun signedToken(payload: Map<String, String>): String {
+    // d 를 문자열이 아닌 타입(null·숫자·객체)으로 실어 non-string d 거부를 검증하기 위한 payload.
+    private fun payloadWithD(d: Any?): Map<String, Any?> =
+        mapOf(
+            "u" to "uid1", "n" to "n", "e" to "dev",
+            "x" to (Instant.now().epochSecond + 300).toString(), "id" to "nonce1", "d" to d,
+        )
+
+    private fun signedToken(payload: Map<String, Any?>): String {
         val b64 =
             Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(mapper.writeValueAsString(payload).toByteArray())

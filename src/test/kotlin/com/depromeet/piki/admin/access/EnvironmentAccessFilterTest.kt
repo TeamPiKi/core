@@ -53,6 +53,9 @@ class EnvironmentAccessFilterTest {
     fun `정규화 후 문서·actuator 만 게이트하고 백엔드 API 는 통과한다`() {
         assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/v3/api-docs")))
         assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/docs/index.html")))
+        // actuator 도 matrix parameter 정규화 후 게이트돼야 한다 — 문서 경로만 검증하면 actuator 우회 회귀를 놓친다.
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/actuator/loggers")))
+        assertTrue(EnvironmentAccessFilter.isGatedRequest(req("/actuator;x=1/loggers")))
         assertFalse(EnvironmentAccessFilter.isGatedRequest(req("/api/v1/wishlists")))
         assertFalse(EnvironmentAccessFilter.isGatedRequest(req("/admin-access/grant")))
     }

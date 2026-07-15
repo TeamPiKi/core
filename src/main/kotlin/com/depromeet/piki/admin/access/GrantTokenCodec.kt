@@ -59,12 +59,18 @@ class GrantTokenCodec(
                 name = json.path("n").takeIf { it.isString }?.asString() ?: return null,
                 env = json.path("e").takeIf { it.isString }?.asString() ?: return null,
                 nonce = json.path("id").takeIf { it.isString }?.asString() ?: return null,
-                // d 가 아예 없는 레거시 토큰만 ADMIN 으로 폴백해 하위호환한다. d 가 있는데 알 수 없는 값이면
-                // fail-open(구버전이 새 목적지를 ADMIN 세션으로 처리) 을 막기 위해 토큰을 거부한다(null).
+                // d 키가 아예 없는(missing) 레거시 토큰만 ADMIN 으로 폴백해 하위호환한다. d 가 존재하면 그 값이
+                // 문자열 unknown·null·숫자·객체 무엇이든 목적지 파싱 실패이므로 토큰을 거부한다(null) — non-string 을
+                // ADMIN 으로 폴백하면 파싱 실패가 admin 세션 발급으로 이어지는 fail-open 이 된다.
                 dest =
-                    json.path("d").takeIf { it.isString }?.asString()
-                        ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() ?: return null }
-                        ?: GrantDest.ADMIN,
+                    json.path("d").let { d ->
+                        if (d.isMissingNode) {
+                            GrantDest.ADMIN
+                        } else {
+                            d.takeIf { it.isString }?.asString()
+                                ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() } ?: return null
+                        }
+                    },
             )
         }.getOrElse { e ->
             log.debug("grant 토큰 검증 실패", e)
