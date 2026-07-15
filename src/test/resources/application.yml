@@ -70,6 +70,14 @@ image:
       - kakaocdn.net
       - coupangcdn.com
 
+# API 레퍼런스 문서 — 로컬(bootTestRun)·테스트에서 문서 UI(WebConfig)·spec(/v3/api-docs)을 노출한다.
+# main application.yml 은 fail-closed 기본값(false)이라, test classpath 가 main 을 대체하는 이 파일에 명시 true 를 둔다.
+docs:
+  enabled: true
+springdoc:
+  api-docs:
+    enabled: true
+
 # actuator 노출은 운영과 동일하게 박는다 — test classpath 의 application.yml 이 main 을 대체하므로
 # 여기 없으면 health(기본 노출)만 떠 /actuator/prometheus 통합 테스트가 깨진다.
 management:

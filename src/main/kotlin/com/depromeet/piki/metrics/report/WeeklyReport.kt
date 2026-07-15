@@ -107,7 +107,7 @@ data class WeeklyReport(
                 parseFailRate = 100 - cur.wish.parseSuccessRate,
                 avgAttempts = avgAttempts,
                 pushSent = cur.push.notificationsTotal,
-                // 공지 발송이 0건이면(성공+실패=0) 성공률이 0/0 이라 "0%" 로 표시하면 "다 실패"로 오해된다 → null 로 두고 embed 가 "금주 발송 없음" 표시.
+                // 공지 발송이 0건이면(성공+실패=0) 성공률이 0/0 이라 "0%" 로 표시하면 "다 실패"로 오해된다 → null 로 두고 embed 가 "금주 공지 없음" 표시.
                 deliverySuccessRate =
                     (cur.push.deliverySuccess + cur.push.deliveryFailure).let { total ->
                         if (total == 0L) null else MetricsSnapshot.pct(cur.push.deliverySuccess, total)

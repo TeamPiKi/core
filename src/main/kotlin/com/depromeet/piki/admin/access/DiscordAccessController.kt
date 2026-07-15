@@ -106,7 +106,8 @@ class DiscordAccessController(
             }
     }
 
-    // grant 링크 클릭 — 토큰 검증(서명·만료·env·one-time) 후 접속자 IP 를 캡처해 등록 + 세션 발급(신원·IP 바인딩) → /admin.
+    // grant 링크 클릭 — 토큰 검증(서명·만료·env·one-time) 후 접속자 IP 를 캡처해 allowlist 등록 후 목적지(dest)로 리다이렉트.
+    //   ADMIN → admin 세션 발급(신원·IP 바인딩) + /admin.  DOCS/SPEC(#733) → IP 등록만(세션 없이) + /docs·/v3/api-docs.
     // 토큰은 다른 env 엔드포인트가 발급했을 수 있으나, 이 env 가 서명·env 일치를 확인해 소비한다.
     @GetMapping("/grant")
     fun grant(
@@ -114,6 +115,11 @@ class DiscordAccessController(
         request: HttpServletRequest,
         response: HttpServletResponse,
     ) {
+        // 방어적 하드닝(#733): grant 토큰이 URL query 로 오므로 이 응답에서 토큰이 Referer 로 하위요청에 실리거나
+        // 캐시·중간 프록시에 남지 않게 막는다. 토큰은 one-time + 3분 TTL 이라 리다이렉트 시점엔 이미 소비됐지만,
+        // 소비 이전 유출(브라우저 기록·access log)의 창을 줄이는 심층방어로 둔다.
+        response.setHeader("Referrer-Policy", "no-referrer")
+        response.setHeader("Cache-Control", "no-store")
         val identity =
             allowlistService.consumeGrantToken(token, adminProperties.environment) ?: run {
                 // setStatus 로 끝낸다(sendError 금지) — sendError 는 /error 로 ERROR 디스패치를 일으키고,
@@ -125,8 +131,16 @@ class DiscordAccessController(
             }
         val ip = ClientIp.of(request)
         allowlistService.grant(ip, identity.name)
-        AdminSession.establish(request.getSession(true), identity.userId, identity.name, ip)
-        auditService.record(identity.name, AdminAuditAction.ACCESS_GRANTED, "원타임 링크로 접근 허용(IP 캡처)", ip)
-        response.sendRedirect("/admin")
+        // ADMIN 은 백오피스라 세션(신원)을 발급한다. DOCS/SPEC(#733)는 문서 노출용이라 IP 등록만 하고 세션은 안 준다.
+        if (identity.dest.issueSession) {
+            AdminSession.establish(request.getSession(true), identity.userId, identity.name, ip)
+        }
+        auditService.record(
+            identity.name,
+            AdminAuditAction.ACCESS_GRANTED,
+            "원타임 링크로 접근 허용(IP 캡처, dest=${identity.dest})",
+            ip,
+        )
+        response.sendRedirect(identity.dest.redirectPath)
     }
 }

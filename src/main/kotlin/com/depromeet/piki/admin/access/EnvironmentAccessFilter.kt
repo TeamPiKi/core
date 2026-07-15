@@ -10,13 +10,15 @@ import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
+import org.springframework.web.util.UrlPathHelper
 
-// dev/staging 도메인 전체를 allowlist IP 로만 열어 내부 환경을 private 로 만든다(공개 차단). prod 는 off(공개 — 실유저용).
+// dev/staging 에서 API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만 allowlist IP 게이트로 막는다(#733). prod 는 off.
+// 과거엔 도메인 전체를 막았으나, 백엔드 API 는 열어두고(현상유지) "문서 노출 차단"으로 범위를 좁혔다 — dev 문서는
+// /docs Discord 커맨드로 grant 받은 IP 만 접근하고, staging 문서는 springdoc off 로 어차피 404 다(문서 자체 없음).
 // staging 이 prod 프로파일을 공유하므로(deploy.yml) 프로파일이 아니라 env 플래그(admin.environment-gate)로 켠다 —
-// 배포가 dev/staging 에만 ENV_ACCESS_GATE=true 를 준다. AdminAccessFilter 와 같은 allowlist·슬랙 등록 흐름을 공유한다.
+// 배포가 dev/staging 에만 ENV_ACCESS_GATE=true 를 준다. AdminAccessFilter 와 같은 allowlist·grant 등록 흐름을 공유한다.
 //
-// 항상 통과: 슬랙 grant 진입(/admin-access/**, 없으면 IP 등록 자체가 막히는 닭/달걀)·health·actuator·localhost
-// (배포 health curl, EC2 내부 Grafana Alloy scrape). 모바일 테스터·로컬 기기는 자기 IP 를 슬랙으로 등록한다(24h sliding).
+// 게이트 밖(통과): 백엔드 API·grant 진입(/admin-access/**)·health·localhost. grant 받은 IP·localhost 는 게이트를 통과한다.
 @Component
 @ConditionalOnAdminEnabled
 @Order(Ordered.HIGHEST_PRECEDENCE + 3)
@@ -40,13 +42,30 @@ class EnvironmentAccessFilter(
     }
 
     override fun shouldNotFilter(request: HttpServletRequest): Boolean {
-        if (!adminProperties.environmentGate) return true // prod·로컬: 도메인 게이트 off
-        val uri = request.requestURI
-        // /admin-access(슬랙 진입, 없으면 IP 등록 자체가 막힘)·/health(라이브니스)만 무조건 통과시킨다.
-        // /actuator 는 필터를 '거치게' 두고 doFilterInternal 의 isLocalhost 로 EC2 내부 Grafana Alloy scrape 만 허용한다 —
-        // shouldNotFilter 로 통째 우회하면 nginx 차단이 흔들리는 순간 외부 IP 에서 관리 엔드포인트(/actuator/loggers 등)가 열린다(앱 레벨 2중 방어).
-        return uri.startsWith("/admin-access/") || uri == "/health"
+        if (!adminProperties.environmentGate) return true // prod·로컬: 게이트 off
+        return !isGatedRequest(request)
     }
 
     private fun isLocalhost(ip: String): Boolean = ip == "127.0.0.1" || ip == "::1" || ip == "0:0:0:0:0:0:0:1"
+
+    companion object {
+        // 게이트 대상 경로 — API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만. 나머지(백엔드 API·grant 진입·health)는 통과한다(#733).
+        //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만, staging 은 springdoc off 로 404.
+        //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 isLocalhost 로 내부 Alloy scrape 만 허용).
+        private val GATED_ROOTS = listOf("/docs", "/v3/api-docs", "/actuator")
+
+        // 게이트 판정 경로를 Spring 라우팅과 동일하게 정규화한 뒤 매칭한다 — raw requestURI 로 판정하면
+        // Spring 은 정규화 경로로 라우팅하는데 판정은 원문이라 불일치가 생겨, `/v3/api-docs;x=1`(matrix param)·
+        // `/%64ocs/index.html`(percent-encoding) 처럼 필터는 안 걸고 dispatcher 는 서빙하는 우회가 뚫린다.
+        // UrlPathHelper(removeSemicolonContent·urlDecode 기본 on)로 matrix 제거·디코딩해 dispatcher 와 같은 경로를 본다.
+        private val PATH_HELPER = UrlPathHelper.defaultInstance
+
+        fun isGatedRequest(request: HttpServletRequest): Boolean = isGatedPath(PATH_HELPER.getPathWithinApplication(request))
+
+        // 세그먼트 경계로 매칭한다 — root 자신, 하위 경로("$root/..."), 확장자 변형("$root.yaml" 등 spec 의 .yaml/.json)만 게이트.
+        // startsWith 만 쓰면 /docs-private·/v3/api-docs-extra·/actuatorial 까지 과매칭하므로 경계를 명시한다.
+        // "$root." 를 포함하는 이유: springdoc spec 이 /v3/api-docs 와 /v3/api-docs.yaml 양쪽에 서빙돼, 후자를 놓치면 spec 이 샌다.
+        fun isGatedPath(uri: String): Boolean =
+            GATED_ROOTS.any { uri == it || uri.startsWith("$it/") || uri.startsWith("$it.") }
+    }
 }
