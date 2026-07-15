@@ -115,6 +115,11 @@ class DiscordAccessController(
         request: HttpServletRequest,
         response: HttpServletResponse,
     ) {
+        // 방어적 하드닝(#733): grant 토큰이 URL query 로 오므로 이 응답에서 토큰이 Referer 로 하위요청에 실리거나
+        // 캐시·중간 프록시에 남지 않게 막는다. 토큰은 one-time + 3분 TTL 이라 리다이렉트 시점엔 이미 소비됐지만,
+        // 소비 이전 유출(브라우저 기록·access log)의 창을 줄이는 심층방어로 둔다.
+        response.setHeader("Referrer-Policy", "no-referrer")
+        response.setHeader("Cache-Control", "no-store")
         val identity =
             allowlistService.consumeGrantToken(token, adminProperties.environment) ?: run {
                 // setStatus 로 끝낸다(sendError 금지) — sendError 는 /error 로 ERROR 디스패치를 일으키고,
