@@ -17,8 +17,10 @@ class NotificationCleanupScheduler(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 기본 매일 04:00(서버 TZ). 값은 notification.cleanup-cron 으로 덮을 수 있다(placeholder 기본값으로 미설정 시에도 부팅 안전).
-    @Scheduled(cron = "\${notification.cleanup-cron:0 0 4 * * *}")
+    // 기본 매일 04:00 KST. 값은 notification.cleanup-cron 으로 덮을 수 있다(placeholder 기본값으로 미설정 시에도 부팅 안전).
+    // zone 을 KST 로 고정한다 — 이 앱의 JVM 기본 TZ 는 UTC 라(로그 표시만 KST), 미지정 시 04:00 UTC(13:00 KST)에 돈다.
+    // DailyActivityRecorder·WeeklyReportScheduler 등 다른 cron 스케줄러와 동일하게 zone="Asia/Seoul" 로 맞춘다.
+    @Scheduled(cron = "\${notification.cleanup-cron:0 0 4 * * *}", zone = "Asia/Seoul")
     fun cleanup() {
         val cutoff = LocalDateTime.now().minusDays(notificationProperties.retentionDays)
         val deleted = notificationRetentionService.purgeOlderThan(cutoff)
