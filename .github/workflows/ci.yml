@@ -39,6 +39,18 @@ jobs:
       - name: Build
         run: ./gradlew assemble --no-daemon
 
+      # 배포(deploy.yml)가 이 JAR 을 그대로 받아쓰도록 업로드해, deploy 단계의 재빌드(중복)를 없앤다.
+      # deploy 는 push CI 의 workflow_run 으로만 트리거되므로(PR 은 배포 안 됨) push 일 때만 올린다.
+      # 짧게 보존(3일)해 아티팩트 누적을 막고, JAR 이 없으면 즉시 실패시킨다.
+      - name: Upload JAR artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: build/libs/*.jar
+          retention-days: 3
+          if-no-files-found: error
+
   test:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'

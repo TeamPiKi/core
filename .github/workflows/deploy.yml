@@ -87,6 +87,8 @@ jobs:
     environment: ${{ needs.resolve.outputs.environment }}
     permissions:
       contents: read
+      # 자동 배포 시 트리거한 CI 실행의 JAR 아티팩트를 크로스런 다운로드하려면 actions:read 가 필요하다.
+      actions: read
     # dev/prod 가 서로 배포를 막지 않도록 환경별 동시성 그룹. 같은 환경 내 재배포는 직렬화(취소 안 함).
     # 그룹은 브랜치명이 아니라 "환경"으로 묶어야 한다 — feature 브랜치 수동배포(dispatch)도 dev EC2 로
     # 가므로 dev 자동배포와 같은 그룹이어야 같은 박스에서 동시 blue-green 조작 레이스를 막는다.
@@ -141,13 +143,30 @@ jobs:
             blocks
           sparse-checkout-cone-mode: true
 
-      - name: Set up JDK 25
+      # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
+      # 러너에서의 재빌드(약 47초)를 없앤다. run-id 로 그 CI 실행에 못박아, 배포 커밋과 다른 커밋의 JAR 을
+      # 집는 레이스를 차단한다(그냥 '최신' 아티팩트를 집으면 배포 도중 다른 push 로 커밋 불일치가 난다).
+      # 자동 경로는 러너에 JDK·Gradle 이 필요 없다 — 도커 빌드의 layertools extract 는 이미지 안에서 돈다.
+      - name: Download JAR from triggering CI run
+        id: fetch_jar
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: build/libs
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 수동 배포(workflow_dispatch): 트리거한 CI 실행이 없어 아티팩트가 없다. 이때만 러너에서 직접 빌드한다.
+      - name: Set up JDK 25 (manual dispatch fallback)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: Cache Gradle
+      - name: Cache Gradle (manual dispatch fallback)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/cache@v4
         with:
           path: |
@@ -156,8 +175,9 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Build JAR
+      - name: Build JAR (manual dispatch fallback)
         id: build
+        if: github.event_name == 'workflow_dispatch'
         run: ./gradlew bootJar --no-daemon
 
       - name: Login to Docker Hub
@@ -647,6 +667,8 @@ jobs:
             STATUS="❌ 실패 (런타임 프로비저닝)"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Gradle 빌드)"
+          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (CI 아티팩트 다운로드)"
           else
             STATUS="⚠️ 알 수 없음"
           fi
@@ -660,7 +682,7 @@ jobs:
             echo "| 환경 | ${{ needs.resolve.outputs.environment }} |"
             echo "| 커밋 | [\`$SHORT_SHA\`]($COMMIT_URL) |"
             echo "| 현재 활성 슬롯 | $NOW |"
-            echo "| Gradle 빌드 | ${{ steps.build.outcome }} |"
+            echo "| JAR 준비 | ${{ github.event_name == 'workflow_run' && steps.fetch_jar.outcome || steps.build.outcome }} |"
             echo "| Docker 푸시 | ${{ steps.docker_push.outcome }} |"
             echo "| EC2 배포 | ${{ steps.deploy.outcome }} |"
             echo "| 헬스체크 & 전환 | ${{ steps.health.outcome }} |"
@@ -743,6 +765,8 @@ jobs:
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
+          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
+            CAUSE="CI 아티팩트(JAR) 다운로드 실패 (트리거 CI 의 app-jar 누락/만료 · actions:read 권한)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
             CAUSE="Docker Hub 로그인 실패"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
