@@ -52,9 +52,9 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
             .save(Notification(userId, type, "제목", "본문", 11L))
             .getId()
 
-    // existsById 는 쿼리라 DB 진실을 읽는다 — all=true(hardDeleteAllByUserId)는 컨텍스트를 clear 하지 않아
-    // findById(PK)는 벌크 삭제 후에도 1차 캐시의 stale 엔티티를 돌려주므로 삭제 검증엔 쓸 수 없다.
-    private fun exists(id: Long): Boolean = notificationJpaRepository.existsById(id)
+    // 삭제 벌크 쿼리(hardDeleteAllByUserId·deleteByUserIdAndIds)가 clearAutomatically 로 컨텍스트를 비워
+    // findById(PK)도 벌크 삭제 후 DB 를 다시 쳐 삭제 결과를 정확히 반영한다.
+    private fun exists(id: Long): Boolean = notificationJpaRepository.findById(id).isPresent
 
     @Test
     fun `단건 삭제 - ids 로 지정한 본인 알림만 삭제되고 badge 가 카테고리별로 재계산된다`() {
