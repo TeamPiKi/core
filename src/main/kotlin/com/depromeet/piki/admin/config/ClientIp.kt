@@ -16,6 +16,16 @@ import java.net.InetAddress
 // 이 신뢰는 "앱이 nginx 뒤, 사설/loopback 에서만 닿는다"는 배포 불변식에 의존한다 — 0.0.0.0 바인딩 등으로 공인망
 // 직접 접근이 열리면 X-Real-IP 위조가 가능해지므로 그 땐 이 신뢰 범위를 재검토해야 한다. nginx 없는 로컬·테스트는
 // remoteAddr 로 폴백한다.
+//
+// 알려진 잔여 리스크(의도적 수용): 신뢰를 gateway 하나가 아니라 RFC1918 전 대역으로 두므로, 같은 docker 브리지의
+// co-located 컨테이너(redis·mysql·Alloy 등)는 자기 remoteAddr 도 사설이라 X-Real-IP 를 위조해 allowlist 에 낄 수 있다.
+// 그럼에도 좁히지 않는 이유:
+//   (1) gateway IP 로 좁히면 "SNAT source = gateway" 라는 docker 네트워킹 가정에 의존해, 그 가정이 깨지면
+//       2026-07-14 처럼 allowlist 격리가 통째로 무력화되는 outage 를 재발시킨다 (그 사고가 이 넓은 신뢰의 유래다).
+//   (2) 이 위조는 브리지 내 코드실행이 전제인데, 그 시점의 대표 이웃 redis 는 이미 allowlist Redis(admin:allow:*)를
+//       직접 쓸 수 있어 위조가 잉여다 — 이 헤더 신뢰를 좁혀도 그 경로는 안 닫힌다.
+// 즉 진짜 방어선은 앱 코드가 아니라 인프라 레벨 브리지 격리(docker icc=false·앱 전용 네트워크·--network host)다.
+// 좁혀야 할 필요가 생기면 앱이 아니라 그쪽에서 처리한다.
 object ClientIp {
     private const val REAL_IP = "X-Real-IP"
 
