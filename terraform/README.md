@@ -67,22 +67,18 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 | 변수 | 종류 | 비고 |
 |---|---|---|
-| `db_password` | secret (필수) | `variables.tf` 에 default 없음 — 평문 커밋 방지 목적 |
 | `image_bucket_name` | 환경 설정 (필수) | default 없음 — 계정번호 포함이라 커밋 금지. 자격증명에서 파생 ("일상 워크플로우"의 도출 명령이 자동 세팅) |
 | `ssh_ingress_cidr` | 환경 설정 | default 는 placeholder (`203.0.113.1/32`). 실제 작업 IP 로 override |
 
 그 외 변수 (`project`, `environment`, `aws_region`, VPC CIDR, EC2 instance type 등) 는 `variables.tf` 의 default 그대로 쓴다.
 
-### 실제 값은 어디서 받나
-
-**팀 Discord 채널 공지** 에 키값 정리가 박혀있다. 신규 합류 시 그 공지 보고 본인 셸로 가져온다.
+**RDS 마스터 비밀번호는 변수가 아니다.** `rds.tf` 의 `data.aws_ssm_parameter` 가 SSM `/piki-core/prod/db-password` 를 plan/apply 시점에 직접 읽는다 (앱 시크릿 SSM 단일화의 후속 — 사람이 값을 옮겨 적는 채널이 없다). 실행 자격증명에 `ssm:GetParameter` 권한만 있으면 된다.
 
 ### 주입 방식 (권장 순)
 
 **(권장) 환경변수 — 세션 한정**
 
 ```bash
-export TF_VAR_db_password='<공지에서 받은 값>'
 export TF_VAR_image_bucket_name="piki-images-$(aws sts get-caller-identity --query Account --output text)"   # 계정번호 파생 — 공지 불필요
 export TF_VAR_ssh_ingress_cidr='<본인 공인 IP>/32'
 ```

@@ -8,8 +8,5 @@ environment = "dev"
 # 여러 팀원은 SG 레벨에서 ingress 블록을 추가하거나, 별도 변수로 list 처리.
 ssh_ingress_cidr = "203.0.113.1/32"
 
-# RDS 마스터 비밀번호 — 반드시 강한 값으로 교체
-db_password = "CHANGE_ME_STRONG_PASSWORD"
-
 # 이미지 버킷 실명 — 계정번호 파생. <ACCOUNT_ID> 는 aws sts get-caller-identity --query Account 로 확인
 image_bucket_name = "piki-images-<ACCOUNT_ID>"

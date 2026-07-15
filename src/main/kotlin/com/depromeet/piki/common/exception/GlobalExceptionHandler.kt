@@ -41,9 +41,15 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
             else ->
                 log.info("[{}] {} -> {}", e.javaClass.simpleName, e.message, status.value())
         }
+        // code 를 배정한 예외는 fail(errorCode) 로 code 를 실어 내린다. 이관 전 예외는 errorCode=null → 기존대로 code 없이 category fallback.
+        val errorCode = (e as? HttpMappable)?.errorCode
+        val body =
+            errorCode
+                ?.let { ApiResponseBody.fail<Nothing>(it, e.message) }
+                ?: ApiResponseBody.fail(category, e.message)
         return ResponseEntity
             .status(status)
-            .body(ApiResponseBody.fail(category, e.message))
+            .body(body)
     }
 
     @ExceptionHandler(IllegalArgumentException::class)

@@ -79,6 +79,26 @@
     <h1>운영 통계 대시보드</h1>
     <p class="lede">백엔드 관점 지표(가입·위시·토너먼트·리텐션·푸시)를 기간별로. 구간 <b th:text="${#temporals.format(snapshot.from,'yyyy-MM-dd HH:mm')}">-</b> ~ <b th:text="${#temporals.format(snapshot.to,'yyyy-MM-dd HH:mm')}">-</b> (KST)</p>
 
+    <!-- 발사 직후 redirect 로 돌아오면 실제 결과(SENT/SKIPPED/FAILED)에 맞는 배너를 띄운다 — 성공 배너가 거짓말하지 않게. -->
+    <div th:if="${param.reportSent}" style="margin:14px 0;padding:10px 14px;border-radius:10px;background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;font-size:14px;font-weight:600;">
+      주간 리포트를 발송했습니다. Discord metrics 채널을 확인하세요.
+    </div>
+    <div th:if="${param.reportSkipped}" style="margin:14px 0;padding:10px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:14px;font-weight:600;">
+      발송하지 않았습니다. metrics 채널 id 또는 봇 토큰이 설정되지 않았습니다(SSM 설정 확인).
+    </div>
+    <div th:if="${param.reportError}" style="margin:14px 0;padding:10px 14px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:14px;font-weight:600;">
+      Discord 발송에 실패했습니다. 봇 토큰과 채널 권한(봇 초대 여부)을 확인하세요.
+    </div>
+
+    <!-- 주간 지표 리포트 수동 발사 — 스케줄(화 10시)과 별개로 지난 완결 주(월~일)를 Discord metrics 채널에 지금 게시한다.
+         실제 채널로 나가는 액션이라 confirm 다이얼로그로 오발사를 막는다(announcements 삭제·취소와 같은 패턴). CSRF 는 Thymeleaf 가 자동 주입. -->
+    <form method="post" th:action="@{/admin/metrics/weekly-report}"
+          onsubmit="return confirm('지난 완결 주(월~일) 리포트를 Discord metrics 채널에 지금 발송합니다. 진행할까요?');"
+          style="margin:12px 0;display:flex;align-items:center;gap:10px;">
+      <button class="btn" type="submit">주간 리포트 지금 발사</button>
+      <span class="muted">스케줄과 별개 · 지난 완결 주를 Discord 채널로 즉시 게시</span>
+    </form>
+
     <!-- 프리셋 + 직접 지정. 프리셋·직접지정·다운로드 링크는 현재 토글 상태(excludeInternal)를 그대로 이어 받는다. -->
     <div class="controls">
       <a class="chip" th:classappend="${activePreset=='today'}?'on'" th:href="@{/admin/metrics(preset='today', excludeInternal=${excludeInternal})}">오늘</a>

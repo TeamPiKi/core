@@ -316,12 +316,10 @@ jobs:
         id: provision
         uses: appleboy/ssh-action@v1
         env:
-          # 환경은 트리거 브랜치에서 derive — dev MySQL 기동/Alloy environment 라벨을 가른다.
-          # provision-runtime.sh 는 ENVIRONMENT=dev 일 때만 MySQL 컨테이너를 기동(prod 는 RDS).
+          # 환경은 트리거 브랜치에서 derive — dev·staging MySQL 기동/Alloy environment 라벨을 가른다.
+          # MySQL 초기 자격증명은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM
+          # (/piki-core/<env>/db-*)으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           # Alloy 가 Grafana Cloud 로 remote-write 할 자격증명. 미등록(빈 값)이면 provision-runtime.sh 가
           # Alloy 기동을 skip 한다. token 1개를 metrics·logs 가 공유, URL·USER 는 Prometheus/Loki 각각.
           GRAFANA_METRICS_URL: ${{ secrets.GRAFANA_METRICS_URL }}
@@ -343,7 +341,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT,DB_NAME,DB_USERNAME,DB_PASSWORD,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
+          envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
           script: |
             chmod +x /tmp/team3-provision/provision-runtime.sh
             /tmp/team3-provision/provision-runtime.sh

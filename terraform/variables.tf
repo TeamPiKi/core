@@ -134,23 +134,6 @@ variable "db_username" {
   default     = "admin"
 }
 
-variable "db_password" {
-  description = "RDS 마스터 비밀번호. terraform.tfvars 또는 환경변수(TF_VAR_db_password)로 주입"
-  type        = string
-  sensitive   = true
-  # default 를 두지 않아 실수로 평문이 커밋되지 않도록 강제한다
-
-  # terraform.tfvars.example 의 placeholder 그대로 apply 되는 사고를 막기 위한 가드.
-  # 길이 하한(16자) 은 AWS RDS 마스터 비밀번호 권장 최소치를 반영.
-  validation {
-    condition = (
-      length(var.db_password) >= 16 &&
-      var.db_password != "CHANGE_ME_STRONG_PASSWORD"
-    )
-    error_message = "db_password 는 16자 이상이어야 하며 example 파일의 placeholder 그대로 사용할 수 없습니다."
-  }
-}
-
 variable "db_allocated_storage" {
   description = "RDS 초기 스토리지 (GB)"
   type        = number

@@ -58,7 +58,12 @@ class OperationExamples(
         add(
             status = exception.httpStatus,
             name = name,
-            payload = ApiResponseBody.fail<Unit>(category = exception.category, detail = exception.message),
+            // code 를 배정한 예외는 example 에도 code 를 실어 문서와 실제 응답을 일치시킨다.
+            // 이관 전 예외(errorCode=null)는 기존대로 code 없이 category fallback.
+            payload =
+                exception.errorCode
+                    ?.let { ApiResponseBody.fail<Unit>(it, exception.message) }
+                    ?: ApiResponseBody.fail<Unit>(category = exception.category, detail = exception.message),
         )
 
     // Security 필터 단(ApiResponseSecurityErrorHandlers)이 내려보내는 401/403 은 detail 없이 fail(category) 라

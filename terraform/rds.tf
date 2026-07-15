@@ -13,6 +13,16 @@ resource "aws_db_subnet_group" "main" {
 # -----------------------------------------------------------------------------
 # RDS MySQL 8.4 (LTS) — db.t4g.micro
 # -----------------------------------------------------------------------------
+
+# RDS 마스터 비밀번호는 SSM 의 앱 DB 비밀번호를 소스로 읽는다 (앱 시크릿 SSM 단일화의 후속).
+# prod 앱이 마스터 계정(admin)으로 이 RDS 에 접속하므로 /piki-core/prod/db-password 가 곧 마스터 비밀번호다.
+# 아래 lifecycle.ignore_changes=[password] 로 이 값은 인스턴스 "생성 시점"에만 쓰이며,
+# 이후 SSM 값과 실제 비밀번호가 어긋나도 apply 가 비밀번호를 건드리지 않는다.
+data "aws_ssm_parameter" "db_password" {
+  name            = "/piki-core/prod/db-password"
+  with_decryption = true
+}
+
 resource "aws_db_instance" "mysql" {
   identifier     = "${local.name_prefix}-mysql"
   engine         = "mysql"
@@ -26,7 +36,7 @@ resource "aws_db_instance" "mysql" {
 
   db_name  = var.db_name
   username = var.db_username
-  password = var.db_password
+  password = data.aws_ssm_parameter.db_password.value
   port     = 3306
 
   db_subnet_group_name   = aws_db_subnet_group.main.name
@@ -48,9 +58,9 @@ resource "aws_db_instance" "mysql" {
   deletion_protection        = false # dev 단계에서는 false, prod 에서는 true 로 전환
   skip_final_snapshot        = true  # dev 단계에서만 true
 
-  # 실제 비밀번호는 콘솔/운영에서 바뀔 수 있어 state·var.db_password 와 어긋날 수 있다.
-  # terraform 이 apply 마다 비번을 var.db_password 로 강제 변경해 앱 DB 연결이 끊기는 사고를 막기 위해
-  # password 변경은 무시한다. 비번을 의도적으로 바꿀 때는 콘솔/CLI 로 직접 수행한다.
+  # 실제 비밀번호는 콘솔/운영에서 바뀔 수 있어 state·SSM 값과 어긋날 수 있다.
+  # terraform 이 apply 마다 비번을 SSM 값으로 강제 변경해 앱 DB 연결이 끊기는 사고를 막기 위해
+  # password 변경은 무시한다. 비번을 의도적으로 바꿀 때는 콘솔/CLI 로 직접 수행하고 SSM 파라미터도 함께 갱신한다.
   lifecycle {
     ignore_changes = [password]
   }
