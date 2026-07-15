@@ -55,6 +55,33 @@ object DiscordInteractions {
                     "flags" to FLAG_EPHEMERAL,
                 ),
         )
+
+    // embed + Link 버튼(style 5, URL). 클릭 시 사용자 브라우저에서 URL 이 열려 그 기기 IP 를 캡처해야 하는 경우에 쓴다(#733 문서 grant).
+    // 인터랙션 버튼(type 2 + custom_id)은 Discord 서버가 처리해 캡처 IP 가 Discord 것이 되므로 grant 에 못 쓴다 — Link 버튼만 기기 IP 를 잡는다.
+    fun embedWithLinkButtons(
+        color: Int,
+        title: String,
+        description: String,
+        buttons: List<Pair<String, String>>,
+    ): Map<String, Any> =
+        mapOf(
+            "type" to TYPE_CHANNEL_MESSAGE,
+            "data" to
+                mapOf(
+                    "embeds" to listOf(mapOf("title" to title, "description" to description, "color" to color)),
+                    "flags" to FLAG_EPHEMERAL,
+                    "components" to
+                        listOf(
+                            mapOf(
+                                "type" to 1, // action row
+                                "components" to
+                                    buttons.map { (label, url) ->
+                                        mapOf("type" to 2, "style" to 5, "label" to label, "url" to url) // link button
+                                    },
+                            ),
+                        ),
+                ),
+        )
 }
 
 // 게이트(서명·채널·allowlist)를 통과한 인터랙션 컨텍스트. 핸들러는 이 값만 받아 커맨드를 처리한다.

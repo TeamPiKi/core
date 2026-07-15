@@ -27,13 +27,14 @@ class GrantTokenCodec(
         userId: String,
         name: String,
         env: String,
+        dest: GrantDest = GrantDest.ADMIN,
     ): String {
         val exp = Instant.now().epochSecond + adminProperties.grantTokenTtl.seconds
         val nonce = UUID.randomUUID().toString().replace("-", "")
-        // exp 는 문자열로 담아 파싱 API 불확실성을 피한다(asString 만 사용).
+        // exp 는 문자열로 담아 파싱 API 불확실성을 피한다(asString 만 사용). d = grant 목적지(admin/docs/spec).
         val payload =
             objectMapper.writeValueAsString(
-                mapOf("u" to userId, "n" to name, "e" to env, "x" to exp.toString(), "id" to nonce),
+                mapOf("u" to userId, "n" to name, "e" to env, "d" to dest.name, "x" to exp.toString(), "id" to nonce),
             )
         val payloadB64 = B64.encodeToString(payload.toByteArray(Charsets.UTF_8))
         return "$payloadB64.${hmacHex(payloadB64)}"
@@ -58,6 +59,11 @@ class GrantTokenCodec(
                 name = json.path("n").takeIf { it.isString }?.asString() ?: return null,
                 env = json.path("e").takeIf { it.isString }?.asString() ?: return null,
                 nonce = json.path("id").takeIf { it.isString }?.asString() ?: return null,
+                // 기존(d 없는)·미상값 토큰은 ADMIN 으로 폴백해 하위호환.
+                dest =
+                    json.path("d").takeIf { it.isString }?.asString()
+                        ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() }
+                        ?: GrantDest.ADMIN,
             )
         }.getOrElse { e ->
             log.debug("grant 토큰 검증 실패", e)
@@ -82,4 +88,16 @@ data class GrantClaims(
     val name: String,
     val env: String,
     val nonce: String,
+    val dest: GrantDest,
 )
+
+// grant 링크의 목적지 — 클릭 시 어디로 리다이렉트하고 admin 세션을 발급하는지. 토큰에 서명돼 위조 불가.
+// ADMIN 은 백오피스라 세션(신원)을 발급하고, DOCS/SPEC 는 문서 노출용이라 IP 등록만 하고 세션은 안 준다(#733).
+enum class GrantDest(
+    val redirectPath: String,
+    val issueSession: Boolean,
+) {
+    ADMIN("/admin", true),
+    DOCS("/docs/index.html", false),
+    SPEC("/v3/api-docs", false),
+}

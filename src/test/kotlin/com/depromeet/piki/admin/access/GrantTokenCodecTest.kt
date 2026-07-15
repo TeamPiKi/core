@@ -67,4 +67,19 @@ class GrantTokenCodecTest {
         val issued = codec(signingKey = key).issue("uid1", "n", "dev")
         assertNull(codec(signingKey = "").verify(issued))
     }
+
+    @Test
+    fun `issue-verify 라운드트립에서 목적지(dest)가 보존된다`() {
+        // dest 에 따라 admin 세션 발급 여부가 갈리는 보안 로직이라 토큰에 위조 불가하게 실려야 한다(#733).
+        val c = codec()
+        GrantDest.entries.forEach { dest ->
+            assertEquals(dest, c.verify(c.issue("uid1", "n", "dev", dest))?.dest, "dest=$dest 가 보존돼야 한다")
+        }
+    }
+
+    @Test
+    fun `dest 생략 시 ADMIN 으로 발급된다 (기존 admin grant 호환)`() {
+        val c = codec()
+        assertEquals(GrantDest.ADMIN, c.verify(c.issue("uid1", "n", "dev"))?.dest)
+    }
 }
