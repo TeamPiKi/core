@@ -41,6 +41,9 @@ interface NotificationRepository {
         ids: List<Long>,
     ): Int
 
+    // N일 자동삭제로 배지가 바뀔 유저(cutoff 미만 안읽음 보유)의 id 를 중복 없이. 삭제 전에 모아 배지 동기화 대상으로 쓴다.
+    fun findUserIdsWithUnreadCreatedBefore(cutoff: LocalDateTime): List<UUID>
+
     // N일 자동삭제 — created_at 이 cutoff 미만인 알림을 유저 무관 전부 하드삭제. 영향 건수 반환. 멱등.
     fun deleteByCreatedAtBefore(cutoff: LocalDateTime): Int
 }

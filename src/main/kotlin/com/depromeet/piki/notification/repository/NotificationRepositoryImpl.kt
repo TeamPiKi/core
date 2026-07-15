@@ -70,5 +70,8 @@ class NotificationRepositoryImpl(
         ids: List<Long>,
     ): Int = notificationJpaRepository.deleteByUserIdAndIds(userId, ids)
 
+    override fun findUserIdsWithUnreadCreatedBefore(cutoff: LocalDateTime): List<UUID> =
+        notificationJpaRepository.findUserIdsWithUnreadCreatedBefore(cutoff)
+
     override fun deleteByCreatedAtBefore(cutoff: LocalDateTime): Int = notificationJpaRepository.deleteByCreatedAtBefore(cutoff)
 }

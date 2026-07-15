@@ -10,4 +10,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 @ConfigurationProperties(prefix = "notification")
 data class NotificationProperties(
     val retentionDays: Long = 30,
-)
+) {
+    init {
+        // 불변식 — 잘못 구성한 env(0·음수)면 cutoff(now-retentionDays)가 현재/미래가 되어 자동삭제가 알림을 대량 삭제한다.
+        // ops 오설정이라 클라가 닿는 계약이 아니므로 커스텀 예외가 아니라 require 로 부팅 시점에 실패시킨다.
+        require(retentionDays > 0) { "notification.retention-days 는 양수여야 한다 (현재=$retentionDays)" }
+    }
+}
