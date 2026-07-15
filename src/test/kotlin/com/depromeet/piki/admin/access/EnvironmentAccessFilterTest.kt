@@ -22,4 +22,20 @@ class EnvironmentAccessFilterTest {
         assertFalse(EnvironmentAccessFilter.isGatedPath("/admin-access/grant"))
         assertFalse(EnvironmentAccessFilter.isGatedPath("/health"))
     }
+
+    @Test
+    fun `루트 자신과 확장자 변형(spec yaml·json)도 게이트한다`() {
+        // spec 은 /v3/api-docs 와 /v3/api-docs.yaml 양쪽에 서빙되므로 확장자 변형도 막아야 문서가 새지 않는다.
+        assertTrue(EnvironmentAccessFilter.isGatedPath("/actuator"))
+        assertTrue(EnvironmentAccessFilter.isGatedPath("/v3/api-docs.yaml"))
+        assertTrue(EnvironmentAccessFilter.isGatedPath("/v3/api-docs/swagger-config"))
+    }
+
+    @Test
+    fun `게이트 루트의 접두사만 겹치는 경로는 게이트하지 않는다`() {
+        // startsWith 과매칭 방지 — 세그먼트 경계(/ 또는 .)가 아니면 게이트 대상이 아니다.
+        assertFalse(EnvironmentAccessFilter.isGatedPath("/docs-private"))
+        assertFalse(EnvironmentAccessFilter.isGatedPath("/v3/api-docs-extra"))
+        assertFalse(EnvironmentAccessFilter.isGatedPath("/actuatorial"))
+    }
 }

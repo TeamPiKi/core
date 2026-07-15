@@ -51,7 +51,12 @@ class EnvironmentAccessFilter(
         // 게이트 대상 경로 — API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만. 나머지(백엔드 API·grant 진입·health)는 통과한다(#733).
         //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만, staging 은 springdoc off 로 404.
         //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 isLocalhost 로 내부 Alloy scrape 만 허용).
+        private val GATED_ROOTS = listOf("/docs", "/v3/api-docs", "/actuator")
+
+        // 세그먼트 경계로 매칭한다 — root 자신, 하위 경로("$root/..."), 확장자 변형("$root.yaml" 등 spec 의 .yaml/.json)만 게이트.
+        // startsWith 만 쓰면 /docs-private·/v3/api-docs-extra·/actuatorial 까지 과매칭하므로 경계를 명시한다.
+        // "$root." 를 포함하는 이유: springdoc spec 이 /v3/api-docs 와 /v3/api-docs.yaml 양쪽에 서빙돼, 후자를 놓치면 spec 이 샌다.
         fun isGatedPath(uri: String): Boolean =
-            uri.startsWith("/docs") || uri.startsWith("/v3/api-docs") || uri.startsWith("/actuator")
+            GATED_ROOTS.any { uri == it || uri.startsWith("$it/") || uri.startsWith("$it.") }
     }
 }
