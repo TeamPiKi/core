@@ -885,8 +885,15 @@ class TournamentService(
 
         for (play in plays) {
             // 루트 토너먼트는 TU ID로 분리, 클론 토너먼트는 tournamentId로 분리
-            val playHistories = historiesByTidAndTuId[play.tournamentId to play.tuId].orEmpty() +
-                historiesByTidAndTuId[play.tournamentId to null].orEmpty()
+            val exactHistories = historiesByTidAndTuId[play.tournamentId to play.tuId].orEmpty()
+            val nullHistories = historiesByTidAndTuId[play.tournamentId to null].orEmpty()
+            // 정상 케이스는 두 버킷 중 한쪽만 차 있다 (루트 play=exact, 클론 play=null).
+            // 그때는 리스트 복사 없이 그 버킷을 그대로 재사용하고, 둘 다 있을 때만 합친다 (요청당 allocation·GC 절감).
+            val playHistories = when {
+                exactHistories.isEmpty() -> nullHistories
+                nullHistories.isEmpty() -> exactHistories
+                else -> exactHistories + nullHistories
+            }
             val ranked = runCatching { computeRanking(playHistories) }.getOrNull() ?: continue
             val user = userById[play.userUUID] ?: continue
             val participant = ParticipantSummary(
