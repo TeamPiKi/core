@@ -26,9 +26,11 @@ class EnvironmentAccessFilterTest {
 
     @Test
     fun `루트 자신과 확장자 변형(spec yaml·json)도 게이트한다`() {
-        // spec 은 /v3/api-docs 와 /v3/api-docs.yaml 양쪽에 서빙되므로 확장자 변형도 막아야 문서가 새지 않는다.
+        // spec 은 /v3/api-docs 와 /v3/api-docs.yaml·.json 에 서빙되므로 확장자 변형도 막아야 문서가 새지 않는다.
         assertTrue(EnvironmentAccessFilter.isGatedPath("/actuator"))
+        assertTrue(EnvironmentAccessFilter.isGatedPath("/docs"))
         assertTrue(EnvironmentAccessFilter.isGatedPath("/v3/api-docs.yaml"))
+        assertTrue(EnvironmentAccessFilter.isGatedPath("/v3/api-docs.json"))
         assertTrue(EnvironmentAccessFilter.isGatedPath("/v3/api-docs/swagger-config"))
     }
 
