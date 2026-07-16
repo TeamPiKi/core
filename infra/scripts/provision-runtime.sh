@@ -139,7 +139,7 @@ if [ -z "${GRAFANA_METRICS_URL:-}" ]; then
 else
   echo "[alloy] config 갱신 후 (재)기동"
   sudo mkdir -p /etc/alloy-team3
-  sudo cp /tmp/team3-alloy/config.alloy /etc/alloy-team3/config.alloy
+  sudo cp /tmp/piki-deploy/config.alloy /etc/alloy-team3/config.alloy
   docker rm -f team3-alloy 2>/dev/null || true
   docker run -d \
     --name team3-alloy \
