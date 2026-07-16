@@ -205,6 +205,8 @@ jobs:
       # strip_components: 2 로 파일명만 남겨 한 스테이징 디렉토리(/tmp/piki-deploy)에 평평하게 안착시킨다.
       # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
       # source: infra/* 는 Checkout, piki-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 것(둘 다 위에서 실행).
+      # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
+      # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
       - name: Upload deploy files
         id: upload_files
         uses: appleboy/scp-action@v1
@@ -213,9 +215,9 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           source: |
-            infra/nginx/${{ needs.resolve.outputs.nginx_conf }}
-            infra/scripts/provision-runtime.sh
-            infra/alloy/config.alloy
+            infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
+            infra/scripts/provision-runtime.sh,
+            infra/alloy/config.alloy,
             piki-infra/blocks/healthcheck.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
