@@ -200,15 +200,26 @@ jobs:
           docker push "$IMAGE_LATEST"
           docker push "$IMAGE_SHA"
 
-      - name: Upload nginx config
-        id: upload_nginx
+      # 배포에 필요한 설정 4개(nginx conf·provision 스크립트·alloy config·healthcheck 블록)를 SSH 연결 1회로
+      # 함께 올린다. 4개를 각각 scp 하면 핸드셰이크·액션 셋업이 4번 반복돼 약 37초인데, 소스가 모두 depth-3 라
+      # strip_components: 2 로 파일명만 남겨 한 스테이징 디렉토리(/tmp/piki-deploy)에 평평하게 안착시킨다.
+      # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
+      # source: infra/* 는 Checkout, piki-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 것(둘 다 위에서 실행).
+      # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
+      # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
+      - name: Upload deploy files
+        id: upload_files
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/nginx/${{ needs.resolve.outputs.nginx_conf }}"
-          target: "/tmp/team3-nginx"
+          source: |
+            infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
+            infra/scripts/provision-runtime.sh,
+            infra/alloy/config.alloy,
+            piki-infra/blocks/healthcheck.sh
+          target: "/tmp/piki-deploy"
           strip_components: 2
 
       # TLS 인증서 보장 — cert 가 없을 때만 발급(idempotent). dev 첫 배포에서만 동작하고,
@@ -261,7 +272,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: NGINX_CONF,DOMAIN
           script: |
-            SRC="/tmp/team3-nginx/$NGINX_CONF"
+            SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
             # api conf 가 include 하는 team3-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
             # blue-green 전환 전이라도 include 대상이 존재하도록 기본값(8080)으로 초기화한다.
@@ -294,42 +305,6 @@ jobs:
               exit 1
             fi
 
-      - name: Upload provisioning script
-        id: upload_provision
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/scripts/provision-runtime.sh"
-          target: "/tmp/team3-provision"
-          strip_components: 2
-
-      - name: Upload Alloy config
-        id: upload_alloy
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/alloy/config.alloy"
-          target: "/tmp/team3-alloy"
-          strip_components: 2
-
-      # infra 공용 블록을 박스로 올린다. 아래 Health check 스텝이 인라인 폴링 대신 이 블록을 호출한다.
-      # source 는 위 'Checkout infra blocks' 가 받은 piki-infra/blocks/ 아래 경로다. strip_components: 2 로
-      # piki-infra/blocks/ 를 떼어 /tmp/piki-blocks/healthcheck.sh 로 안착시킨다 (기존 scp 패턴과 동일).
-      - name: Upload healthcheck block
-        id: upload_healthcheck
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "piki-infra/blocks/healthcheck.sh"
-          target: "/tmp/piki-blocks"
-          strip_components: 2
-
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
         id: provision
         uses: appleboy/ssh-action@v1
@@ -361,8 +336,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
           script: |
-            chmod +x /tmp/team3-provision/provision-runtime.sh
-            /tmp/team3-provision/provision-runtime.sh
+            chmod +x /tmp/piki-deploy/provision-runtime.sh
+            /tmp/piki-deploy/provision-runtime.sh
 
       - name: Deploy to ${{ needs.resolve.outputs.environment }}
         id: deploy
@@ -597,7 +572,7 @@ jobs:
             #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
             #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
             #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
-            if bash /tmp/piki-blocks/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
+            if bash /tmp/piki-deploy/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
               echo "================================================"
               echo "  HEALTH CHECK PASSED on $INACTIVE"
               echo "================================================"
@@ -655,7 +630,7 @@ jobs:
             STATUS="❌ 실패 (EC2 배포)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 파일 업로드)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (TLS 인증서 발급)"
@@ -769,7 +744,7 @@ jobs:
             CAUSE="Docker Hub 로그인 실패"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
             CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"
