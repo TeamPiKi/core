@@ -4,6 +4,7 @@ import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationCursor
 import com.depromeet.piki.notification.domain.NotificationHistorySize
 import com.depromeet.piki.notification.repository.NotificationRepository
+import com.depromeet.piki.notification.service.dto.NotificationDeleteCommand
 import com.depromeet.piki.notification.service.dto.NotificationHistoryPage
 import com.depromeet.piki.notification.service.dto.NotificationReadCommand
 import org.slf4j.LoggerFactory
@@ -74,6 +75,24 @@ class NotificationService(
             }
         val unread = notificationRepository.countUnreadByCategory(userId)
         log.info("알림 읽음 처리 userId={} 방식={} 처리후안읽음={}", userId, method, unread.values.sum())
+        return unread
+    }
+
+    // 삭제 처리 — 명령(All/Ids)별 벌크 하드삭제(읽음 무관). 본인 소유만 반영(소유 검증은 쿼리의 user_id 조건이 겸한다). 멱등.
+    // 삭제로 안읽음 알림이 사라지면 badge 도 줄어야 하므로, 읽음(read)과 대칭으로 처리 후 카테고리별 안읽음 수를 같은
+    // 트랜잭션에서 세어 반환한다 — 클라가 앱 badge·탭 badge 를 서버 권위 값으로 미러링하게 해 산수 drift 를 없앤다.
+    @Transactional
+    fun delete(
+        userId: UUID,
+        command: NotificationDeleteCommand,
+    ): Map<NotificationCategory, Long> {
+        val deleted =
+            when (command) {
+                NotificationDeleteCommand.All -> notificationRepository.hardDeleteAllByUserId(userId)
+                is NotificationDeleteCommand.Ids -> notificationRepository.deleteByUserIdAndIds(userId, command.ids)
+            }
+        val unread = notificationRepository.countUnreadByCategory(userId)
+        log.info("알림 삭제 userId={} 삭제건수={} 처리후안읽음={}", userId, deleted, unread.values.sum())
         return unread
     }
 }

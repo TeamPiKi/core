@@ -1,6 +1,8 @@
 package com.depromeet.piki.notification.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteRequest
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
@@ -148,4 +150,58 @@ interface NotificationHistoryApi {
         @Parameter(hidden = true) userId: UUID,
         request: NotificationReadRequest,
     ): ApiResponseBody<NotificationReadResponse>
+
+    @Operation(
+        summary = "알림 삭제",
+        description =
+            "알림을 삭제한다 (**GUEST·MEMBER 모두, 본인 알림만**). 하드삭제라 삭제된 알림은 히스토리에서 영구 제거된다(복구 없음). " +
+                "요청 body 는 읽음(`POST /read`)과 같은 계약을 미러링해 두 방식 중 **정확히 하나**:\n\n" +
+                "| 방식 | 동작 |\n" +
+                "|---|---|\n" +
+                "| `all=true` | 본인 알림 전부 삭제 (읽음 무관, 모두 삭제 버튼) |\n" +
+                "| `ids=[...]` | 지정한 알림만 삭제 (단건은 `[id]` 1개, 다건은 `[id, ...]`) |\n\n" +
+                "- 둘 다 보내거나 둘 다 비우면(빈 `ids` 포함) **400**.\n" +
+                "- `ids` 는 본인 소유만 삭제되고 타인·없는 id 는 무시된다. **멱등**(이미 없는 것도 성공).\n" +
+                "- 삭제로 안읽음 알림이 사라지면 badge 도 줄어든다. 응답 `data` 의 `unreadCount`(앱 badge) · " +
+                "`unreadCountByCategory`(탭 badge)로 삭제 후 안읽음 수를 **서버 권위 값**으로 내려준다 — " +
+                "클라는 이 값들을 그대로 badge 로 미러링한다(읽음 응답과 동일 셰입).",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "삭제 성공 (삭제 후 unreadCount 동봉, 멱등)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (all 과 ids 를 함께 보냄 · 둘 다 없음 · 빈 ids)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun delete(
+        @Parameter(hidden = true) userId: UUID,
+        request: NotificationDeleteRequest,
+    ): ApiResponseBody<NotificationDeleteResponse>
 }
