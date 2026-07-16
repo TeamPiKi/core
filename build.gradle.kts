@@ -137,3 +137,10 @@ tasks.withType<Test> {
     // JDK 21+부터 동적 에이전트 로딩이 제한됨. Mockito(ByteBuddy)가 런타임에 에이전트를 붙이므로 명시적 허용 필요.
     jvmArgs("-XX:+EnableDynamicAgentLoading")
 }
+
+// Spring Boot 플러그인은 실행 가능한 boot jar 와 라이브러리용 plain jar 를 함께 만든다. 이 앱은 라이브러리로
+// 쓰이지 않아 plain jar 가 불필요하고, build/libs 에 jar 가 2개면 배포·CI 의 `COPY build/libs/*.jar` 와
+// 아티팩트 전달이 어느 jar 인지 모호해져 깨진다. plain jar 를 꺼 산출물을 boot jar 하나로 고정한다.
+tasks.named("jar") {
+    enabled = false
+}
