@@ -65,6 +65,14 @@ class PushNotificationChannel(
     fun syncBadge(
         userId: UUID,
         badge: Int,
+    ) = syncBadgeBlocking(userId, badge)
+
+    // 동기 배지 발송(best-effort). @Async syncBadge 와 자동삭제 배치(NotificationRetentionBadgeNotifier)가 공유한다 —
+    // 후자는 유저당 @Async 를 던지지 않고 한 워커에서 이걸 순차 호출해 실행기 포화(대량 drop)를 피한다. 자기 예외를 삼켜
+    // 호출자(비동기 워커·순차 배치)로 전파하지 않는다: 배지 push 실패가 읽음/삭제를 깨면 안 되고, 못 받은 기기는 재진입 시 GET 으로 보정된다.
+    fun syncBadgeBlocking(
+        userId: UUID,
+        badge: Int,
     ) {
         try {
             val sender = sender() ?: return
@@ -73,7 +81,7 @@ class PushNotificationChannel(
             val result = sender.sendBadgeSync(tokens, badge)
             userDeviceService.removeStaleTokens(result.staleTokens)
         } catch (e: Exception) {
-            log.warn("읽음 후 badge 동기화 푸시 실패 userId={}", userId, e)
+            log.warn("badge 동기화 푸시 실패 userId={}", userId, e)
         }
     }
 
