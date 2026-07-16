@@ -53,6 +53,9 @@ jobs:
           path: build/libs/*.jar
           retention-days: 3
           if-no-files-found: error
+          # JAR 은 이미 압축된 zip 이라 기본 level 6 재압축은 크기 이득 ~0 에 CPU 만 쓴다.
+          # store(0)로 헛수고를 없애 업로드를 줄인다. CI 는 deploy 가 workflow_run 으로 기다리는 크리티컬 패스다.
+          compression-level: 0
 
   test:
     runs-on: ubuntu-latest
