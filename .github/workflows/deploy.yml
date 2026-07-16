@@ -187,20 +187,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      # 러너가 arm64 네이티브(EC2 Graviton 과 동일 arch)라 크로스빌드가 불필요하다. buildx 없이 기본 docker
+      # 데몬으로 arm64 이미지를 네이티브 빌드해 setup-buildx(약 10초)를 없앤다. 태그·image ref 는 셸 보간
+      # injection 을 피해 env 로 받아 "$VAR" 로 쓴다(repo 컨벤션).
       - name: Build and push Docker image
         id: docker_push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.ci
-          push: true
-          platforms: linux/arm64
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
+        env:
+          IMAGE_LATEST: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
+          IMAGE_SHA: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
+        run: |
+          docker build -f Dockerfile.ci -t "$IMAGE_LATEST" -t "$IMAGE_SHA" .
+          docker push "$IMAGE_LATEST"
+          docker push "$IMAGE_SHA"
 
       - name: Upload nginx config
         id: upload_nginx
