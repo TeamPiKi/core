@@ -41,7 +41,10 @@ jobs:
 
       # 배포(deploy.yml)가 이 JAR 을 그대로 받아쓰도록 업로드해, deploy 단계의 재빌드(중복)를 없앤다.
       # deploy 는 push CI 의 workflow_run 으로만 트리거되므로(PR 은 배포 안 됨) push 일 때만 올린다.
-      # 짧게 보존(3일)해 아티팩트 누적을 막고, JAR 이 없으면 즉시 실패시킨다.
+      # 보존 3일이 안전한 이유: 아티팩트는 이 CI 직후(수분 내) 그 workflow_run 배포가 소비하므로 3일은 큰 여유다.
+      # 롤백·재배포도 옛 아티팩트에 기대지 않는다 - 자동배포는 새 push 라 늘 새 아티팩트, 수동 재배포는
+      # 러너 빌드 fallback(deploy.yml), blue-green 롤백은 돌던 컨테이너 유지. 누적 방지 겸 짧게 둔다.
+      # JAR 이 없으면 즉시 실패시킨다.
       - name: Upload JAR artifact
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
