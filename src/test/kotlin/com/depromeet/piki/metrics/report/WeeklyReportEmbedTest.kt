@@ -113,13 +113,25 @@ class WeeklyReportEmbedTest {
         val embeds = WeeklyReportEmbed.build(sampleReport())
 
         val footer = footerText(embeds[0])
-        assertTrue(footer.contains("카카오 62%") && footer.contains("누적 1,234"), "실제: $footer")
+        // provider %가 회원 전용 모집단임을 밝히는 "회원 구성" 문구까지 고정한다(사라지면 모집단 오독 회귀).
+        assertTrue(
+            footer.contains("카카오 62%") && footer.contains("누적 1,234") && footer.contains("회원 구성"),
+            "실제: $footer",
+        )
+    }
+
+    @Test
+    fun `푸시 알림은 발송 수와 근사 CTR 을 한 필드에 함께 표시한다`() {
+        // 개인 푸시(notifications)를 공지(announcements)와 구분해 한 필드로 묶은 표시 계약을 고정한다.
+        val embeds = WeeklyReportEmbed.build(sampleReport())
+
+        assertEquals("3건 발송\n근사 CTR 12%", fieldValue(embeds[2], "푸시 알림"))
     }
 
     // completionRate 를 손으로 박지 않고, 참가자 0 스냅샷을 WeeklyReport.of() 에 넣어 실제 계산 경로
     // (pct(completed, participants) 의 0 분모 처리)가 예외 없이 0 을 내는지 검증한다.
     @Test
-    fun `참가자가 0인 스냅샷으로도 완료율이 0으로 안전하게 계산돼 렌더된다`() {
+    fun `참가자가 0인 스냅샷으로도 완주율이 0으로 안전하게 계산돼 렌더된다`() {
         val report =
             WeeklyReport.of(
                 weekLabel = "07/06(월) ~ 07/12(일)",
@@ -136,7 +148,8 @@ class WeeklyReportEmbedTest {
         assertEquals(0, report.completionRate) // 0 분모에도 예외 없이 0
 
         val embeds = WeeklyReportEmbed.build(report)
-        assertEquals("0%", fieldValue(embeds[1], "완료율"))
+        // 0% 뿐 아니라 이번 PR 의 핵심인 "참가자 기준·근사" 안내 문구까지 고정한다.
+        assertEquals("0%\n완주 기준·근사", fieldValue(embeds[1], "참가자 완주율"))
     }
 
     // 모든 지표가 0 인 스냅샷 — 참가자 0(분모 0) 계산 경로 검증용.
@@ -162,17 +175,31 @@ class WeeklyReportEmbedTest {
     }
 
     @Test
-    fun `공지 발송이 없으면 전달 성공률을 0퍼센트가 아니라 금주 발송 없음으로 표시한다`() {
-        val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = null))
+    fun `공지 발송이 0건이면 전달 성공률을 0퍼센트가 아니라 금주 공지 없음으로 표시한다`() {
+        // deliverySuccessRate 를 직접 null 로 주입하지 않고, 성공+실패=0 스냅샷을 WeeklyReport.of() 에 넣어
+        // 0/0 → null 계산 경로(WeeklyReport.kt)까지 실제로 태운 뒤 렌더를 확인한다(계산 회귀도 잡히게).
+        val report =
+            WeeklyReport.of(
+                weekLabel = "07/06(월) ~ 07/12(일)",
+                month30Label = "06/13 ~ 07/12",
+                cur = zeroSnapshot(),
+                prev = zeroSnapshot(),
+                d30 = zeroSnapshot(),
+                cumulativeProvider = emptyMap(),
+                wau = 0,
+                withdrawals = 0,
+                avgAttempts = null,
+            )
 
-        assertEquals("금주 발송 없음", fieldValue(embeds[2], "전달 성공률"))
+        val embeds = WeeklyReportEmbed.build(report)
+        assertEquals("금주 공지 없음", fieldValue(embeds[2], "공지 전달 성공률"))
     }
 
     @Test
     fun `공지 발송이 있으면 전달 성공률을 퍼센트로 표시한다`() {
         val embeds = WeeklyReportEmbed.build(sampleReport(deliverySuccessRate = 97))
 
-        assertEquals("97%", fieldValue(embeds[2], "전달 성공률"))
+        assertEquals("97%", fieldValue(embeds[2], "공지 전달 성공률"))
     }
 
     @Suppress("UNCHECKED_CAST")

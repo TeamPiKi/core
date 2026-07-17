@@ -52,7 +52,8 @@ class AdminAllowlistService(
         userId: String,
         name: String,
         env: String,
-    ): String = grantTokenCodec.issue(userId, name, env)
+        dest: GrantDest = GrantDest.ADMIN,
+    ): String = grantTokenCodec.issue(userId, name, env, dest)
 
     // 토큰 소비(1회) — 서명·만료 검증 후 (1) 토큰의 env 가 이 환경과 같고 (2) 처음 쓰는 토큰이면 신원 반환, 아니면 null.
     // one-time 은 nonce 를 SET NX(setIfAbsent)로 심어 보장한다 — 이미 있으면(재사용·동시 재클릭) false 라 거부(TOCTOU 차단).
@@ -64,7 +65,7 @@ class AdminAllowlistService(
         if (claims.env != currentEnv) return null
         val fresh = redis.opsForValue().setIfAbsent(usedKey(claims.nonce), "1", adminProperties.grantTokenTtl) ?: false
         if (!fresh) return null
-        return GrantIdentity(userId = claims.userId, name = claims.name)
+        return GrantIdentity(userId = claims.userId, name = claims.name, dest = claims.dest)
     }
 
     private fun allowKey(ip: String) = "$ALLOW_PREFIX$ip"
@@ -79,4 +80,4 @@ class AdminAllowlistService(
 
 data class AllowedIp(val ip: String, val name: String)
 
-data class GrantIdentity(val userId: String, val name: String)
+data class GrantIdentity(val userId: String, val name: String, val dest: GrantDest)

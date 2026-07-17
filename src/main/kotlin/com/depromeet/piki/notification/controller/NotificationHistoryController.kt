@@ -2,14 +2,18 @@ package com.depromeet.piki.notification.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteRequest
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
 import com.depromeet.piki.notification.domain.NotificationCategory
+import com.depromeet.piki.notification.service.NotificationDeleteOrchestrator
 import com.depromeet.piki.notification.service.NotificationReadOrchestrator
 import com.depromeet.piki.notification.service.NotificationService
 import jakarta.validation.Valid
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -23,6 +27,7 @@ import java.util.UUID
 class NotificationHistoryController(
     private val notificationService: NotificationService,
     private val notificationReadOrchestrator: NotificationReadOrchestrator,
+    private val notificationDeleteOrchestrator: NotificationDeleteOrchestrator,
 ) : NotificationHistoryApi {
     @GetMapping
     override fun getHistory(
@@ -45,5 +50,14 @@ class NotificationHistoryController(
     ): ApiResponseBody<NotificationReadResponse> {
         val unreadByCategory = notificationReadOrchestrator.readAndSyncBadge(userId = userId, command = request.toCommand())
         return ApiResponseBody.ok(data = NotificationReadResponse.of(unreadByCategory))
+    }
+
+    @DeleteMapping
+    override fun delete(
+        @AuthenticationPrincipal userId: UUID,
+        @Valid @RequestBody request: NotificationDeleteRequest,
+    ): ApiResponseBody<NotificationDeleteResponse> {
+        val unreadByCategory = notificationDeleteOrchestrator.deleteAndSyncBadge(userId = userId, command = request.toCommand())
+        return ApiResponseBody.ok(data = NotificationDeleteResponse.of(unreadByCategory))
     }
 }

@@ -126,7 +126,7 @@ else
 fi
 
 # 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
-#    deploy.yml 의 'Upload alloy block' 이 /tmp/piki-blocks/alloy/ 로 올려둔다. 여기는 core 박스 값
+#    deploy.yml 의 'Upload deploy files' 가 /tmp/piki-deploy/alloy/ 로 올려둔다. 여기는 core 박스 값
 #    (--environment/--box)으로 호출만 한다. skip 가드(GRAFANA_METRICS_URL 미주입 시 exit 0)·기동 전
 #    validate 게이트·--network host·호스트 마운트·Running 확인은 전부 블록이 책임진다.
 #    자격증명(GRAFANA_*)은 deploy.yml 이 env 로 이미 export 해 뒀다(블록이 env 로 소비 — ps 노출 방지).
@@ -136,8 +136,8 @@ fi
 # 이중 수집된다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
 docker rm -f team3-alloy 2>/dev/null || true
 sudo rm -rf /etc/alloy-team3
-bash /tmp/piki-blocks/alloy/provision-alloy.sh \
-  --config /tmp/piki-blocks/alloy/config.alloy \
+bash /tmp/piki-deploy/alloy/provision-alloy.sh \
+  --config /tmp/piki-deploy/alloy/config.alloy \
   --name piki-alloy \
   --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
   --box piki-core

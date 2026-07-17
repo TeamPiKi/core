@@ -44,7 +44,7 @@ class SocialAccountWriter(
         if (guest.identityType != IdentityType.GUEST) return null // 이미 MEMBER → 게스트-연결 케이스 아님
         link(guestId, userInfo)
         // 가입(승격) 시점에만 provider 프사로 전환한다. provider 가 프사를 안 주거나 빈 값이면(null/blank)
-        // 게스트가 갖고 있던 랜덤 기본 아바타를 그대로 유지한다. (기존 유저 재로그인은 findExisting 경로라
+        // 게스트가 갖고 있던 랜덤 기본 아바타를 그대로 유지한다. (기존 유저 재로그인은 loginExisting 경로라
         // 여기 닿지 않으므로, 사용자가 직접 바꾼 프사는 보존된다 — 매 로그인 동기화하지 않는다.)
         userInfo.profileImage
             ?.takeIf { it.isNotBlank() }

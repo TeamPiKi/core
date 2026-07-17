@@ -877,11 +877,22 @@ class TournamentService(
         val tItemById = tournamentItemRepository.findByIds(allTournamentItemIds).associateBy { it.getId() }
         val snapshotById = snapshotsOf(tItemById.values)
 
+        // play 루프 안에서 allHistories 를 매번 filter 하면 O(plays × histories) 인메모리 스캔이 된다.
+        // (tournamentId, tournamentUserId) 로 1회 그룹핑해 각 play 를 O(1) 조회로 낮춘다.
+        // 루트 history 는 tournamentUserId 로 참여자를 분리하고, 클론 history 는 tournamentUserId=null 이라
+        // 그 클론 tournamentId 의 단일 play 에 귀속된다 — null 버킷을 함께 합쳐 기존 `?: true` 의미를 보존한다.
+        val historiesByTidAndTuId = allHistories.groupBy { it.tournamentId to it.tournamentUserId }
+
         for (play in plays) {
             // 루트 토너먼트는 TU ID로 분리, 클론 토너먼트는 tournamentId로 분리
-            val playHistories = allHistories.filter { h ->
-                h.tournamentId == play.tournamentId &&
-                    (h.tournamentUserId?.let { it == play.tuId } ?: true)
+            val exactHistories = historiesByTidAndTuId[play.tournamentId to play.tuId].orEmpty()
+            val nullHistories = historiesByTidAndTuId[play.tournamentId to null].orEmpty()
+            // 정상 케이스는 두 버킷 중 한쪽만 차 있다 (루트 play=exact, 클론 play=null).
+            // 그때는 리스트 복사 없이 그 버킷을 그대로 재사용하고, 둘 다 있을 때만 합친다 (요청당 allocation·GC 절감).
+            val playHistories = when {
+                exactHistories.isEmpty() -> nullHistories
+                nullHistories.isEmpty() -> exactHistories
+                else -> exactHistories + nullHistories
             }
             val ranked = runCatching { computeRanking(playHistories) }.getOrNull() ?: continue
             val user = userById[play.userUUID] ?: continue

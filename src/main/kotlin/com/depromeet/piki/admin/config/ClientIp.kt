@@ -1,25 +1,49 @@
 package com.depromeet.piki.admin.config
 
 import jakarta.servlet.http.HttpServletRequest
+import java.net.InetAddress
 
 // 접속자 실제 IP 추출 — 게이트(#526)의 IP allowlist 키라 위조되면 안 된다.
-// nginx 는 X-Forwarded-For 를 `$proxy_add_x_forwarded_for`(append)로 넣어, 클라가 보낸 XFF 뒤에 실 IP 를 덧붙인다.
-// 따라서 XFF '첫 hop' 은 클라가 위조한 값일 수 있다(허용된 IP 를 사칭해 게이트 우회 가능) → 쓰지 않는다.
-// 대신 nginx 가 `$remote_addr`(실 연결 IP)로 '덮어쓰는' X-Real-IP 를 신뢰한다(앞단 ALB/CloudFront 없는 EIP 직결이라
-// $remote_addr 이 진짜 클라 IP). nginx 가 없는 로컬·테스트는 remoteAddr 로 폴백.
+// nginx 는 X-Forwarded-For 를 append 로 넣어 클라 위조분이 첫 hop 에 섞이므로 쓰지 않고, nginx 가 $remote_addr(실
+// 연결 IP)로 '덮어쓰는' X-Real-IP 를 신뢰한다(앞단 ALB/CloudFront 없는 EIP 직결이라 $remote_addr 이 진짜 클라 IP).
+//
+// 앱은 `-p 127.0.0.1:PORT`(deploy.yml)로 호스트 loopback 에만 바인딩돼 외부가 직접 못 닿고 nginx 로만 들어온다.
+// 단 docker bridge + userland-proxy 가 source 를 docker0 gateway(예: 172.17.0.1)로 SNAT 하므로, 앱이 보는
+// remoteAddr 은 loopback 이 아니라 사설대역이다. 과거 loopback 만 신뢰해 이 gateway 뒤의 X-Real-IP 를 버린 탓에
+// 모든 요청 IP 가 gateway 하나로 뭉개져 allowlist 격리가 통째로 무력화됐다(2026-07-14: grant 한 번에 전원 통과).
+// 그래서 loopback + 사설대역(RFC1918)을 신뢰 프록시로 본다.
+//
+// 이 신뢰는 "앱이 nginx 뒤, 사설/loopback 에서만 닿는다"는 배포 불변식에 의존한다 — 0.0.0.0 바인딩 등으로 공인망
+// 직접 접근이 열리면 X-Real-IP 위조가 가능해지므로 그 땐 이 신뢰 범위를 재검토해야 한다. nginx 없는 로컬·테스트는
+// remoteAddr 로 폴백한다.
+//
+// 알려진 잔여 리스크(의도적 수용): 신뢰를 gateway 하나가 아니라 RFC1918 전 대역으로 두므로, 같은 docker 브리지의
+// co-located 컨테이너(redis·mysql·Alloy 등)는 자기 remoteAddr 도 사설이라 X-Real-IP 를 위조해 allowlist 에 낄 수 있다.
+// 그럼에도 좁히지 않는 이유:
+//   (1) gateway IP 로 좁히면 "SNAT source = gateway" 라는 docker 네트워킹 가정에 의존해, 그 가정이 깨지면
+//       2026-07-14 처럼 allowlist 격리가 통째로 무력화되는 outage 를 재발시킨다 (그 사고가 이 넓은 신뢰의 유래다).
+//   (2) 이 위조는 브리지 내 코드실행이 전제인데, 그 시점의 대표 이웃 redis 는 이미 allowlist Redis(admin:allow:*)를
+//       직접 쓸 수 있어 위조가 잉여다 — 이 헤더 신뢰를 좁혀도 그 경로는 안 닫힌다.
+// 즉 진짜 방어선은 앱 코드가 아니라 인프라 레벨 브리지 격리(docker icc=false·앱 전용 네트워크·--network host)다.
+// 좁혀야 할 필요가 생기면 앱이 아니라 그쪽에서 처리한다.
 object ClientIp {
     private const val REAL_IP = "X-Real-IP"
 
-    // 신뢰 프록시 — 앱은 127.0.0.1 바인딩 뒤의 nginx 로만 닿으므로(deploy.yml), 정상 트래픽의 remoteAddr 은 항상 loopback 이다.
-    private val TRUSTED_PROXIES = setOf("127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
-
-    // X-Real-IP 는 신뢰 프록시(nginx)가 $remote_addr 로 '덮어쓴' 값일 때만 신뢰한다.
-    // remoteAddr 이 loopback 이 아니면(직접 접근 경로 생김·바인딩 가정 깨짐 등) 헤더가 위조됐을 수 있어 채택하지 않고 remoteAddr 를 쓴다.
+    // X-Real-IP 는 신뢰 프록시(nginx·docker gateway)가 덮어쓴 값일 때만 신뢰한다. 그 외(공인 IP 직접 접근 등)는
+    // 헤더가 위조됐을 수 있어 채택하지 않고 remoteAddr 를 쓴다.
     fun of(request: HttpServletRequest): String {
         val remote = request.remoteAddr
-        if (remote in TRUSTED_PROXIES) {
+        if (isTrustedProxy(remote)) {
             request.getHeader(REAL_IP)?.trim()?.ifBlank { null }?.let { return it }
         }
         return remote
     }
+
+    // 신뢰 프록시 = loopback(127/8·::1) + 사설대역(RFC1918 10/8·172.16–31·192.168)·link-local. nginx·docker
+    // gateway 가 전부 여기 든다. InetAddress 로 대역을 판정해 gateway IP 하드코딩(변동에 깨짐)을 피한다.
+    private fun isTrustedProxy(ip: String): Boolean =
+        runCatching {
+            val addr = InetAddress.getByName(ip)
+            addr.isLoopbackAddress || addr.isSiteLocalAddress || addr.isLinkLocalAddress
+        }.getOrDefault(false)
 }
