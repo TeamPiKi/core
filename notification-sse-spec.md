@@ -320,7 +320,10 @@ fun openSse() {
         override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
             // notification·silent-sync 에 id 가 실린다 — 올 때마다 저장해 두면 그게 곧 재연결 기준점이다.
             // 같은 id 가 두 번 오면(라이브·replay 중복) 두 번째는 버린다.
-            id?.let { if (!seenEventIds.add(it)) return else lastEventIdStore.save(it) }
+            // 커서는 "지금 것보다 큰 id 일 때만" 갱신한다 — 드물게 라이브·replay 가 순서를 어긋나 도착해도
+            // 커서가 역행하지 않아 다음 재연결의 중복 replay 가 줄어든다. (WEB EventSource 는 마지막 수신값
+            // 고정이라 이 최적화가 불가하지만, 중복은 어차피 dedup 이 흡수한다.)
+            id?.let { if (!seenEventIds.add(it)) return else lastEventIdStore.saveIfGreater(it) }
             when (type) {
                 "connect" -> { /* 연결됨 */ }
                 "notification" -> {

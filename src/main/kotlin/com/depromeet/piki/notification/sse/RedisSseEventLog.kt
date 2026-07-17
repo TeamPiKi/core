@@ -25,28 +25,36 @@ class RedisSseEventLog(
 ) : SseEventLog {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 적재 + 상한 trim + TTL 갱신. 어느 단계든 실패하면 null 로 degrade(live 전송만) — SSE 는 best-effort
-    // 채널이라 Redis 장애가 알림 발송 자체를 막으면 안 된다.
+    // 적재(XADD) 실패만 null 로 degrade(live 전송만) — SSE 는 best-effort 채널이라 Redis 장애가
+    // 알림 발송 자체를 막으면 안 된다. 적재가 성공했으면 뒤따르는 정리(trim·TTL) 실패로 id 를 버리지 않는다:
+    // 레코드는 이미 로그에 있으므로 id 를 버리면 "id 없이 live 로 나갔는데 로그엔 남은" 이벤트가 생겨,
+    // 이후 더 큰 id 를 커서로 잡은 클라이언트가 그 레코드를 replay 로도 못 받는 불일치가 된다.
+    // trim·TTL 은 멱등 정리라 다음 적재가 자연 재시도한다.
     override fun append(
         userId: UUID,
         eventName: String,
         payloadJson: String,
-    ): String? =
-        runCatching {
-            val key = key(userId)
-            val ops = redisTemplate.opsForStream<String, String>()
-            val recordId =
+    ): String? {
+        val key = key(userId)
+        val ops = redisTemplate.opsForStream<String, String>()
+        val recordId =
+            runCatching {
                 ops.add(MapRecord.create(key, mapOf(FIELD_NAME to eventName, FIELD_PAYLOAD to payloadJson)))
                     ?: error("XADD 가 record id 를 돌려주지 않았다")
+            }.getOrElse { e ->
+                log.warn("SSE 이벤트 로그 적재 실패 - live 전송만 진행 userId={} event={}", userId, eventName, e)
+                return null
+            }
+        runCatching {
             // 정확 trim(비근사): "trim 이 일어났다면 잔존 건수가 MAX_LEN" 이 정확히 성립해야
             // replay 의 상한 초과 판정(trim 구멍 배제 증명)이 근사 오차 없이 선다. 스트림이 짧아 비용은 무시 가능.
             ops.trim(key, MAX_LEN)
             redisTemplate.expire(key, TTL)
-            recordId.value
-        }.getOrElse { e ->
-            log.warn("SSE 이벤트 로그 적재 실패 - live 전송만 진행 userId={} event={}", userId, eventName, e)
-            null
+        }.onFailure { e ->
+            log.warn("SSE 이벤트 로그 정리(trim·TTL) 실패 - 다음 적재가 재시도 userId={}", userId, e)
         }
+        return recordId.value
+    }
 
     override fun readAfter(
         userId: UUID,
