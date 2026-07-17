@@ -1,0 +1,11 @@
+{
+  "id": 1,
+  "type": "TOURNAMENT_JOINED",
+  "category": "ACTIVITY",
+  "title": "홍길동님이 참가했어요",
+  "body": "",
+  "imageUrl": "https://img.test/profiles/actor.png",
+  "refId": 45,
+  "isRead": false,
+  "createdAt": "2026-07-17T21:34:56+09:00"
+}

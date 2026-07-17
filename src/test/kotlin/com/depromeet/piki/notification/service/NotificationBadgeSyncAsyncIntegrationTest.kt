@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.fcm.domain.UserDevice
@@ -9,6 +8,7 @@ import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.RecordingSseEmitter
 import com.depromeet.piki.support.StubFcmMessageSender
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
@@ -26,11 +26,9 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.util.UUID
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
@@ -167,7 +165,7 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val target = saveNotification(userId)
             saveNotification(userId) // 안 읽을 1건 → 읽음 후 안읽음 = 1
-            val emitter = BadgeRecordingEmitter().also { registry.register(userId, it) }
+            val emitter = RecordingSseEmitter().also { registry.register(userId, it) }
             try {
                 buildMockMvc()
                     .perform(
@@ -178,11 +176,9 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
                     ).andExpect(status().isOk)
 
                 // badge SSE 는 SilentSyncDispatcher.dispatch(@Async)로 응답 경로 밖에서 발행된다. Awaitility 로 도착을 기다린다.
+                // payload 는 운영 경로가 직렬화해 실은 와이어 JSON 그대로다 — type 판별자 + 카테고리 맵(클라 분기 키)이 함께 잡힌다.
                 await().atMost(Duration.ofSeconds(5)).untilAsserted {
-                    val payload = emitter.payloads().single()
-                    assertEquals(1, payload.unreadCount)
-                    // wire 직렬화 contract — type 판별자 + 카테고리 맵이 실제 JSON 에 실리는지(클라가 type 으로 분기).
-                    val node = objectMapper.readTree(objectMapper.writeValueAsString(payload))
+                    val node = objectMapper.readTree(emitter.payloadsOf("silent-sync").single())
                     assertEquals("UNREAD_COUNT_CHANGED", node.get("type").asString())
                     assertEquals(1L, node.get("unreadCount").asLong())
                     assertTrue(node.has("unreadCountByCategory"))
@@ -194,15 +190,4 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
             cleanup(userId)
         }
     }
-}
-
-// send 를 가로채 실제 IO 없이 전송된 silent-sync payload 를 기록한다(TournamentItemParsedSseIntegrationTest 와 동일 패턴).
-private class BadgeRecordingEmitter : SseEmitter() {
-    val sentData = CopyOnWriteArrayList<Any>()
-
-    override fun send(builder: SseEmitter.SseEventBuilder) {
-        builder.build().forEach { sentData.add(it.data) }
-    }
-
-    fun payloads(): List<UnreadCountChanged> = sentData.filterIsInstance<UnreadCountChanged>()
 }

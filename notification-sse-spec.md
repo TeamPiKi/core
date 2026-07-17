@@ -64,18 +64,24 @@ data: connected
 알림이 발생할 때마다 전송. `data` 는 아래 [5. payload](#5-notification-payload-스키마) JSON.
 
 ```text
+id: 1752741234567-0
 event: notification
-data: {"id":123,"type":"TOURNAMENT_JOINED","category":"ACTIVITY","title":"홍길동님이 참가했어요","body":"","imageUrl":"https://.../profiles/{uid}.png","refId":45,"isRead":false,"createdAt":"2026-06-06T14:32:10"}
+data: {"id":123,"type":"TOURNAMENT_JOINED","category":"ACTIVITY","title":"홍길동님이 참가했어요","body":"","imageUrl":"https://.../profiles/{uid}.png","refId":45,"isRead":false,"createdAt":"2026-06-06T23:32:10+09:00"}
 ```
+
+- SSE **`id` 필드에 이벤트 id**(불투명 문자열)가 실린다. 재연결 시 놓친 이벤트를 다시 받는 키다 — [7. 끊김 중 발생한 이벤트](#끊김-중-발생한-이벤트--last-event-id-replay) 참조. `data` 안의 `id`(알림 식별자, 읽음 처리 키)와는 별개다.
 
 ### (3) `silent-sync` — 조용한 화면 갱신 신호 (알림 아님)
 
 **이건 "알림"이 아니라 화면 갱신 신호다.** 알림센터에 쌓이지 않고 FCM 표시 푸시도 가지 않으며, 오직 열려 있는 SSE 연결로만 흐른다(`notification` 과 구분 — `silent` 은 토스트 없이 조용히 화면만 갱신함을 뜻한다). 한 채널로 여러 갱신 사건이 흐르고, 클라는 payload 의 **`type`** 으로 사건을 분기한다. `data` 는 아래 [5-1. payload](#5-1-silent-sync-payload-스키마) JSON.
 
 ```text
+id: 1752741234568-0
 event: silent-sync
 data: {"type":"TOURNAMENT_ITEM_PARSED","tournamentId":99,"tournamentItemId":555,"status":"READY"}
 ```
+
+- `silent-sync` 에도 `notification` 과 같은 **SSE `id` 필드**가 실려, 재연결 replay 대상에 똑같이 포함된다 (아래 7번).
 
 현재 흐르는 `type`:
 
@@ -113,7 +119,7 @@ data: {"type":"TOURNAMENT_ITEM_PARSED","tournamentId":99,"tournamentItemId":555,
 | `imageUrl` | string | 아바타 URL. **항상 채워짐** — 사람 알림은 발송 시점 actor 프사 snapshot, 시스템 알림은 피키 로고(서버가 `defaultPushImg` 채움). 클라는 null-check 없이 렌더. |
 | `refId` | number (long) | 딥링크 대상 식별자. `type` 에 따라 가리키는 대상이 다름 (아래 표). |
 | `isRead` | boolean | 읽음 여부. SSE 로 즉시 도착하는 알림은 사실상 `false`. |
-| `createdAt` | string (ISO-8601 LocalDateTime) | 생성 시각. 예: `2026-06-06T14:32:10`. 타임존 오프셋 없음(서버 로컬). |
+| `createdAt` | string (ISO-8601, `+09:00` 오프셋 포함) | 생성 시각. 예: `2026-06-06T23:32:10+09:00`. 저장값(UTC)을 같은 순간의 KST 로 변환해 내려간다(`JacksonConfig`). 오프셋을 파싱하면 동일 순간, 문자열 그대로 쓰면 KST 시각. |
 | `kind` | string (enum) \| 생략 | **파싱 알림(`ITEM_PARSING_*`) 전용** 출처 구분. `WISH` \| `TOURNAMENT`. 그 외 타입엔 키 자체가 없다. |
 | `tournamentId` | number (long) \| 생략 | **`kind=TOURNAMENT` 일 때만.** 딥링크로 입장할 토너먼트. |
 | `tournamentItemId` | number (long) \| 생략 | **`kind=TOURNAMENT` 일 때만.** 입장한 토너먼트 안에서 지목할 출전 아이템. |
@@ -194,7 +200,7 @@ data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1,"unreadCountByCategory":{"A
 |---|---|---|
 | 연결 타임아웃 | **30분** | 만료 시 서버가 연결을 닫음. |
 | 하트비트 주기 | **30초** | nginx proxy_read_timeout(60s) 아래로 유지. |
-| 재연결 | **클라이언트 책임** | 끊기면(타임아웃·네트워크) 재호출해 다시 연다. |
+| 재연결 | **클라이언트 책임** | 끊기면(타임아웃·네트워크) 재호출해 다시 연다. `Last-Event-ID` 를 실으면 놓친 이벤트가 replay 된다(아래). |
 | 인증 검증 시점 | **연결을 여는 순간 1회만** | 아래 "토큰 만료" 참고. |
 
 - `EventSource` 는 연결이 끊기면 **자동 재연결**을 시도한다(브라우저 기본 동작). APP 직접 구현은 재연결 로직을 직접 넣어야 한다.
@@ -210,12 +216,23 @@ data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1,"unreadCountByCategory":{"A
   - WEB(쿠키 인증): `access_token` 쿠키가 만료되면 `/api/v1/auth/token/refresh` 로 갱신(쿠키 재발급) 후 재연결.
   - APP(헤더 인증): refresh 로 새 access token 을 받아 **재연결 요청의 `Authorization` 헤더에 새 토큰**을 실어 연다.
 
-### 끊김 중 발생한 알림 (현재 한계)
+### 끊김 중 발생한 이벤트 — Last-Event-ID replay
 
-- 현재 SSE 는 **연결 중에 발생한 알림만** 실시간 전달한다. **연결이 끊겨 있던 동안 쌓인 알림은 재연결해도 스트림으로 다시 오지 않는다.**
-- 단, 모든 알림은 DB(`notifications`)에 영속되므로, **목록/배지 조회 API** 로 놓친 알림을 따라잡는 설계가 정석이다. (해당 조회 API 는 후속 작업)
-- `silent-sync`(조용한 화면 갱신)는 **영속되지 않는다** — 끊겨 있던 동안의 파싱 완료/실패는 재전송되지 않는다. 하지만 재연결·앱 진입 시 토너먼트 아이템 목록을 재조회하면 그 시점의 최신 `status`(READY/FAILED)가 그대로 내려오므로 자연히 따라잡힌다.
-- 따라서 권장 클라이언트 패턴: **앱 진입/재연결 시 목록 API 로 동기화 + SSE 로 실시간 갱신.**
+서버는 유저별로 최근 데이터 이벤트(`notification`·`silent-sync`)의 로그를 유지한다. 재연결 요청에 **`Last-Event-ID` 헤더**(마지막으로 받은 이벤트의 SSE `id`)를 실으면, 끊김 동안 쌓인 이벤트가 **종류 구분 없이 발생 순서대로** 그 연결에 다시 흘러온다. 브라우저 `EventSource` 는 이 헤더를 **자동으로** 싣는다(별도 구현 불필요). APP 직접 구현은 마지막으로 받은 이벤트의 `id` 를 저장했다가 재연결 요청 헤더에 싣는다.
+
+```text
+GET /api/v1/notifications/subscribe
+Last-Event-ID: 1752741234567-0
+```
+
+- **replay 는 `notification` 과 `silent-sync` 모두 포함한다.** 예: 토너먼트 화면을 보다 끊긴 사이 파싱이 끝났다면, 재연결 직후 `TOURNAMENT_ITEM_PARSED` 가 replay 로 도착해 로딩 카드가 갱신된다.
+- **replay 상한 100건.** 끊김 동안 쌓인 이벤트가 100건을 넘으면(장기 미접속) replay 없이 라이브 스트림만 시작된다 — 그 공백은 목록/배지 조회 API 재조회로 복구한다. 서버 로그의 보관 창(유저당 최근 200건·24시간)을 넘는 공백도 마찬가지로 재조회가 복구를 책임진다.
+- **중복 도착 가능 — 이벤트 `id` 로 dedup 할 것.** 서버는 유실을 막는 쪽을 택해(연결 등록 후 replay 조회) 재연결 직후 발생한 이벤트가 라이브·replay 양쪽으로 겹칠 수 있다. 같은 `id` 는 같은 이벤트이므로 클라이언트가 버리면 된다. replay 로 오는 `silent-sync` 는 상태 갱신 신호라 중복 적용 자체도 무해(멱등)하다.
+- **`id` 가 없는 이벤트**(connect·하트비트, 그리고 드물게 서버 로그 적재가 실패한 이벤트)는 lastEventId 를 갱신하지 않는다. 복구 기준점은 항상 "마지막으로 받은 id 있는 이벤트" 다.
+- `Last-Event-ID` 가 없거나 형식이 다르면 첫 연결로 취급한다(replay 없음, 연결은 정상 성립).
+- replay 로 오는 `notification` 의 `isRead` 는 발송 시점 값이다 — 끊김 중 다른 기기에서 읽었어도 `false` 로 올 수 있다. 읽음 상태의 진실은 목록/배지 API 다.
+
+**권장 클라이언트 패턴은 그대로다: 앱 진입/재연결 시 목록/배지 API 로 동기화 + SSE 로 실시간 갱신.** replay 는 짧은 끊김(30분 타임아웃 재연결 등)의 유실을 스트림 차원에서 메워주는 보강이지, 재조회 동기화를 대체하지 않는다. 특히 100건 초과·보관 창 초과 공백, 그리고 드물게 연결이 살아 있는 동안 서버 내부에서 유실된 이벤트는 재조회만이 복구한다.
 
 ---
 
@@ -274,9 +291,12 @@ es.addEventListener("silent-sync", (e) => {
 });
 
 es.onerror = () => {
-  // EventSource 가 자동 재연결을 시도한다. 필요 시 추가 처리.
+  // EventSource 가 자동 재연결을 시도한다. 이때 Last-Event-ID 헤더(마지막으로 받은 이벤트의 id)도
+  // 자동으로 실리므로, 끊김 동안 놓친 notification·silent-sync 가 재연결 직후 replay 로 도착한다.
 };
 ```
+
+> 각 리스너는 replay 로 같은 이벤트가 중복 도착할 수 있으므로 `e.lastEventId`(이벤트 id) 기준으로 dedup 한다 (예: 최근 처리한 id Set 보관). `silent-sync` 는 상태 미러링이라 중복 적용도 무해하다.
 
 ### APP (헤더 인증 + 재연결 시 토큰 갱신)
 
@@ -289,10 +309,18 @@ fun openSse() {
     val request = Request.Builder()
         .url("$BASE_URL/api/v1/notifications/subscribe")
         .header("Authorization", "Bearer $token")
+        .apply {
+            // 재연결이면 마지막으로 받은 이벤트 id 를 실어 끊김 구간을 replay 받는다.
+            // (브라우저 EventSource 는 자동이지만 직접 구현은 저장·전송을 직접 한다)
+            lastEventIdStore.get()?.let { header("Last-Event-ID", it) }
+        }
         .build()
 
     EventSources.createFactory(client).newEventSource(request, object : EventSourceListener() {
         override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
+            // notification·silent-sync 에 id 가 실린다 — 올 때마다 저장해 두면 그게 곧 재연결 기준점이다.
+            // 같은 id 가 두 번 오면(라이브·replay 중복) 두 번째는 버린다.
+            id?.let { if (!seenEventIds.add(it)) return else lastEventIdStore.save(it) }
             when (type) {
                 "connect" -> { /* 연결됨 */ }
                 "notification" -> {
@@ -338,6 +366,7 @@ fun openSse() {
 - [ ] 파싱 알림(`ITEM_PARSING_*`)은 `kind` 로 출처 분기 (WISH → `/archive`, TOURNAMENT → `tournamentId`·`tournamentItemId`)
 - [ ] `silent-sync` 는 알림이 아닌 **화면 갱신 신호** — payload 의 `type` 으로 분기 (`TOURNAMENT_ITEM_PARSED` 면 `(tournamentId, tournamentItemId)` 로 카드를 찾아 `status`(READY/FAILED) 반영). 토스트·알림센터 아님
 - [ ] 주석 `: ping` 은 무시 (data 이벤트 아님)
-- [ ] 재연결 시 목록 API 로 놓친 알림 동기화
+- [ ] 재연결 시 `Last-Event-ID` 로 놓친 이벤트(notification·silent-sync 모두) replay 받기 (WEB 은 자동, APP 은 마지막 id 저장·전송 직접) + 목록 API 동기화 병행
+- [ ] 이벤트 `id` 기준 dedup (replay 와 라이브가 겹쳐 중복 도착 가능)
 - [ ] WEB 은 쿠키 인증(`withCredentials`), APP 은 `Authorization` 헤더
 - [ ] **재연결 시 토큰이 만료됐으면 refresh 후 새 토큰으로 연결** (연결 도중 만료는 무관, 재연결 시점이 관건)

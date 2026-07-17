@@ -1,0 +1,8 @@
+{
+  "unreadCount": 3,
+  "unreadCountByCategory": {
+    "ACTIVITY": 2,
+    "SYSTEM": 1
+  },
+  "type": "UNREAD_COUNT_CHANGED"
+}

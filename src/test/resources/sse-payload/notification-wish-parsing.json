@@ -1,0 +1,12 @@
+{
+  "id": 2,
+  "type": "ITEM_PARSING_COMPLETED",
+  "category": "SYSTEM",
+  "title": "상품 정보가 저장됐어요",
+  "body": "",
+  "imageUrl": "https://img.test/defaults/push-icon.svg",
+  "refId": 11,
+  "isRead": false,
+  "createdAt": "2026-07-17T21:34:56+09:00",
+  "kind": "WISH"
+}

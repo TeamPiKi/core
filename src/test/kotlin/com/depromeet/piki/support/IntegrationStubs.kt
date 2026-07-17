@@ -61,6 +61,12 @@ class IntegrationStubs {
     @Primary
     fun withdrawnTokenStore(): StubWithdrawnTokenStore = StubWithdrawnTokenStore()
 
+    // SSE 이벤트 로그(Redis Stream) 격리 — 적재·replay 흐름을 인메모리로 결정적으로 검증한다.
+    // 실제 Redis 거동(XADD id·XRANGE exclusive·trim·TTL)은 RedisSseEventLogIntegrationTest 가 실 컨테이너로 책임진다.
+    @Bean
+    @Primary
+    fun sseEventLog(): StubSseEventLog = StubSseEventLog()
+
     // oauth.client.enabled=false 로 운영 OAuthClientConfig 를 비활성화해 실제 외부 호출을 막는다.
     // stub 빈이 유일한 OAuthClient 라 @Primary 불필요.
     @Bean

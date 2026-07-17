@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.config.NotificationProperties
-import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.fcm.domain.UserDevice
@@ -9,13 +8,14 @@ import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.RecordingSseEmitter
 import com.depromeet.piki.support.StubFcmMessageSender
 import com.depromeet.piki.support.uuidToBytes
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+import tools.jackson.databind.ObjectMapper
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.LocalDateTime
@@ -42,6 +42,8 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var notificationProperties: NotificationProperties
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired private lateinit var objectMapper: ObjectMapper
 
     private fun saveUnread(userId: UUID): Long =
         notificationRepository
@@ -87,8 +89,8 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
             userDeviceRepository.save(UserDevice(userId = userA, deviceId = "dA", fcmToken = tokenA))
             userDeviceRepository.save(UserDevice(userId = userB, deviceId = "dB", fcmToken = tokenB))
 
-            val emitterA = CleanupBadgeRecordingEmitter().also { registry.register(userA, it) }
-            val emitterB = CleanupBadgeRecordingEmitter().also { registry.register(userB, it) }
+            val emitterA = RecordingSseEmitter().also { registry.register(userA, it) }
+            val emitterB = RecordingSseEmitter().also { registry.register(userB, it) }
             val fcmCalls = CopyOnWriteArrayList<Pair<List<String>, Int>>()
             stubFcmMessageSender.onSendBadgeSync = { tokens, badge ->
                 fcmCalls.add(tokens to badge)
@@ -99,12 +101,13 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
                 scheduler.cleanup()
 
                 await().atMost(Duration.ofSeconds(5)).untilAsserted {
-                    // userA: 온라인(SSE) 기기에 갱신 안읽음 수(1) 전파.
-                    assertEquals(1L, emitterA.payloads().singleOrNull()?.unreadCount)
+                    // userA: 온라인(SSE) 기기에 갱신 안읽음 수(1) 전파 — payload 는 와이어 JSON 그대로 단언한다.
+                    val payload = emitterA.payloadsOf("silent-sync").singleOrNull()?.let(objectMapper::readTree)
+                    assertEquals(1L, payload?.get("unreadCount")?.asLong())
                     // userA: 오프라인(FCM) 기기에 badge=1 전파.
                     assertEquals(1, fcmCalls.singleOrNull { it.first.contains(tokenA) }?.second)
                     // userB: 읽음만 지워져 배지 불변 → SSE·FCM 어느 쪽도 호출되지 않는다.
-                    assertTrue(emitterB.payloads().isEmpty())
+                    assertTrue(emitterB.sends.isEmpty())
                     assertTrue(fcmCalls.none { it.first.contains(tokenB) })
                 }
             } finally {
@@ -115,15 +118,4 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
             cleanupRows(userA, userB)
         }
     }
-}
-
-// send 를 가로채 실제 IO 없이 전송된 silent-sync payload 를 기록한다(NotificationBadgeSyncAsyncIntegrationTest 와 동일 패턴).
-private class CleanupBadgeRecordingEmitter : SseEmitter() {
-    private val sentData = CopyOnWriteArrayList<Any>()
-
-    override fun send(builder: SseEmitter.SseEventBuilder) {
-        builder.build().forEach { sentData.add(it.data) }
-    }
-
-    fun payloads(): List<UnreadCountChanged> = sentData.filterIsInstance<UnreadCountChanged>()
 }
