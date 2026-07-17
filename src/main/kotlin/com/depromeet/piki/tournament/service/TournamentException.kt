@@ -33,6 +33,15 @@ class TournamentException private constructor(
                 HttpStatus.BAD_REQUEST,
             )
 
+        // 목록 조회 limit 이 1 미만(0·음수)인 경우. 정상 클라이언트는 limit>=1(홈은 3)만 보내므로,
+        // 여기 닿는 건 잘못 구성한 요청 = 계약 위반 → 400. (#728 tournament code 이관 시 다른 팩토리와 함께 code 부여.)
+        fun invalidLimit(): TournamentException =
+            TournamentException(
+                "조회 개수는 1 이상이어야 해요.",
+                ErrorCategory.INVALID_INPUT,
+                HttpStatus.BAD_REQUEST,
+            )
+
         fun invalidTournamentItem(): TournamentException =
             TournamentException(
                 "이 토너먼트에 없는 아이템이에요.",

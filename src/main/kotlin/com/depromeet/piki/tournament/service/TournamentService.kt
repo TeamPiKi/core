@@ -481,7 +481,10 @@ class TournamentService(
     fun getTournaments(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        limit: Int?,
     ): List<TournamentSummary> {
+        limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
+
         val tournamentIds = tournamentUserRepository.findTournamentIdsByUserId(userId)
         if (tournamentIds.isEmpty()) return emptyList()
         val tournaments = tournamentRepository.findByIdsAndStatuses(tournamentIds, statuses)
@@ -502,19 +505,46 @@ class TournamentService(
                 .groupBy { it.tournamentId }
                 .mapValues { (_, users) -> users.mapNotNull { profileImageByUserId[it.userId] } }
 
-        return tournaments
-            .filter { tournament ->
+        // ROOT(소셜) 토너먼트는 PENDING 이후 멤버 목록에서 제외한다(멤버는 본인 CLONE 으로 플레이·표시).
+        // 목록은 이미 createdAt DESC(최근순)라, 필터 뒤 take(limit) 로 "보이는 것 중 최근 N개"만 남긴다.
+        val visible =
+            tournaments.filter { tournament ->
                 val myTU = myTUByTournamentId[tournament.getId()]
                 val isTournamentOwner = myTU?.getId() == tournament.ownerTournamentUserId
-                // ROOT(소셜) 토너먼트는 PENDING 이후에는 멤버 목록에서 제외한다.
-                // 멤버는 본인 CLONE 으로 플레이하며 그 CLONE 이 목록에 표시된다.
                 !tournament.isRoot() || isTournamentOwner || tournament.isPending()
             }
-            .map { tournament ->
-                TournamentSummary.of(
-                    tournament = tournament,
-                    participantProfileImages = profileImagesByTournamentId[tournament.getId()] ?: emptyList(),
-                    effectiveStatus = tournament.status,
+        val limited = limit?.let { visible.take(it) } ?: visible
+
+        // 썸네일은 잘리고 남은 토너먼트에 대해서만 조회한다 (잘릴 것의 아이템은 안 읽음).
+        val thumbnailsByTournamentId = thumbnailUrlsByTournamentId(limited.map { it.getId() })
+
+        return limited.map { tournament ->
+            TournamentSummary.of(
+                tournament = tournament,
+                participantProfileImages = profileImagesByTournamentId[tournament.getId()] ?: emptyList(),
+                thumbnailUrls = thumbnailsByTournamentId[tournament.getId()] ?: emptyList(),
+                effectiveStatus = tournament.status,
+            )
+        }
+    }
+
+    // 토너먼트별 대표 썸네일(최근 등록 아이템 중 이미지 있는 것 최대 2장) 배치 조립.
+    // 기존 배치 조회 2회(tournament_items → item_snapshots)만 쓰고 N+1 을 만들지 않는다.
+    private fun thumbnailUrlsByTournamentId(tournamentIds: List<Long>): Map<Long, List<String>> {
+        if (tournamentIds.isEmpty()) return emptyMap()
+        val items = tournamentItemRepository.findAllByTournamentIds(tournamentIds)
+        if (items.isEmpty()) return emptyMap()
+        val imageUrlBySnapshotId =
+            itemSnapshotRepository
+                .findByIds(items.map { it.snapshotId })
+                .associate { it.getId() to it.imageUrl }
+        return items
+            .groupBy { it.tournamentId }
+            .mapValues { (_, tournamentItems) ->
+                TournamentThumbnails.select(
+                    tournamentItems.map {
+                        TournamentThumbnails.Candidate(recency = it.getId(), imageUrl = imageUrlBySnapshotId[it.snapshotId])
+                    },
                 )
             }
     }

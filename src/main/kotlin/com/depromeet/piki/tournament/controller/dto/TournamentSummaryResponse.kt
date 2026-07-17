@@ -10,6 +10,8 @@ data class TournamentSummaryResponse(
     val status: TournamentStatus,
     val createdAt: LocalDateTime,
     val participantProfileImages: List<String>,
+    // 카드 대표 썸네일 URL — 최근 등록 아이템 중 이미지 있는 것 최대 2장 (없으면 빈 배열).
+    val thumbnailUrls: List<String>,
 ) {
     companion object {
         fun from(summary: TournamentSummary): TournamentSummaryResponse =
@@ -19,6 +21,7 @@ data class TournamentSummaryResponse(
                 status = summary.status,
                 createdAt = summary.createdAt,
                 participantProfileImages = summary.participantProfileImages,
+                thumbnailUrls = summary.thumbnailUrls,
             )
     }
 }
