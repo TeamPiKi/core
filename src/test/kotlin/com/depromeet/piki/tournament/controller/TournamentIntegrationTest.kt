@@ -715,8 +715,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     fun `GET tournaments 에서 limit 을 주면 최근순 상위 N개만 반환한다`() {
         val mockMvc = buildMockMvc()
         createTournament(mockMvc, "토너먼트1")
-        createTournament(mockMvc, "토너먼트2")
-        createTournament(mockMvc, "토너먼트3")
+        val second = createTournament(mockMvc, "토너먼트2")
+        val third = createTournament(mockMvc, "토너먼트3") // 가장 최근
 
         // limit 없으면 전체
         mockMvc
@@ -726,7 +726,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(3))
 
-        // limit=2 면 상위 2개만
+        // limit=2 면 최근순 상위 2개(3번, 2번)만, 가장 오래된 1번은 제외
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
@@ -734,6 +734,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .param("limit", "2"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(third))
+            .andExpect(jsonPath("$.data[1].tournamentId").value(second))
     }
 
     @Test
