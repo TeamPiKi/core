@@ -44,8 +44,9 @@ class TournamentController(
     override fun getTournaments(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) status: List<TournamentStatus>?,
+        @RequestParam(required = false) limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>> {
-        val summaries = tournamentService.getTournaments(userId, status)
+        val summaries = tournamentService.getTournaments(userId, status, limit)
         return ApiResponseBody.ok(summaries.map(TournamentSummaryResponse::from))
     }
 
