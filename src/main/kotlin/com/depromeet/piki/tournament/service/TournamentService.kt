@@ -1,6 +1,7 @@
 package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.tournament.domain.Tournament
@@ -516,13 +517,15 @@ class TournamentService(
         val limited = limit?.let { visible.take(it) } ?: visible
 
         // 썸네일은 잘리고 남은 토너먼트에 대해서만 조회한다 (잘릴 것의 아이템은 안 읽음).
-        val thumbnailsByTournamentId = thumbnailUrlsByTournamentId(limited.map { it.getId() })
+        // CLONE 은 자기 tournament_item 이 없고 sourceTournamentId(ROOT)의 아이템을 쓰므로, ROOT id 로 조회한 뒤 CLONE 에 매핑한다.
+        val rootIdByTournamentId = limited.associate { it.getId() to (it.sourceTournamentId ?: it.getId()) }
+        val thumbnailsByRootId = thumbnailUrlsByTournamentId(rootIdByTournamentId.values.distinct())
 
         return limited.map { tournament ->
             TournamentSummary.of(
                 tournament = tournament,
                 participantProfileImages = profileImagesByTournamentId[tournament.getId()] ?: emptyList(),
-                thumbnailUrls = thumbnailsByTournamentId[tournament.getId()] ?: emptyList(),
+                thumbnailUrls = thumbnailsByRootId[rootIdByTournamentId.getValue(tournament.getId())] ?: emptyList(),
                 effectiveStatus = tournament.status,
             )
         }
@@ -534,16 +537,17 @@ class TournamentService(
         if (tournamentIds.isEmpty()) return emptyMap()
         val items = tournamentItemRepository.findAllByTournamentIds(tournamentIds)
         if (items.isEmpty()) return emptyMap()
-        val imageUrlBySnapshotId =
+        // READY 스냅샷의 이미지만 후보로 삼는다 — FAILED/PROCESSING 의 stale 이미지가 카드에 노출되지 않게 상태로 거른다.
+        val readyImageUrlBySnapshotId =
             itemSnapshotRepository
                 .findByIds(items.map { it.snapshotId })
-                .associate { it.getId() to it.imageUrl }
+                .associate { snapshot -> snapshot.getId() to snapshot.imageUrl?.takeIf { snapshot.status == ItemStatus.READY } }
         return items
             .groupBy { it.tournamentId }
             .mapValues { (_, tournamentItems) ->
                 TournamentThumbnails.select(
                     tournamentItems.map {
-                        TournamentThumbnails.Candidate(recency = it.getId(), imageUrl = imageUrlBySnapshotId[it.snapshotId])
+                        TournamentThumbnails.Candidate(recency = it.getId(), imageUrl = readyImageUrlBySnapshotId[it.snapshotId])
                     },
                 )
             }

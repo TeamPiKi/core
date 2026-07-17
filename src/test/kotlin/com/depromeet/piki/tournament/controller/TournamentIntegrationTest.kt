@@ -782,13 +782,89 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     fun `GET tournaments 에서 limit 이 1 미만이면 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
 
+        for (limit in listOf("0", "-1")) {
+            mockMvc
+                .perform(
+                    get("/api/v1/tournaments")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .param("limit", limit),
+                ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.detail").value("조회 개수는 1 이상이어야 해요."))
+        }
+    }
+
+    @Test
+    fun `GET tournaments 에서 limit 이 정수가 아니면 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                    .param("limit", "0"),
+                    .param("limit", "abc"),
             ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.detail").value("조회 개수는 1 이상이어야 해요."))
+    }
+
+    @Test
+    fun `GET tournaments 에서 FAILED 스냅샷의 이미지는 thumbnailUrls 에서 제외된다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc, "FAILED 이미지 토너먼트")
+        // 추출 실패(FAILED)했지만 imageUrl 이 남아있는 stale 스냅샷 — 카드에 노출되면 안 된다.
+        saveTournamentItemFor(
+            tournamentId,
+            itemJpaRepository.save(Item()),
+            status = ItemStatus.FAILED,
+            imageUrl = "https://img.example.com/stale.jpg",
+        )
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(0))
+    }
+
+    @Test
+    fun `GET tournaments 에서 CLONE 토너먼트는 원본 ROOT 아이템의 썸네일을 사용한다`() {
+        val mockMvc = buildMockMvc()
+        // ROOT 는 다른 유저 소유라 내 목록엔 안 뜬다. 아이템(이미지)은 ROOT 에 붙는다.
+        val root =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 1,
+                    name = "원본 ROOT",
+                    inviteCode = "ROOT01",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                ),
+            )
+        saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root1.jpg")
+        saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root2.jpg")
+
+        // CLONE 은 자기 아이템 없이 sourceTournamentId 로 ROOT 를 가리킨다. 내가 멤버라 목록에 뜬다.
+        val clone =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 2,
+                    name = "내 CLONE",
+                    inviteCode = "CLON01",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                    sourceTournamentId = root.getId(),
+                ),
+            )
+        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(clone.getId()))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(2))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[0]").value("https://img.example.com/root2.jpg"))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[1]").value("https://img.example.com/root1.jpg"))
     }
 
     @Test
