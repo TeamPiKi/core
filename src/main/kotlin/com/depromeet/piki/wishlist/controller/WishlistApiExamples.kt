@@ -1,6 +1,6 @@
 package com.depromeet.piki.wishlist.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -121,7 +121,7 @@ class WishlistApiExamples(
                         name = "가격 음수",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 // @ModelAttribute Bean Validation 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = WishlistUpdateRequest.PRICE_MIN_MESSAGE,
                             ),

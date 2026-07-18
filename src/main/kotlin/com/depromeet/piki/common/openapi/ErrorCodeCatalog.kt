@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.openapi
 
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.user.domain.UserErrorCode
 import org.springdoc.core.customizers.OpenApiCustomizer
@@ -12,6 +13,7 @@ import org.springframework.context.annotation.Configuration
 object ErrorCodeRegistry {
     val all: List<ErrorCode> =
         buildList {
+            addAll(CommonErrorCode.entries)
             addAll(UserErrorCode.entries)
             // 도메인 이관 시 여기에 addAll(XxxErrorCode.entries) 추가
         }

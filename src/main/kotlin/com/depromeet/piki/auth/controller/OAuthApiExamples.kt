@@ -4,7 +4,7 @@ import com.depromeet.piki.auth.controller.dto.OAuthLoginRequest
 import com.depromeet.piki.auth.controller.dto.OAuthLoginResponse
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthException
 import com.depromeet.piki.auth.service.dto.TokenPair
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -52,7 +52,7 @@ class OAuthApiExamples(
                         name = "요청 본문 검증 실패 (두 흐름 동시 전달 또는 둘 다 누락/공백)",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 // @AssertTrue 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = OAuthLoginRequest.VALID_FLOW_MESSAGE,
                             ),

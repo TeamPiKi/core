@@ -3,6 +3,7 @@ package com.depromeet.piki.auth.config
 import com.depromeet.piki.common.web.TraceIdHeaderFilter
 import com.depromeet.piki.support.IntegrationTestSupport
 import io.micrometer.tracing.Tracer
+import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.notNullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -46,6 +47,8 @@ class SecurityErrorResponseIntegrationTest : IntegrationTestSupport() {
                 .perform(post("/api/v1/wishlists"))
                 .andExpect(status().isUnauthorized)
                 .andExpect(content().contentTypeCompatibleWith("application/json"))
+                // 필터 단 401 도 code 기반 contract 로 내려간다 — COMMON-UNAUTHORIZED 고정(회귀 가드).
+                .andExpect(jsonPath("$.code", equalTo("COMMON-UNAUTHORIZED")))
                 .andExpect(jsonPath("$.detail", notNullValue()))
                 .andExpect(header().string(TraceIdHeaderFilter.HEADER, expectedTraceId))
         }
@@ -63,6 +66,7 @@ class SecurityErrorResponseIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer invalid.token.value"),
                 ).andExpect(status().isUnauthorized)
                 .andExpect(content().contentTypeCompatibleWith("application/json"))
+                .andExpect(jsonPath("$.code", equalTo("COMMON-UNAUTHORIZED")))
                 .andExpect(jsonPath("$.detail", notNullValue()))
                 .andExpect(header().string(TraceIdHeaderFilter.HEADER, expectedTraceId))
         }

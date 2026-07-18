@@ -16,6 +16,14 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| USER-001 | 404 | 존재하지 않는 계정이에요. |"), md)
         assertTrue(md.contains("| USER-006 | 400 | 닉네임을 입력해 주세요. |"), md)
         assertTrue(md.contains("| USER-012 | 400 | 닉네임은 10자까지 입력할 수 있어요. |"), md)
+
+        // 공통(횡단) code 도 registry 에 등록돼 카탈로그에 나열된다 — 4xx 구체 code 와 5xx 재시도 방식별 code.
+        assertTrue(md.contains("### COMMON"), md)
+        assertTrue(md.contains("| COMMON-UNAUTHORIZED | 401 | 로그인이 필요해요. |"), md)
+        assertTrue(md.contains("| COMMON-INVALID-INPUT | 400 | 요청 값을 다시 확인해 주세요. |"), md)
+        assertTrue(md.contains("| COMMON-RETRYABLE | 502 | 일시적인 오류예요. 잠시 후 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("| COMMON-SERVER-BUSY | 503 | 지금 요청이 많아요. 잠시 후 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("| COMMON-SERVER-ERROR | 500 | 서버에 문제가 발생했어요. 불편을 드려 죄송해요. |"), md)
     }
 
     @Test
@@ -26,8 +34,11 @@ class ErrorCodeCatalogTest {
     }
 
     @Test
-    fun `모든 code 는 PREFIX-000 형식이다`() {
-        val format = Regex("^[A-Z_]+-\\d{3}$")
+    fun `모든 code 는 PREFIX-SUFFIX 형식이다 (도메인은 숫자 3자리, 공통은 의미 문자열)`() {
+        // 도메인 code 는 숫자 append-only(USER-001), 공통 code 는 FE 계약상 의미 문자열(COMMON-UNAUTHORIZED·
+        // COMMON-METHOD-NOT-ALLOWED). prefix(substringBefore("-"))로 그룹핑되므로 prefix 는 [A-Z]+ 로 고정하고,
+        // suffix 는 숫자 3자리 또는 하이픈으로 이어진 대문자 단어들 중 하나를 허용한다.
+        val format = Regex("^[A-Z]+-(\\d{3}|[A-Z]+(-[A-Z]+)*)$")
 
         assertTrue(ErrorCodeRegistry.all.all { format.matches(it.code) }, "형식 위반: ${ErrorCodeRegistry.all.map { it.code }.filterNot { format.matches(it) }}")
     }

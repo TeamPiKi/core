@@ -39,6 +39,8 @@ class GlobalExceptionHandlerIntegrationTest : IntegrationTestSupport() {
             .perform(
                 post("/api/v1/auth/login/google").contentType(MediaType.APPLICATION_JSON).content("{ broken json "),
             ).andExpect(status().isBadRequest)
+            // handleExceptionInternal 이 실제 응답 body 에 공통 code 를 싣는지까지 계약으로 고정한다(내부 매핑만이 아니라).
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
             .andExpect(jsonPath("$.detail").isString)
     }
 
@@ -48,6 +50,7 @@ class GlobalExceptionHandlerIntegrationTest : IntegrationTestSupport() {
             .perform(
                 post("/api/v1/auth/login/google").contentType(MediaType.TEXT_PLAIN).content("hello"),
             ).andExpect(status().isUnsupportedMediaType)
+            .andExpect(jsonPath("$.code").value("COMMON-UNSUPPORTED-MEDIA-TYPE"))
     }
 
     @Test
@@ -105,5 +108,6 @@ class GlobalExceptionHandlerIntegrationTest : IntegrationTestSupport() {
         mockMvc()
             .perform(get("/api/v1/dev/$guestId/token").header(HttpHeaders.AUTHORIZATION, "Bearer $guestToken"))
             .andExpect(status().isMethodNotAllowed)
+            .andExpect(jsonPath("$.code").value("COMMON-METHOD-NOT-ALLOWED"))
     }
 }

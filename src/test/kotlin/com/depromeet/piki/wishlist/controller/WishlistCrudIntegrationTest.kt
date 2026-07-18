@@ -157,6 +157,9 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${guestToken(userId)}")
                     .content(body),
             ).andExpect(status().isForbidden)
+            // WishException 은 아직 code 미배정이라, handleBaseException 이 category(FORBIDDEN)로 공통 code 를 폴백해 COMMON-FORBIDDEN 을 싣는다.
+            // (위시 도메인이 자기 code 를 이관하면 이 단언을 WISH-xxx 로 바꾼다 — 그때 깨져서 갱신을 강제하는 게 의도다.)
+            .andExpect(jsonPath("$.code").value("COMMON-FORBIDDEN"))
             .andExpect(jsonPath("$.detail").value("위시리스트는 회원만 이용할 수 있어요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }

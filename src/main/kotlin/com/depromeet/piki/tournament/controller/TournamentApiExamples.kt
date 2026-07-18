@@ -1,6 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -116,7 +116,7 @@ class TournamentApiExamples(
                             name = "닉네임 미입력",
                             payload =
                                 ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.INVALID_INPUT,
+                                    CommonErrorCode.INVALID_INPUT,
                                     // Bean Validation 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                     detail = JoinTournamentAsGuestRequest.NICKNAME_BLANK_MESSAGE,
                                 ),
@@ -505,7 +505,7 @@ class TournamentApiExamples(
                             name = "과거 시각 입력",
                             payload =
                                 ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.INVALID_INPUT,
+                                    CommonErrorCode.INVALID_INPUT,
                                     detail = UpdateInviteDurationRequest.INVITE_EXPIRY_PAST_MESSAGE,
                                 ),
                         )
