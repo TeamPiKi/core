@@ -35,6 +35,9 @@ interface TournamentApi {
             내 토너먼트 목록을 최근 생성 순으로 조회한다.
             status 파라미터로 상태 필터링 가능하며 여러 값을 중복 전달할 수 있다(예: ?status=PENDING&status=IN_PROGRESS).
             생략 시 전체 반환. status 값은 대문자(PENDING/IN_PROGRESS/COMPLETED)로 전달해야 한다.
+            limit 파라미터로 최근순 상위 N개만 받을 수 있다(예: 홈 카드용 ?limit=3). 생략 시 전체.
+            각 항목의 thumbnailUrls 는 카드 대표 썸네일 URL 배열이다 — 최근 등록 아이템 중 이미지가 준비된(READY) 것 최대 2장.
+            이미지가 준비된 아이템이 없으면 빈 배열이며, limit 유무와 무관하게 항상 포함된다.
         """,
     )
     @ApiResponses(
@@ -42,6 +45,16 @@ interface TournamentApi {
             ApiResponse(
                 responseCode = "200",
                 description = "목록 조회 성공 (참여 토너먼트 없으면 빈 배열 반환)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (limit 이 1 미만 · limit 이 정수가 아님)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -65,6 +78,8 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "상태 필터 (복수 전달 가능, 생략 시 전체)", example = "PENDING")
         status: List<TournamentStatus>?,
+        @Parameter(description = "조회 개수 제한 (최근순 상위 N, 생략 시 전체). 1 이상.", example = "3")
+        limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>>
 
     @Operation(

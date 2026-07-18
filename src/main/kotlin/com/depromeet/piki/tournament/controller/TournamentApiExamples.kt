@@ -54,10 +54,16 @@ class TournamentApiExamples(
                                                     "https://cdn.example.com/profiles/user1.jpg",
                                                     "https://cdn.example.com/profiles/user2.jpg",
                                                 ),
+                                            thumbnailUrls =
+                                                listOf(
+                                                    "https://cdn.example.com/items/item1.jpg",
+                                                    "https://cdn.example.com/items/item2.jpg",
+                                                ),
                                         ),
                                     ),
                                 ),
                         )
+                        add(TournamentException.invalidLimit(), name = "limit 이 1 미만")
                         unauthorized()
                     }
 

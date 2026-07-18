@@ -6,6 +6,8 @@ import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteRequest
+import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
@@ -94,6 +96,31 @@ class NotificationHistoryApiExamples(
                                 CommonErrorCode.INVALID_INPUT,
                                 // @AssertTrue 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = NotificationReadRequest.VALID_SELECTION_MESSAGE,
+                            ),
+                    )
+                    unauthorized()
+                }
+            }
+            if (handlerMethod.binds(NotificationHistoryController::delete)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(
+                        status = HttpStatus.OK,
+                        name = "삭제 성공 (삭제 후 unreadCount 동봉)",
+                        payload =
+                            ApiResponseBody.ok(
+                                data = NotificationDeleteResponse.of(
+                                    mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 0L),
+                                ),
+                            ),
+                    )
+                    add(
+                        status = HttpStatus.BAD_REQUEST,
+                        name = "all 과 ids 동시 전송 / 둘 다 없음 / 빈 ids",
+                        payload =
+                            ApiResponseBody.fail<Unit>(
+                                CommonErrorCode.INVALID_INPUT,
+                                // @AssertTrue 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
+                                detail = NotificationDeleteRequest.VALID_SELECTION_MESSAGE,
                             ),
                     )
                     unauthorized()

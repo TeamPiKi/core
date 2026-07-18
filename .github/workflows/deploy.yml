@@ -79,11 +79,16 @@ jobs:
 
   deploy:
     needs: resolve
-    runs-on: ubuntu-latest
+    # arm64 네이티브 러너 — 배포 이미지가 linux/arm64(EC2 Graviton)라, x86 러너에서 QEMU 에뮬레이션으로
+    # 빌드하면 Dockerfile.ci 의 layertools extract(JVM 실행)가 에뮬돼 느리다. 네이티브 arm64 로 그 병목을 없앤다.
+    # public repo 라 GitHub-hosted arm64 러너는 무료. (QEMU setup 스텝은 이 전환으로 불필요해져 제거)
+    runs-on: ubuntu-24.04-arm
     # GitHub Environment — secret 해석을 환경별로 가른다. dev env override / prod 는 repo 상속.
     environment: ${{ needs.resolve.outputs.environment }}
     permissions:
       contents: read
+      # 자동 배포 시 트리거한 CI 실행의 JAR 아티팩트를 크로스런 다운로드하려면 actions:read 가 필요하다.
+      actions: read
     # dev/prod 가 서로 배포를 막지 않도록 환경별 동시성 그룹. 같은 환경 내 재배포는 직렬화(취소 안 함).
     # 그룹은 브랜치명이 아니라 "환경"으로 묶어야 한다 — feature 브랜치 수동배포(dispatch)도 dev EC2 로
     # 가므로 dev 자동배포와 같은 그룹이어야 같은 박스에서 동시 blue-green 조작 레이스를 막는다.
@@ -138,13 +143,30 @@ jobs:
             blocks
           sparse-checkout-cone-mode: true
 
-      - name: Set up JDK 25
+      # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
+      # 러너에서의 재빌드(약 47초)를 없앤다. run-id 로 그 CI 실행에 못박아, 배포 커밋과 다른 커밋의 JAR 을
+      # 집는 레이스를 차단한다(그냥 '최신' 아티팩트를 집으면 배포 도중 다른 push 로 커밋 불일치가 난다).
+      # 자동 경로는 러너에 JDK·Gradle 이 필요 없다 — 도커 빌드의 layertools extract 는 이미지 안에서 돈다.
+      - name: Download JAR from triggering CI run
+        id: fetch_jar
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: build/libs
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 수동 배포(workflow_dispatch): 트리거한 CI 실행이 없어 아티팩트가 없다. 이때만 러너에서 직접 빌드한다.
+      - name: Set up JDK 25 (manual dispatch fallback)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: Cache Gradle
+      - name: Cache Gradle (manual dispatch fallback)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/cache@v4
         with:
           path: |
@@ -153,8 +175,9 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Build JAR
+      - name: Build JAR (manual dispatch fallback)
         id: build
+        if: github.event_name == 'workflow_dispatch'
         run: ./gradlew bootJar --no-daemon
 
       - name: Login to Docker Hub
@@ -164,33 +187,39 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      # 러너가 arm64 네이티브(EC2 Graviton 과 동일 arch)라 크로스빌드가 불필요하다. buildx 없이 기본 docker
+      # 데몬으로 arm64 이미지를 네이티브 빌드해 setup-buildx(약 10초)를 없앤다. 태그·image ref 는 셸 보간
+      # injection 을 피해 env 로 받아 "$VAR" 로 쓴다(repo 컨벤션).
       - name: Build and push Docker image
         id: docker_push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.ci
-          push: true
-          platforms: linux/arm64
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
+        env:
+          IMAGE_LATEST: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
+          IMAGE_SHA: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
+        run: |
+          docker build -f Dockerfile.ci -t "$IMAGE_LATEST" -t "$IMAGE_SHA" .
+          docker push "$IMAGE_LATEST"
+          docker push "$IMAGE_SHA"
 
-      - name: Upload nginx config
-        id: upload_nginx
+      # 배포에 필요한 설정 4개(nginx conf·provision 스크립트·alloy config·healthcheck 블록)를 SSH 연결 1회로
+      # 함께 올린다. 4개를 각각 scp 하면 핸드셰이크·액션 셋업이 4번 반복돼 약 37초인데, 소스가 모두 depth-3 라
+      # strip_components: 2 로 파일명만 남겨 한 스테이징 디렉토리(/tmp/piki-deploy)에 평평하게 안착시킨다.
+      # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
+      # source: infra/* 는 Checkout, piki-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 것(둘 다 위에서 실행).
+      # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
+      # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
+      - name: Upload deploy files
+        id: upload_files
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/nginx/${{ needs.resolve.outputs.nginx_conf }}"
-          target: "/tmp/team3-nginx"
+          source: |
+            infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
+            infra/scripts/provision-runtime.sh,
+            infra/alloy/config.alloy,
+            piki-infra/blocks/healthcheck.sh
+          target: "/tmp/piki-deploy"
           strip_components: 2
 
       # TLS 인증서 보장 — cert 가 없을 때만 발급(idempotent). dev 첫 배포에서만 동작하고,
@@ -243,7 +272,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: NGINX_CONF,DOMAIN
           script: |
-            SRC="/tmp/team3-nginx/$NGINX_CONF"
+            SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
             # api conf 가 include 하는 team3-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
             # blue-green 전환 전이라도 include 대상이 존재하도록 기본값(8080)으로 초기화한다.
@@ -276,42 +305,6 @@ jobs:
               exit 1
             fi
 
-      - name: Upload provisioning script
-        id: upload_provision
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/scripts/provision-runtime.sh"
-          target: "/tmp/team3-provision"
-          strip_components: 2
-
-      - name: Upload Alloy config
-        id: upload_alloy
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/alloy/config.alloy"
-          target: "/tmp/team3-alloy"
-          strip_components: 2
-
-      # infra 공용 블록을 박스로 올린다. 아래 Health check 스텝이 인라인 폴링 대신 이 블록을 호출한다.
-      # source 는 위 'Checkout infra blocks' 가 받은 piki-infra/blocks/ 아래 경로다. strip_components: 2 로
-      # piki-infra/blocks/ 를 떼어 /tmp/piki-blocks/healthcheck.sh 로 안착시킨다 (기존 scp 패턴과 동일).
-      - name: Upload healthcheck block
-        id: upload_healthcheck
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "piki-infra/blocks/healthcheck.sh"
-          target: "/tmp/piki-blocks"
-          strip_components: 2
-
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
         id: provision
         uses: appleboy/ssh-action@v1
@@ -343,8 +336,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
           script: |
-            chmod +x /tmp/team3-provision/provision-runtime.sh
-            /tmp/team3-provision/provision-runtime.sh
+            chmod +x /tmp/piki-deploy/provision-runtime.sh
+            /tmp/piki-deploy/provision-runtime.sh
 
       - name: Deploy to ${{ needs.resolve.outputs.environment }}
         id: deploy
@@ -579,7 +572,7 @@ jobs:
             #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
             #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
             #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
-            if bash /tmp/piki-blocks/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
+            if bash /tmp/piki-deploy/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
               echo "================================================"
               echo "  HEALTH CHECK PASSED on $INACTIVE"
               echo "================================================"
@@ -637,7 +630,7 @@ jobs:
             STATUS="❌ 실패 (EC2 배포)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 파일 업로드)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (TLS 인증서 발급)"
@@ -647,6 +640,8 @@ jobs:
             STATUS="❌ 실패 (런타임 프로비저닝)"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Gradle 빌드)"
+          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (CI 아티팩트 다운로드)"
           else
             STATUS="⚠️ 알 수 없음"
           fi
@@ -660,7 +655,7 @@ jobs:
             echo "| 환경 | ${{ needs.resolve.outputs.environment }} |"
             echo "| 커밋 | [\`$SHORT_SHA\`]($COMMIT_URL) |"
             echo "| 현재 활성 슬롯 | $NOW |"
-            echo "| Gradle 빌드 | ${{ steps.build.outcome }} |"
+            echo "| JAR 준비 | ${{ github.event_name == 'workflow_run' && steps.fetch_jar.outcome || steps.build.outcome }} |"
             echo "| Docker 푸시 | ${{ steps.docker_push.outcome }} |"
             echo "| EC2 배포 | ${{ steps.deploy.outcome }} |"
             echo "| 헬스체크 & 전환 | ${{ steps.health.outcome }} |"
@@ -743,11 +738,13 @@ jobs:
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
           elif [ "${{ steps.build.outcome }}" = "failure" ]; then
             CAUSE="Gradle 빌드 실패 (Build JAR)"
+          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
+            CAUSE="CI 아티팩트(JAR) 다운로드 실패 (트리거 CI 의 app-jar 누락/만료 · actions:read 권한)"
           elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
             CAUSE="Docker Hub 로그인 실패"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
-          elif [ "${{ steps.upload_nginx.outcome }}" = "failure" ] || [ "${{ steps.upload_provision.outcome }}" = "failure" ] || [ "${{ steps.upload_alloy.outcome }}" = "failure" ] || [ "${{ steps.upload_healthcheck.outcome }}" = "failure" ]; then
+          elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
             CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"

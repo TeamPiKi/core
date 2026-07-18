@@ -148,6 +148,12 @@ image:
     max-bytes: 5242880     # 5 MB
     timeout-seconds: 10
 
+notification:
+  # 알림 보존 기간(일). 생성 후 이 기간을 넘긴 알림은 N일 자동삭제 스케줄러(NotificationCleanupScheduler)가 하드삭제한다.
+  retention-days: ${NOTIFICATION_RETENTION_DAYS:30}
+  # 자동삭제 스케줄(cron, KST/Asia/Seoul). 기본 매일 04:00 KST. NotificationCleanupScheduler 의 @Scheduled(zone=Asia/Seoul) placeholder 가 참조한다.
+  cleanup-cron: ${NOTIFICATION_CLEANUP_CRON:0 0 4 * * *}
+
 # API 레퍼런스 문서 노출 게이트 — dev 만 노출, staging/prod 는 404 (deploy.yml 이 dev 만 SPRINGDOC_ENABLED=true).
 # spec(springdoc.api-docs.enabled)·static Stoplight UI·루트 리다이렉트(docs.enabled → WebConfig)가 이 플래그를 공유한다.
 # 기본값을 fail-closed(false)로 둔다 — deploy.yml 의 변수 전달이 빠지거나 새 배포 경로가 생겨도 문서가 조용히
