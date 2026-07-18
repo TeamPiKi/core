@@ -99,8 +99,11 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         return ResponseEntity.status(statusCode).headers(headers).body(wrapped)
     }
 
-    // status → 우리 ErrorCategory. 인증/권한/리소스/충돌·메서드·미디어타입은 각자, 그 외 4xx 는 입력 오류, 5xx 는 서버 오류.
-    private fun categoryOf(status: HttpStatus): ErrorCategory =
+    // status → 우리 ErrorCategory. 인증/권한/리소스/충돌·메서드·미디어타입은 각자, 그 외 4xx 는 입력 오류.
+    // 5xx 는 재시도 방식별로 가른다 — RESEH 경로로 502/503 이 들어오면(AsyncRequestTimeout→503,
+    // ResponseStatusException(502/503) 등) status 와 code 가 어긋나지 않게 RETRYABLE/SERVER_BUSY 로,
+    // 그 외 5xx(500 등)는 SERVER_ERROR 로. internal — categoryOf 매핑 단위 검증에 열어둔다.
+    internal fun categoryOf(status: HttpStatus): ErrorCategory =
         when {
             status == HttpStatus.UNAUTHORIZED -> ErrorCategory.UNAUTHORIZED
             status == HttpStatus.FORBIDDEN -> ErrorCategory.FORBIDDEN
@@ -109,6 +112,8 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
             status == HttpStatus.UNSUPPORTED_MEDIA_TYPE -> ErrorCategory.UNSUPPORTED_MEDIA_TYPE
             status == HttpStatus.CONFLICT -> ErrorCategory.CONFLICT
             status.is4xxClientError -> ErrorCategory.INVALID_INPUT
+            status == HttpStatus.BAD_GATEWAY -> ErrorCategory.RETRYABLE
+            status == HttpStatus.SERVICE_UNAVAILABLE -> ErrorCategory.SERVER_BUSY
             else -> ErrorCategory.SERVER_ERROR
         }
 
