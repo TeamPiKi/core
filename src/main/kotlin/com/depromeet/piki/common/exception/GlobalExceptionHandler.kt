@@ -41,8 +41,11 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
             else ->
                 log.info("[{}] {} -> {}", e.javaClass.simpleName, e.message, status.value())
         }
-        // code 를 배정한 예외는 fail(errorCode) 로 code 를 실어 내린다. 이관 전 예외는 errorCode=null → 기존대로 code 없이 category fallback.
-        val errorCode = (e as? HttpMappable)?.errorCode
+        // code 우선순위: (1) 예외 자신이 배정한 errorCode → 그대로. (2) 없으면 category 로 공통 code 를 파생 —
+        // 도메인 code 를 아직 안 단 5xx(외부 의존성 실패 등)를 재시도 방식별 공통 5xx code(RETRYABLE/SERVER_ERROR)로
+        // 뭉치고, CONFLICT 처럼 공통 code 가 없는 category 는 null → 기존 fail(category) fallback(code 없음).
+        // detail 은 어느 경로든 e.message 를 유지한다(이관 단계: code 만 추가, detail 제거는 전체 이관 후).
+        val errorCode = (e as? HttpMappable)?.errorCode ?: CommonErrorCode.of(category)
         val body =
             errorCode
                 ?.let { ApiResponseBody.fail<Nothing>(it, e.message) }
@@ -57,7 +60,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         log.info("[IllegalArgumentException] {}", e.message)
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
-            .body(ApiResponseBody.fail(ErrorCategory.INVALID_INPUT, e.message))
+            .body(ApiResponseBody.fail(CommonErrorCode.INVALID_INPUT, e.message))
     }
 
     @ExceptionHandler(Exception::class)
@@ -65,7 +68,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         log.error("[UnexpectedException] {}", e.message, e)
         return ResponseEntity
             .status(HttpStatus.INTERNAL_SERVER_ERROR)
-            .body(ApiResponseBody.fail(ErrorCategory.SERVER_ERROR))
+            .body(ApiResponseBody.fail(CommonErrorCode.SERVER_ERROR))
     }
 
     // RESEH 의 모든 표준 예외 핸들러가 최종적으로 이 메서드를 거쳐 응답 바디를 만든다 → ApiResponseBody 로 통일.
@@ -85,18 +88,32 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         } else {
             log.info("[{}] {} → {}", ex.javaClass.simpleName, ex.message, status.value())
         }
-        val wrapped: ApiResponseBody<Nothing> = ApiResponseBody.fail(categoryOf(status), detailOf(ex))
+        // category 로 공통 code 를 파생해 표준 MVC 4xx(400/404/405/415)에도 code 를 싣는다. detail 은 detailOf(ex)
+        // 를 유지(이관 단계: code 만 추가). 공통 code 가 없는 category(CONFLICT 등)는 null → 기존 fail(category) fallback.
+        val category = categoryOf(status)
+        val commonCode = CommonErrorCode.of(category)
+        val wrapped: ApiResponseBody<Nothing> =
+            commonCode
+                ?.let { ApiResponseBody.fail(it, detailOf(ex)) }
+                ?: ApiResponseBody.fail(category, detailOf(ex))
         return ResponseEntity.status(statusCode).headers(headers).body(wrapped)
     }
 
-    // status → 우리 ErrorCategory. 인증/권한/리소스/충돌은 각자, 그 외 4xx 는 입력 오류, 5xx 는 서버 오류.
-    private fun categoryOf(status: HttpStatus): ErrorCategory =
+    // status → 우리 ErrorCategory. 인증/권한/리소스/충돌·메서드·미디어타입은 각자, 그 외 4xx 는 입력 오류.
+    // 5xx 는 재시도 방식별로 가른다 — RESEH 경로로 502/503 이 들어오면(AsyncRequestTimeout→503,
+    // ResponseStatusException(502/503) 등) status 와 code 가 어긋나지 않게 RETRYABLE/SERVER_BUSY 로,
+    // 그 외 5xx(500 등)는 SERVER_ERROR 로. internal — categoryOf 매핑 단위 검증에 열어둔다.
+    internal fun categoryOf(status: HttpStatus): ErrorCategory =
         when {
             status == HttpStatus.UNAUTHORIZED -> ErrorCategory.UNAUTHORIZED
             status == HttpStatus.FORBIDDEN -> ErrorCategory.FORBIDDEN
             status == HttpStatus.NOT_FOUND -> ErrorCategory.NOT_FOUND
+            status == HttpStatus.METHOD_NOT_ALLOWED -> ErrorCategory.METHOD_NOT_ALLOWED
+            status == HttpStatus.UNSUPPORTED_MEDIA_TYPE -> ErrorCategory.UNSUPPORTED_MEDIA_TYPE
             status == HttpStatus.CONFLICT -> ErrorCategory.CONFLICT
             status.is4xxClientError -> ErrorCategory.INVALID_INPUT
+            status == HttpStatus.BAD_GATEWAY -> ErrorCategory.RETRYABLE
+            status == HttpStatus.SERVICE_UNAVAILABLE -> ErrorCategory.SERVER_BUSY
             else -> ErrorCategory.SERVER_ERROR
         }
 

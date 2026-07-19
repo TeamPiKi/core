@@ -1,11 +1,11 @@
 package com.depromeet.piki.auth.config
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
+import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.response.ApiResponseBody
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.LoggerFactory
-import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.security.core.AuthenticationException
@@ -42,7 +42,7 @@ class ApiResponseAuthenticationEntryPoint(
         } else {
             log.debug(ENTRY_POINT_LOG, request.method, request.requestURI, authException.message)
         }
-        writeApiResponseBody(response, HttpStatus.UNAUTHORIZED, ErrorCategory.UNAUTHORIZED, objectMapper)
+        writeApiResponseBody(response, CommonErrorCode.UNAUTHORIZED, objectMapper)
     }
 
     private companion object {
@@ -63,19 +63,21 @@ class ApiResponseAccessDeniedHandler(
         accessDeniedException: AccessDeniedException,
     ) {
         log.info("[AccessDeniedHandler] {} {} - {}", request.method, request.requestURI, accessDeniedException.message)
-        writeApiResponseBody(response, HttpStatus.FORBIDDEN, ErrorCategory.FORBIDDEN, objectMapper)
+        writeApiResponseBody(response, CommonErrorCode.FORBIDDEN, objectMapper)
     }
 }
 
+// status 는 errorCode.category.httpStatus 로 파생하고 body 에 code 를 실어, GlobalExceptionHandler 를 못 거치는
+// 필터 단 401/403 도 다른 엔드포인트와 같은 code 기반 contract 로 내려간다. detail 은 미지정 →
+// category.description 고정 문구가 그대로 나가 이관 전 동작을 보존한다(code 만 추가).
 private fun writeApiResponseBody(
     response: HttpServletResponse,
-    status: HttpStatus,
-    category: ErrorCategory,
+    errorCode: ErrorCode,
     objectMapper: ObjectMapper,
 ) {
-    response.status = status.value()
+    response.status = errorCode.category.httpStatus.value()
     response.contentType = MediaType.APPLICATION_JSON_VALUE
     response.characterEncoding = Charsets.UTF_8.name()
-    val body = ApiResponseBody.fail<Nothing>(category)
+    val body = ApiResponseBody.fail<Nothing>(errorCode)
     response.writer.write(objectMapper.writeValueAsString(body))
 }

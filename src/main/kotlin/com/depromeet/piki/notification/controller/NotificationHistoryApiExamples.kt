@@ -1,6 +1,6 @@
 package com.depromeet.piki.notification.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -93,7 +93,7 @@ class NotificationHistoryApiExamples(
                         name = "all 과 ids 동시 전송 / 둘 다 없음 / 빈 ids",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 // @AssertTrue 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = NotificationReadRequest.VALID_SELECTION_MESSAGE,
                             ),
@@ -118,7 +118,7 @@ class NotificationHistoryApiExamples(
                         name = "all 과 ids 동시 전송 / 둘 다 없음 / 빈 ids",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 // @AssertTrue 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = NotificationDeleteRequest.VALID_SELECTION_MESSAGE,
                             ),
