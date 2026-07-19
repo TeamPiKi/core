@@ -83,6 +83,43 @@ class AdminSourcePlatformIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `추가 폼은 URL host 로 해석될 수 없는 도메인을 거부한다`() {
+        // 쿼리 문자·빈 라벨이 든 문자열은 저장돼도 어떤 URL host 와도 매칭되지 않는 유령 행이 된다 —
+        // 운영 화면에선 성공으로 보이므로 저장 전에 거른다. SSR 이라 400 대신 에러를 표시한 목록 화면(200)으로 돌아온다.
+        val mockMvc = mockMvc()
+        listOf("example.com?preview=1", "foo..example.com").forEach { raw ->
+            mockMvc
+                .perform(
+                    post("/admin/source-platforms")
+                        .with(csrf())
+                        .param("domain", raw)
+                        .param("displayName", "GHOST"),
+                ).andExpect(status().isOk)
+            assertTrue(sourcePlatformRepository.findById(raw).isEmpty, "유령 도메인이 저장되면 안 된다: $raw")
+        }
+    }
+
+    @Test
+    fun `겹치는 도메인 등록에서는 가장 구체적인 도메인의 표시명이 이긴다`() {
+        // 부모/서브도메인 등록이 겹칠 때 길이 내림차순 정렬이 구체(긴) 쪽을 먼저 매칭시킨다 —
+        // 정렬·매칭 구현이 바뀌어 부모가 먼저 잡히는 회귀를 여기서 잡는다.
+        val parent = "parent-${UUID.randomUUID()}.example.com"
+        val child = "shop.$parent"
+        try {
+            sourcePlatformRepository.save(SourcePlatformEntity(domain = parent, displayName = "PARENT"))
+            sourcePlatformRepository.save(SourcePlatformEntity(domain = child, displayName = "CHILD"))
+            sourcePlatformResolver.reload()
+
+            assertEquals("CHILD", sourcePlatformResolver.resolve(ProductLink.parse("https://m.$child/item")))
+            // 부모까지만 매칭되는 host 는 여전히 부모의 표시명이다.
+            assertEquals("PARENT", sourcePlatformResolver.resolve(ProductLink.parse("https://$parent/item")))
+        } finally {
+            listOf(parent, child).forEach { d -> sourcePlatformRepository.findById(d).ifPresent { sourcePlatformRepository.delete(it) } }
+            sourcePlatformResolver.reload()
+        }
+    }
+
+    @Test
     fun `상세는 표시명을 교체하고 즉시 반영한다`() {
         val mockMvc = mockMvc()
         val domain = "detail-${UUID.randomUUID()}.example.com"
