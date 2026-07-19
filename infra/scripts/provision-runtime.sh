@@ -134,7 +134,12 @@ fi
 #    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
 # 전환기 잔재 정리: 구 수집기(team3-alloy)·구 config 경로가 남으면 새 수집기(piki-alloy, 블록이 기동)와
 # 이중 수집된다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
-docker rm -f team3-alloy 2>/dev/null || true
+# 제거 실패는 조용히 넘기지 않는다 - 새 수집기가 다른 이름이라 docker run 의 이름 충돌 안전망이 없어,
+# rm 이 조용히 실패하면 두 수집기가 같은 신호를 이중 전송하는 상태가 소리 없이 성립하기 때문.
+if docker inspect team3-alloy >/dev/null 2>&1; then
+  timeout 30 docker rm -f team3-alloy \
+    || { echo "[alloy] 구 수집기(team3-alloy) 제거 실패 - 이중 수집 방지를 위해 중단"; exit 1; }
+fi
 sudo rm -rf /etc/alloy-team3
 bash /tmp/piki-deploy/alloy/provision-alloy.sh \
   --config /tmp/piki-deploy/alloy/config.alloy \
