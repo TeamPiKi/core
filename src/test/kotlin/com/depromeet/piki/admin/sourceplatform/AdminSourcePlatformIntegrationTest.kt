@@ -87,6 +87,8 @@ class AdminSourcePlatformIntegrationTest : IntegrationTestSupport() {
         // 쿼리 문자·빈 라벨이 든 문자열은 저장돼도 어떤 URL host 와도 매칭되지 않는 유령 행이 된다 —
         // 운영 화면에선 성공으로 보이므로 저장 전에 거른다. SSR 이라 400 대신 에러를 표시한 목록 화면(200)으로 돌아온다.
         val mockMvc = mockMvc()
+        // raw 키 조회만으로는 정규화된 다른 키로 저장되는 경우를 못 잡는다 — 총량 불변으로 "어떤 키로도 저장 없음"을 고정한다.
+        val beforeCount = sourcePlatformRepository.count()
         listOf("example.com?preview=1", "foo..example.com").forEach { raw ->
             mockMvc
                 .perform(
@@ -97,6 +99,7 @@ class AdminSourcePlatformIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
             assertTrue(sourcePlatformRepository.findById(raw).isEmpty, "유령 도메인이 저장되면 안 된다: $raw")
         }
+        assertEquals(beforeCount, sourcePlatformRepository.count(), "거부된 입력은 어떤 키로도 저장되면 안 된다")
     }
 
     @Test
