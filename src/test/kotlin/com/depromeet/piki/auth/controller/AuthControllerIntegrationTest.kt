@@ -77,6 +77,8 @@ class AuthControllerIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(body),
             ).andExpect(status().isUnauthorized)
+            // 도메인 401(AuthException, code 미배정)도 handleBaseException 이 category → 공통 code 로 폴백해 COMMON-UNAUTHORIZED 를 싣는다.
+            .andExpect(jsonPath("$.code").value("COMMON-UNAUTHORIZED"))
     }
 
     @Test
@@ -88,6 +90,8 @@ class AuthControllerIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(body),
             ).andExpect(status().isBadRequest)
+            // 공통 400(입력 검증)은 COMMON-INVALID-INPUT 을 싣는다(회귀 가드).
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
     }
 
     @Test

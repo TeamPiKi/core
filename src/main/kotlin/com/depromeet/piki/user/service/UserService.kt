@@ -168,6 +168,13 @@ class UserService(
 
         // 게스트 닉네임 자동 생성 시 save 직전 race 로 unique 충돌이 나면 닉네임을 다시 뽑아 재시도하는 최대 횟수.
         private const val GUEST_NICKNAME_MAX_ATTEMPTS = 5
+
+        // 게스트 닉네임 자동 생성 시 4096 풀 전체를 IN 조회하지 않고 랜덤 64개 subset 만 조회한다(#685).
+        // 실측(Testcontainers MySQL): 호출당 ~6–8ms → ~0.2–1ms (풀 소진도에 따라 8–29×). 풀이 텅 빈 상태에서도
+        // IN(4096)은 4096 인덱스 probe 로 ~6ms 고정인데, subset 은 그 확인을 ~0.2ms 에 끝낸다.
+        // 64: 흔한 경우 subset 1회로 끝난다. subset 이 전부 taken(near-exhaustion)일 때만 전체 풀을 한 번 더
+        // 조회해 진짜 소진을 확인하므로(generateUniqueGuestNickname 의 fallback), 샘플 고갈을 풀 고갈로 오인한 실패는 없다.
+        private const val GUEST_NICKNAME_SAMPLE_SIZE = 64
     }
 
     // 게스트는 닉네임을 자동 생성하므로 '닉네임 중복' 이라는 사용자 입력 오류가 없다. 다만 generateUniqueGuestNickname()
@@ -331,7 +338,13 @@ class UserService(
     }
 
     private fun generateUniqueGuestNickname(): String {
-        val taken = userRepository.findNicknamesIn(NICKNAME_POOL).toSet()
-        return (NICKNAME_POOL - taken).randomOrNull() ?: throw UserException.nicknameGenerationFailed()
+        val sample = NICKNAME_POOL.shuffled().take(GUEST_NICKNAME_SAMPLE_SIZE)
+        val takenInSample = userRepository.findNicknamesIn(sample).toSet()
+        (sample - takenInSample).randomOrNull()?.let { return it }
+
+        // subset 이 전부 taken(near-exhaustion)이면 진짜 소진인지 전체 풀로 확인한다 — 샘플 고갈을 풀 고갈로
+        // 오인해, 사용 가능한 닉네임이 남았는데도 재생성 실패로 던지는 것을 막는다.
+        val takenInPool = userRepository.findNicknamesIn(NICKNAME_POOL).toSet()
+        return (NICKNAME_POOL - takenInPool).randomOrNull() ?: throw UserException.nicknameGenerationFailed()
     }
 }

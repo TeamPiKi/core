@@ -712,6 +712,164 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 에서 limit 을 주면 최근순 상위 N개만 반환한다`() {
+        val mockMvc = buildMockMvc()
+        createTournament(mockMvc, "토너먼트1")
+        val second = createTournament(mockMvc, "토너먼트2")
+        val third = createTournament(mockMvc, "토너먼트3") // 가장 최근
+
+        // limit 없으면 전체
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(3))
+
+        // limit=2 면 최근순 상위 2개(3번, 2번)만, 가장 오래된 1번은 제외
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("limit", "2"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(third))
+            .andExpect(jsonPath("$.data[1].tournamentId").value(second))
+    }
+
+    @Test
+    fun `GET tournaments 는 최근 등록 아이템의 이미지 최대 2장을 thumbnailUrls 에 최근순으로 담는다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc, "썸네일 토너먼트")
+        // 오래된 → 최신 순으로 3개 등록 (tournament_item id 가 증가 = 최근). 최근 2장만 최근순으로 담겨야 한다.
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/1.jpg")
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/2.jpg")
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/3.jpg")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(2))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[0]").value("https://img.example.com/3.jpg"))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[1]").value("https://img.example.com/2.jpg"))
+    }
+
+    @Test
+    fun `GET tournaments 에서 이미지 준비된 아이템이 없으면 thumbnailUrls 는 빈 배열이다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc, "미준비 토너먼트")
+        // 아직 파싱 중(PROCESSING)이라 이미지가 없는 아이템만 있는 경우
+        saveTournamentItemFor(
+            tournamentId,
+            itemJpaRepository.save(Item()),
+            status = ItemStatus.PROCESSING,
+            imageUrl = null,
+        )
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls").isArray)
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(0))
+    }
+
+    @Test
+    fun `GET tournaments 에서 limit 이 1 미만이면 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+
+        for (limit in listOf("0", "-1")) {
+            mockMvc
+                .perform(
+                    get("/api/v1/tournaments")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .param("limit", limit),
+                ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.detail").value("조회 개수는 1 이상이어야 해요."))
+        }
+    }
+
+    @Test
+    fun `GET tournaments 에서 limit 이 정수가 아니면 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("limit", "abc"),
+            ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `GET tournaments 에서 FAILED 스냅샷의 이미지는 thumbnailUrls 에서 제외된다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc, "FAILED 이미지 토너먼트")
+        // 추출 실패(FAILED)했지만 imageUrl 이 남아있는 stale 스냅샷 — 카드에 노출되면 안 된다.
+        saveTournamentItemFor(
+            tournamentId,
+            itemJpaRepository.save(Item()),
+            status = ItemStatus.FAILED,
+            imageUrl = "https://img.example.com/stale.jpg",
+        )
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(0))
+    }
+
+    @Test
+    fun `GET tournaments 에서 CLONE 토너먼트는 원본 ROOT 아이템의 썸네일을 사용한다`() {
+        val mockMvc = buildMockMvc()
+        // ROOT 는 다른 유저 소유라 내 목록엔 안 뜬다. 아이템(이미지)은 ROOT 에 붙는다.
+        val root =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 1,
+                    name = "원본 ROOT",
+                    inviteCode = "ROOT01",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                ),
+            )
+        saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root1.jpg")
+        saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root2.jpg")
+
+        // CLONE 은 자기 아이템 없이 sourceTournamentId 로 ROOT 를 가리킨다. 내가 멤버라 목록에 뜬다.
+        val clone =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 2,
+                    name = "내 CLONE",
+                    inviteCode = "CLON01",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                    sourceTournamentId = root.getId(),
+                ),
+            )
+        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(clone.getId()))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(2))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[0]").value("https://img.example.com/root2.jpg"))
+            .andExpect(jsonPath("$.data[0].thumbnailUrls[1]").value("https://img.example.com/root1.jpg"))
+    }
+
+    @Test
     fun `GET tournaments-id 는 COMPLETED 토너먼트에서 1위부터 4위까지 순위 결과를 반환한다`() {
         val mockMvc = buildMockMvc()
         val item1Id = saveWishItem(name = "1위아이템", price = 10_000)

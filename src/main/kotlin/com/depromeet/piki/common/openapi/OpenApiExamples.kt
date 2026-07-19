@@ -1,7 +1,7 @@
 package com.depromeet.piki.common.openapi
 
 import com.depromeet.piki.common.exception.BaseException
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.common.response.ApiResponseBody
 import io.swagger.v3.oas.models.Operation
@@ -58,20 +58,21 @@ class OperationExamples(
         add(
             status = exception.httpStatus,
             name = name,
-            // code 를 배정한 예외는 example 에도 code 를 실어 문서와 실제 응답을 일치시킨다.
-            // 이관 전 예외(errorCode=null)는 기존대로 code 없이 category fallback.
+            // handleBaseException 과 동일한 code 우선순위로 example 을 만든다: 예외 자신의 errorCode → 없으면
+            // category 로 공통 code 파생(도메인 code 없는 5xx 를 공통 5xx code 로 뭉침) → 그것도 없으면 category fallback.
+            // 실제 응답과 lockstep 이라 5xx 외부 의존성 예외도 example 이 code 를 정확히 보여준다.
             payload =
-                exception.errorCode
+                (exception.errorCode ?: CommonErrorCode.of(exception.category))
                     ?.let { ApiResponseBody.fail<Unit>(it, exception.message) }
                     ?: ApiResponseBody.fail<Unit>(category = exception.category, detail = exception.message),
         )
 
-    // Security 필터 단(ApiResponseSecurityErrorHandlers)이 내려보내는 401/403 은 detail 없이 fail(category) 라
+    // Security 필터 단(ApiResponseSecurityErrorHandlers)이 내려보내는 401/403 은 detail 없이 fail(errorCode) 라
     // 전 엔드포인트에 같은 example 이 반복된다. 그 보일러플레이트를 한 자리로 모은다.
     // (도메인 예외 403 처럼 detail 이 있는 응답은 그대로 add 를 직접 쓴다.)
     fun unauthorized(name: String = "인증 필요") =
-        add(HttpStatus.UNAUTHORIZED, name, ApiResponseBody.fail<Unit>(category = ErrorCategory.UNAUTHORIZED))
+        add(HttpStatus.UNAUTHORIZED, name, ApiResponseBody.fail<Unit>(CommonErrorCode.UNAUTHORIZED))
 
     fun forbidden(name: String) =
-        add(HttpStatus.FORBIDDEN, name, ApiResponseBody.fail<Unit>(category = ErrorCategory.FORBIDDEN))
+        add(HttpStatus.FORBIDDEN, name, ApiResponseBody.fail<Unit>(CommonErrorCode.FORBIDDEN))
 }

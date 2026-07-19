@@ -1,6 +1,6 @@
 package com.depromeet.piki.user.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -43,14 +43,8 @@ class UserApiExamples(
                                 ),
                         )
                         unauthorized()
-                        add(
-                            status = HttpStatus.NOT_FOUND,
-                            name = "유저 없음 (JWT 유효하나 DB에 없음)",
-                            payload =
-                                ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.NOT_FOUND,
-                                ),
-                        )
+                        // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
+                        add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
                     }
 
                 handlerMethod.binds(UserController::updateMe) ->
@@ -74,7 +68,7 @@ class UserApiExamples(
                             name = "닉네임 길이/공백 검증 실패",
                             payload =
                                 ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.INVALID_INPUT,
+                                    CommonErrorCode.INVALID_INPUT,
                                     // @ModelAttribute(multipart) Bean Validation 위반도 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                     detail = UserUpdateRequest.NICKNAME_SIZE_MESSAGE,
                                 ),
@@ -89,20 +83,14 @@ class UserApiExamples(
                         add(UserException.deletedUser(), name = "탈퇴한 유저")
                         unauthorized()
                         add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 수정 거부")
-                        add(
-                            status = HttpStatus.NOT_FOUND,
-                            name = "유저 없음 (JWT 유효하나 DB에 없음)",
-                            payload =
-                                ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.NOT_FOUND,
-                                ),
-                        )
+                        // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
+                        add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
                         // multipart 한도 초과 — ResponseEntityExceptionHandler 가 표준으로 413 처리하고
                         // handleExceptionInternal 이 ApiResponseBody(category=INVALID_INPUT, 기본 detail)로 감싼다.
                         add(
                             status = HttpStatus.PAYLOAD_TOO_LARGE,
                             name = "파일 크기 초과",
-                            payload = ApiResponseBody.fail<Unit>(category = ErrorCategory.INVALID_INPUT),
+                            payload = ApiResponseBody.fail<Unit>(CommonErrorCode.INVALID_INPUT),
                         )
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장소(S3) 업로드 실패")
                     }
@@ -116,14 +104,8 @@ class UserApiExamples(
                         )
                         unauthorized()
                         add(UserException.guestCannotWithdraw(), name = "게스트 탈퇴 거부")
-                        add(
-                            status = HttpStatus.NOT_FOUND,
-                            name = "유저 없음 (JWT 유효하나 DB에 없음)",
-                            payload =
-                                ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.NOT_FOUND,
-                                ),
-                        )
+                        // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
+                        add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
                     }
 
                 handlerMethod.binds(UserController::checkNickname) ->
@@ -143,7 +125,7 @@ class UserApiExamples(
                             name = "닉네임 형식 검증 실패",
                             payload =
                                 ApiResponseBody.fail<Unit>(
-                                    category = ErrorCategory.INVALID_INPUT,
+                                    CommonErrorCode.INVALID_INPUT,
                                     // 쿼리 파라미터 바인딩 @Valid 위반도 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                     detail = NicknameCheckRequest.NICKNAME_SIZE_MESSAGE,
                                 ),

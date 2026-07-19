@@ -1,6 +1,6 @@
 package com.depromeet.piki.notification.fcm.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -38,7 +38,7 @@ class DevFcmApiExamples(
                         name = "토큰 누락",
                         payload =
                             ApiResponseBody.fail<DevPushResponse>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 detail = DevPushRequest.TOKEN_BLANK_MESSAGE,
                             ),
                     )
@@ -47,7 +47,7 @@ class DevFcmApiExamples(
                         name = "badge 음수",
                         payload =
                             ApiResponseBody.fail<DevPushResponse>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 detail = DevPushRequest.BADGE_NON_NEGATIVE_MESSAGE,
                             ),
                     )

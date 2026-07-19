@@ -1,6 +1,6 @@
 package com.depromeet.piki.notification.fcm.controller
 
-import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
@@ -31,7 +31,7 @@ class FcmTokenApiExamples(
                         name = "토큰 또는 기기 식별자 누락",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 detail = FcmTokenRegisterRequest.BLANK_MESSAGE,
                             ),
                     )
@@ -50,7 +50,7 @@ class FcmTokenApiExamples(
                         name = "기기 식별자 누락",
                         payload =
                             ApiResponseBody.fail<Unit>(
-                                category = ErrorCategory.INVALID_INPUT,
+                                CommonErrorCode.INVALID_INPUT,
                                 detail = FcmDeviceUnregisterRequest.DEVICE_ID_BLANK_MESSAGE,
                             ),
                     )
