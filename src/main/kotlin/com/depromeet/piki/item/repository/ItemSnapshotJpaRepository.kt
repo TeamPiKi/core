@@ -13,9 +13,13 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDateTime
 
 // FOR UPDATE 에 SKIP LOCKED 를 더하는 힌트 값 (Hibernate LockOptions.SKIP_LOCKED = -2).
-// claim 계열 범위 스캔이 잠긴 entry 를 만나면 "대기" 대신 "건너뛰기" 한다 — 대기가 없으면 교착 사이클도 성립할 수 없다.
-// 이게 없으면 "PENDING snapshot 을 다건 insert 중인 요청 트랜잭션" 과 next-key/gap 락 교착이 성립해(실측 재현),
-// InnoDB 가 요청 쪽을 victim 으로 고르면 사용자 요청이 간헐 500 으로 떨어진다. 건너뛴 행은 다음 폴링 주기가 집는다.
+// claim 계열 locking read 가 잠긴 레코드를 만나면 "대기" 대신 "건너뛰기" 한다. 교착의 재료는 상호 대기라,
+// 이 스캔이 절대 기다리지 않으면 스캔이 끼는 사이클은 성립 자체가 불가능하다.
+// 실측(InnoDB deadlock 리포트 확보): 동시에 돈 claim 둘이 같은 snapshot 행을 보조 인덱스(스캔의 next-key)와
+// PRIMARY(상태 전이 UPDATE 의 인덱스 유지보수)에서 서로 반대 순서로 잠가 교착했다. 이 계열의 victim 이
+// 사용자 요청 트랜잭션 쪽으로 떨어지면 간헐 500 이 된다. 건너뛴 행은 다음 폴링 주기가 집는다.
+// 부수 발견: 옵티마이저가 이 SELECT 를 PRIMARY 풀스캔으로 실행하면 FOR UPDATE 가 전 행 + supremum 에
+// next-key 락을 깔아 충돌 표면이 상태 필터와 무관하게 커진다 — SKIP LOCKED 는 그 경우에도 대기를 제거한다.
 private const val SKIP_LOCKED = "-2"
 
 interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {

@@ -21,9 +21,9 @@ import java.time.LocalDateTime
 // 재시도해도 결과가 뻔한 확정 실패(상품 아님 등)는 워커가 즉시 FAILED 하고, recover 는 "실행이 안 끝난" 행만 맡는다.
 //
 // 단일 인스턴스 기준의 @Scheduled 다. claim 은 FOR UPDATE SKIP LOCKED 라(ItemSnapshotJpaRepository) 중복 파싱을
-// 막으면서도 잠긴 행에 대기하지 않는다 — "PENDING 다건 insert 중인 요청 트랜잭션" 과의 교착(요청이 victim 이면
-// 간헐 500, 실측 재현)을 제거했고, 멀티 인스턴스에서도 두 디스패처가 서로 다른 행을 집는다(work-queue 분산).
-// 멀티 인스턴스 시 남는 보강은 ShedLock(폴링 단일 실행) 정도다.
+// 막으면서도 잠긴 행에 대기하지 않는다 — claim 스캔이 대기 에지로 끼는 InnoDB 교착(실측: 동시 locking 트랜잭션이
+// 같은 행을 보조 인덱스와 PRIMARY 에서 반대 순서로 잠그는 사이클, victim 이 요청 쪽이면 간헐 500)을 제거했고,
+// 멀티 인스턴스에서도 두 디스패처가 서로 다른 행을 집는다(work-queue 분산). 남는 보강은 ShedLock(폴링 단일 실행) 정도다.
 @Component
 class ItemParsingScheduler(
     private val itemParsingService: ItemParsingService,
