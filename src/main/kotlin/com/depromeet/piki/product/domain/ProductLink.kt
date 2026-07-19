@@ -18,9 +18,13 @@ class ProductLink private constructor(
     // domains 항목은 소문자·trailing dot 없는 정규형이어야 한다 — 출처(DB 정책의 admin 경계와 엔티티 불변식)가
     // 정규화를 책임진다. 새 출처가 생기면 그 출처가 같은 정규화를 진다.
     fun matchesAnyDomain(domains: Collection<String>): Boolean {
-        val host = value.host?.trimEnd('.')?.lowercase() ?: return false
+        val host = normalizedHost() ?: return false
         return domains.any { host == it || host.endsWith(".$it") }
     }
+
+    // host 정규형(trailing dot 제거·lowercase). 도메인 매칭(위 matchesAnyDomain)과 출처 몰 표시명 유도
+    // (SourcePlatformResolver)가 같은 정규형을 공유한다 — 규칙이 갈라지지 않게 여기가 주인이다.
+    fun normalizedHost(): String? = value.host?.trimEnd('.')?.lowercase()
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
