@@ -329,6 +329,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                     ),
                 ),
             ).andExpect(status().isBadGateway)
+            .andExpect(jsonPath("$.code").value("OAUTH-001"))
             .andExpect(jsonPath("$.detail").value("로그인에 실패했어요. 잠시 후 다시 시도해 주세요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
@@ -345,6 +346,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                     ),
                 ),
             ).andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.code").value("OAUTH-006"))
             .andExpect(jsonPath("$.detail").value("로그인 정보가 만료됐어요. 다시 로그인해 주세요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
@@ -364,14 +366,15 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                     ),
                 ),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("OAUTH-005"))
             .andExpect(jsonPath("$.detail").value("로그인 정보가 만료됐어요. 다시 시도해 주세요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
 
     @Test
-    fun `OAuth 설정 오류 - misconfigured 는 502 로 매핑된다 (provider 장애 502 와 detail 로 구분)`() {
-        // 우리 OAuth 설정 오류(invalid_client 등)는 외부 호출 경계 실패라 502 + SERVER_ERROR 로 내려간다
-        // (GeminiApiException.clientError 와 같은 결). RETRYABLE 502(provider 장애)와는 detail 로 구분된다.
+    fun `OAuth 설정 오류 - misconfigured 는 500 OAUTH-007 로 매핑된다`() {
+        // 우리 OAuth 설정 오류(invalid_client 등)는 상류 장애가 아니라 우리 서버 버그라 500 + SERVER_ERROR(OAUTH-007).
+        // provider 일시 장애(OAUTH-001, 502 RETRYABLE)와는 code·status 로 구분된다.
         googleOAuthClient.fetchByAccessTokenStub =
             { throw OAuthException.misconfigured(RuntimeException("client secret invalid")) }
 
@@ -382,7 +385,8 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                         "accessToken" to "t",
                     ),
                 ),
-            ).andExpect(status().isBadGateway)
+            ).andExpect(status().isInternalServerError)
+            .andExpect(jsonPath("$.code").value("OAUTH-007"))
             .andExpect(jsonPath("$.detail").value("로그인에 실패했어요. 잠시 후 다시 시도해 주세요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
