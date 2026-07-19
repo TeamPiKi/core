@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.net.URI
+import java.net.URISyntaxException
 import java.time.LocalDateTime
 
 // 백오피스 출처 몰 표시명 관리(#766). 배포 없이 도메인별 표시명(위시 응답 sourcePlatform)을 저장(upsert)·삭제한다.
@@ -86,8 +88,18 @@ class AdminSourcePlatformService(
             "도메인만 입력해 주세요 (스킴·경로 제외, 예: 29cm.co.kr)"
         }
         require(domain.contains('.')) { "올바른 도메인 형식이 아닙니다 (예: 29cm.co.kr)" }
+        // URL host 로 해석될 수 없는 문자열(쿼리 문자 포함·빈 라벨 등)은 저장은 되지만 어떤 URL host 와도 매칭되지
+        // 않는 유령 행이 된다 — 운영 화면에선 성공으로 보여 더 위험하다. host 파싱 결과가 입력과 정확히 일치할 때만 통과.
+        require(domain == parseHost(domain)) { "올바른 도메인 형식이 아닙니다 (예: 29cm.co.kr)" }
         return domain
     }
+
+    private fun parseHost(domain: String): String? =
+        try {
+            URI("https://$domain").host
+        } catch (e: URISyntaxException) {
+            null
+        }
 
     // DB 컬럼 한계(둘 다 255)를 서비스에서 먼저 막아 운영자 입력 실수를 편집 화면 에러로 처리한다.
     // 안 막으면 커밋 시점 DB 제약 위반으로 500 이 난다 (AdminExtractionPolicyService.validateLengths 와 같은 이유).
