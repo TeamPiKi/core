@@ -138,7 +138,8 @@ jobs:
         with:
           repository: TeamPiKi/infra
           ref: main
-          path: piki-infra
+          # 경로 별칭은 shared-infra - core 자신의 infra/(서비스 전용)와 "공용 정본" 이 이름으로 구분되게 한다.
+          path: shared-infra
           sparse-checkout: |
             blocks
           sparse-checkout-cone-mode: true
@@ -205,7 +206,7 @@ jobs:
       # (/tmp/piki-deploy)에 안착시킨다 — strip_components: 2 로 depth-3 소스는 파일명만 남고, alloy 블록
       # (depth-4)은 alloy/ 하위(/tmp/piki-deploy/alloy/*)로 남아 provision-runtime.sh 가 그 경로로 호출한다(#743).
       # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
-      # source: infra/* 는 Checkout, piki-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 것(둘 다 위에서 실행).
+      # source: infra/* 는 Checkout(서비스 전용), shared-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 공용 정본.
       # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
       # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
       - name: Upload deploy files
@@ -218,9 +219,10 @@ jobs:
           source: |
             infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
             infra/scripts/provision-runtime.sh,
-            piki-infra/blocks/alloy/config.alloy,
-            piki-infra/blocks/alloy/provision-alloy.sh,
-            piki-infra/blocks/healthcheck.sh
+            shared-infra/blocks/alloy/config.alloy,
+            shared-infra/blocks/alloy/provision-alloy.sh,
+            shared-infra/blocks/healthcheck.sh,
+            shared-infra/blocks/run_container.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
 
@@ -417,8 +419,8 @@ jobs:
               exit 1
             fi
             # NAME<TAB>base64(VALUE) 로 뽑아 파일에 쓴 뒤(파이프 서브셸의 export 유실을 피하려 파일 리다이렉트로 루프),
-            # UPPER_SNAKE 로 복원해 export + '-e KEY' 플래그(RUN_ENV_FLAGS)를 모은다. 플래그엔 값이 없어(-e KEY passthrough)
-            # 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
+            # UPPER_SNAKE 로 복원해 export + '--env KEY' 플래그(RUN_ENV_FLAGS, run_container 블록의 passthrough)를
+            # 모은다. 플래그엔 값이 없어 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
             umask 077
             SSM_KV="$(mktemp)"
             printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
@@ -439,7 +441,7 @@ jobs:
               # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
               E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
               export "$E_KEY=$E_VAL"
-              RUN_ENV_FLAGS="$RUN_ENV_FLAGS -e $E_KEY"
+              RUN_ENV_FLAGS="$RUN_ENV_FLAGS --env $E_KEY"
             done < "$SSM_KV"
             rm -f "$SSM_KV"
             echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
@@ -535,30 +537,31 @@ jobs:
             # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md) — 박스 Alloy 가
             #   이 라벨로 수집 대상을 인식한다(로그=observe+service, 메트릭=+port). piki.metrics.port 는
             #   호스트 127.0.0.1 에서 닿는 published 포트라 슬롯 포트($INACTIVE_PORT)를 준다.
-            docker run -d \
+            # 기동은 공용 블록(run_container.sh, extractor·renderer 와 동일)에 위임한다. 블록이 기동 직후
+            #   "Running + 재시작 0회" 검증까지 책임져 즉사 크래시가 헬스 폴링 전에 조기 검출된다.
+            #   env 는 전부 '--env KEY' passthrough - 위에서 export 한 값을 docker 가 직접 읽어
+            #   argv·로그 노출이 없고 다중행 PEM 도 전달된다. 슬롯 계산·graceful stop·로그 덤프는
+            #   blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
+            export JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}"
+            export LOG_STRUCTURED="ecs"
+            export TRACING_OTLP_ENABLED="true"
+            bash /tmp/piki-deploy/run_container.sh \
               --name "piki-core-$INACTIVE" \
+              --image "$IMAGE" \
+              --restart unless-stopped \
+              --publish "127.0.0.1:$INACTIVE_PORT:8080" \
               --label piki.observe=true \
               --label piki.service=piki-core \
               --label "piki.metrics.port=$INACTIVE_PORT" \
               --label piki.metrics.path=/actuator/prometheus \
-              --restart unless-stopped \
-              -p "127.0.0.1:$INACTIVE_PORT:8080" \
-              --add-host=host.docker.internal:host-gateway \
-              --memory=${{ needs.resolve.outputs.mem_limit }} --memory-swap=${{ needs.resolve.outputs.mem_swap }} \
-              -e JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}" \
-              -e LOG_STRUCTURED="ecs" \
-              -e TRACING_OTLP_ENABLED="true" \
-              -e SPRING_PROFILES_ACTIVE="$SPRING_PROFILES_ACTIVE" \
-              -e EXTRACT_REMOTE_BASE_URL="$EXTRACT_REMOTE_BASE_URL" \
-              -e ADMIN_ENABLED="$ADMIN_ENABLED" \
-              -e ENV_ACCESS_GATE="$ENV_ACCESS_GATE" \
-              -e ADMIN_ENVIRONMENT="$ADMIN_ENVIRONMENT" \
-              -e SPRINGDOC_ENABLED="$SPRINGDOC_ENABLED" \
+              --add-host host.docker.internal:host-gateway \
+              --memory "${{ needs.resolve.outputs.mem_limit }}" \
+              --memory-swap "${{ needs.resolve.outputs.mem_swap }}" \
+              --env JAVA_TOOL_OPTIONS --env LOG_STRUCTURED --env TRACING_OTLP_ENABLED \
+              --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
+              --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED \
               $RUN_ENV_FLAGS \
-              -e SENTRY_DSN="$SENTRY_DSN" \
-              -e SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
-              -e SENTRY_RELEASE="$SENTRY_RELEASE" \
-              "$IMAGE"
+              --env SENTRY_DSN --env SENTRY_ENVIRONMENT --env SENTRY_RELEASE
 
       - name: Health check and switch
         id: health
