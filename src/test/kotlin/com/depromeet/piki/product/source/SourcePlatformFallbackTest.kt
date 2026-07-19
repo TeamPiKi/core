@@ -15,11 +15,11 @@ class SourcePlatformFallbackTest {
         "29cm.co.kr, 29cm",
         "m.a-bly.com, a-bly",
         "global.oliveyoung.com, oliveyoung",
-        // PSL private 섹션의 호스팅 suffix — 등록 가능 도메인이 brand.github.io 라 브랜드 라벨이 나온다.
-        "brand.github.io, brand",
-        // 문서화된 한계: PSL 에 없는 임의 다단 도메인은 suffix(com) 바로 앞 라벨로 떨어진다("muuusinsa" 는
-        // host 문자열만으로 판별 불가). 이런 잔여는 백오피스 수동 등록이 덮는다.
-        "muuusinsa.as.as.as.com, as",
+        // PSL private 섹션의 커머스 호스팅 suffix — 등록 가능 도메인이 brand.myshopify.com 이라 입점 브랜드 라벨이 나온다.
+        "brand.myshopify.com, brand",
+        // 문서화된 한계: PSL 에 없는 호스팅 suffix(cafe24.com)는 입점 브랜드가 아니라 호스팅사 라벨로 떨어진다
+        // (host 문자열만으로는 어느 라벨이 브랜드인지 판별 불가). 이런 잔여는 백오피스 수동 등록이 덮는다.
+        "brand.cafe24.com, cafe24",
     )
     fun `등록 가능 도메인의 첫 라벨을 임시 표시명으로 유도한다`(
         host: String,
@@ -37,7 +37,7 @@ class SourcePlatformFallbackTest {
             "localhost",
             // public suffix 자체 (ICANN·private 섹션) — 등록 가능 도메인이 없다.
             "co.kr",
-            "github.io",
+            "myshopify.com",
         ],
     )
     fun `도메인 문법이 아니거나 등록 가능 도메인이 없으면 host 원형을 그대로 쓴다`(host: String) {
