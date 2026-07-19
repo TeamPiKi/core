@@ -30,6 +30,7 @@ import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -118,6 +119,9 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
             val status200 = AtomicInteger(0)
             val status400 = AtomicInteger(0)
+            // 예상 밖 응답은 삼키지 않고 증거(status+body)로 보존한다 — 과거 outbox claim 과의 InnoDB 교착으로
+            // 간헐 500 이 여기 떨어졌을 때, else 없는 when 이 정체를 삼켜 원인 추적이 불가능했다(SKIP LOCKED 로 근본 해결).
+            val unexpectedResponses = CopyOnWriteArrayList<String>()
             val executor = Executors.newFixedThreadPool(2)
             val ready = CountDownLatch(2)
             val start = CountDownLatch(1)
@@ -136,6 +140,9 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
                         when (res.response.status) {
                             200, 201 -> status200.incrementAndGet()
                             400 -> status400.incrementAndGet()
+                            else -> unexpectedResponses.add(
+                                "status=${res.response.status} body=${res.response.contentAsString}",
+                            )
                         }
                     } finally {
                         done.countDown()
@@ -153,6 +160,7 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
                 executor.shutdownNow()
             }
 
+            assertTrue(unexpectedResponses.isEmpty(), "200/400 외 응답이 있었다 — 증거: $unexpectedResponses")
             assertEquals(1, status200.get(), "정확히 하나만 성공이어야 한다 (5장 담기 성공)")
             assertEquals(1, status400.get(), "나머지 하나는 락 대기 후 32개 초과로 400 이어야 한다")
 

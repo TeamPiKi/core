@@ -20,9 +20,10 @@ import java.time.LocalDateTime
 //   2. 재실행 상한 2회(MAX_ATTEMPTS). 최악 총 시간 = 2 x (60s 윈도 + recover 주기 15s) = 약 150s 로, 절대 3분을 넘지 않는다.
 // 재시도해도 결과가 뻔한 확정 실패(상품 아님 등)는 워커가 즉시 FAILED 하고, recover 는 "실행이 안 끝난" 행만 맡는다.
 //
-// 단일 인스턴스 기준의 @Scheduled 다. 멀티 인스턴스로 가면 claim 의 FOR UPDATE 가 중복 파싱(두 워커가 같은 행)은
-// 막지만, SKIP LOCKED 가 없어 두 디스패처가 같은 선두 batch 를 두고 락 대기로 직렬화된다 — 그때는 SKIP LOCKED
-// (work-queue 분산) + ShedLock(폴링 단일 실행) 으로 보강해야 한다.
+// 단일 인스턴스 기준의 @Scheduled 다. claim 은 FOR UPDATE SKIP LOCKED 라(ItemSnapshotJpaRepository) 중복 파싱을
+// 막으면서도 잠긴 행에 대기하지 않는다 — "PENDING 다건 insert 중인 요청 트랜잭션" 과의 교착(요청이 victim 이면
+// 간헐 500, 실측 재현)을 제거했고, 멀티 인스턴스에서도 두 디스패처가 서로 다른 행을 집는다(work-queue 분산).
+// 멀티 인스턴스 시 남는 보강은 ShedLock(폴링 단일 실행) 정도다.
 @Component
 class ItemParsingScheduler(
     private val itemParsingService: ItemParsingService,
