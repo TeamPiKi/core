@@ -200,9 +200,10 @@ jobs:
           docker push "$IMAGE_LATEST"
           docker push "$IMAGE_SHA"
 
-      # 배포에 필요한 설정 4개(nginx conf·provision 스크립트·alloy config·healthcheck 블록)를 SSH 연결 1회로
-      # 함께 올린다. 4개를 각각 scp 하면 핸드셰이크·액션 셋업이 4번 반복돼 약 37초인데, 소스가 모두 depth-3 라
-      # strip_components: 2 로 파일명만 남겨 한 스테이징 디렉토리(/tmp/piki-deploy)에 평평하게 안착시킨다.
+      # 배포에 필요한 설정 5개(nginx conf·provision 스크립트·alloy 공용 블록 2파일·healthcheck 블록)를 SSH 연결
+      # 1회로 함께 올린다. 각각 scp 하면 핸드셰이크·액션 셋업이 반복돼 수십 초라 한 스테이징 디렉토리
+      # (/tmp/piki-deploy)에 안착시킨다 — strip_components: 2 로 depth-3 소스는 파일명만 남고, alloy 블록
+      # (depth-4)은 alloy/ 하위(/tmp/piki-deploy/alloy/*)로 남아 provision-runtime.sh 가 그 경로로 호출한다(#743).
       # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
       # source: infra/* 는 Checkout, piki-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 것(둘 다 위에서 실행).
       # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
@@ -217,7 +218,8 @@ jobs:
           source: |
             infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
             infra/scripts/provision-runtime.sh,
-            infra/alloy/config.alloy,
+            piki-infra/blocks/alloy/config.alloy,
+            piki-infra/blocks/alloy/provision-alloy.sh,
             piki-infra/blocks/healthcheck.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
@@ -325,16 +327,13 @@ jobs:
           GRAFANA_TRACES_URL: ${{ secrets.GRAFANA_TRACES_URL }}
           GRAFANA_TRACES_USER: ${{ secrets.GRAFANA_TRACES_USER }}
           GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
-          # piki-extractor(파싱 분리 이관) 메트릭 scrape 대상 — Alloy(--network host)가 이 주소를 긁는다.
-          # dev=동거 컨테이너(localhost:8090), prod=전용 박스(secrets.EXTRACTOR_PROD_ADDRESS, 앱 SG→8090 허용). staging 은
-          # 빈 값 → config.alloy 가 discard 포트로 fallback(prod extractor 는 prod Alloy 가 이미 수집, 환경 라벨 오염 방지).
-          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다).
-          EXTRACTOR_METRICS_TARGET: ${{ needs.resolve.outputs.environment == 'dev' && 'localhost:8090' || (needs.resolve.outputs.environment == 'prod' && secrets.EXTRACTOR_PROD_ADDRESS || '') }}
+          # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
+          # extractor prod 박스는 자체 Alloy 가 수집한다. dev 동거 extractor 는 컨테이너 라벨로 잡힌다.
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN,EXTRACTOR_METRICS_TARGET
+          envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN
           script: |
             chmod +x /tmp/piki-deploy/provision-runtime.sh
             /tmp/piki-deploy/provision-runtime.sh
@@ -495,12 +494,16 @@ jobs:
             echo "  DEPLOY  : $INACTIVE (port $INACTIVE_PORT) [new version]"
             echo "================================================"
 
-            # 로그 백업 후 비활성 슬롯 정리
+            # 로그 백업 후 비활성 슬롯 정리 (디렉토리명은 컨테이너명 개편(#743)과 무관한 박스 로컬 경로라 유지)
             mkdir -p /var/log/team3
-            docker logs "team3-$INACTIVE" > /var/log/team3/team3-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
-            find /var/log/team3 -name "team3-*.log" -mtime +7 -delete || true
+            docker logs "piki-core-$INACTIVE" > /var/log/team3/piki-core-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
+            find /var/log/team3 -name "*.log" -mtime +7 -delete || true
             # 직전 배포의 구버전 teardown 이 timeout 으로 끊겨 이 슬롯 컨테이너가 살아있을 수 있다.
             # 아래 docker run 의 name/port 충돌을 막으려 force 로 지우고, 데몬 지연에 대비해 timeout 으로 상한을 건다.
+            timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
+            timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
+            # 전환기(#743): 컨테이너명 개편 이전 이름(team3-*)이 이 슬롯 포트를 물고 있으면 run 이 포트 충돌로
+            # 깨진다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
             timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
             timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
 
@@ -529,8 +532,15 @@ jobs:
             #   식은 페이지는 swap 에 남는다. memory-swap 은 부팅 스파이크가 RAM 을 잠깐 넘어도 cgroup-OOM 대신 swap 으로
             #   흘려 배포가 안 깨지게 하는 쿠션이다. 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정.
             #   ExitOnOutOfMemoryError: 힙 OOM 시 즉시 종료→재시작.
+            # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md) — 박스 Alloy 가
+            #   이 라벨로 수집 대상을 인식한다(로그=observe+service, 메트릭=+port). piki.metrics.port 는
+            #   호스트 127.0.0.1 에서 닿는 published 포트라 슬롯 포트($INACTIVE_PORT)를 준다.
             docker run -d \
-              --name "team3-$INACTIVE" \
+              --name "piki-core-$INACTIVE" \
+              --label piki.observe=true \
+              --label piki.service=piki-core \
+              --label "piki.metrics.port=$INACTIVE_PORT" \
+              --label piki.metrics.path=/actuator/prometheus \
               --restart unless-stopped \
               -p "127.0.0.1:$INACTIVE_PORT:8080" \
               --add-host=host.docker.internal:host-gateway \
@@ -580,20 +590,21 @@ jobs:
               echo "server localhost:$INACTIVE_PORT;" | sudo tee /etc/nginx/team3-upstream.conf
               sudo nginx -s reload
               echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
-              # 구버전 종료 (team3-server 마이그레이션 포함) — switch 는 이미 끝났으므로 best-effort.
+              # 구버전 종료 (레거시 이름 team3-$ACTIVE·team3-server 포함 — 컨테이너명 개편(#743) 전환기와
+              # 그 이전 마이그레이션 잔재. 없으면 no-op 라 유지 비용 없음) — switch 는 이미 끝났으므로 best-effort.
               # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
               # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
               # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
-              timeout 60 docker stop -t 30 "team3-$ACTIVE" team3-server 2>/dev/null || true
-              timeout 30 docker rm -f "team3-$ACTIVE" team3-server 2>/dev/null || true
+              timeout 60 docker stop -t 30 "piki-core-$ACTIVE" "team3-$ACTIVE" team3-server 2>/dev/null || true
+              timeout 30 docker rm -f "piki-core-$ACTIVE" "team3-$ACTIVE" team3-server 2>/dev/null || true
               echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
               echo "================================================"
               exit 0
             else
               echo "Health check failed — rolling back"
               # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
-              timeout 40 docker stop -t 30 "team3-$INACTIVE" 2>/dev/null || true
-              timeout 30 docker rm -f "team3-$INACTIVE" 2>/dev/null || true
+              timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
+              timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
               exit 1
             fi
 
