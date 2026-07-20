@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
+import kotlin.test.assertContains
 
 @Transactional
 class UserControllerIntegrationTest : IntegrationTestSupport() {
@@ -386,6 +387,35 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId)}"),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
+    fun `PATCH users me - 영속화가 409 로 떨어지면 방금 올린 프로필 이미지를 S3 에서 회수한다`() {
+        // 업로드는 트랜잭션 밖에서 먼저 끝나므로, 뒤이은 영속화가 떨어지면 아무도 안 가리키는 객체가 남는다.
+        // 프로필 사진은 PII 라 lifecycle 만료에 맡기지 않고 즉시 회수해야 한다.
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val otherUserId = UUID.randomUUID()
+        insertUser(otherUserId, nickname = "점유닉네임", identityType = IdentityType.MEMBER)
+        val myUserId = UUID.randomUUID()
+        insertUser(myUserId, nickname = "내닉네임", identityType = IdentityType.MEMBER)
+        val image = MockMultipartFile("image", "photo.jpg", "image/jpeg", jpegBytes())
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                    .file(image)
+                    .param("nickname", "점유닉네임")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId, IdentityType.MEMBER)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+
+        // 이 요청이 올린 key 가 그대로 삭제 호출됐는지 — 회수 대상이 방금 올린 그 객체여야 한다.
+        val uploadedKey = stubImageStorage.uploadedKeys.last { it.startsWith("profiles/$myUserId/") }
+        assertContains(stubImageStorage.deletedKeys, uploadedKey)
     }
 
     @Test

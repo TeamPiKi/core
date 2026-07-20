@@ -36,6 +36,19 @@ class ProfileUpdateService(
         val key = "profiles/$userId/${UUID.randomUUID()}.${profileImage.extension}"
         val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
         log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
-        return userService.updateProfile(userId, nickname, url)
+        // 영속화가 떨어지면 방금 올린 객체가 아무도 안 가리키는 orphan 으로 남는다 — 닉네임 중복(409)이 흔한
+        // 트리거이고, 활성 확인과 영속화 사이에 탈퇴가 커밋되면 탈퇴 cascade 의 prefix 파기가 이미 지나간 뒤라
+        // 프로필 사진(얼굴 등 PII)이 S3 에 계속 남는다. 그래서 lifecycle 에 맡기지 않고 즉시 회수한다
+        // (registerFromImages 의 raw 회수와 같은 패턴).
+        return runCatching { userService.updateProfile(userId, nickname, url) }
+            .onFailure { deleteQuietly(key) }
+            .getOrThrow()
+    }
+
+    // 보상 삭제는 best-effort — 회수 자체가 실패해도 원래 예외(409 등)를 가리지 않도록 삼키고 로그만 남긴다.
+    // delete 는 객체가 없어도 no-op(멱등)이라 언제 불러도 안전하다.
+    private fun deleteQuietly(key: String) {
+        runCatching { imageStorage.delete(key) }
+            .onFailure { e -> log.warn("프로필 이미지 {} 회수 실패(orphan 잔존, lifecycle 대상): {}", key, e.message) }
     }
 }
