@@ -12,8 +12,8 @@ import kotlin.test.assertEquals
 // KakaoOAuthErrorClassifier 의 분기를 망라하는 순수 단위 테스트 (Spring·DB 없음).
 // token endpoint 와 user API 는 바디 포맷·분기 필드가 다르므로(전자는 문자열 error_code, 후자는 정수 code)
 // 두 경로를 각각 별도 @ParameterizedTest 로 분리한다.
-// 우리 설정 오류와 provider 장애는 둘 다 502 라 httpStatus 만으로 구분되지 않으므로
-// category(SERVER_ERROR vs RETRYABLE)까지 함께 단언해 의도를 검증한다 (GeminiApiException 과 같은 결).
+// 우리 설정 오류는 500/SERVER_ERROR(우리 버그), provider 장애는 502/RETRYABLE 로 이제 status 로도 구분되지만,
+// 의도(재시도 여부·책임 소재)를 명확히 하려고 category 까지 함께 단언한다.
 class KakaoOAuthErrorClassifierTest {
     // token endpoint: { error, error_description, error_code(KOE...) } — 문자열 error_code 로 분기.
     @ParameterizedTest(name = "[{index}] {3} → {1}/{2}")
@@ -59,12 +59,12 @@ class KakaoOAuthErrorClassifierTest {
                     "KOE320 (invalid_grant) → 400",
                     """{"error":"invalid_grant","error_description":"authorization code not found","error_code":"KOE320"}""",
                 ),
-                // 502 SERVER_ERROR: 우리 설정 오류(REST 키·secret·redirect 불일치 등). 외부 경계 실패라 502, 재시도 무의미라 SERVER_ERROR.
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "KOE101 → 502/SERVER_ERROR", """{"error":"invalid_client","error_code":"KOE101"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "KOE010 → 502/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE010"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "KOE303 → 502/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE303"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "KOE114 → 502/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE114"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "KOE310 → 502/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE310"}"""),
+                // 500 SERVER_ERROR: 우리 설정 오류(REST 키·secret·redirect 불일치 등). 우리 서버 버그라 500, 재시도 무의미라 SERVER_ERROR.
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "KOE101 → 500/SERVER_ERROR", """{"error":"invalid_client","error_code":"KOE101"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "KOE010 → 500/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE010"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "KOE303 → 500/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE303"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "KOE114 → 500/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE114"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "KOE310 → 500/SERVER_ERROR", """{"error":"invalid_request","error_code":"KOE310"}"""),
                 // 502 RETRYABLE: KOE003 — 카카오 OAuth 서버 일시 오류(재시도 대상).
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "KOE003 → 502/RETRYABLE", """{"error":"server_error","error_code":"KOE003"}"""),
                 // 502 RETRYABLE fallback — 미지 KOE / error_code 부재 / blank / 파싱 실패.
@@ -90,9 +90,9 @@ class KakaoOAuthErrorClassifierTest {
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "-1 → 502/RETRYABLE", """{"msg":"internal server error","code":-1}"""),
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "-7 → 502/RETRYABLE", """{"msg":"server unavailable","code":-7}"""),
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "-9798 → 502/RETRYABLE", """{"msg":"under maintenance","code":-9798}"""),
-                // 502 SERVER_ERROR: 우리 요청 구성 버그(필수 인자 누락·헤더 오류). 외부 경계 실패라 502, 재시도 무의미라 SERVER_ERROR.
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "-2 → 502/SERVER_ERROR", """{"msg":"invalid argument","code":-2}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "-8 → 502/SERVER_ERROR", """{"msg":"invalid header","code":-8}"""),
+                // 500 SERVER_ERROR: 우리 요청 구성 버그(필수 인자 누락·헤더 오류). 우리 서버 버그라 500, 재시도 무의미라 SERVER_ERROR.
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "-2 → 500/SERVER_ERROR", """{"msg":"invalid argument","code":-2}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "-8 → 500/SERVER_ERROR", """{"msg":"invalid header","code":-8}"""),
                 // 502 RETRYABLE fallback — 미지 음수 code / code 부재 / 정수 아님 / 파싱 실패.
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "미지의 음수 code → 502/RETRYABLE", """{"code":-12345}"""),
                 Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "code 부재 → 502/RETRYABLE", """{"msg":"x"}"""),

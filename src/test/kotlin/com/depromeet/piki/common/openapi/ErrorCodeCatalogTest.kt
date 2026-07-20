@@ -24,6 +24,16 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| COMMON-RETRYABLE | 502 | 일시적인 오류예요. 잠시 후 다시 시도해 주세요. |"), md)
         assertTrue(md.contains("| COMMON-SERVER-BUSY | 503 | 지금 요청이 많아요. 잠시 후 다시 시도해 주세요. |"), md)
         assertTrue(md.contains("| COMMON-SERVER-ERROR | 500 | 서버에 문제가 발생했어요. 불편을 드려 죄송해요. |"), md)
+
+        // auth 도메인 이관(#762) — AUTH·OAUTH·APPLE 3 prefix 가 registry 에 등록돼 나열된다.
+        assertTrue(md.contains("### AUTH"), md)
+        assertTrue(md.contains("| AUTH-001 | 401 | 로그인 정보가 만료됐어요. 다시 로그인해 주세요. |"), md)
+        assertTrue(md.contains("### OAUTH"), md)
+        assertTrue(md.contains("| OAUTH-001 | 502 | 로그인에 실패했어요. 잠시 후 다시 시도해 주세요. |"), md)
+        // OAUTH-007 misconfigured 는 502→500 교정: SERVER_ERROR category 라 status 가 500 으로 파생된다.
+        assertTrue(md.contains("| OAUTH-007 | 500 | 로그인에 실패했어요. 잠시 후 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("### APPLE"), md)
+        assertTrue(md.contains("| APPLE-001 | 401 | 유효하지 않은 Apple 서버 알림입니다. |"), md)
     }
 
     @Test
