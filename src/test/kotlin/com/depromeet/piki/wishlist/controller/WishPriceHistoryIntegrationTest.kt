@@ -68,6 +68,8 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.itemId").value(itemId))
             .andExpect(jsonPath("$.data.sourceUrl").value("https://shop.example.com/products/history"))
+            // 백오피스(source_platforms) 미등록 도메인 — host 에서 유도한 임시 표시명(등록 가능 도메인의 첫 라벨)이 나간다.
+            .andExpect(jsonPath("$.data.sourcePlatform").value("example"))
             .andExpect(jsonPath("$.data.activeSnapshotId").value(active))
             .andExpect(jsonPath("$.data.entries.length()").value(3))
             // 최신순(snapshotId desc): active → middle → older
