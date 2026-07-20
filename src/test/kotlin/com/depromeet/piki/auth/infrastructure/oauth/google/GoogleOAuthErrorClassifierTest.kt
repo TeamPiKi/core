@@ -10,8 +10,8 @@ import kotlin.test.assertEquals
 
 // GoogleOAuthErrorClassifier 의 분기를 망라하는 순수 단위 테스트 (Spring·DB 없음).
 // TOKEN endpoint 는 안정 바디 필드(`error` 코드)로, USER_INFO endpoint 는 HTTP status 로 분기한다.
-// 우리 설정 오류(invalid_client 등)와 provider 장애는 둘 다 502 라서 httpStatus 만으로는 구분되지 않는다 —
-// GeminiApiException 과 같은 결로 category(SERVER_ERROR vs RETRYABLE)까지 함께 단언해 의도를 검증한다.
+// 우리 설정 오류(invalid_client 등)는 500/SERVER_ERROR(우리 버그), provider 장애는 502/RETRYABLE 로 이제 status 로도
+// 구분되지만, 의도(재시도 여부·책임 소재)를 명확히 하려고 category 까지 함께 단언한다.
 class GoogleOAuthErrorClassifierTest {
     // TOKEN: HTTP status 가 400/401 로 혼재 가능 → 안정 `error` 코드로만 분류한다. statusCode 는 무의미해 0 으로 고정.
     @ParameterizedTest(name = "[{index}] {2} → {0}/{1}")
@@ -30,7 +30,7 @@ class GoogleOAuthErrorClassifierTest {
         assertEquals(expectedCategory, exception.category)
     }
 
-    // USER_INFO: access_token 무효/만료는 HTTP 401 로 온다 — status 401 → 401, 그 외(403/5xx) → 502 fallback.
+    // USER_INFO: access_token 무효/만료는 HTTP 401 로 온다 — status 401 → 401, 403(우리 권한/설정) → 500, 5xx(provider 장애) → 502.
     @ParameterizedTest(name = "[{index}] {2} → {0}/{1}")
     @MethodSource("userInfoCases")
     fun `Google userinfo 에러 응답을 HTTP status 로 분류한다`(
@@ -54,22 +54,21 @@ class GoogleOAuthErrorClassifierTest {
                 // 400 INVALID_INPUT: 멀쩡한 클라가 정상 요청으로 도달 가능(계약). code 만료/재사용·요청 형식 오류.
                 Arguments.of(HttpStatus.BAD_REQUEST, ErrorCategory.INVALID_INPUT, "invalid_grant → 400", """{"error":"invalid_grant"}"""),
                 Arguments.of(HttpStatus.BAD_REQUEST, ErrorCategory.INVALID_INPUT, "invalid_request → 400", """{"error":"invalid_request"}"""),
-                // 502 SERVER_ERROR: 우리 OAuth 설정 오류(우리 버그). 외부 호출 경계 실패라 502, 재시도 무의미라 SERVER_ERROR.
-                // (GeminiApiException.clientError 와 동일 결.)
-                Arguments.of(HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "invalid_client → 502/SERVER_ERROR", """{"error":"invalid_client"}"""),
+                // 500 SERVER_ERROR: 우리 OAuth 설정 오류(우리 버그). 상류 장애가 아니라 우리 서버 문제라 500, 재시도 무의미라 SERVER_ERROR.
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "invalid_client → 500/SERVER_ERROR", """{"error":"invalid_client"}"""),
                 Arguments.of(
-                    HttpStatus.BAD_GATEWAY,
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     ErrorCategory.SERVER_ERROR,
-                    "unauthorized_client → 502/SERVER_ERROR",
+                    "unauthorized_client → 500/SERVER_ERROR",
                     """{"error":"unauthorized_client"}""",
                 ),
                 Arguments.of(
-                    HttpStatus.BAD_GATEWAY,
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     ErrorCategory.SERVER_ERROR,
-                    "unsupported_grant_type → 502/SERVER_ERROR",
+                    "unsupported_grant_type → 500/SERVER_ERROR",
                     """{"error":"unsupported_grant_type"}""",
                 ),
-                Arguments.of(HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "invalid_scope → 502/SERVER_ERROR", """{"error":"invalid_scope"}"""),
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "invalid_scope → 500/SERVER_ERROR", """{"error":"invalid_scope"}"""),
                 // error_description 이 동봉돼도 안정 필드인 error 코드로만 분류한다 (메시지 의존 금지).
                 Arguments.of(
                     HttpStatus.BAD_REQUEST,
@@ -89,8 +88,8 @@ class GoogleOAuthErrorClassifierTest {
             Stream.of(
                 // 401: access_token 무효/만료 — 클라가 정상 요청으로 도달 가능(계약).
                 Arguments.of(HttpStatus.UNAUTHORIZED, ErrorCategory.UNAUTHORIZED, "HTTP 401 → 401", 401),
-                // 403(scope 부족 등 우리 권한/설정 문제) → 502/SERVER_ERROR (재시도 무의미). 5xx 는 provider 장애 → RETRYABLE.
-                Arguments.of(HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "HTTP 403 → 502/SERVER_ERROR", 403),
+                // 403(scope 부족 등 우리 권한/설정 문제) → 500/SERVER_ERROR (재시도 무의미). 5xx 는 provider 장애 → RETRYABLE.
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "HTTP 403 → 500/SERVER_ERROR", 403),
                 Arguments.of(HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "HTTP 500 → 502/RETRYABLE", 500),
                 Arguments.of(HttpStatus.BAD_GATEWAY, ErrorCategory.RETRYABLE, "HTTP 503 → 502/RETRYABLE", 503),
             )

@@ -104,9 +104,9 @@ class DocsAccessIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `GET v3 api-docs - OAuth 로그인 선언 실패 응답에 example payload 가 부착된다 (회귀 가드)`() {
         // OperationExamples.add 는 @ApiResponse 가 선언된 status 에만 example 을 붙인다(없으면 조용히 무시).
-        // #313 에서 OAuth 로그인 실패 응답을 400/401/502 로 정밀화하며 example 도 함께 붙였다 — 선언↔example
-        // 짝이 유지되는지 회귀 가드. 특히 502 는 이번 변경의 핵심인 RETRYABLE(provider 장애)·SERVER_ERROR(우리
-        // 설정) 두 example 이 각각 붙어야 분리가 잠긴다 — examples 맵 존재만 보면 둘 중 하나가 사라져도 통과한다.
+        // #313 에서 OAuth 로그인 실패 응답을 400/401/502 로 정밀화하며 example 도 함께 붙였고, #762 로 misconfigured 를
+        // 502→500 으로 교정하며 SERVER_ERROR example 이 500 으로 이동했다 — 선언↔example 짝이 유지되는지 회귀 가드.
+        // provider 장애(502 RETRYABLE)와 우리 설정 오류(500 SERVER_ERROR)가 각각 자기 status 에 붙어야 분리가 잠긴다.
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -114,6 +114,7 @@ class DocsAccessIntegrationTest : IntegrationTestSupport() {
                 .build()
 
         val login502 = "$.paths['/api/v1/auth/login/{provider}'].post.responses['502'].content['application/json'].examples"
+        val login500 = "$.paths['/api/v1/auth/login/{provider}'].post.responses['500'].content['application/json'].examples"
         mockMvc
             .perform(get("/v3/api-docs"))
             .andExpect(status().isOk)
@@ -122,7 +123,10 @@ class DocsAccessIntegrationTest : IntegrationTestSupport() {
             ).andExpect(
                 jsonPath("$.paths['/api/v1/auth/login/{provider}'].post.responses['401'].content['application/json'].examples").exists(),
             ).andExpect(jsonPath("$login502['소셜 제공자 장애 (RETRYABLE — 재시도 가능)']").exists())
-            .andExpect(jsonPath("$login502['우리 OAuth 설정/요청 오류 (SERVER_ERROR — 재시도 무의미)']").exists())
+            .andExpect(jsonPath("$login500['우리 OAuth 설정/요청 오류 (SERVER_ERROR — 재시도 무의미)']").exists())
+            // 이동이 아니라 복제였으면(502 에 misconfigured example 잔존) 위 exists 단언만으로는 통과해버린다.
+            // 부재까지 함께 잠가야 "provider 장애 502 / 우리 설정 오류 500" 분리가 회귀 가드로 성립한다.
+            .andExpect(jsonPath("$login502['우리 OAuth 설정/요청 오류 (SERVER_ERROR — 재시도 무의미)']").doesNotExist())
     }
 
     @Test
