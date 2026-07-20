@@ -56,7 +56,8 @@ interface OAuthApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청\n\n" +
-                        "- `code`+`redirectUri` 도 `accessToken` 도 없음 (`OAUTH-002`) / 본문 검증 실패(두 흐름 동시·둘 다 공백)는 `COMMON-INVALID-INPUT`\n" +
+                        "- 흐름 검증 실패 (`COMMON-INVALID-INPUT`) — v1(`code`+`redirectUri`)·v2(`accessToken`) 중\n" +
+                        "  정확히 하나여야 하는데 둘 다 전달했거나 둘 다 누락/공백\n" +
                         "- 지원하지 않는 provider (`OAUTH-003`)\n" +
                         "- provider 인가코드(`code`)가 만료/재사용/무효 (`OAUTH-005`) — 재로그인으로 새 code 를 받아 재시도",
                 content = [

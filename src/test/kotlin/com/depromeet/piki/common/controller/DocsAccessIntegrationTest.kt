@@ -124,6 +124,9 @@ class DocsAccessIntegrationTest : IntegrationTestSupport() {
                 jsonPath("$.paths['/api/v1/auth/login/{provider}'].post.responses['401'].content['application/json'].examples").exists(),
             ).andExpect(jsonPath("$login502['소셜 제공자 장애 (RETRYABLE — 재시도 가능)']").exists())
             .andExpect(jsonPath("$login500['우리 OAuth 설정/요청 오류 (SERVER_ERROR — 재시도 무의미)']").exists())
+            // 이동이 아니라 복제였으면(502 에 misconfigured example 잔존) 위 exists 단언만으로는 통과해버린다.
+            // 부재까지 함께 잠가야 "provider 장애 502 / 우리 설정 오류 500" 분리가 회귀 가드로 성립한다.
+            .andExpect(jsonPath("$login502['우리 OAuth 설정/요청 오류 (SERVER_ERROR — 재시도 무의미)']").doesNotExist())
     }
 
     @Test
