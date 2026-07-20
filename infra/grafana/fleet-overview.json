@@ -334,18 +334,9 @@
           },
           "expr": "sum by (service) (count_over_time({environment=\"$environment\", service=~\"$service\", level=~\"(?i)error\"} [5m]))",
           "legendFormat": "{{service}}"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "loki",
-            "uid": "${DS_LOKI}"
-          },
-          "expr": "sum by (service) (count_over_time({environment=\"$environment\", service=~\"$service\", service=\"piki-renderer\"} |~ `(?i)error` !~ `error=None` [5m]))",
-          "legendFormat": "{{service}}"
         }
       ],
-      "description": "level 라벨(ECS 구조화) 기준. extractor 는 구조화 배선 전까지 여기 안 잡힌다(#778 갭). renderer 는 라인 필터."
+      "description": "Loki level 라벨 기준 - 3서비스 모두 구조화 로그로 level 이 붙는 것을 실측 확인 (extractor 는 deploy 의 LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs, renderer 는 자체 구조화)."
     },
     {
       "id": 5,
@@ -517,7 +508,7 @@
       "id": 8,
       "type": "logs",
       "title": "통합 로그 (선택 서비스 전체)",
-      "description": "line_format 으로 각 줄 앞에 [서비스] 를 붙인다. level 색상은 ECS 구조화 서비스에서 동작.",
+      "description": "line_format 으로 각 줄 앞에 [서비스] 를 붙인다. level 색상은 전 서비스에서 동작.",
       "gridPos": {
         "h": 13,
         "w": 24,
