@@ -192,6 +192,27 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `탈퇴한 회원의 살아있는 access token 으로 가격 히스토리를 조회하면 409 가 반환된다`() {
+        // 소유권 검증(verifyOwnedBy)만으로는 탈퇴 여부를 못 본다 — 본인 위시이므로 그대로 통과해버린다.
+        // 회원 가드가 활성 조회로 끊어야 탈퇴 회원이 자기 가격 이력을 계속 읽는 것을 막는다 (#691).
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val itemId = saveItem("https://shop.example.com/products/withdrawn")
+        val snapshot = saveReadySnapshot(itemId, "내 상품", 10_000, LocalDateTime.now())
+        val wishId = saveWish(userId, snapshot)
+        jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(userId))
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists/$wishId/history")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-003"))
+            .andExpect(jsonPath("$.detail").value("탈퇴한 계정이에요."))
+    }
+
+    @Test
     fun `미인증으로 가격 히스토리를 조회하면 401 이다`() {
         val mockMvc = buildMockMvc()
         mockMvc

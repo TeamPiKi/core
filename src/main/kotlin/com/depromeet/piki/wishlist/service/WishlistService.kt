@@ -40,7 +40,9 @@ class WishlistService(
     // "회원만 이용 가능" 이라는 구체 사유를 내려준다(SecurityConfig 의 wishlists authenticated() 주석 참고).
     // 인증 principal 은 userId 뿐이라 identityType 은 조회로 확인한다 — 모든 진입 메서드가 처리 전에 가장 먼저 호출한다.
     private fun requireMember(userId: UUID) {
-        val user = userService.findById(userId)
+        // 활성 조회라 탈퇴(tombstone) 회원은 identityType 이 MEMBER 여도 여기서 409 로 끊긴다 —
+        // 탈퇴 시 토큰 무효화가 부분 실패한 창에서 죽은 계정이 위시리스트를 쓰는 것을 막는다 (#691).
+        val user = userService.findActiveById(userId)
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
@@ -184,6 +186,7 @@ class WishlistService(
         userId: UUID,
         wishId: Long,
     ): WishPriceHistory {
+        requireMember(userId)
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
         // 활성 snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그). item 정체성은 snapshot.itemId 단일 출처다.

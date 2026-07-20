@@ -246,14 +246,30 @@ class UserService(
                 t.message?.contains(USERS_NICKNAME_CONSTRAINT, ignoreCase = true) == true
         }
 
+    // tombstone(탈퇴) 유저도 그대로 반환한다. 탈퇴 상태 자체를 읽어야 하는 경로 — 재로그인 판정(죽은 계정을
+    // 되살리지 않기), 멱등 탈퇴, refresh 거부(409 가 아니라 401 로 응답) — 전용이다.
+    // 활성 유저를 기대하는 경로는 이걸 쓰면 안 된다. findActiveById 를 쓴다.
     @Transactional(readOnly = true)
     fun findById(userId: UUID): User = userRepository.findById(userId) ?: throw UserException.notFound()
+
+    // 활성(미탈퇴) 유저 전용 조회. tombstone 접근이 계약 위반인 경로는 전부 이걸 쓴다.
+    // 호출부마다 흩어져 있던 deletedAt 확인을 한 자리로 모아, 새 경로가 그 체크를 빠뜨려 탈퇴 유저가
+    // 되살아나는 조용한 버그를 구조적으로 막는다 (#691).
+    //
+    // 전역 @SQLRestriction 으로 거르지 않는 이유: 탈퇴 cascade 와 위 findById 의 의도적 tombstone 읽기가
+    // 같은 엔티티를 필요로 해, 전역 필터를 걸면 그 경로들이 함께 깨진다.
+    @Transactional(readOnly = true)
+    fun findActiveById(userId: UUID): User {
+        val user = findById(userId)
+        user.deletedAt?.let { throw UserException.deletedUser() }
+        return user
+    }
 
     // 마이페이지(GET /me) 조회 — User(정체성)와 UserDetail 의 email 을 한 트랜잭션에서 모은다.
     // email 은 미수집(게스트)·미동의·backfill 전이면 UserDetail 이 없거나 null 이라 그대로 null 로 내려간다.
     @Transactional(readOnly = true)
     fun getMyProfile(userId: UUID): UserProfile {
-        val user = findById(userId)
+        val user = findActiveById(userId)
         val email = userDetailRepository.findByUserId(userId)?.email
         return UserProfile(user, email)
     }
@@ -278,8 +294,7 @@ class UserService(
         nickname: String?,
         profileImageUrl: String?,
     ): User {
-        val user = findById(userId)
-        user.deletedAt?.let { throw UserException.deletedUser() }
+        val user = findActiveById(userId)
         // 무엇이 바뀌었는지만 남긴다 — 닉네임 원문은 PII 라 값이 아니라 "어떤 필드가 변경됐나"만 로깅한다.
         val changedFields =
             buildList {
@@ -316,20 +331,20 @@ class UserService(
         userId: UUID,
         profileImageUrl: String,
     ): User {
-        val user = findById(userId)
-        user.deletedAt?.let { throw UserException.deletedUser() }
+        val user = findActiveById(userId)
         user.updateProfileImage(profileImageUrl)
         return userRepository.save(user)
     }
 
     @Transactional
     fun promoteToMember(userId: UUID): User {
-        val user = findById(userId)
-        user.deletedAt?.let { throw UserException.deletedUser() }
+        val user = findActiveById(userId)
         user.promoteToMember()
         return userRepository.save(user)
     }
 
+    // 재탈퇴는 멱등하게 통과시켜야 하므로 tombstone 을 읽는 findById 를 그대로 쓴다 — softDelete() 가
+    // deletedAt ?:= now 로 첫 값을 유지하므로 2회차는 무해한 no-op 이다.
     @Transactional
     fun softDelete(userId: UUID) {
         val user = findById(userId)

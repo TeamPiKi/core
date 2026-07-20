@@ -55,6 +55,13 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         )
     }
 
+    // 탈퇴(tombstone) 유저 — 행은 남고 deleted_at 이 채워진 상태. 닉네임 익명화까지 재현할 필요는 없어
+    // "활성이 아니다"를 결정하는 deleted_at 만 세운다.
+    private fun insertWithdrawnUser(userId: UUID) {
+        insertUser(userId, identityType = IdentityType.MEMBER)
+        jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(userId))
+    }
+
     private fun insertUserDetail(
         userId: UUID,
         provider: String = "GOOGLE",
@@ -141,6 +148,28 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.email").value(null))
+    }
+
+    @Test
+    fun `GET users me - 탈퇴한 유저의 살아있는 access token 으로 조회하면 409 가 반환된다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertWithdrawnUser(userId)
+
+        // 탈퇴 시 access token 은 denylist 로 막히지만, 그 무효화가 부분 실패하면(#689) tombstone 이 서비스까지 닿는다.
+        // 그 창에서도 tombstone 은 활성 유저로 살아나면 안 되므로 409 로 끊는다.
+        mockMvc
+            .perform(
+                get("/api/v1/users/me")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-003"))
+            .andExpect(jsonPath("$.detail").value("탈퇴한 계정이에요."))
+            .andExpect(jsonPath("$.data").value(null))
     }
 
     @Test

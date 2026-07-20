@@ -8,7 +8,6 @@ import com.depromeet.piki.auth.service.dto.SignupResult
 import com.depromeet.piki.auth.service.dto.TokenPair
 import com.depromeet.piki.common.logging.SensitiveData
 import com.depromeet.piki.user.domain.User
-import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.service.UserService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -40,8 +39,7 @@ class AuthService(
     // Dev 전용. 기존 user 의 token pair 를 발급해 임의 user 시나리오를 재현할 수 있게 한다.
     // OAuth 통합 (epic #122) 전까지의 임시 endpoint 와 같은 결로 묶여 운영 노출 차단 예정 (#177 후속).
     fun issueTokenForExistingUser(userId: UUID): SignupResult {
-        val user = userService.findById(userId)
-        user.deletedAt?.let { throw UserException.deletedUser() }
+        val user = userService.findActiveById(userId)
         val tokenPair = issueTokenPair(user)
         return SignupResult(tokenPair = tokenPair, user = user)
     }
@@ -58,6 +56,8 @@ class AuthService(
                 log.info("토큰 갱신 거부 사유=refresh 토큰 파싱 실패(만료·위조) token={}", SensitiveData.maskToken(refreshToken))
                 throw AuthException.invalidToken()
             }
+        // 탈퇴 여부를 여기서 직접 본다(findActiveById 아님) — 갱신 거부는 409 가 아니라 거부 사유 로그 + 401 이라,
+        // 활성 조회에 위임하면 응답 계약이 바뀐다.
         val user = userService.findById(userId)
         user.deletedAt?.let {
             log.info("토큰 갱신 거부 사유=탈퇴 유저 userId={}", userId)

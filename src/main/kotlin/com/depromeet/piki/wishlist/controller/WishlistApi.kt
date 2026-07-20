@@ -72,6 +72,16 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun registerFromUrl(
@@ -125,6 +135,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -192,6 +212,16 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun getWish(
@@ -245,6 +275,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "404",
                 description = "존재하지 않는 위시 항목 (삭제된 항목 포함)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -326,7 +366,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "수정할 수 없는 상태 (이미 등록 완료(READY) · 아직 대기·처리 중(PENDING·PROCESSING))",
+                description = "수정할 수 없는 상태 (이미 등록 완료(READY) · 아직 대기·처리 중(PENDING·PROCESSING)) · 탈퇴한 계정(code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -419,7 +459,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "추출 실패(FAILED) 항목은 새로고침 대상이 아님 (보정으로 복구) · 새로고침은 성공(READY) 항목 전용",
+                description = "추출 실패(FAILED) 항목은 새로고침 대상이 아님 (보정으로 복구) · 새로고침은 성공(READY) 항목 전용 · 탈퇴한 계정(code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -466,6 +506,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요, 또는 본인 위시가 아님)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -533,6 +583,16 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun deleteWishes(
@@ -587,6 +647,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -665,6 +735,16 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "502",
                 description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도)",
                 content = [
@@ -726,6 +806,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
