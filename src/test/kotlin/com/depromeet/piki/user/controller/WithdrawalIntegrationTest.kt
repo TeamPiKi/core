@@ -399,4 +399,47 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         // refresh 실패가 markWithdrawn 을 막지 않았어야 한다 — denylist 에 마킹돼 있다.
         assertTrue(stubWithdrawnTokenStore.isWithdrawn(userId))
     }
+
+    @Test
+    fun `markWithdrawn 이 1회 실패해도 즉시 재시도로 성공하면 메트릭이 오르지 않는다`() {
+        val userId = UUID.randomUUID()
+        insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
+        // 1회째만 던지고 2회째는 실제 저장(순간 blip 재현).
+        var calls = 0
+        stubWithdrawnTokenStore.behavior = { id ->
+            calls++
+            if (calls == 1) throw RuntimeException("redis blip") else stubWithdrawnTokenStore.defaultBehavior(id)
+        }
+        val before =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+
+        try {
+            mockMvc()
+                .perform(
+                    delete("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isOk)
+
+            // 2회 호출(최초 + 재시도 1회)로 끝나야 한다. reset() 이 markWithdrawnInvocations 도 비우므로 finally 전에 단언한다.
+            assertEquals(2, stubWithdrawnTokenStore.markWithdrawnInvocations.count { it == userId })
+            // 재시도가 성공했으니 denylist 에 마킹돼 있고, 실패 메트릭은 오르지 않았어야 한다.
+            assertTrue(stubWithdrawnTokenStore.isWithdrawn(userId))
+        } finally {
+            stubWithdrawnTokenStore.reset()
+        }
+
+        val after =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+        assertEquals(before, after)
+    }
 }

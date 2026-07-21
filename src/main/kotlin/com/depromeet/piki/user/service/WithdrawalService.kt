@@ -47,10 +47,12 @@ class WithdrawalService(
 
         // 2-1. access token 무효화 — 탈퇴 회원을 denylist 에 마킹. JwtAuthenticationFilter 가 이를 확인해
         //      만료(최대 access token 수명) 전까지 남은 access token 을 즉시 거부한다. best-effort 지만 보안
-        //      핵심이라, Redis 순간 blip 을 흡수하도록 즉시 1회 재시도한다(Task 3 에서 재시도 추가).
+        //      핵심이라, Redis 순간 blip 을 흡수하도록 즉시 1회 재시도한다. 완전 다운은 못 살리니 빠르게
+        //      포기(3회+backoff 는 타임아웃 반복으로 탈퇴 응답만 늦춘다)하고 메트릭으로 관측 → 사람 개입.
         runCatching { withdrawnTokenStore.markWithdrawn(userId) }
+            .recoverCatching { withdrawnTokenStore.markWithdrawn(userId) }
             .onFailure { e ->
-                log.warn("탈퇴 access denylist 마킹 실패(보안 창 위험) userId={}", userId, e)
+                log.warn("탈퇴 access denylist 마킹 실패(재시도 후에도 실패, 보안 창 위험) userId={}", userId, e)
                 WithdrawalMetrics.record(meterRegistry, WithdrawalMetrics.STEP_MARK_WITHDRAWN)
             }
 
