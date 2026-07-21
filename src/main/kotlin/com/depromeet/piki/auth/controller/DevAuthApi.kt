@@ -2,8 +2,11 @@ package com.depromeet.piki.auth.controller
 
 import com.depromeet.piki.auth.controller.dto.DevUserCreateRequest
 import com.depromeet.piki.auth.controller.dto.GuestCreateResponse
+import com.depromeet.piki.auth.web.ClientType
 import com.depromeet.piki.common.response.ApiResponseBody
 import io.swagger.v3.oas.annotations.Operation
+import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.enums.ParameterIn
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -62,6 +65,13 @@ interface DevAuthApi {
             ),
         ],
     )
+    @Parameter(
+        name = ClientType.HEADER,
+        `in` = ParameterIn.HEADER,
+        required = false,
+        description = "클라이언트 종류. app 이면 body 로 토큰을 받는다(네이티브 secure storage). 그 외·미설정은 HttpOnly 쿠키로 받고 body 토큰은 null(기본, secure by default).",
+        schema = Schema(allowableValues = ["web", "app"]),
+    )
     fun createDevUser(request: DevUserCreateRequest): ApiResponseBody<GuestCreateResponse>
 
     @Operation(
@@ -114,6 +124,13 @@ interface DevAuthApi {
                 ],
             ),
         ],
+    )
+    @Parameter(
+        name = ClientType.HEADER,
+        `in` = ParameterIn.HEADER,
+        required = false,
+        description = "클라이언트 종류. app 이면 body 로 토큰을 받는다(네이티브 secure storage). 그 외·미설정은 HttpOnly 쿠키로 받고 body 토큰은 null(기본, secure by default).",
+        schema = Schema(allowableValues = ["web", "app"]),
     )
     fun issueTokenForUser(userId: UUID): ApiResponseBody<GuestCreateResponse>
 }
