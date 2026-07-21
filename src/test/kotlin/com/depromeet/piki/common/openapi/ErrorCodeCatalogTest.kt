@@ -34,6 +34,24 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| OAUTH-007 | 500 | 로그인에 실패했어요. 잠시 후 다시 시도해 주세요. |"), md)
         assertTrue(md.contains("### APPLE"), md)
         assertTrue(md.contains("| APPLE-001 | 401 | 유효하지 않은 Apple 서버 알림입니다. |"), md)
+
+        // notification·announcement 도메인 이관(#763) — 커서 문구는 wish·announcement 와 통일된 사용자 친화 문구.
+        assertTrue(md.contains("### NOTIFICATION"), md)
+        assertTrue(md.contains("| NOTIFICATION-001 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
+        assertTrue(md.contains("### ANNOUNCEMENT"), md)
+        assertTrue(md.contains("| ANNOUNCEMENT-001 | 404 | 존재하지 않는 공지예요. |"), md)
+        assertTrue(md.contains("| ANNOUNCEMENT-002 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
+    }
+
+    @Test
+    fun `AnnouncementImage code 는 공개 카탈로그에 등록되지 않는다 (어드민 SSR 전용)`() {
+        // AnnouncementImageException 은 어드민 백오피스(Thymeleaf SSR)에서 자체 catch 돼 리다이렉트로 처리되고
+        // GlobalExceptionHandler 를 거치지 않아 wire code 로 나가지 않는다. 따라서 클라 대면 공개 카탈로그에
+        // 넣으면 안 된다 — 향후 실수로 ErrorCodeRegistry 에 등록되는 회귀를 막는 가드.
+        val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
+
+        assertTrue(ErrorCodeRegistry.all.none { it.code.startsWith("ANNOUNCEMENT-IMAGE-") }, "AnnouncementImage code 가 registry 에 새어들어옴")
+        assertTrue(!md.contains("ANNOUNCEMENT-IMAGE-"), md)
     }
 
     @Test
