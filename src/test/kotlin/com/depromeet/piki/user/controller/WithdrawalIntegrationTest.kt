@@ -385,6 +385,13 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
         // refresh 삭제만 던지고, 이후 단계(markWithdrawn)는 정상이어야 한다 — best-effort 격리.
         stubRefreshTokenStore.onDelete = { throw RuntimeException("redis down") }
+        val before =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_REFRESH,
+                ).count()
 
         try {
             mockMvc()
@@ -398,6 +405,16 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
 
         // refresh 실패가 markWithdrawn 을 막지 않았어야 한다 — denylist 에 마킹돼 있다.
         assertTrue(stubWithdrawnTokenStore.isWithdrawn(userId))
+        // refresh 실패도 STEP_REFRESH 메트릭으로 관측돼야 한다 — record 호출이 지워지거나
+        // 잘못된 step 을 넘기면 이 단언이 잡는다.
+        val after =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_REFRESH,
+                ).count()
+        assertEquals(before + 1.0, after)
     }
 
     @Test
