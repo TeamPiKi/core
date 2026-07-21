@@ -19,10 +19,11 @@ data class WishItemResponse(
             wish: Wish,
             item: Item,
             snapshot: ItemSnapshot,
+            sourcePlatform: String?,
         ): WishItemResponse =
             WishItemResponse(
                 wish = WishView.from(wish),
-                item = ItemView.from(item, snapshot),
+                item = ItemView.from(item, snapshot, sourcePlatform),
             )
     }
 
@@ -71,13 +72,22 @@ data class WishItemResponse(
             nullable = true,
         )
         val sourceUrl: String?,
+        @field:Schema(
+            description = "출처 커머스몰 표시명 — 백오피스 등록값이 있으면 그 표기(예: 29CM), 없으면 URL host 에서 " +
+                "유도한 임시값(예: 29cm). 표시 텍스트로만 취급한다(안정 식별자 아님). 이미지 등록 항목은 URL 이 없어 null.",
+            example = "29CM",
+            nullable = true,
+        )
+        val sourcePlatform: String?,
     ) {
         companion object {
             // 표시값(status·name·currentPrice·currency·imageUrl)은 활성 snapshot 에서,
             // 정체성(id·sourceUrl=상품 링크)은 item 에서 읽는다. snapshot 은 5단계 갱신에서 새 버전으로 스왑된다.
+            // sourcePlatform 은 SourcePlatformResolver(빈)의 판정이라 호출부(컨트롤러)가 풀어 넘긴다.
             fun from(
                 item: Item,
                 snapshot: ItemSnapshot,
+                sourcePlatform: String?,
             ): ItemView =
                 ItemView(
                     id = item.getId(),
@@ -87,6 +97,7 @@ data class WishItemResponse(
                     currency = snapshot.currency,
                     imageUrl = snapshot.imageUrl,
                     sourceUrl = item.link?.toString(),
+                    sourcePlatform = sourcePlatform,
                 )
         }
     }

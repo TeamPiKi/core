@@ -174,8 +174,9 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.length()").value(2))
                 // 등록 직후 응답은 PENDING 이어야 한다(이미지도 link 처럼 outbox 에 적재).
                 .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
-                // 이미지 등록은 원본 URL 이 없어 sourceUrl 이 null 이다.
+                // 이미지 등록은 원본 URL 이 없어 sourceUrl 도, 거기서 유도하는 sourcePlatform 도 null 이다.
                 .andExpect(jsonPath("$.data[0].item.sourceUrl").value(nullValue()))
+                .andExpect(jsonPath("$.data[0].item.sourcePlatform").value(nullValue()))
 
             val wishCount =
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId))

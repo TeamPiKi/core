@@ -1,5 +1,8 @@
 package com.depromeet.piki.common.openapi
 
+import com.depromeet.piki.auth.exception.AuthErrorCode
+import com.depromeet.piki.auth.infrastructure.oauth.OAuthErrorCode
+import com.depromeet.piki.auth.infrastructure.oauth.apple.AppleErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.user.domain.UserErrorCode
@@ -15,6 +18,9 @@ object ErrorCodeRegistry {
         buildList {
             addAll(CommonErrorCode.entries)
             addAll(UserErrorCode.entries)
+            addAll(AuthErrorCode.entries)
+            addAll(OAuthErrorCode.entries)
+            addAll(AppleErrorCode.entries)
             // 도메인 이관 시 여기에 addAll(XxxErrorCode.entries) 추가
         }
 }

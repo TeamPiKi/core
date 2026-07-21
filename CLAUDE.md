@@ -263,7 +263,7 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 컨트롤러 / OpenAPI 문서
 
-**컨트롤러는 `*Api` 인터페이스를 구현한다.** 이 규칙은 **공개 JSON API 엔드포인트**에 적용된다 — 어드민 백오피스(Thymeleaf SSR: `AdminSessionController` · `DiscordAccessController` · `AdminViewController` · `AdminTemplateController` · `AdminAnnouncementController` · `AdminExtractionPolicyController`)와 `HealthController` · `MetricsController`(메트릭 대시보드)는 공개 JSON 응답면이 아니므로 `*Api` 를 구현하지 않으며, 이는 위반이 아니라 정당한 예외다. OpenAPI 어노테이션은 인터페이스, 매핑/검증 어노테이션은 구현체로 분리한다. example 은 평문 JSON 으로 박지 않고 `*ApiExamples` 의 `OperationCustomizer` 빈으로 객체화한다.
+**컨트롤러는 `*Api` 인터페이스를 구현한다.** 이 규칙은 **공개 JSON API 엔드포인트**에 적용된다 — 어드민 백오피스(Thymeleaf SSR: `AdminSessionController` · `DiscordAccessController` · `AdminViewController` · `AdminTemplateController` · `AdminAnnouncementController` · `AdminExtractionPolicyController` · `AdminSourcePlatformController`)와 `HealthController` · `MetricsController`(메트릭 대시보드)는 공개 JSON 응답면이 아니므로 `*Api` 를 구현하지 않으며, 이는 위반이 아니라 정당한 예외다. OpenAPI 어노테이션은 인터페이스, 매핑/검증 어노테이션은 구현체로 분리한다. example 은 평문 JSON 으로 박지 않고 `*ApiExamples` 의 `OperationCustomizer` 빈으로 객체화한다.
 
 ### 규칙
 - **인터페이스 (`*Api.kt`)**: `@Tag`, `@Operation`, `@ApiResponse(s)`, `@Schema` 만 둔다. 메서드 시그니처는 평범한 함수 (`@PostMapping` 등 매핑 어노테이션 / `@RequestBody` 등 파라미터 어노테이션 / `@Valid` / `@ResponseStatus` 모두 두지 않는다).

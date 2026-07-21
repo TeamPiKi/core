@@ -103,6 +103,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.name").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.currentPrice").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/42"))
+                // 백오피스(source_platforms) 미등록 도메인 — host 에서 유도한 임시 표시명(등록 가능 도메인의 첫 라벨)이 나간다.
+                .andExpect(jsonPath("$.data.item.sourcePlatform").value("example"))
         } finally {
             cleanup(userId)
         }

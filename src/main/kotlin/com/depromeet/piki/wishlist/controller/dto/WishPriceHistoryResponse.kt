@@ -17,6 +17,13 @@ data class WishPriceHistoryResponse(
     )
     val sourceUrl: String?,
     @field:Schema(
+        description = "출처 커머스몰 표시명 — 백오피스 등록값이 있으면 그 표기(예: 29CM), 없으면 URL host 에서 " +
+            "유도한 임시값(예: 29cm). 표시 텍스트로만 취급한다(안정 식별자 아님). 이미지 등록 항목은 URL 이 없어 null.",
+        example = "29CM",
+        nullable = true,
+    )
+    val sourcePlatform: String?,
+    @field:Schema(
         description = "현재 활성(위시가 가리키는) 버전의 snapshot ID. entries 중 isActive=true 인 항목과 일치한다. " +
             "활성 버전이 아직 추출 중(PENDING·PROCESSING)이거나 실패(FAILED)면 가격이 없어 entries 에서 빠질 수 있다.",
         example = "1088",
@@ -30,14 +37,17 @@ data class WishPriceHistoryResponse(
     val entries: List<PriceHistoryEntry>,
 ) {
     companion object {
+        // sourcePlatform 은 SourcePlatformResolver(빈)의 판정이라 호출부(컨트롤러)가 풀어 넘긴다.
         fun from(
             wish: Wish,
             item: Item,
             history: List<ItemSnapshot>,
+            sourcePlatform: String?,
         ): WishPriceHistoryResponse =
             WishPriceHistoryResponse(
                 itemId = item.getId(),
                 sourceUrl = item.link?.toString(),
+                sourcePlatform = sourcePlatform,
                 activeSnapshotId = wish.snapshotId,
                 entries = history.map { PriceHistoryEntry.from(it, activeSnapshotId = wish.snapshotId) },
             )

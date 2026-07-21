@@ -57,7 +57,11 @@ class OAuthApiExamples(
                                 detail = OAuthLoginRequest.VALID_FLOW_MESSAGE,
                             ),
                     )
-                    add(OAuthException.invalidRequest(), name = "자격증명 누락 (code+redirectUri·accessToken 모두 공백)")
+                    // OAUTH-002(invalidRequest)는 example 을 두지 않는다 — 이 엔드포인트에서 도달 불가능하기 때문.
+                    // 컨트롤러의 @Valid 가 OAuthLoginRequest.validFlow(v1 xor v2)를 먼저 강제하므로, invalidRequest 를
+                    // 터뜨릴 입력(둘 다 누락/공백)은 그 전에 위 COMMON-INVALID-INPUT 으로 걸린다. 서비스의 invalidRequest 는
+                    // 입력 경계를 안 거치는 호출자를 위한 중복방어로 남고, 못 닿는 응답은 문서화하지 않는다
+                    // (CLAUDE.md 응답 전수 문서화 — "닿는다 → 문서화 대상, 못 닿는다 → 제외").
                     add(OAuthException.unsupportedProvider(), name = "지원하지 않는 provider")
                     add(OAuthException.invalidGrant(), name = "인가코드(code) 만료/재사용/무효")
                     add(OAuthException.invalidState(), name = "state 검증 실패 (만료 또는 미발급)")

@@ -249,6 +249,8 @@ class WishlistApiExamples(
         WishPriceHistoryResponse(
             itemId = 512,
             sourceUrl = "https://www.example-shop.com/products/12345",
+            // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
+            sourcePlatform = "example-shop",
             activeSnapshotId = 1088,
             entries =
                 listOf(
@@ -278,6 +280,7 @@ class WishlistApiExamples(
         WishPriceHistoryResponse(
             itemId = 515,
             sourceUrl = "https://www.example-shop.com/products/67891",
+            sourcePlatform = "example-shop",
             activeSnapshotId = 1090,
             entries = emptyList(),
         )
@@ -299,6 +302,8 @@ class WishlistApiExamples(
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
+                    // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -319,6 +324,7 @@ class WishlistApiExamples(
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -339,6 +345,7 @@ class WishlistApiExamples(
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67890",
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -383,6 +390,7 @@ class WishlistApiExamples(
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
+                        sourcePlatform = null,
                     ),
             ),
             WishItemResponse(
@@ -400,6 +408,7 @@ class WishlistApiExamples(
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
+                        sourcePlatform = null,
                     ),
             ),
         )
