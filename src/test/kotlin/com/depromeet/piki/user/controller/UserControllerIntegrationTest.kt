@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
 import kotlin.test.assertContains
+import kotlin.test.assertTrue
 
 @Transactional
 class UserControllerIntegrationTest : IntegrationTestSupport() {
@@ -416,6 +417,39 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         // 이 요청이 올린 key 가 그대로 삭제 호출됐는지 — 회수 대상이 방금 올린 그 객체여야 한다.
         val uploadedKey = stubImageStorage.uploadedKeys.last { it.startsWith("profiles/$myUserId/") }
         assertContains(stubImageStorage.deletedKeys, uploadedKey)
+    }
+
+    @Test
+    fun `PATCH users me - 업로드가 502 로 떨어져도 그 key 를 회수 시도한다`() {
+        // S3 응답 유실·timeout 이면 예외가 나도 객체는 올라가 있을 수 있다. key 는 우리가 만든 값이라
+        // 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId, nickname = "원래닉네임", identityType = IdentityType.MEMBER)
+        val image = MockMultipartFile("image", "photo.jpg", "image/jpeg", jpegBytes())
+        stubImageStorage.behavior = { _, _, _ -> throw ImageStorageException.uploadFailed() }
+
+        try {
+            mockMvc
+                .perform(
+                    multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                        .file(image)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isBadGateway)
+        } finally {
+            // 공유 컨텍스트의 stub mutable state 를 복원해 다른 테스트로 누수되지 않게 한다.
+            stubImageStorage.behavior = stubImageStorage.defaultBehavior
+        }
+
+        // 업로드가 던져 uploadedKeys 에는 안 남지만, 회수는 이 유저의 프로필 key 로 시도돼야 한다.
+        assertTrue(
+            stubImageStorage.deletedKeys.any { it.startsWith("profiles/$userId/") },
+            "업로드 실패 시에도 해당 key 회수를 시도해야 한다",
+        )
     }
 
     @Test

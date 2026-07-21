@@ -34,14 +34,17 @@ class ProfileUpdateService(
         // 형식 검증(빈 바이트·미지원 MIME·내용 불일치)을 업로드 전에 끝낸다 — 실패 시 즉시 400.
         val profileImage = ProfileImageFile.of(image.bytes, image.contentType)
         val key = "profiles/$userId/${UUID.randomUUID()}.${profileImage.extension}"
-        val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
-        log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
-        // 영속화가 떨어지면 방금 올린 객체가 아무도 안 가리키는 orphan 으로 남는다 — 닉네임 중복(409)이 흔한
-        // 트리거이고, 활성 확인과 영속화 사이에 탈퇴가 커밋되면 탈퇴 cascade 의 prefix 파기가 이미 지나간 뒤라
-        // 프로필 사진(얼굴 등 PII)이 S3 에 계속 남는다. 그래서 lifecycle 에 맡기지 않고 즉시 회수한다
-        // (registerFromImages 의 raw 회수와 같은 패턴).
-        return runCatching { userService.updateProfile(userId, nickname, url) }
-            .onFailure { deleteQuietly(key) }
+        // 업로드부터 영속화까지를 한 묶음으로 보고, 어느 단계에서 떨어지든 이 key 를 회수한다. 영속화가 떨어지면
+        // 방금 올린 객체가 아무도 안 가리키는 orphan 으로 남고(닉네임 중복 409 가 흔한 트리거), 활성 확인과 영속화
+        // 사이에 탈퇴가 커밋되면 탈퇴 cascade 의 prefix 파기가 이미 지나간 뒤라 프로필 사진(얼굴 등 PII)이 계속 남는다.
+        // upload 가 던진 경우도 포함한다 — 응답 유실·timeout 이면 S3 에는 객체가 올라갔을 수 있다. key 는 우리가
+        // 만든 값이라 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
+        // (registerFromImages 의 raw 회수와 같은 패턴.)
+        return runCatching {
+            val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
+            log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
+            userService.updateProfile(userId, nickname, url)
+        }.onFailure { deleteQuietly(key) }
             .getOrThrow()
     }
 
