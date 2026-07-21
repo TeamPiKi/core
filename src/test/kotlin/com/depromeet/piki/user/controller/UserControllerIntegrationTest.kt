@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
 import kotlin.test.assertContains
-import kotlin.test.assertTrue
+import kotlin.test.assertEquals
 
 @Transactional
 class UserControllerIntegrationTest : IntegrationTestSupport() {
@@ -431,7 +431,13 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, nickname = "원래닉네임", identityType = IdentityType.MEMBER)
         val image = MockMultipartFile("image", "photo.jpg", "image/jpeg", jpegBytes())
-        stubImageStorage.behavior = { _, _, _ -> throw ImageStorageException.uploadFailed() }
+        // 업로드가 던져 uploadedKeys 에는 안 남으므로, 업로드에 실제로 쓰인 key 를 여기서 직접 기록해 둔다 —
+        // 회수가 "그 유저의 아무 key"가 아니라 "방금 시도한 바로 그 key"를 지우는지 정확히 검증하기 위해서다.
+        val attemptedKeys = mutableListOf<String>()
+        stubImageStorage.behavior = { _, key, _ ->
+            attemptedKeys += key
+            throw ImageStorageException.uploadFailed()
+        }
 
         try {
             mockMvc
@@ -445,11 +451,9 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
             stubImageStorage.behavior = stubImageStorage.defaultBehavior
         }
 
-        // 업로드가 던져 uploadedKeys 에는 안 남지만, 회수는 이 유저의 프로필 key 로 시도돼야 한다.
-        assertTrue(
-            stubImageStorage.deletedKeys.any { it.startsWith("profiles/$userId/") },
-            "업로드 실패 시에도 해당 key 회수를 시도해야 한다",
-        )
+        // 업로드는 한 번만 시도되고, 회수는 stale key 가 아니라 그때 시도한 바로 그 key 를 지워야 한다.
+        assertEquals(1, attemptedKeys.size)
+        assertContains(stubImageStorage.deletedKeys, attemptedKeys.single())
     }
 
     @Test
