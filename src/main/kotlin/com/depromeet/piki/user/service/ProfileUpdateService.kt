@@ -29,14 +29,29 @@ class ProfileUpdateService(
         image ?: return userService.updateProfile(userId, nickname, null)
         // 프로필 이미지 수정은 MEMBER 전용. 권한을 형식 검증·업로드보다 먼저 본다 — 게스트의 이미지 파트는
         // 내용과 무관하게 403 으로 끊고(authorization before payload processing), orphan S3 업로드도 함께 막는다.
-        val user = userService.findById(userId)
-        user.deletedAt?.let { throw UserException.deletedUser() }
+        val user = userService.findActiveById(userId)
         if (user.identityType != IdentityType.MEMBER) throw UserException.guestCannotUpdateProfileImage()
         // 형식 검증(빈 바이트·미지원 MIME·내용 불일치)을 업로드 전에 끝낸다 — 실패 시 즉시 400.
         val profileImage = ProfileImageFile.of(image.bytes, image.contentType)
         val key = "profiles/$userId/${UUID.randomUUID()}.${profileImage.extension}"
-        val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
-        log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
-        return userService.updateProfile(userId, nickname, url)
+        // 업로드부터 영속화까지를 한 묶음으로 보고, 어느 단계에서 떨어지든 이 key 를 회수한다. 영속화가 떨어지면
+        // 방금 올린 객체가 아무도 안 가리키는 orphan 으로 남고(닉네임 중복 409 가 흔한 트리거), 활성 확인과 영속화
+        // 사이에 탈퇴가 커밋되면 탈퇴 cascade 의 prefix 파기가 이미 지나간 뒤라 프로필 사진(얼굴 등 PII)이 계속 남는다.
+        // upload 가 던진 경우도 포함한다 — 응답 유실·timeout 이면 S3 에는 객체가 올라갔을 수 있다. key 는 우리가
+        // 만든 값이라 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
+        // (registerFromImages 의 raw 회수와 같은 패턴.)
+        return runCatching {
+            val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
+            log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
+            userService.updateProfile(userId, nickname, url)
+        }.onFailure { deleteQuietly(key) }
+            .getOrThrow()
+    }
+
+    // 보상 삭제는 best-effort — 회수 자체가 실패해도 원래 예외(409 등)를 가리지 않도록 삼키고 로그만 남긴다.
+    // delete 는 객체가 없어도 no-op(멱등)이라 언제 불러도 안전하다.
+    private fun deleteQuietly(key: String) {
+        runCatching { imageStorage.delete(key) }
+            .onFailure { e -> log.warn("프로필 이미지 {} 회수 실패(orphan 잔존, lifecycle 대상): {}", key, e.message) }
     }
 }

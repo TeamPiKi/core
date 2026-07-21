@@ -27,6 +27,7 @@ class WithdrawalService(
     fun withdraw(userId: UUID) {
         // 탈퇴는 MEMBER 전용. 게스트는 PII 도 없고 공유 토너먼트 참조 때문에 하드삭제도 불가하며, 스토어 요건은 계정 기준 → 403.
         // 멀쩡한 게스트 클라이언트가 정상 요청으로 닿을 수 있는 계약이라 커스텀 예외로 막는다(도메인 check 가 아닌 경계 검증).
+        // 활성 조회(findActiveById)를 쓰지 않는다 — 재탈퇴는 이미 목표 상태이므로 409 가 아니라 멱등 성공이어야 한다.
         val user = userService.findById(userId)
         if (user.identityType == IdentityType.GUEST) throw UserException.guestCannotWithdraw()
 
