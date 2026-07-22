@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
+import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
@@ -11,6 +12,7 @@ import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
 import com.depromeet.piki.wishlist.service.WishlistService
+import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -34,7 +36,13 @@ import java.util.UUID
 @RequestMapping("/api/v1/wishlists")
 class WishlistController(
     private val wishlistService: WishlistService,
+    private val sourcePlatformResolver: SourcePlatformResolver,
 ) : WishlistApi {
+    // wish 묶음 → 응답 변환의 단일 지점. sourcePlatform 판정(SourcePlatformResolver)은 빈이 필요해 DTO 의 from 이
+    // 직접 못 하므로 여기서 풀어 넘긴다.
+    private fun toResponse(result: WishWithItem): WishItemResponse =
+        WishItemResponse.from(result.wish, result.item, result.snapshot, sourcePlatformResolver.resolve(result.item.link))
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     override fun registerFromUrl(
@@ -42,7 +50,7 @@ class WishlistController(
         @Valid @RequestBody request: WishlistRegisterRequest,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
-        return ApiResponseBody.created(WishItemResponse.from(result.wish, result.item, result.snapshot))
+        return ApiResponseBody.created(toResponse(result))
     }
 
     @PostMapping("/images", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
@@ -54,7 +62,7 @@ class WishlistController(
         // images 파트를 아예 안 보내면(0장) Spring 이 컨트롤러 진입 전 MissingServletRequestPartException 으로
         // 끊어 캐치올(500)로 떨어진다. required=false + orEmpty 로 항상 서비스 검증(invalidImageCount, 400)에 닿게 한다.
         val results = wishlistService.registerFromImages(images = images.orEmpty(), userId = userId)
-        return ApiResponseBody.created(results.map { WishItemResponse.from(it.wish, it.item, it.snapshot) })
+        return ApiResponseBody.created(results.map { toResponse(it) })
     }
 
     // 이미지 등록 v2 1단계 — presigned 업로드 URL 발급. pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않으므로 200 OK.
@@ -75,7 +83,7 @@ class WishlistController(
         @RequestBody request: ConfirmImageUploadRequest,
     ): ApiResponseBody<List<WishItemResponse>> {
         val results = wishlistService.confirmImageRegistration(imageKeys = request.imageKeys, userId = userId)
-        return ApiResponseBody.created(results.map { WishItemResponse.from(it.wish, it.item, it.snapshot) })
+        return ApiResponseBody.created(results.map { toResponse(it) })
     }
 
     @GetMapping
@@ -85,7 +93,7 @@ class WishlistController(
         @RequestParam(required = false) size: Int?,
     ): ApiResponseBody<List<WishItemResponse>> {
         val page = wishlistService.getWishlist(userId = userId, rawCursor = cursor, rawSize = size)
-        val data = page.entries.map { WishItemResponse.from(it.wish, it.item, it.snapshot) }
+        val data = page.entries.map { toResponse(it) }
         return ApiResponseBody.ok(
             data = data,
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
@@ -98,7 +106,7 @@ class WishlistController(
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.getWish(userId = userId, wishId = wishId)
-        return ApiResponseBody.ok(WishItemResponse.from(result.wish, result.item, result.snapshot))
+        return ApiResponseBody.ok(toResponse(result))
     }
 
     @GetMapping("/{wishId}/history")
@@ -107,7 +115,9 @@ class WishlistController(
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishPriceHistoryResponse> {
         val result = wishlistService.getPriceHistory(userId = userId, wishId = wishId)
-        return ApiResponseBody.ok(WishPriceHistoryResponse.from(result.wish, result.item, result.history))
+        return ApiResponseBody.ok(
+            WishPriceHistoryResponse.from(result.wish, result.item, result.history, sourcePlatformResolver.resolve(result.item.link)),
+        )
     }
 
     @PatchMapping("/{wishId}", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
@@ -126,7 +136,7 @@ class WishlistController(
                 currency = request.currency,
                 image = image,
             )
-        return ApiResponseBody.ok(WishItemResponse.from(result.wish, result.item, result.snapshot))
+        return ApiResponseBody.ok(toResponse(result))
     }
 
     @PostMapping("/{wishId}/refresh")
@@ -135,7 +145,7 @@ class WishlistController(
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.refreshWishItem(userId = userId, wishId = wishId)
-        return ApiResponseBody.ok(WishItemResponse.from(result.wish, result.item, result.snapshot))
+        return ApiResponseBody.ok(toResponse(result))
     }
 
     @DeleteMapping("/{wishId}")

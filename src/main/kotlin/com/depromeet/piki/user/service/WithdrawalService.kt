@@ -6,6 +6,7 @@ import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.notification.sse.LocalSseDelivery
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.UUID
@@ -21,12 +22,14 @@ class WithdrawalService(
     private val withdrawnTokenStore: WithdrawnTokenStore,
     private val localSseDelivery: LocalSseDelivery,
     private val imageStorage: ImageStorage,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun withdraw(userId: UUID) {
         // 탈퇴는 MEMBER 전용. 게스트는 PII 도 없고 공유 토너먼트 참조 때문에 하드삭제도 불가하며, 스토어 요건은 계정 기준 → 403.
         // 멀쩡한 게스트 클라이언트가 정상 요청으로 닿을 수 있는 계약이라 커스텀 예외로 막는다(도메인 check 가 아닌 경계 검증).
+        // 활성 조회(findActiveById)를 쓰지 않는다 — 재탈퇴는 이미 목표 상태이므로 409 가 아니라 멱등 성공이어야 한다.
         val user = userService.findById(userId)
         if (user.identityType == IdentityType.GUEST) throw UserException.guestCannotWithdraw()
 
@@ -34,12 +37,24 @@ class WithdrawalService(
         withdrawalPersistenceService.withdraw(userId)
 
         // 2. refresh token(Redis) 무효화 — 트랜잭션 밖(외부 의존성). 재발급 경로를 끊는다.
-        refreshTokenStore.delete(userId)
+        //    best-effort: Redis 장애로 던져도 탈퇴는 완료시킨다. refresh 재발급 경로는 DB deletedAt 이
+        //    이중으로 막으므로(AuthService.refresh) 재시도까진 두지 않고, 실패만 관측한다.
+        runCatching { refreshTokenStore.delete(userId) }
+            .onFailure { e ->
+                log.warn("탈퇴 refresh 토큰 무효화 실패(후속 관측 대상) userId={}", userId, e)
+                WithdrawalMetrics.record(meterRegistry, WithdrawalMetrics.STEP_REFRESH)
+            }
 
         // 2-1. access token 무효화 — 탈퇴 회원을 denylist 에 마킹. JwtAuthenticationFilter 가 이를 확인해
-        //      만료(최대 access token 수명) 전까지 남은 access token 을 즉시 거부한다. refresh 만 끊으면
-        //      access token 이 만료까지 살아있어 탈퇴 회원이 계속 접근 가능한 구멍이 생긴다.
-        withdrawnTokenStore.markWithdrawn(userId)
+        //      만료(최대 access token 수명) 전까지 남은 access token 을 즉시 거부한다. best-effort 지만 보안
+        //      핵심이라, Redis 순간 blip 을 흡수하도록 즉시 1회 재시도한다. 완전 다운은 못 살리니 빠르게
+        //      포기(3회+backoff 는 타임아웃 반복으로 탈퇴 응답만 늦춘다)하고 메트릭으로 관측 → 사람 개입.
+        runCatching { withdrawnTokenStore.markWithdrawn(userId) }
+            .recoverCatching { withdrawnTokenStore.markWithdrawn(userId) }
+            .onFailure { e ->
+                log.warn("탈퇴 access denylist 마킹 실패(재시도 후에도 실패, 보안 창 위험) userId={}", userId, e)
+                WithdrawalMetrics.record(meterRegistry, WithdrawalMetrics.STEP_MARK_WITHDRAWN)
+            }
 
         // 3. SSE 연결 종료 — best-effort, 트랜잭션 밖. 인스턴스-로컬 연결만 끊는다.
         localSseDelivery.closeAll(userId)

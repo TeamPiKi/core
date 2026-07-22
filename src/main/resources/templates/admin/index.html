@@ -35,7 +35,7 @@
 
   <div class="wrap">
     <h1>운영 백오피스</h1>
-    <p class="lede">배포 없이 알림 문구를 수정하고 공지를 관리합니다.</p>
+    <p class="lede">배포 없이 운영 설정(알림 문구 · 공지 · 추출 정책 · 출처 몰 표시명)을 관리하고 운영 지표를 봅니다.</p>
 
     <div class="grid">
       <a class="card" th:href="@{/admin/templates}" style="text-decoration:none;color:inherit">
@@ -53,6 +53,10 @@
       <a class="card" th:href="@{/admin/extraction-policies}" style="text-decoration:none;color:inherit">
         <div class="t">추출 라우팅 정책 →</div>
         <div class="d">플랫폼(도메인)별 미지원 차단 · 브라우저 직행을 배포 없이 변경</div>
+      </a>
+      <a class="card" th:href="@{/admin/source-platforms}" style="text-decoration:none;color:inherit">
+        <div class="t">출처 몰 표시명 →</div>
+        <div class="d">위시 응답의 출처 커머스몰 표시명을 도메인별로 배포 없이 관리</div>
       </a>
     </div>
   </div>

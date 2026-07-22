@@ -25,6 +25,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
 
 @Transactional
 class UserControllerIntegrationTest : IntegrationTestSupport() {
@@ -53,6 +55,13 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
             "https://example.com/img.png",
             identityType.name,
         )
+    }
+
+    // 탈퇴(tombstone) 유저 — 행은 남고 deleted_at 이 채워진 상태. 닉네임 익명화까지 재현할 필요는 없어
+    // "활성이 아니다"를 결정하는 deleted_at 만 세운다.
+    private fun insertWithdrawnUser(userId: UUID) {
+        insertUser(userId, identityType = IdentityType.MEMBER)
+        jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(userId))
     }
 
     private fun insertUserDetail(
@@ -141,6 +150,28 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.email").value(null))
+    }
+
+    @Test
+    fun `GET users me - 탈퇴한 유저의 살아있는 access token 으로 조회하면 409 가 반환된다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertWithdrawnUser(userId)
+
+        // 탈퇴 시 access token 은 denylist 로 막히지만, 그 무효화가 부분 실패하면(#689) tombstone 이 서비스까지 닿는다.
+        // 그 창에서도 tombstone 은 활성 유저로 살아나면 안 되므로 409 로 끊는다.
+        mockMvc
+            .perform(
+                get("/api/v1/users/me")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-003"))
+            .andExpect(jsonPath("$.detail").value("탈퇴한 계정이에요."))
+            .andExpect(jsonPath("$.data").value(null))
     }
 
     @Test
@@ -357,6 +388,72 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId)}"),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
+    fun `PATCH users me - 영속화가 409 로 떨어지면 방금 올린 프로필 이미지를 S3 에서 회수한다`() {
+        // 업로드는 트랜잭션 밖에서 먼저 끝나므로, 뒤이은 영속화가 떨어지면 아무도 안 가리키는 객체가 남는다.
+        // 프로필 사진은 PII 라 lifecycle 만료에 맡기지 않고 즉시 회수해야 한다.
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val otherUserId = UUID.randomUUID()
+        insertUser(otherUserId, nickname = "점유닉네임", identityType = IdentityType.MEMBER)
+        val myUserId = UUID.randomUUID()
+        insertUser(myUserId, nickname = "내닉네임", identityType = IdentityType.MEMBER)
+        val image = MockMultipartFile("image", "photo.jpg", "image/jpeg", jpegBytes())
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                    .file(image)
+                    .param("nickname", "점유닉네임")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId, IdentityType.MEMBER)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+
+        // 이 요청이 올린 key 가 그대로 삭제 호출됐는지 — 회수 대상이 방금 올린 그 객체여야 한다.
+        val uploadedKey = stubImageStorage.uploadedKeys.last { it.startsWith("profiles/$myUserId/") }
+        assertContains(stubImageStorage.deletedKeys, uploadedKey)
+    }
+
+    @Test
+    fun `PATCH users me - 업로드가 502 로 떨어져도 그 key 를 회수 시도한다`() {
+        // S3 응답 유실·timeout 이면 예외가 나도 객체는 올라가 있을 수 있다. key 는 우리가 만든 값이라
+        // 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId, nickname = "원래닉네임", identityType = IdentityType.MEMBER)
+        val image = MockMultipartFile("image", "photo.jpg", "image/jpeg", jpegBytes())
+        // 업로드가 던져 uploadedKeys 에는 안 남으므로, 업로드에 실제로 쓰인 key 를 여기서 직접 기록해 둔다 —
+        // 회수가 "그 유저의 아무 key"가 아니라 "방금 시도한 바로 그 key"를 지우는지 정확히 검증하기 위해서다.
+        val attemptedKeys = mutableListOf<String>()
+        stubImageStorage.behavior = { _, key, _ ->
+            attemptedKeys += key
+            throw ImageStorageException.uploadFailed()
+        }
+
+        try {
+            mockMvc
+                .perform(
+                    multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                        .file(image)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isBadGateway)
+        } finally {
+            // 공유 컨텍스트의 stub mutable state 를 복원해 다른 테스트로 누수되지 않게 한다.
+            stubImageStorage.behavior = stubImageStorage.defaultBehavior
+        }
+
+        // 업로드는 한 번만 시도되고, 회수는 stale key 가 아니라 그때 시도한 바로 그 key 를 지워야 한다.
+        assertEquals(1, attemptedKeys.size)
+        assertContains(stubImageStorage.deletedKeys, attemptedKeys.single())
     }
 
     @Test

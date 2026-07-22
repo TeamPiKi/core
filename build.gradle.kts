@@ -64,6 +64,11 @@ dependencies {
     // 알림 템플릿 플레이스홀더 치환 (StringSubstitutor). Spring Boot BOM 미관리라 버전 명시 (Maven Central 최신 안정).
     implementation("org.apache.commons:commons-text:1.15.0")
 
+    // 출처 몰 표시명 fallback 유도 — InternetDomainName(Public Suffix List)로 host 의 등록 가능 도메인 첫 라벨을 뽑는다
+    // (SourcePlatformFallback). firebase-admin 이 transitive 로 끌고 오지만 직접 사용하므로 명시 선언 —
+    // 제공자가 Guava 를 떨구면 조용히 깨진다. Spring Boot BOM 미관리라 버전 명시 (Maven Central 최신 안정).
+    implementation("com.google.guava:guava:33.6.0-jre")
+
     // SSRF IP-pin: 가드가 검증한 IP 로만 연결하도록 HttpClient5 의 DnsResolver 를 끼운다 (#440).
     // JDK HttpURLConnection 은 IP pin 시 TLS SNI·인증서를 수동 복구해야 해 깨지기 쉬운데(JDK-8144566 등), HttpClient5 는
     // IP 만 바꾸고 SNI·인증서·Host 헤더는 원 도메인을 유지한다. 버전은 Spring Boot BOM 관리(이미 transitive).

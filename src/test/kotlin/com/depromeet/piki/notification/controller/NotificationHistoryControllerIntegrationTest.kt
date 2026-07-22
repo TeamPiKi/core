@@ -247,7 +247,7 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `유효하지 않은 cursor 는 400 으로 거른다`() {
+    fun `유효하지 않은 cursor 는 400 NOTIFICATION-001 로 거른다`() {
         val userId = UUID.randomUUID()
         buildMockMvc()
             .perform(
@@ -255,7 +255,21 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
                     .param("cursor", "abc")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.detail", notNullValue()))
+            .andExpect(jsonPath("$.code").value("NOTIFICATION-001"))
+    }
+
+    @Test
+    fun `유효하지 않은 category 값은 400 COMMON-INVALID-INPUT 로 거른다`() {
+        // category 는 NotificationCategory enum 바인딩이라 미지 값은 MethodArgumentTypeMismatchException →
+        // RESEH → 400. 도메인 예외가 아니므로 공통 폴백 code(COMMON-INVALID-INPUT)를 받는다.
+        val userId = UUID.randomUUID()
+        buildMockMvc()
+            .perform(
+                get("/api/v1/notifications")
+                    .param("category", "UNKNOWN")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
     }
 
     @Test

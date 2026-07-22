@@ -22,10 +22,13 @@ class StubRefreshTokenStore : RefreshTokenStore {
 
     override fun get(userId: UUID): String? = store[userId]
 
-    override fun delete(userId: UUID) {
+    // default: 정상 삭제. 테스트에서 onDelete = { throw ... } 로 Redis 장애 시뮬레이션.
+    var onDelete: (UUID) -> Unit = { userId ->
         store.remove(userId)
         grace.remove(userId)
     }
+
+    override fun delete(userId: UUID) = onDelete(userId)
 
     // 실제 Lua 와 동일 판정. Redis 싱글스레드 직렬화를 @Synchronized 로 모델링해, 동시 요청이 한쪽만 회전하고
     // 나머지는 grace replay 로 같은 토큰에 수렴하는 것을 stub 에서도 결정적으로 재현한다.
@@ -60,5 +63,9 @@ class StubRefreshTokenStore : RefreshTokenStore {
         store.clear()
         grace.clear()
         onSave = { userId, token -> store[userId] = token }
+        onDelete = { userId ->
+            store.remove(userId)
+            grace.remove(userId)
+        }
     }
 }
