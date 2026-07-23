@@ -158,7 +158,7 @@ class WeeklyReportEmbedTest {
             from = LocalDateTime.of(2026, 7, 6, 0, 0),
             to = LocalDateTime.of(2026, 7, 13, 0, 0),
             signup = MetricsSnapshot.Signup(0, 0, 0, 0, emptyMap(), 0),
-            wish = MetricsSnapshot.Wish(0, 0, 0, 0, 0),
+            wish = MetricsSnapshot.Wish(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             tournament = MetricsSnapshot.Tournament(0, 0, 0, 0, 0),
             pushReachableUsers = 0,
             retention = MetricsSnapshot.Retention(0, 0, emptyList()),

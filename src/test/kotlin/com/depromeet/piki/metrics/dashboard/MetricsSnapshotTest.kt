@@ -21,6 +21,16 @@ class MetricsSnapshotTest {
     }
 
     @Test
+    fun `파싱 성공률은 위시-토너먼트 출처별과 전체가 각각 계산된다`() {
+        val w = wish(ready = 8, failed = 2, tournamentReady = 3, tournamentFailed = 7)
+        assertEquals(80, w.wishParseSuccessRate) // 위시 8/10
+        assertEquals(30, w.tournamentParseSuccessRate) // 토너먼트 3/10
+        assertEquals(55, w.parseSuccessRate) // 전체 (8+3)/20
+        assertEquals(11, w.parsedReady)
+        assertEquals(9, w.parsedFailed)
+    }
+
+    @Test
     fun `토너먼트 평균 참가자는 생성이 0이면 0, 아니면 소수 1자리다`() {
         assertEquals("0", tournament(created = 0, participants = 0).avgParticipants)
         assertEquals("3.5", tournament(created = 2, participants = 7).avgParticipants)
@@ -55,7 +65,20 @@ class MetricsSnapshotTest {
     private fun wish(
         ready: Long,
         failed: Long,
-    ) = MetricsSnapshot.Wish(total = ready + failed, fromUrl = 0, fromImage = 0, parsedReady = ready, parsedFailed = failed)
+        tournamentReady: Long = 0,
+        tournamentFailed: Long = 0,
+    ) = MetricsSnapshot.Wish(
+        total = ready + failed,
+        fromUrl = 0,
+        fromImage = 0,
+        activeTotal = 0,
+        activeFromUrl = 0,
+        activeFromImage = 0,
+        wishParsedReady = ready,
+        wishParsedFailed = failed,
+        tournamentParsedReady = tournamentReady,
+        tournamentParsedFailed = tournamentFailed,
+    )
 
     private fun tournament(
         created: Long,
