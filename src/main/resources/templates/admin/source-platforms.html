@@ -22,6 +22,25 @@
     form.add input[name=domain]{width:220px;} form.add input[name=displayName]{flex:1;min-width:180px;}
     form.add button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;}
 
+    /* 동작 방식 설명. 늘 펼쳐 두면 정작 보러 온 목록이 아래로 밀리므로 접어 둔다(details 라 JS 없이 동작) —
+       extraction-policies 의 guide 와 같은 패턴. 제목·화살표를 accent 로 둬 "눌러서 펼치는 것"임이 접힌 상태에서도 보인다. */
+    .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:var(--accent);
+      display:flex;align-items:center;gap:9px;}
+    .guide>summary::-webkit-details-marker{display:none;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:var(--accent);font-size:15px;line-height:1;transition:transform .15s;}
+    .guide[open]>summary::before{transform:rotate(90deg);}
+    .guide>summary:hover{background:var(--accent-soft);}
+    .guide>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+    .gbody{border-top:1px solid var(--border);}
+    /* 주제 라벨(왼쪽 열)을 세로로 정렬해 항목 사이를 눈으로 비교하게 한다 — 갈래 비교표가 아니라 항목별 설명이라
+       extraction-policies 의 다열 표 대신 라벨 + 설명 2열로 둔다. */
+    .gtable{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .gtable th{width:104px;text-align:left;vertical-align:top;padding:11px 15px;border-bottom:1px solid #f1f3f5;
+      color:#384049;font-size:12px;font-weight:700;white-space:nowrap;}
+    .gtable td{padding:11px 15px 11px 0;border-bottom:1px solid #f1f3f5;color:var(--muted);line-height:1.65;}
+    .gtable tr:last-child th,.gtable tr:last-child td{border-bottom:none;}
+
     /* 한 줄 고정: 도메인·표시명은 ellipsis, 수정일·화살표는 nowrap. 어떤 값이 들어와도 행 높이가 벌어지지도,
        행이 가로로 넘치지도 않는다. 표시명은 max-width 로 상한을 둬 도메인 칸을 다 밀어내지 못하게 한다.
        ellipsis 로 잘린 전문은 각 칸의 title(hover 툴팁)이 보여준다. */
@@ -44,10 +63,36 @@
   <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
   <div class="wrap">
     <h1>출처 몰 표시명</h1>
-    <!-- 한 줄이 한 주제에 답한다: 무엇을 하나 / 미등록 도메인의 동작 / 교체 규칙. -->
-    <p class="lede">위시 응답에 나가는 <b>출처 커머스몰 표시명(sourcePlatform)</b>을 도메인별로 배포 없이 관리합니다. 서브도메인은 자동 포함됩니다 (29cm.co.kr 은 www·shop 포함).<br>
-      <b>등록이 없는 도메인은 URL 에서 유도한 임시 표시명</b>(예: 29cm.co.kr → 29cm)이 나갑니다. 정식 브랜드 표기를 쓰려면 여기 등록하세요 — 저장 즉시 과거 항목에도 적용됩니다.<br>
-      <b>같은 도메인을 다시 추가하면 표시명이 교체</b>되고, 수정·삭제는 항목을 눌러 상세에서 합니다.</p>
+    <!-- lede 는 "무엇을 하나" 한 줄만. 동작 규칙은 아래 접이식 가이드가 진다 — 늘 펼친 문단으로 두면
+         정작 보러 온 목록이 아래로 밀린다 (extraction-policies 와 같은 구조). -->
+    <p class="lede">위시 응답에 나가는 <b>출처 커머스몰 표시명(sourcePlatform)</b>을 도메인별로 배포 없이 관리합니다.</p>
+
+    <!-- 설명은 항목당 핵심 문장 + 예시 하나까지만, 한 문장(생각)마다 개행 — 규칙 전문이 아니라 핵심만 담는다. -->
+    <details class="guide">
+      <summary>동작 방식</summary>
+      <div class="gbody">
+        <table class="gtable">
+          <tbody>
+            <tr>
+              <th>임시 표시명</th>
+              <td>등록이 없는 도메인은 URL 에서 유도한 임시 표시명이 나갑니다.<br>예: shop.29cm.co.kr → 29cm</td>
+            </tr>
+            <tr>
+              <th>즉시 적용</th>
+              <td>저장·삭제는 즉시 적용됩니다.<br>과거 위시 항목에도 소급됩니다.</td>
+            </tr>
+            <tr>
+              <th>서브도메인</th>
+              <td>등록 도메인은 서브도메인을 자동 포함합니다.<br>등록이 겹치면 더 구체적인 도메인이 이깁니다.</td>
+            </tr>
+            <tr>
+              <th>교체·수정</th>
+              <td>같은 도메인을 다시 추가하면 표시명이 교체됩니다.<br>수정·삭제는 항목을 눌러 상세에서 합니다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
 
     <div class="ok" th:if="${param.updated}">표시명이 저장됐습니다. (즉시 적용)</div>
     <div class="ok" th:if="${param.deleted}">표시명이 삭제됐습니다. (즉시 적용 — 임시 표시명으로 돌아갑니다)</div>
@@ -70,7 +115,7 @@
         <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
         <span class="go" aria-hidden="true">→</span>
       </a>
-      <div class="empty" th:if="${#lists.isEmpty(platforms)}">등록된 표시명이 없습니다. 모든 도메인이 URL 에서 유도한 임시 표시명으로 나가는 중입니다.</div>
+      <div class="empty" th:if="${#lists.isEmpty(platforms)}">등록된 표시명이 없습니다. 모든 도메인이 임시 표시명으로 나가는 중입니다.</div>
     </div>
 
   </div>
