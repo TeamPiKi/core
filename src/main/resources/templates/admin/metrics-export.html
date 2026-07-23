@@ -154,6 +154,7 @@
         <div class="kv"><span class="lab">파싱 전체 (성공 / 실패)</span><span><b class="pos" th:text="${snapshot.wish.parsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.parsedFailed}">0</b> · <b th:text="${snapshot.wish.parseSuccessRate}+'%'">0%</b></span></div>
         <div class="kv"><span class="lab">└ 위시 파싱 (등록+새로고침)</span><span><b class="pos" th:text="${snapshot.wish.wishParsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.wishParsedFailed}">0</b> · <b th:text="${snapshot.wish.wishParseSuccessRate}+'%'">0%</b></span></div>
         <div class="kv"><span class="lab">└ 토너먼트 파싱</span><span><b class="pos" th:text="${snapshot.wish.tournamentParsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.tournamentParsedFailed}">0</b> · <b th:text="${snapshot.wish.tournamentParseSuccessRate}+'%'">0%</b></span></div>
+        <p class="note">활성 = 지금 살아있는 위시(삭제 제외, 전체 기간). 담기 = 구간 내 새로 담은 유입(삭제 무관). 파싱은 item_snapshots(구간 내 READY/FAILED)를 위시(등록+새로고침) vs 토너먼트 전용 아이템으로 분리 — user 차원이 없어 개발진 제외는 미적용.</p>
       </div>
       <div class="card">
         <h3>리텐션 / DAU</h3>
