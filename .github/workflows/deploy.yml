@@ -317,25 +317,16 @@ jobs:
           # MySQL 초기 자격증명은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM
           # (/piki-core/<env>/db-*)으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          # Alloy 가 Grafana Cloud 로 remote-write 할 자격증명. 미등록(빈 값)이면 provision-runtime.sh 가
-          # Alloy 기동을 skip 한다. token 1개를 metrics·logs 가 공유, URL·USER 는 Prometheus/Loki 각각.
-          GRAFANA_METRICS_URL: ${{ secrets.GRAFANA_METRICS_URL }}
-          GRAFANA_METRICS_USER: ${{ secrets.GRAFANA_METRICS_USER }}
-          GRAFANA_LOGS_URL: ${{ secrets.GRAFANA_LOGS_URL }}
-          GRAFANA_LOGS_USER: ${{ secrets.GRAFANA_LOGS_USER }}
-          # Tempo(OTLP) 자격증명 — Alloy otelcol.exporter.otlp 가 GC Traces 로 보낼 endpoint·instance ID(#380).
-          # token 은 metrics·logs 와 공유(GRAFANA_CLOUD_TOKEN, traces:write scope 필요). 미등록이면 config.alloy 가
-          # 더미로 fallback 해 trace 만 비활성(메트릭·로그는 정상) — Alloy 기동은 GRAFANA_METRICS_URL 기준으로만 skip 된다.
-          GRAFANA_TRACES_URL: ${{ secrets.GRAFANA_TRACES_URL }}
-          GRAFANA_TRACES_USER: ${{ secrets.GRAFANA_TRACES_USER }}
-          GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+          # Grafana Cloud 자격은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM 공유 경로
+          # (/piki/observability/grafana-*)로 직접 읽는다 (#771, MySQL db-* 와 같은 결. 세 서비스 박스가
+          # 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다).
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
           # extractor prod 박스는 자체 Alloy 가 수집한다. dev 동거 extractor 는 컨테이너 라벨로 잡힌다.
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT,GRAFANA_METRICS_URL,GRAFANA_METRICS_USER,GRAFANA_LOGS_URL,GRAFANA_LOGS_USER,GRAFANA_TRACES_URL,GRAFANA_TRACES_USER,GRAFANA_CLOUD_TOKEN
+          envs: ENVIRONMENT
           script: |
             chmod +x /tmp/piki-deploy/provision-runtime.sh
             /tmp/piki-deploy/provision-runtime.sh
