@@ -141,9 +141,9 @@
         <div class="s">구간 참여 유저</div>
       </div>
       <div class="kpi">
-        <div class="k">위시 담기</div>
-        <div class="v num" th:text="${#numbers.formatInteger(snapshot.wish.total,1,'COMMA')}">0</div>
-        <div class="s">파싱 성공률 <b th:text="${snapshot.wish.parseSuccessRate}+'%'">0%</b></div>
+        <div class="k">현재 활성 위시</div>
+        <div class="v num" th:text="${#numbers.formatInteger(snapshot.wish.activeTotal,1,'COMMA')}">0</div>
+        <div class="s">구간 담기 <b th:text="${snapshot.wish.total}">0</b> · 파싱 <b th:text="${snapshot.wish.parseSuccessRate}+'%'">0%</b></div>
       </div>
       <div class="kpi">
         <div class="k">올라간 아이템</div>
@@ -192,9 +192,13 @@
     <div class="grid2">
       <div class="card">
         <h3>위시</h3>
-        <div class="kv"><span class="lab">담기 (URL / 이미지)</span><span>URL <b th:text="${snapshot.wish.fromUrl}">0</b> · 이미지 <b th:text="${snapshot.wish.fromImage}">0</b></span></div>
-        <div class="kv"><span class="lab">파싱 성공 / 실패</span><span><b class="pos" th:text="${snapshot.wish.parsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.parsedFailed}">0</b></span></div>
-        <div class="kv"><span class="lab">파싱 성공률</span><b th:text="${snapshot.wish.parseSuccessRate}+'%'">0%</b></div>
+        <div class="kv"><span class="lab">현재 활성 위시 (구간 무관)</span><b class="num" th:text="${#numbers.formatInteger(snapshot.wish.activeTotal,1,'COMMA')}">0</b></div>
+        <div class="kv"><span class="lab">└ URL / 이미지</span><span>URL <b th:text="${snapshot.wish.activeFromUrl}">0</b> · 이미지 <b th:text="${snapshot.wish.activeFromImage}">0</b></span></div>
+        <div class="kv"><span class="lab">담기 (유입, 구간 내 · URL/이미지)</span><span>URL <b th:text="${snapshot.wish.fromUrl}">0</b> · 이미지 <b th:text="${snapshot.wish.fromImage}">0</b></span></div>
+        <div class="kv"><span class="lab">파싱 전체 (성공 / 실패)</span><span><b class="pos" th:text="${snapshot.wish.parsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.parsedFailed}">0</b> · <b th:text="${snapshot.wish.parseSuccessRate}+'%'">0%</b></span></div>
+        <div class="kv"><span class="lab">└ 위시 파싱 (등록+새로고침)</span><span><b class="pos" th:text="${snapshot.wish.wishParsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.wishParsedFailed}">0</b> · <b th:text="${snapshot.wish.wishParseSuccessRate}+'%'">0%</b></span></div>
+        <div class="kv"><span class="lab">└ 토너먼트 파싱</span><span><b class="pos" th:text="${snapshot.wish.tournamentParsedReady}">0</b> / <b class="neg" th:text="${snapshot.wish.tournamentParsedFailed}">0</b> · <b th:text="${snapshot.wish.tournamentParseSuccessRate}+'%'">0%</b></span></div>
+        <p class="note">활성 = 지금 살아있는 위시(삭제 제외, 전체 기간). 담기 = 구간 내 새로 담은 유입(삭제 무관). 파싱은 item_snapshots(구간 내 READY/FAILED)를 위시(등록+새로고침) vs 토너먼트 전용 아이템으로 분리 — user 차원이 없어 개발진 제외는 미적용.</p>
       </div>
       <div class="card">
         <h3>리텐션 / DAU</h3>

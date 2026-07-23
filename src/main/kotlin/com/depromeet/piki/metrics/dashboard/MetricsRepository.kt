@@ -106,18 +106,53 @@ class MetricsRepository(
         return url to image
     }
 
-    // 파싱(item_snapshots)은 user 차원이 없어 개발진 제외 불가 — 토글과 무관하게 개발진 파싱도 함께 집계된다(인지된 한계).
-    fun countParsing(
+    // 현재 활성 위시(stock) — 구간 무관, deleted_at IS NULL 인 "지금 살아있는 위시"를 url/image 로 나눈다. 개발진 토글 적용.
+    // 유입(countWishes/countWishesBySource, flow)과 달리 삭제된 위시는 빠지고 기간 필터도 없다(현재 재고 스냅샷).
+    fun countActiveWishesBySource(exclude: Boolean): Pair<Long, Long> {
+        val byImage =
+            keyCounts(
+                """
+                SELECT i.source_url IS NULL AS is_image, COUNT(*)
+                FROM wishes w
+                JOIN item_snapshots s ON s.id = w.snapshot_id
+                JOIN items i ON i.id = s.item_id
+                WHERE w.deleted_at IS NULL${notInternal(exclude, "w.user_id")} GROUP BY is_image
+                """.trimIndent(),
+            )
+        return (byImage["0"] ?: 0L) to (byImage["1"] ?: 0L)
+    }
+
+    // 파싱(item_snapshots READY/FAILED)을 출처별로 나눈다 — 아이템이 위시로 참조되면 '위시 파싱'(등록+새로고침 전부),
+    // 아니면 '토너먼트 파싱'(토너먼트 전용 아이템). 위시·토너먼트가 별도 item 을 만들어 item 단위로 출처가 갈린다.
+    // 파싱은 user 차원이 없어 개발진 제외는 못 한다(전체 파싱과 동일한 인지된 한계) — 토글과 무관하게 개발진 파싱도 포함된다.
+    fun countParsingBySource(
         from: LocalDateTime,
         to: LocalDateTime,
-    ): Pair<Long, Long> {
-        val byStatus =
-            keyCounts(
-                "SELECT status, COUNT(*) FROM item_snapshots WHERE created_at >= ? AND created_at < ? AND status IN ('READY','FAILED') GROUP BY status",
+    ): ParsingBySource {
+        val rows =
+            jdbcTemplate.query(
+                """
+                SELECT
+                  EXISTS(SELECT 1 FROM wishes w JOIN item_snapshots s2 ON s2.id = w.snapshot_id WHERE s2.item_id = s.item_id) AS is_wish,
+                  s.status, COUNT(*)
+                FROM item_snapshots s
+                WHERE s.created_at >= ? AND s.created_at < ? AND s.status IN ('READY','FAILED')
+                GROUP BY is_wish, s.status
+                """.trimIndent(),
+                { rs, _ -> Triple(rs.getBoolean(1), rs.getString(2), rs.getLong(3)) },
                 ts(from),
                 ts(to),
             )
-        return (byStatus["READY"] ?: 0L) to (byStatus["FAILED"] ?: 0L)
+        fun pick(
+            isWish: Boolean,
+            status: String,
+        ): Long = rows.firstOrNull { it.first == isWish && it.second == status }?.third ?: 0L
+        return ParsingBySource(
+            wishReady = pick(true, "READY"),
+            wishFailed = pick(true, "FAILED"),
+            tournamentReady = pick(false, "READY"),
+            tournamentFailed = pick(false, "FAILED"),
+        )
     }
 
     // ---- 토너먼트 ----
@@ -383,3 +418,11 @@ class MetricsRepository(
         private const val DEVELOPER_IDS = "SELECT user_id FROM developers"
     }
 }
+
+// 파싱 출처별 집계 결과 — 위시(등록+새로고침) vs 토너먼트(전용 아이템), 각 READY/FAILED.
+data class ParsingBySource(
+    val wishReady: Long,
+    val wishFailed: Long,
+    val tournamentReady: Long,
+    val tournamentFailed: Long,
+)
