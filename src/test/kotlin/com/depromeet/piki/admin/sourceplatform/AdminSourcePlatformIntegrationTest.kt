@@ -136,6 +136,8 @@ class AdminSourcePlatformIntegrationTest : IntegrationTestSupport() {
             val detail = html(mockMvc, "/admin/source-platforms/$domain")
             assertContains(detail, domain)
             assertContains(detail, oldName)
+            // 삭제 박스가 이 도메인의 실측 fallback 을 보여준다 — 모델 배선(fallbackName)이 빠지면 빈 태그로 조용히 회귀한다.
+            assertContains(detail, "<b>example</b>")
 
             mockMvc
                 .perform(
