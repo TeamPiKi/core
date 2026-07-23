@@ -176,14 +176,14 @@
         </div>
         <div class="kv"><span class="lab">유형</span><span>회원 <b th:text="${snapshot.signup.withinMembers}">0</b> · 게스트 <b th:text="${snapshot.signup.withinGuests}">0</b></span></div>
         <div class="kv"><span class="lab">게스트→회원 전환</span><b th:text="${snapshot.signup.guestToMemberConversions}">0</b></div>
-        <p class="note">전환은 소셜 연결이 가입보다 1분 이상 늦은 경우로 근사.</p>
+        <p class="note">가입 = 구간 내 새로 가입한 유저 수(users.created_at, 탈퇴 제외). provider·유형은 소셜 연결(user_details)·계정 종류(identity_type) 기준. 전환 = 소셜 연결이 가입보다 1분 이상 늦은 경우로 근사(동시 신규가입과 구분).</p>
       </div>
       <div class="card">
         <h3>토너먼트</h3>
         <div class="kv"><span class="lab">생성 / 완료</span><span><b th:text="${snapshot.tournament.created}">0</b> / <b th:text="${snapshot.tournament.completed}">0</b></span></div>
         <div class="kv"><span class="lab">플레이 (픽)</span><b class="num" th:text="${#numbers.formatInteger(snapshot.tournament.plays,1,'COMMA')}">0</b></div>
         <div class="kv"><span class="lab">평균 참가자</span><b th:text="${snapshot.tournament.avgParticipants}+'명'">0명</b></div>
-        <p class="note">완료는 참가자별 완료, 플레이는 라운드 픽 수 기준(시작 시각 컬럼 없음).</p>
+        <p class="note">생성 = 구간 내 만든 토너먼트(tournaments.created_at). 완료 = 참가자별 완료 시각(tournament_users.completed_at). 플레이 = 라운드 픽 수(tournament_histories 행). 이용자·평균참가자 = 참여자(tournament_users) 기준. 토너먼트에 상태 전이 시각 컬럼이 없어 완료는 참가자 단위로 센다.</p>
       </div>
     </div>
 
@@ -229,7 +229,7 @@
         </div>
         <div class="kv"><span class="lab">공지 도달 (성공/실패/미도달)</span><span><b class="pos" th:text="${snapshot.push.deliverySuccess}">0</b> / <b class="neg" th:text="${snapshot.push.deliveryFailure}">0</b> / <b th:text="${snapshot.push.deliverySkipped}">0</b></span></div>
         <div class="kv"><span class="lab">클릭률 (근사)</span><b th:text="${snapshot.push.ctrApproxPct}+'%'">0%</b></div>
-        <p class="note">클릭률은 is_read 근사 — 알림센터 열람도 포함돼 과대계상될 수 있다.</p>
+        <p class="note">발송 이력 = 구간 내 발송된 알림(notifications)을 종류(type)별로 집계. 공지 도달 = 구간 내 발송 공지(announcements)의 성공/실패/미도달 합. 클릭률은 is_read 근사 — 알림센터 열람도 포함돼 과대계상될 수 있다.</p>
       </div>
       <div class="card">
         <h3>시간대별 가입 (KST)</h3>
