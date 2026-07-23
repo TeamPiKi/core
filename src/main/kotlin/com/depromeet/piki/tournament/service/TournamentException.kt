@@ -2,252 +2,94 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
+// message·category·httpStatus 는 전부 errorCode 하나에서 파생한다(TournamentErrorCode 가 single source).
 class TournamentException private constructor(
-    message: String,
-    override val category: ErrorCategory,
-    override val httpStatus: HttpStatus,
-) : BaseException(message),
+    override val errorCode: ErrorCode,
+) : BaseException(errorCode.message),
     HttpMappable {
+    override val category: ErrorCategory get() = errorCode.category
+    override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
+
     companion object {
-        fun forbiddenTournament(): TournamentException =
-            TournamentException(
-                "이 토너먼트에 접근할 수 없어요.",
-                ErrorCategory.FORBIDDEN,
-                HttpStatus.FORBIDDEN,
-            )
+        fun forbiddenTournament(): TournamentException = TournamentException(TournamentErrorCode.FORBIDDEN_TOURNAMENT)
 
-        fun notFoundTournament(): TournamentException =
-            TournamentException(
-                "토너먼트를 찾을 수 없어요. 이미 삭제됐을 수 있어요.",
-                ErrorCategory.NOT_FOUND,
-                HttpStatus.NOT_FOUND,
-            )
+        fun notFoundTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_TOURNAMENT)
 
-        fun invalidWinner(): TournamentException =
-            TournamentException(
-                "올바르지 않은 선택이에요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidWinner(): TournamentException = TournamentException(TournamentErrorCode.INVALID_WINNER)
 
         // 목록 조회 limit 이 1 미만(0·음수)인 경우. 정상 클라이언트는 limit>=1(홈은 3)만 보내므로,
-        // 여기 닿는 건 잘못 구성한 요청 = 계약 위반 → 400. (#728 tournament code 이관 시 다른 팩토리와 함께 code 부여.)
-        fun invalidLimit(): TournamentException =
-            TournamentException(
-                "조회 개수는 1 이상이어야 해요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        // 여기 닿는 건 잘못 구성한 요청 = 계약 위반 → 400.
+        fun invalidLimit(): TournamentException = TournamentException(TournamentErrorCode.INVALID_LIMIT)
 
-        fun invalidTournamentItem(): TournamentException =
-            TournamentException(
-                "이 토너먼트에 없는 아이템이에요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.INVALID_TOURNAMENT_ITEM)
 
-        fun notPendingTournament(): TournamentException =
-            TournamentException(
-                "토너먼트가 시작되기 전에만 할 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun notPendingTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_PENDING_TOURNAMENT)
 
-        fun notInProgressTournament(): TournamentException =
-            TournamentException(
-                "토너먼트가 진행 중일 때만 할 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun notInProgressTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_IN_PROGRESS_TOURNAMENT)
 
-        fun invalidItemCount(): TournamentException =
-            TournamentException(
-                "아이템은 2~32개 사이로 담아주세요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidItemCount(): TournamentException = TournamentException(TournamentErrorCode.INVALID_ITEM_COUNT)
 
-        fun tooManyTournamentItems(): TournamentException =
-            TournamentException(
-                "아이템은 최대 32개까지 담을 수 있어요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun tooManyTournamentItems(): TournamentException = TournamentException(TournamentErrorCode.TOO_MANY_TOURNAMENT_ITEMS)
 
-        fun duplicateTournamentItem(): TournamentException =
-            TournamentException(
-                "이미 담은 아이템이에요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun duplicateTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM)
 
-        fun notFoundTournamentItem(): TournamentException =
-            TournamentException(
-                "토너먼트 아이템을 찾을 수 없어요.",
-                ErrorCategory.NOT_FOUND,
-                HttpStatus.NOT_FOUND,
-            )
+        fun notFoundTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_TOURNAMENT_ITEM)
 
-        fun notFoundItems(): TournamentException =
-            TournamentException(
-                "존재하지 않는 아이템이 포함되어 있어요.",
-                ErrorCategory.NOT_FOUND,
-                HttpStatus.NOT_FOUND,
-            )
+        fun notFoundItems(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_ITEMS)
 
         // 비동기 파싱이 끝나지 않은(PENDING·PROCESSING) 또는 실패한(FAILED) 상품을 위시에서 토너먼트에 추가하려 한 경우.
         // 곧 READY 가 되거나 영구 실패라 현재 상태와 충돌 → 409.
-        fun itemNotReady(): TournamentException =
-            TournamentException(
-                "아직 정보를 가져오는 중인 상품이에요. 잠시 후 추가해 주세요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun itemNotReady(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_READY)
 
         // 토너먼트 시작 시 PENDING·PROCESSING·FAILED 아이템이 포함된 경우.
-        fun itemNotReadyToStart(): TournamentException =
-            TournamentException(
-                "아직 준비 중인 상품이 있어요. 모두 준비되면 시작할 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun itemNotReadyToStart(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_READY_TO_START)
 
         // 토너먼트 시작 시 가격 정보가 없는 아이템이 포함된 경우.
         // 가격 기준 정렬이 불가능하고 클라이언트가 아이템 추가 시점에 해당 상태를 유발할 수 있어 → 409.
-        fun itemPriceRequired(): TournamentException =
-            TournamentException(
-                "가격 정보가 없는 상품이 있어요. 직접 입력 후 시작해 주세요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun itemPriceRequired(): TournamentException = TournamentException(TournamentErrorCode.ITEM_PRICE_REQUIRED)
 
-        fun invalidImageCount(): TournamentException =
-            TournamentException(
-                "이미지는 1~5장만 올릴 수 있어요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidImageCount(): TournamentException = TournamentException(TournamentErrorCode.INVALID_IMAGE_COUNT)
 
-        fun itemNotInWishlist(): TournamentException =
-            TournamentException(
-                "위시에 저장된 아이템만 담을 수 있어요.",
-                ErrorCategory.FORBIDDEN,
-                HttpStatus.FORBIDDEN,
-            )
+        fun itemNotInWishlist(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_IN_WISHLIST)
 
-        fun eliminatedTournamentItem(): TournamentException =
-            TournamentException(
-                "이미 탈락한 아이템이에요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun eliminatedTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.ELIMINATED_TOURNAMENT_ITEM)
 
-        fun invalidCurrentRound(): TournamentException =
-            TournamentException(
-                "지금은 진행할 수 없는 단계예요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidCurrentRound(): TournamentException = TournamentException(TournamentErrorCode.INVALID_CURRENT_ROUND)
 
         fun inProgressTournamentCannotBeDeleted(): TournamentException =
-            TournamentException(
-                "토너먼트가 끝난 후 삭제할 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+            TournamentException(TournamentErrorCode.IN_PROGRESS_TOURNAMENT_CANNOT_BE_DELETED)
 
-        fun invalidInviteCode(): TournamentException =
-            TournamentException(
-                "초대 코드가 올바르지 않아요.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun invalidInviteCode(): TournamentException = TournamentException(TournamentErrorCode.INVALID_INVITE_CODE)
 
-        fun inviteExpired(): TournamentException =
-            TournamentException(
-                "초대 링크가 만료됐어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun inviteExpired(): TournamentException = TournamentException(TournamentErrorCode.INVITE_EXPIRED)
 
-        fun alreadyParticipant(): TournamentException =
-            TournamentException(
-                "이미 참여 중인 토너먼트예요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun alreadyParticipant(): TournamentException = TournamentException(TournamentErrorCode.ALREADY_PARTICIPANT)
 
-        fun notCompletedTournament(): TournamentException =
-            TournamentException(
-                "완료된 토너먼트에서만 할 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun notCompletedTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_COMPLETED_TOURNAMENT)
 
         fun clonedTournamentCannotSharePlayLink(): TournamentException =
-            TournamentException(
-                "플레이 링크로 참여한 토너먼트는 공유 링크를 만들 수 없어요.",
-                ErrorCategory.FORBIDDEN,
-                HttpStatus.FORBIDDEN,
-            )
+            TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK)
 
-        fun playLinkAlreadyCreated(): TournamentException =
-            TournamentException(
-                "이미 플레이 링크가 만들어진 토너먼트예요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun playLinkAlreadyCreated(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_ALREADY_CREATED)
 
-        fun playLinkNotCreated(): TournamentException =
-            TournamentException(
-                "아직 플레이 링크가 만들어지지 않은 토너먼트예요.",
-                ErrorCategory.NOT_FOUND,
-                HttpStatus.NOT_FOUND,
-            )
+        fun playLinkNotCreated(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_NOT_CREATED)
 
-        fun playLinkExpired(): TournamentException =
-            TournamentException(
-                "플레이 링크가 만료됐어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun playLinkExpired(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_EXPIRED)
 
-        fun groupResultNotAvailable(): TournamentException =
-            TournamentException(
-                "완료된 토너먼트에서만 결과를 볼 수 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun groupResultNotAvailable(): TournamentException = TournamentException(TournamentErrorCode.GROUP_RESULT_NOT_AVAILABLE)
 
-        fun alreadyCloned(): TournamentException =
-            TournamentException(
-                "이미 이 플레이 링크로 만든 토너먼트가 있어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun alreadyCloned(): TournamentException = TournamentException(TournamentErrorCode.ALREADY_CLONED)
 
-        fun participantLimitExceeded(): TournamentException =
-            TournamentException(
-                "참여 인원이 가득 찼어요.",
-                ErrorCategory.CONFLICT,
-                HttpStatus.CONFLICT,
-            )
+        fun participantLimitExceeded(): TournamentException = TournamentException(TournamentErrorCode.PARTICIPANT_LIMIT_EXCEEDED)
 
         fun clonedTournamentCannotViewGroupResult(): TournamentException =
-            TournamentException(
-                "플레이 링크로 참여한 토너먼트에서는 친구 결과를 볼 수 없어요.",
-                ErrorCategory.FORBIDDEN,
-                HttpStatus.FORBIDDEN,
-            )
+            TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT)
 
         fun clonedTournamentCannotAddItems(): TournamentException =
-            TournamentException(
-                "플레이 링크로 만든 토너먼트에는 아이템을 추가할 수 없어요.",
-                ErrorCategory.FORBIDDEN,
-                HttpStatus.FORBIDDEN,
-            )
+            TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_ADD_ITEMS)
     }
 }

@@ -208,6 +208,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"inviteCode":"$inviteCode"}"""),
             ).andExpect(status().isConflict)
+            // tournament 이관(#764)으로 409(CONFLICT)가 처음으로 도메인 code 를 싣는다 — alreadyParticipant → TOURNAMENT-022.
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-022"))
     }
 
     @Test
@@ -414,6 +416,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"itemIds":[100,200]}"""),
             ).andExpect(status().isForbidden)
+            // 참여자가 아닌 경우 forbiddenTournament → TOURNAMENT-001 (도메인 code 회귀 가드).
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-001"))
     }
 
     @Test
@@ -791,6 +795,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                         .param("limit", limit),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-033"))
                 .andExpect(jsonPath("$.detail").value("조회 개수는 1 이상이어야 해요."))
         }
     }
