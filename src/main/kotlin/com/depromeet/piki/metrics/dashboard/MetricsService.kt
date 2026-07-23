@@ -27,7 +27,7 @@ class MetricsService(
         from: LocalDateTime?,
         to: LocalDateTime?,
     ): Range {
-        if (from != null && to != null) return Range(from, to, null) // 직접 지정
+        from?.let { f -> to?.let { t -> return Range(f, t, null) } } // 직접 지정: from·to 둘 다 있으면
         val now = LocalDateTime.now(KST)
         val today = now.toLocalDate()
         return when (preset) {
@@ -50,7 +50,8 @@ class MetricsService(
 
         val identityCounts = repository.countWithinByIdentityType(fromUtc, toUtc, excludeInternal)
         val (wishUrl, wishImage) = repository.countWishesBySource(fromUtc, toUtc, excludeInternal)
-        val (parsedReady, parsedFailed) = repository.countParsing(fromUtc, toUtc)
+        val (activeWishUrl, activeWishImage) = repository.countActiveWishesBySource(excludeInternal)
+        val parsing = repository.countParsingBySource(fromUtc, toUtc)
         val (notifTotal, notifRead) = repository.notificationReadApprox(fromUtc, toUtc, excludeInternal)
         // announcements.sent_at 은 다른 테이블(UTC 저장)과 달리 KST wall-clock 으로 저장된다(Announcement.markSent → now(KST)).
         // 그래서 UTC 로 변환한 fromUtc/toUtc 로 조회하면 9시간 어긋나 늘 0/0/0 이 된다 → 원본 KST 구간(from·to)으로 조회한다.
@@ -74,8 +75,13 @@ class MetricsService(
                     total = repository.countWishes(fromUtc, toUtc, excludeInternal),
                     fromUrl = wishUrl,
                     fromImage = wishImage,
-                    parsedReady = parsedReady,
-                    parsedFailed = parsedFailed,
+                    activeTotal = activeWishUrl + activeWishImage,
+                    activeFromUrl = activeWishUrl,
+                    activeFromImage = activeWishImage,
+                    wishParsedReady = parsing.wishReady,
+                    wishParsedFailed = parsing.wishFailed,
+                    tournamentParsedReady = parsing.tournamentReady,
+                    tournamentParsedFailed = parsing.tournamentFailed,
                 ),
             tournament =
                 MetricsSnapshot.Tournament(
