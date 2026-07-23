@@ -117,13 +117,22 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         assertEquals(1L, snapshot.signup.byProvider["GOOGLE"])
         assertEquals(0, snapshot.signup.guestToMemberConversions)
 
-        // 위시
+        // 위시 — 유입(flow): 구간 내 담긴 2건(URL 1 · 이미지 1)
         assertEquals(2, snapshot.wish.total)
         assertEquals(1, snapshot.wish.fromUrl)
         assertEquals(1, snapshot.wish.fromImage)
+        // 활성(stock): 둘 다 삭제 안 됐으니 flow 와 동일하게 2건
+        assertEquals(2, snapshot.wish.activeTotal)
+        assertEquals(1, snapshot.wish.activeFromUrl)
+        assertEquals(1, snapshot.wish.activeFromImage)
+        // 파싱: 둘 다 위시 아이템이라 위시 파싱에만 잡히고 토너먼트 파싱은 0
         assertEquals(1, snapshot.wish.parsedReady)
         assertEquals(1, snapshot.wish.parsedFailed)
         assertEquals(50, snapshot.wish.parseSuccessRate)
+        assertEquals(1, snapshot.wish.wishParsedReady)
+        assertEquals(1, snapshot.wish.wishParsedFailed)
+        assertEquals(0, snapshot.wish.tournamentParsedReady)
+        assertEquals(0, snapshot.wish.tournamentParsedFailed)
 
         // 리텐션
         assertEquals(3, snapshot.retention.cohortSignups)
@@ -134,6 +143,55 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         assertEquals(0, snapshot.tournament.created)
         assertEquals(0, snapshot.pushReachableUsers)
         assertEquals(0, snapshot.push.notificationsTotal)
+    }
+
+    @Test
+    fun `활성 위시는 삭제된 위시를 빼고, 파싱은 위시-토너먼트 출처로 분리 집계된다`() {
+        val member = UUID.randomUUID()
+        insertUser(member, "MEMBER", withinWindow)
+
+        // 위시 아이템 — 활성 2건(URL·이미지) + 삭제 1건(URL). 셋 다 위시로 참조돼 파싱은 '위시 파싱'.
+        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3001, 'https://shop.example/a', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO items (id, created_at, updated_at) VALUES (3002, ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow)) // 이미지(source_url NULL)
+        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3003, 'https://shop.example/c', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3101, 3001, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3102, 3002, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3103, 3003, 'FAILED', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, created_at, updated_at) VALUES (?, 3101, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, created_at, updated_at) VALUES (?, 3102, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        // 삭제된 위시 — 활성(stock)에선 빠지지만 유입(flow)엔 잡히고, 파싱은 '위시 파싱'으로 남는다(아이템이 위시로 참조됨).
+        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, created_at, updated_at, deleted_at) VALUES (?, 3103, ?, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+
+        // 토너먼트 전용 아이템 — 위시가 없어 '토너먼트 파싱'으로 잡힌다.
+        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3004, 'https://shop.example/d', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3104, 3004, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO tournament_items (tournament_id, user_id, snapshot_id, created_at, updated_at) VALUES (8500, ?, 3104, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+
+        val snapshot =
+            mockMvc()
+                .perform(get("/admin/metrics").param("from", "2026-06-20T13:00").param("to", "2026-06-20T18:00"))
+                .andExpect(status().isOk)
+                .andReturn()
+                .modelAndView!!
+                .model["snapshot"] as MetricsSnapshot
+
+        // 유입(flow)은 삭제 포함 3건, 활성(stock)은 삭제 뺀 2건 — 둘이 다르다.
+        assertEquals(3, snapshot.wish.total)
+        assertEquals(2, snapshot.wish.activeTotal)
+        assertEquals(1, snapshot.wish.activeFromUrl)
+        assertEquals(1, snapshot.wish.activeFromImage)
+
+        // 파싱 출처 분리 — 위시(등록, 삭제된 위시 포함) 2R/1F, 토너먼트 1R/0F
+        assertEquals(2, snapshot.wish.wishParsedReady)
+        assertEquals(1, snapshot.wish.wishParsedFailed)
+        assertEquals(1, snapshot.wish.tournamentParsedReady)
+        assertEquals(0, snapshot.wish.tournamentParsedFailed)
+        // 전체·성공률
+        assertEquals(3, snapshot.wish.parsedReady)
+        assertEquals(1, snapshot.wish.parsedFailed)
+        assertEquals(75, snapshot.wish.parseSuccessRate)
+        assertEquals(66, snapshot.wish.wishParseSuccessRate)
+        assertEquals(100, snapshot.wish.tournamentParseSuccessRate)
     }
 
     @Test
@@ -199,10 +257,12 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         jdbcTemplate.update("INSERT INTO user_daily_activity (user_id, active_date, created_at) VALUES (?, ?, NOW(6))", uuidToBytes(normal), Date.valueOf(LocalDate.of(2026, 6, 20)))
         jdbcTemplate.update("INSERT INTO user_daily_activity (user_id, active_date, created_at) VALUES (?, ?, NOW(6))", uuidToBytes(dev), Date.valueOf(LocalDate.of(2026, 6, 20)))
 
-        // 기본(제외) — 개발진(dev)이 빠져 일반 유저 1명분만.
+        // 기본(제외) — 개발진(dev)이 빠져 일반 유저 1명분만. 활성 위시도 개발진 제외가 적용된다(w.user_id 기준).
         val excluded = snapshotVia(excludeInternal = true)
         assertEquals(1, excluded.signup.within)
         assertEquals(1, excluded.wish.total)
+        assertEquals(1, excluded.wish.activeTotal)
+        assertEquals(1, excluded.wish.activeFromUrl)
         assertEquals(1, excluded.pushReachableUsers)
         assertEquals(1, excluded.retention.dau.single { it.date == LocalDate.of(2026, 6, 20) }.count)
 
@@ -210,6 +270,8 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         val included = snapshotVia(excludeInternal = false)
         assertEquals(2, included.signup.within)
         assertEquals(2, included.wish.total)
+        assertEquals(2, included.wish.activeTotal)
+        assertEquals(2, included.wish.activeFromUrl)
         assertEquals(2, included.pushReachableUsers)
         assertEquals(2, included.retention.dau.single { it.date == LocalDate.of(2026, 6, 20) }.count)
     }
