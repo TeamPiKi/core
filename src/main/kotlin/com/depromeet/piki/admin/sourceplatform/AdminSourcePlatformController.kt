@@ -3,6 +3,7 @@ package com.depromeet.piki.admin.sourceplatform
 import com.depromeet.piki.admin.access.AdminSession
 import com.depromeet.piki.admin.config.ClientIp
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
+import com.depromeet.piki.product.source.SourcePlatformFallback
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.stereotype.Controller
@@ -100,6 +101,9 @@ class AdminSourcePlatformController(
         model: Model,
     ): String {
         model.addAttribute("platform", platform)
+        // 삭제 박스가 추상 설명 대신 "삭제하면 이 값이 된다"를 보여주게, 이 도메인의 실제 fallback 을 계산해 내린다.
+        // (도메인은 정규형으로 저장돼 있어 fallback 의 host 전제와 일치한다.)
+        model.addAttribute("fallbackName", SourcePlatformFallback.of(platform.domain))
         return "admin/source-platform-detail"
     }
 }
