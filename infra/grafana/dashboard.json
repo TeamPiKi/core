@@ -246,7 +246,7 @@
             "type": "prometheus",
             "uid": "${DS_PROM}"
           },
-          "expr": "max(up{job=\"prometheus.scrape.app\", environment=\"$environment\"})"
+          "expr": "max(up{job=\"piki-core\", environment=\"$environment\"})"
         }
       ]
     },

@@ -428,7 +428,7 @@ jobs:
             # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
             # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
             # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
-            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOG_STRUCTURED TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOGGING_STRUCTURED_FORMAT_CONSOLE TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
             RUN_ENV_FLAGS=""
             TAB="$(printf '\t')"
             while IFS="$TAB" read -r P_NAME P_B64; do
@@ -515,9 +515,10 @@ jobs:
             # 외부에서 직접 scrape 되는 우회 경로를 구조적으로 차단한다 (nginx /actuator 차단의 보강).
             # 주의: 별도 PR 의 Grafana Alloy 는 같은 호스트의 컨테이너이므로 --network host 로 띄워 localhost 를 scrape 해야 한다
             #       (redis 가 쓰는 172.17.0.1 bridge 바인딩 방식으로는 127.0.0.1 바인딩 포트에 닿지 못한다).
-            # LOG_STRUCTURED=ecs: 운영 로그를 ECS JSON 으로 출력해 Alloy 가 trace 를 Loki structured
-            # metadata 로 승격하게 한다(#364). 값 고정 평문이라 Secrets 불필요. 로컬은 이 변수 미설정이라
-            # application.yml 의 평문 콘솔 패턴(#361)을 그대로 쓴다.
+            # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs: 운영 로그를 ECS JSON 으로 출력해 Alloy 가 trace 를 Loki
+            # structured metadata 로 승격하게 한다(#364). Spring 표준 env 라 application.yml 배선 없이 property 로
+            # 직접 바인딩된다(extractor 와 동일 이름, #783). 값 고정 평문이라 Secrets 불필요. 로컬은 이 변수
+            # 미설정이라 application.yml 의 평문 콘솔 패턴(#361)을 그대로 쓴다.
             # TRACING_OTLP_ENABLED=true + --add-host: span 을 OTLP 로 Alloy(otelcol.receiver.otlp)에 push 한다(#380).
             # 앱 컨테이너는 bridge 네트워크라 컨테이너 안 localhost 가 --network host 인 Alloy 에 안 닿으므로,
             # --add-host=host.docker.internal:host-gateway 로 호스트 게이트웨이를 잡고 application.yml 의 OTLP
@@ -543,7 +544,7 @@ jobs:
             #   argv·로그 노출이 없고 다중행 PEM 도 전달된다. 슬롯 계산·graceful stop·로그 덤프는
             #   blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
             export JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}"
-            export LOG_STRUCTURED="ecs"
+            export LOGGING_STRUCTURED_FORMAT_CONSOLE="ecs"
             export TRACING_OTLP_ENABLED="true"
             bash /tmp/piki-deploy/run_container.sh \
               --name "piki-core-$INACTIVE" \
@@ -557,7 +558,7 @@ jobs:
               --add-host host.docker.internal:host-gateway \
               --memory "${{ needs.resolve.outputs.mem_limit }}" \
               --memory-swap "${{ needs.resolve.outputs.mem_swap }}" \
-              --env JAVA_TOOL_OPTIONS --env LOG_STRUCTURED --env TRACING_OTLP_ENABLED \
+              --env JAVA_TOOL_OPTIONS --env LOGGING_STRUCTURED_FORMAT_CONSOLE --env TRACING_OTLP_ENABLED \
               --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
               --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED \
               $RUN_ENV_FLAGS \

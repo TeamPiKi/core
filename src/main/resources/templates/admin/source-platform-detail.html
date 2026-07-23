@@ -56,7 +56,8 @@
 
     <div class="danger">
       <div class="t">표시명 삭제</div>
-      <div class="d">삭제 즉시 이 도메인은 <b>URL 에서 유도한 임시 표시명</b>(등록 가능 도메인의 첫 라벨, 예: 29cm.co.kr → 29cm)으로 돌아갑니다.
+      <!-- 유도 규칙을 산문으로 풀지 않고, 이 도메인의 실제 fallback 계산값을 보여준다 — "삭제하면 무엇이 되나"에 바로 답한다. -->
+      <div class="d">삭제 즉시 이 도메인은 URL 에서 유도한 임시 표시명(<b th:text="${fallbackName}">29cm</b>)으로 돌아갑니다.
         되돌리려면 표시명을 새로 등록해야 합니다.</div>
       <form method="post" th:action="@{/admin/source-platforms/{d}/delete(d=${platform.domain})}">
         <button type="submit">이 표시명 삭제</button>
