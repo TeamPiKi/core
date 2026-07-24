@@ -31,4 +31,12 @@ interface ItemSnapshotRepository {
         threshold: LocalDateTime,
         batchSize: Int,
     ): List<ItemSnapshot>
+
+    // 박동 fenced touch — snapshotId 가 여전히 expectedAttempt 의 PROCESSING 이면 updated_at 을 now 로 밀고 1을, 아니면 0을 반환한다.
+    // 산 워커의 stale 오판 방지 + 소유권 fencing (자세한 계약은 ItemSnapshotJpaRepository.touchHeartbeat).
+    fun touchHeartbeat(
+        snapshotId: Long,
+        expectedAttempt: Int,
+        now: LocalDateTime,
+    ): Int
 }

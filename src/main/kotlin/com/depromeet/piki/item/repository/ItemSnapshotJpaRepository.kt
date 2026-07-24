@@ -7,6 +7,7 @@ import jakarta.persistence.QueryHint
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.jpa.repository.QueryHints
 import org.springframework.data.repository.query.Param
@@ -65,4 +66,21 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         @Param("threshold") threshold: LocalDateTime,
         pageable: Pageable,
     ): List<ItemSnapshot>
+
+    // 박동(heartbeat) fenced touch — 이 snapshot 이 여전히 :attempt 의 PROCESSING 일 때만 updated_at 을 :now 로 민다.
+    // 산 워커가 도는 동안 recover 의 stale 판정 시각을 계속 갱신해, 느린 단건을 stale 로 오판해 죽이지 않게 한다.
+    // fencing(status·attempt 일치)이 소유권을 건다: 재클레임(attempt++)됐거나 이미 READY/FAILED 로 전이한 행은 0행 매치라,
+    // 좀비 워커의 박동이 남의 시도를 되살리지 못한다. @Modifying bulk update 라 JPA auditing(@LastModifiedDate)을 우회하므로
+    // updated_at 을 명시로 넘긴다. 반환은 영향받은 행 수(1=소유권 유지, 0=상실).
+    @Modifying
+    @Query(
+        "update ItemSnapshot s set s.updatedAt = :now " +
+            "where s.id = :id and s.status = :status and s.attemptCount = :attempt and s.deletedAt is null",
+    )
+    fun touchHeartbeat(
+        @Param("id") id: Long,
+        @Param("status") status: ItemStatus,
+        @Param("attempt") attempt: Int,
+        @Param("now") now: LocalDateTime,
+    ): Int
 }

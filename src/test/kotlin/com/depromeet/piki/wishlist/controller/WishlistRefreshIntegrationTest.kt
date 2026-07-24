@@ -332,10 +332,11 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
             val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
 
-            // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
+            // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다. markProcessing 만 한 v1 의 attempt 는 1.
             itemParsingService.markReady(
                 v1.getId(),
                 ProductSnapshot(link = null, name = "버전1", currentPrice = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+                expectedAttempt = 1,
             )
 
             assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(v1.getId())?.status)

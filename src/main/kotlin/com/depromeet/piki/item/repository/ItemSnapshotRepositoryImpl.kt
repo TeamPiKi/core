@@ -38,4 +38,10 @@ class ItemSnapshotRepositoryImpl(
             threshold,
             PageRequest.of(0, batchSize),
         )
+
+    override fun touchHeartbeat(
+        snapshotId: Long,
+        expectedAttempt: Int,
+        now: LocalDateTime,
+    ): Int = itemSnapshotJpaRepository.touchHeartbeat(snapshotId, ItemStatus.PROCESSING, expectedAttempt, now)
 }

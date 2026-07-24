@@ -13,11 +13,11 @@ import java.time.LocalDateTime
 // 별도 테이블이 없다.
 //
 // 보장은 execution at-least-once(#461): claim 직후 크래시(실행 0회)·실행 중 크래시·일시 외부 오류로 단건 실행이
-// 끝나지 않은 작업을 recover 가 재실행으로 되살린다. 핵심 불변식 두 가지:
-//   1. 단건 시도는 60s 안에 끝난다 — 원격 extractor 호출 read timeout ≤ 약 55s(extractor 내부 재시도 off).
-//      그래서 updated_at 이 60s(STALE_TIMEOUT_SECONDS) 보다 오래된 PROCESSING 은 "워커가 더는 돌고 있지 않다" 로 단정할 수 있고,
-//      정상적으로 도는 시도를 stale 로 오판해 죽이지 않는다.
-//   2. 재실행 상한 2회(MAX_ATTEMPTS). 최악 총 시간 = 2 x (60s 윈도 + recover 주기 15s) = 약 150s 로, 절대 3분을 넘지 않는다.
+// 끝나지 않은 작업을 recover 가 재실행으로 되살린다. stale 판정을 지탱하는 것은 시간 추정이 아니라 ParsingHeartbeat 다:
+//   1. 산 워커는 박동으로 updated_at 을 계속 갱신한다(박동 간격 15s). 그래서 updated_at 이 stale 임계(60s = 박동 x 3 + 여유)보다
+//      오래된 PROCESSING 은 "박동이 연속으로 끊겼다 = 프로세스가 죽었다" 는 뜻이고, 정상적으로 (느리게라도) 도는 시도는 stale 로 오판하지 않는다.
+//      좀비(재클레임돼 소유권 잃은 옛 시도)는 fenced touch·전이의 attempt fencing 이 막고, 무한 행잉은 박동의 절대 캡(5분)이 끊어 회수에 넘긴다.
+//   2. 재실행 상한 2회(MAX_ATTEMPTS). 재실행 대상은 죽은 워커의 행이므로 상한과 함께 종결이 보장된다.
 // 재시도해도 결과가 뻔한 확정 실패(상품 아님 등)는 워커가 즉시 FAILED 하고, recover 는 "실행이 안 끝난" 행만 맡는다.
 //
 // 단일 인스턴스 기준의 @Scheduled 다. claim 은 FOR UPDATE SKIP LOCKED 라(ItemSnapshotJpaRepository) 중복 파싱을
@@ -48,14 +48,15 @@ class ItemParsingScheduler(
     private fun dispatchToWorker(claimed: ClaimedItem) {
         runCatching {
             when (claimed) {
-                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link)
-                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey)
+                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.attempt)
+                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.attempt)
             }
         }.onFailure { e -> log.warn("item {} 워커 디스패치 거부 → PROCESSING 유지, recover 가 재실행: {}", claimed.itemId, e.message) }
     }
 
-    // recover — 단건 실행이 끝나지 않아 stale 해진 PROCESSING 을 재실행하거나(execution at-least-once) 상한 도달·되살림 불가 시 종결한다.
-    // stale 판정은 updated_at(claim·재실행 시각) 기준이라, 정상적으로 도는 단건(≤ 약 55s)은 60s 윈도에 걸리지 않는다.
+    // recover — 프로세스 죽음으로 박동이 끊긴 stale PROCESSING 을 재실행하거나(execution at-least-once) 상한 도달·되살림 불가 시 종결한다.
+    // stale 판정은 updated_at(박동·claim·재실행 시각) 기준이다. 산 워커는 박동이 updated_at 을 갱신하므로 60s 윈도에 걸리지 않고,
+    // 걸린 행은 박동이 끊긴(죽은) 워커의 것이다.
     @Scheduled(fixedDelay = RECOVER_INTERVAL_MS)
     fun recover() {
         val threshold = LocalDateTime.now().minusSeconds(STALE_TIMEOUT_SECONDS)
@@ -75,13 +76,14 @@ class ItemParsingScheduler(
         // 사용자 대면 작업이라 짧게 둔다 — 등록 직후 파싱이 시작되기까지의 지연이 이 주기로 결정된다.
         private const val DISPATCH_INTERVAL_MS = 1_000L
 
-        // recover 주기. stale 윈도(60s) + 이 주기가 stale 감지 지연이므로, 최악 총 시간(2 x (60s + 15s) = 약 150s)을 3분 밑으로 둔다.
+        // recover 주기. stale 윈도(60s) + 이 주기가 stale 감지 지연이다. 산 워커는 박동이 지키므로 이 윈도에 걸리는 건 죽은 워커의 행이다.
         private const val RECOVER_INTERVAL_MS = 15_000L
 
-        // 단건 시도가 60s 안에 끝나는 구조라(외부 timeout 합 ≤ 약 55s), 60s 넘게 PROCESSING 이면 워커가 더는 돌고 있지 않다고 본다.
+        // stale 임계 — 이보다 오래 updated_at 이 조용한 PROCESSING 은 박동이 끊긴(죽은) 워커의 것으로 본다.
+        // 박동 간격(ParsingHeartbeat.BEAT_INTERVAL_MS = 15s) x 3 + 여유라, 산 워커가 박동을 연속으로 놓치지 않는 한 오판되지 않는다.
         private const val STALE_TIMEOUT_SECONDS = 60L
 
-        // 실행 시도 상한(초회 1 + 재시도 1). 단건 ≤ 60s 와 함께 "절대 3분 초과 금지" 를 보장한다.
+        // 실행 시도 상한(초회 1 + 재시도 1). 재실행 대상은 죽은 워커의 행이라, 상한과 함께 종결이 보장된다.
         private const val MAX_ATTEMPTS = 2
     }
 }

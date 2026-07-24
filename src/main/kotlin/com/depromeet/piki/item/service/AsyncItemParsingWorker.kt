@@ -25,6 +25,7 @@ class AsyncItemParsingWorker(
     private val productLinkExtractor: ProductLinkExtractor,
     private val itemParsingService: ItemParsingService,
     private val transitionRetry: TransitionRetry,
+    private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
     private val observationRegistry: ObservationRegistry,
 ) : ItemParsingWorker {
@@ -35,15 +36,27 @@ class AsyncItemParsingWorker(
         itemId: Long,
         snapshotId: Long,
         link: ProductLink,
+        attempt: Int,
     ) {
         // 파싱 한 건을 "item.parse" span 하나로 묶는다 — 원격 extractor 호출이 그 자식 span 으로 붙고, extractor 내부의
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
         // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
         Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
-            val started = System.nanoTime()
-            runCatching { productLinkExtractor.extract(link) }
-                .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started) }
-                .onFailure { e -> onExtractFailed(itemId, snapshotId, link, e) }
+            parsingHeartbeat.register(snapshotId, attempt)
+            try {
+                // 시작 가드 — 큐에 묵다 재클레임돼 소유권을 잃었으면(fenced touch 0행) ext 호출·부수효과 없이 스킵한다.
+                // 이 touch 가 stale 시계를 실제 시작 시각으로 리셋해, 큐 대기가 재시도 예산을 잠식하는 구멍도 닫는다.
+                if (!parsingHeartbeat.touchOnStart(snapshotId, attempt)) {
+                    log.info("item.parse.skip item={} snapshot={} reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
+                    return@observe
+                }
+                val started = System.nanoTime()
+                runCatching { productLinkExtractor.extract(link) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt) }
+                    .onFailure { e -> onExtractFailed(itemId, snapshotId, link, e, attempt) }
+            } finally {
+                parsingHeartbeat.deregister(snapshotId, attempt)
+            }
         }
     }
 
@@ -53,11 +66,12 @@ class AsyncItemParsingWorker(
         link: ProductLink,
         snapshot: ProductSnapshot,
         started: Long,
+        attempt: Int,
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot) } }
+        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
             .onSuccess {
                 log.info(
                     "item.parse.result item={} result={} reason={} latency={}ms url={}",
@@ -80,7 +94,7 @@ class AsyncItemParsingWorker(
                 )
                 // 예외 상세(스택)는 별도 줄로 — 구조화(item.parse.result) 줄에 스택을 붙이면 logfmt 파싱이 깨진다.
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
-                markFailedQuietly(itemId, snapshotId)
+                markFailedQuietly(itemId, snapshotId, attempt)
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
             }
     }
@@ -93,6 +107,7 @@ class AsyncItemParsingWorker(
         snapshotId: Long,
         link: ProductLink,
         e: Throwable,
+        attempt: Int,
     ) {
         if (isRetryable(e)) {
             // 일시 외부 오류(네트워크·timeout·5xx 게이트웨이 등) — 다시 하면 될 수도 있으므로 FAILED 로 종결하지 않고
@@ -123,7 +138,7 @@ class AsyncItemParsingWorker(
         )
         // 실패 사유 원문(공백 포함 가능)은 별도 줄로 — 구조화 줄의 logfmt 필드 파싱을 깨지 않게 분리한다.
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
-        markFailedQuietly(itemId, snapshotId)
+        markFailedQuietly(itemId, snapshotId, attempt)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
     }
 
@@ -139,8 +154,9 @@ class AsyncItemParsingWorker(
     private fun markFailedQuietly(
         itemId: Long,
         snapshotId: Long,
+        attempt: Int,
     ) {
-        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId) } }
+        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)

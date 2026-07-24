@@ -28,6 +28,7 @@ class AsyncImageParsingWorker(
     private val imageStorage: ImageStorage,
     private val itemParsingService: ItemParsingService,
     private val transitionRetry: TransitionRetry,
+    private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
 ) : ImageParsingWorker {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -37,10 +38,22 @@ class AsyncImageParsingWorker(
         itemId: Long,
         snapshotId: Long,
         imageKey: String,
+        attempt: Int,
     ) {
-        runCatching { imageSnapshotExtractor.extract(imageKey) }
-            .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot) }
-            .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e) }
+        parsingHeartbeat.register(snapshotId, attempt)
+        try {
+            // 시작 가드 — 큐에 묵다 재클레임돼 소유권을 잃었으면(fenced touch 0행) ext 호출 없이, 어떤 부수효과도 없이 스킵한다.
+            // 특히 raw 원본 회수(deleteRaw)를 하지 않는다 — 소유권을 쥔 새 시도가 그 원본으로 재실행해야 하기 때문.
+            if (!parsingHeartbeat.touchOnStart(snapshotId, attempt)) {
+                log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
+                return
+            }
+            runCatching { imageSnapshotExtractor.extract(imageKey) }
+                .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
+                .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
+        } finally {
+            parsingHeartbeat.deregister(snapshotId, attempt)
+        }
     }
 
     private fun onExtracted(
@@ -48,9 +61,10 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         imageKey: String,
         snapshot: ProductSnapshot,
+        attempt: Int,
     ) {
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot) } }
+        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
             .onSuccess {
                 log.info("item {} 이미지 파싱 완료 → READY", itemId)
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
@@ -59,7 +73,7 @@ class AsyncImageParsingWorker(
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없음 → PROCESSING 방치 대신 FAILED.
                 log.warn("item {} READY 전이 거부 → FAILED: {}", itemId, e.message)
-                markFailedQuietly(itemId, snapshotId)
+                markFailedQuietly(itemId, snapshotId, attempt)
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                 deleteRawQuietly(imageKey)
             }
@@ -74,6 +88,7 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         imageKey: String,
         e: Throwable,
+        attempt: Int,
     ) {
         if (isRetryable(e)) {
             // 일시 외부 오류 — FAILED 로 종결하지 않고 PROCESSING 그대로 둔다. raw 는 보존하고 recover 가 stale 로 잡아
@@ -92,7 +107,7 @@ class AsyncImageParsingWorker(
         val reason = reasonOf(e)
         log.info("item.parse.result item={} type=image result={} reason={}", itemId, ItemParsingMetrics.RESULT_FAILED, reason)
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
-        markFailedQuietly(itemId, snapshotId)
+        markFailedQuietly(itemId, snapshotId, attempt)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
         deleteRawQuietly(imageKey)
     }
@@ -114,8 +129,9 @@ class AsyncImageParsingWorker(
     private fun markFailedQuietly(
         itemId: Long,
         snapshotId: Long,
+        attempt: Int,
     ) {
-        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId) } }
+        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)

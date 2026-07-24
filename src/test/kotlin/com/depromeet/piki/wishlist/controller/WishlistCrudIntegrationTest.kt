@@ -105,6 +105,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
+        // claim(markProcessing) 직후라 fencing attempt 는 1 이다.
         itemParsingService.markReady(
             result.snapshot.getId(),
             ProductSnapshot(
@@ -114,6 +115,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 currency = currency,
                 imageUrl = imageUrl,
             ),
+            expectedAttempt = 1,
         )
         return result.wish.getId()
     }
@@ -126,7 +128,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
-        itemParsingService.markFailed(result.snapshot.getId())
+        // claim(markProcessing) 직후라 fencing attempt 는 1 이다.
+        itemParsingService.markFailed(result.snapshot.getId(), expectedAttempt = 1)
         return result.wish.getId()
     }
 

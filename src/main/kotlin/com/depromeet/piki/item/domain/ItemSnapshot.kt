@@ -61,6 +61,8 @@ class ItemSnapshot(
     // 파싱 실행 시도 횟수 (execution at-least-once, #461). claim(markProcessing)에서 1 이 되고, recover 의 재실행(reclaim)마다 +1.
     // recover 가 이 값으로 "상한 도달 → FAILED 종결" 여부를 판단한다(무한 재큐잉 방지). 증가 자체가 updated_at 을
     // 갱신(dirty checking)해 재실행 시점부터 stale 시계를 다시 흐르게 한다 — recover 가 막 재실행한 행을 또 stale 로 오판하지 않는다.
+    // 이 값은 소유권 fencing 토큰도 겸한다(#802): claim 시점의 attemptCount 를 워커까지 실어, 재클레임(attempt++)돼 소유권이
+    // 넘어간 뒤 뒤늦게 도착한 좀비 워커의 박동(fenced touch)·전이(markReady/markFailed)를 attemptCount 불일치로 걸러낸다.
     @Column(name = "attempt_count", nullable = false)
     var attemptCount: Int = attemptCount
         protected set

@@ -2167,9 +2167,11 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
         itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        // markProcessing 만 한 직후라 fencing attempt 는 1 이다.
         itemParsingService.markReady(
             result.snapshot.getId(),
             ProductSnapshot(name = name, currentPrice = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            expectedAttempt = 1,
         )
         return result.item.getId()
     }
