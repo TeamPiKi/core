@@ -8,7 +8,7 @@
 ### 1.1 구성
 
 - `item_snapshots` 가 도메인 상태머신과 작업 큐를 겸한다. 별도 outbox 테이블 없음. outbox 는 "확실히 처리해야 할 일"을 도메인 변경과 같은 트랜잭션으로 DB 에 적어 두는 패턴이다(엄밀한 정의는 2.1).
-- claim 머신은 core 소유: `ItemParsingScheduler` 의 dispatch(1s 주기, PENDING 을 FOR UPDATE claim)와 recover(15s 주기, 60s stale PROCESSING 재실행·종결).
+- claim 머신은 core 소유: `ItemParsingScheduler` 의 dispatch(1s 주기, PENDING 을 FOR UPDATE claim)와 recover(15s 주기, 갱신이 끊긴 채 방치된 PROCESSING 재실행·종결).
 - 실행은 전부 원격: 링크는 `/extractions`, 이미지는 `/internal/extractions/image` (download, OCR, crop, 결과 업로드까지 extractor 가 수행). core 워커는 얇은 HTTP 호출자 + 상태 전이자다.
 - extractor 는 무상태 HTTP 서비스: DB 의존 0, 도메인 자격증명 0, staging·prod 가 박스 1대 공유.
 
@@ -21,8 +21,8 @@
 ### 1.3 보장
 
 - execution at-least-once(실행이 최소 한 번은 반드시 일어남 - 유실만 막고, 중복 실행 가능성은 허용): 등록 트랜잭션이 PENDING 커밋 = 의도의 영속화. 인메모리 큐 유실과 무관하게 반드시 한 번은 claim 된다.
-- 일시 오류(네트워크·timeout·5xx)는 FAILED 로 종결하지 않고 PROCESSING 유지, recover 가 60s stale 후 재실행. 확정 실패(extractor 가 "다시 해도 같은 결과"라는 뜻으로 돌려주는 422 응답)는 즉시 종결.
-- 상한 2회, 최악 약 150s. 재시도 가치 판정(어떤 실패가 일시인가)은 extractor 의 422 계약이 쥔다.
+- 일시 오류(네트워크·timeout·5xx)는 FAILED 로 종결하지 않고 PROCESSING 유지, 갱신이 끊긴 행은 recover 가 되살려 재실행한다. 확정 실패(extractor 가 "다시 해도 같은 결과"라는 뜻으로 돌려주는 422 응답)는 즉시 종결.
+- 재실행 상한(2회)이 종결을 보증한다. 재시도 가치 판정(어떤 실패가 일시인가)은 extractor 의 422 계약이 쥔다. 되살림 판정의 세부(시계·임계)에는 미약한 결함이 알려져 있어 별도로 개선 중이며, 이 문서는 그 세부를 고정하지 않는다.
 
 ## 2. 패턴 분류 - outbox 인가, 상태머신인가
 
@@ -81,7 +81,7 @@ visibility timeout: 큐 소비자가 메시지를 받으면 그 시간 동안 �
 ### 3.1 얻는 것
 
 - **backpressure(받는 쪽 처리 여력에 맞춰 보내는 쪽이 속도를 줄이는 흐름 제어) 자기조절**: ext 가 여유 있을 때만 집어가므로, ext 수용량 지식을 core 워커 풀·timeout 으로 이중 표현하는 부담이 사라진다.
-- **호출-완료 모호성 축소**: "HTTP read timeout 은 났는데 작업은 성공"으로 생기는 중복 작업 창이 사라진다(현재 구조에서도 read timeout 55s < stale 60s 라, 응답만 유실되면 성공한 작업이 재시도될 수 있다). 단 어느 구조든 at-least-once 인 한 "워커가 늦어져 claim 이 만료된 뒤 재클레임되는" 중복은 남으므로, 사실상 1회 수렴은 여전히 core 의 멱등 전이 몫이다(4.2 와 같은 결).
+- **호출-완료 모호성 축소**: "HTTP read timeout 은 났는데 작업은 성공"으로 생기는 중복 작업 창이 사라진다. 단 어느 구조든 at-least-once 인 한 중복 실행 가능성 자체는 남으므로, 사실상 1회 수렴은 여전히 core 의 멱등 전이 몫이다(4.2 와 같은 결).
 - **재시도 지식 동거**: 재시도 가치 분류(422)는 이미 ext 에 있으므로, 시도 횟수까지 오면 재시도 로직이 실패를 제일 잘 아는 곳에 모인다.
 - **수평 확장**: ext N 대의 작업 분배가 claim 경쟁으로 자연 해결된다.
 
@@ -99,14 +99,14 @@ SSOT(single source of truth)는 같은 사실의 정본을 한 곳에만 둔다�
 
 - **갈래 1 - 도메인 4상태 유지 + 잡 테이블에서 투영**: 모든 전이가 두 번 쓰인다(잡 행 + 도메인 투영). 같은 진실이 두 행에 살고, 투영 규율 - 투영은 단방향으로만, 적용은 멱등하게(같은 적용을 여러 번 해도 결과가 한 번과 같게), 터미널(더 전이가 없는 종결 상태)은 도메인 쪽 우선 - 로 모순은 막아도 이중화와 지연은 실재한다.
 - **갈래 2 - 진실 재분할** (도메인은 UX 입도 3상태, 기계 사실은 잡 테이블): SSOT 는 깨끗해지지만 클라가 파싱하는 status 열거값을 바꾸는 와이어 계약(클라이언트와 주고받는 응답 형식 자체의 약속) 변경이다.
-- **갈래 3 - lease 테이블 + PROCESSING 파생**: lease 는 기한이 붙은 소유권이다 - 자원을 정해진 시간 동안만 빌리고, 갱신 없이 만료되면 자동 반납되어 소유자가 말없이 죽는 상황을 시간으로 해결한다(현 recover 의 60s stale 판정이 이미 이름 없는 60초짜리 lease 다). 잡 테이블을 상태 복제본이 아니라 이 임차 기록(snapshot_id·claimed_by·lease_until·attempt)으로 좁히고, PROCESSING 은 "PENDING 인데 lease 활성"으로 응답에서 파생한다. 이중 write 없음, 계약 변경 없음. 분리를 한다면 유일하게 건전한 형태.
+- **갈래 3 - lease 테이블 + PROCESSING 파생**: lease 는 기한이 붙은 소유권이다 - 자원을 정해진 시간 동안만 빌리고, 갱신 없이 만료되면 자동 반납되어 소유자가 말없이 죽는 상황을 시간으로 해결한다(현 recover 의 되살림 판정이 이미 이름 없는 lease 다). 잡 테이블을 상태 복제본이 아니라 이 임차 기록(snapshot_id·claimed_by·lease_until·attempt)으로 좁히고, PROCESSING 은 "PENDING 인데 lease 활성"으로 응답에서 파생한다. 이중 write 없음, 계약 변경 없음. 분리를 한다면 유일하게 건전한 형태.
 
 ## 4. 결론
 
 ### 4.1 판정
 
 - **지금은 옮기지 않는다.** 편익(3.1)은 부하·인스턴스 수에 비례하는 미래형인데 현재는 ext 1대·낮은 처리량이고, 비용(3.2)은 옮기는 날 전액 선불이다.
-- 지금도 조악한 backpressure 는 존재한다: 과부하 실패는 일을 잃지 않고 PROCESSING 유지 후 60s+ 간격 재시도로 지연으로 변환된다.
+- 지금도 조악한 backpressure 는 존재한다: 과부하 실패는 일을 잃지 않고 PROCESSING 유지 후 시간을 두고 재시도되어 지연으로 변환된다.
 - **미래에도 정답은 "이관"이 아니라 "분배 계층 삽입"이다.** 전이·SSE·백스톱(최후의 안전장치)이 core 에 남는 한 공유 표면은 좁을수록 좋다. ext 가 core 의 도메인 행을 직접 claim 하는 형태는 현재에도 미래에도 열등하다.
 - 형태 우선순위: SQS 류 큐 > lease 테이블(새 인프라 회피 시) > 도메인 행 직접 claim(항상 열등).
 
@@ -114,7 +114,7 @@ SSOT(single source of truth)는 같은 사실의 정본을 한 곳에만 둔다�
 
 - DB 커밋과 큐 publish 는 원자적으로 못 묶는다. 커밋 후 publish 전에 죽으면 영구 미아가 생기므로, PENDING 을 폴링해 publish 하는 relay 는 core 에 남는다.
 - 보장의 3층 분업: 작업의 존재 = DB(PENDING 행), 전달 = 큐(visibility timeout 과 redrive - 반복 실패 메시지를 격리 큐로 옮기는 것), 사실상 1회 = core 의 멱등 전이.
-- 현 스케줄러는 손으로 짠 SQS 다: claim = receive, stale 60s 윈도 = visibility timeout, 상한 2회 = 재수신 횟수 상한(maxReceiveCount) 도달 시 실패 격리 큐(DLQ, dead letter queue)로 이동, 멀티 인스턴스용 SKIP LOCKED = 큐에선 불필요. 큐 삽입은 이 수제 머신을 통째로 지우는 선택이고, 직접 claim 이관은 같은 머신을 ext 에 재건축하는 선택이다.
+- 현 스케줄러는 손으로 짠 SQS 다: claim = receive, 되살림 대기 윈도 = visibility timeout, 상한 2회 = 재수신 횟수 상한(maxReceiveCount) 도달 시 실패 격리 큐(DLQ, dead letter queue)로 이동, 멀티 인스턴스용 SKIP LOCKED = 큐에선 불필요. 큐 삽입은 이 수제 머신을 통째로 지우는 선택이고, 직접 claim 이관은 같은 머신을 ext 에 재건축하는 선택이다.
 
 ### 4.3 전환 신호 (하나라도 실측되면 재론이 아니라 실행)
 
