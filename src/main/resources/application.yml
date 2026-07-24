@@ -1,4 +1,10 @@
 server:
+  # 응답 gzip 압축 — example 로 비대한 /v3/api-docs OpenAPI JSON 의 전송 시간을 크게 줄인다(문서 로딩 DX, #788).
+  # 앱 전역 응답에 적용된다(모바일 API JSON 도 함께 축소되는 이득). min-response-size 미만의 작은 응답은 압축 생략.
+  compression:
+    enabled: true
+    mime-types: application/json,application/javascript,text/css,text/html,image/svg+xml
+    min-response-size: 1024
   servlet:
     session:
       # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin form-login 세션에만 적용된다.
@@ -189,7 +195,7 @@ management:
     export:
       otlp:
         # span 을 OTLP 로 내보낼지 토글 (micrometer-tracing 기본 true). 로컬엔 수집기(Alloy)가 없어 끈다 —
-        # 운영 docker run 에만 TRACING_OTLP_ENABLED=true 를 준다 (LOG_STRUCTURED=ecs 와 같은 env override 패턴).
+        # 운영 docker run 에만 TRACING_OTLP_ENABLED=true 를 준다 (LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs 와 같은 env override 패턴).
         # off 여도 trace 생성·전파(traceId·MDC·로그 correlation)는 그대로다 — export 단계만 끈다.
         enabled: ${TRACING_OTLP_ENABLED:false}
   opentelemetry:
@@ -203,16 +209,12 @@ management:
           endpoint: ${OTLP_TRACES_ENDPOINT:http://host.docker.internal:4318/v1/traces}
 
 logging:
-  structured:
-    format:
-      # 운영은 Grafana(Loki)로 로그를 보낸다. ECS JSON 으로 출력하면 Alloy 가 trace.id·log.level·message 등
-      # 필드를 파싱해 trace 를 Loki structured metadata 로 승격하고 본문은 message 만 남길 수 있다(#364).
-      # 값이 있으면(ecs) 구조화 JSON 출력이 켜지고 아래 pattern.console(평문)은 무시된다.
-      # 로컬은 LOG_STRUCTURED 미설정(빈값)이라 구조화 off → pattern.console 평문 패턴이 적용된다.
-      # (운영 docker run 에만 -e LOG_STRUCTURED=ecs 를 준다. env override 패턴은 TRACING_OTLP_ENABLED 와 동일.)
-      console: ${LOG_STRUCTURED:}
+  # 구조화(ECS JSON) 출력은 여기 배선 없이 운영 docker run 의 Spring 표준 env
+  # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs 가 relaxed binding 으로 직접 켠다 (extractor 와 동일 패턴, #783).
+  # 켜지면 Alloy 가 trace.id·log.level·message 등 필드를 파싱해 trace 를 Loki structured metadata 로
+  # 승격하고 본문은 message 만 남긴다(#364). 로컬은 env 미설정이라 구조화 off → 아래 평문 패턴 적용.
   pattern:
-    # 아래 평문 패턴은 구조화 off(로컬)일 때만 적용된다 — LOG_STRUCTURED=ecs 면 위 구조화 출력이 우선한다.
+    # 아래 평문 패턴은 구조화 off(로컬)일 때만 적용된다 — 구조화가 켜지면(위 env) 이 패턴은 무시된다.
     # 운영 로그는 Grafana(Loki)에서 본다. Grafana 가 줄 앞에 수집시각(KST)+레벨을 자동으로 붙이므로,
     # Spring Boot 기본 콘솔 패턴의 시각·레벨과 겹쳐 한 줄에 시각·레벨이 두 번씩 나온다. 게다가 운영 컨테이너
     # JVM 은 UTC 라 Spring 시각이 Grafana 의 KST 표시와 9시간 어긋나 더 헷갈린다.
@@ -221,7 +223,7 @@ logging:
     #  - 시각을 Asia/Seoul 로 고정해 Grafana 표시(KST)와 맞춘다 (JVM 타임존은 안 건드린다 — now() 등 도메인 시각에
     #    영향 주지 않도록 로그 출력에서만 KST 로 포맷. DB 는 serverTimezone=UTC 유지).
     #  - PID·--- ·application name([piki-core])을 뺀다. 단일 컨테이너라 PID 는 항상 1 이고, 서비스 구분은 Loki 의
-    #    container 라벨(team3-blue/green)이 이미 한다 — 줄마다 반복할 가치가 없다.
+    #    container 라벨(piki-core-blue/green)이 이미 한다 — 줄마다 반복할 가치가 없다.
     #  - traceId/spanId 는 한 요청의 전체 로그를 묶는 추적 키라 유지한다 (sampling 1.0 이라 항상 채워진다).
     #  - userId(MDC, JwtAuthenticationFilter 가 인증 요청에 주입)는 한 유저의 여러 요청을 가로질러 묶는 키다 —
     #    grep userId=<uuid> 로 로그인→플레이→… 여정 전체를 잇는다. 미인증 요청은 '-' 로 비워진다.

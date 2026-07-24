@@ -29,13 +29,25 @@ data class MetricsSnapshot(
     )
 
     data class Wish(
+        // 유입(flow) — 조회 구간 내 담긴 위시 수(삭제 여부 무관, 담은 사실 기준). 기간 비교·주간 리포트 트렌드에 쓰인다.
         val total: Long,
         val fromUrl: Long,
         val fromImage: Long,
-        val parsedReady: Long,
-        val parsedFailed: Long,
+        // 현재 활성 위시(stock) — 구간 무관, deleted_at IS NULL 인 "지금 위시리스트에 살아있는 수".
+        val activeTotal: Long,
+        val activeFromUrl: Long,
+        val activeFromImage: Long,
+        // 파싱(추출) 출처별 — 위시(등록+새로고침) vs 토너먼트(전용 아이템). 구간 내 READY/FAILED.
+        val wishParsedReady: Long,
+        val wishParsedFailed: Long,
+        val tournamentParsedReady: Long,
+        val tournamentParsedFailed: Long,
     ) {
+        val parsedReady: Long get() = wishParsedReady + tournamentParsedReady
+        val parsedFailed: Long get() = wishParsedFailed + tournamentParsedFailed
         val parseSuccessRate: Int get() = pct(parsedReady, parsedReady + parsedFailed)
+        val wishParseSuccessRate: Int get() = pct(wishParsedReady, wishParsedReady + wishParsedFailed)
+        val tournamentParseSuccessRate: Int get() = pct(tournamentParsedReady, tournamentParsedReady + tournamentParsedFailed)
     }
 
     data class Tournament(

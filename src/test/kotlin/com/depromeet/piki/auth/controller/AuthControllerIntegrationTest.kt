@@ -77,8 +77,8 @@ class AuthControllerIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(body),
             ).andExpect(status().isUnauthorized)
-            // 도메인 401(AuthException, code 미배정)도 handleBaseException 이 category → 공통 code 로 폴백해 COMMON-UNAUTHORIZED 를 싣는다.
-            .andExpect(jsonPath("$.code").value("COMMON-UNAUTHORIZED"))
+            // 위조 토큰은 AuthException.invalidToken → AUTH-001 (auth 도메인 code 이관 완료, 더는 공통 폴백 아님).
+            .andExpect(jsonPath("$.code").value("AUTH-001"))
     }
 
     @Test

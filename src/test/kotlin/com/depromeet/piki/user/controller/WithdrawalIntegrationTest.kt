@@ -27,6 +27,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @Transactional
 class WithdrawalIntegrationTest : IntegrationTestSupport() {
@@ -44,6 +45,15 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var withdrawalService: WithdrawalService
+
+    @Autowired
+    private lateinit var stubWithdrawnTokenStore: com.depromeet.piki.support.StubWithdrawnTokenStore
+
+    @Autowired
+    private lateinit var stubRefreshTokenStore: com.depromeet.piki.support.StubRefreshTokenStore
+
+    @Autowired
+    private lateinit var meterRegistry: io.micrometer.core.instrument.MeterRegistry
 
     @PersistenceContext
     private lateinit var entityManager: EntityManager
@@ -321,5 +331,132 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         assertEquals("탈퇴" + userId.toString().replace("-", "").take(8), nickname)
+    }
+
+    @Test
+    fun `markWithdrawn 이 실패해도 탈퇴는 200 으로 완료되고 실패 메트릭이 오른다`() {
+        val userId = UUID.randomUUID()
+        insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
+        // Redis 장애로 access denylist 마킹이 던지는 상황.
+        stubWithdrawnTokenStore.behavior = { throw RuntimeException("redis down") }
+        val before =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+
+        try {
+            mockMvc()
+                .perform(
+                    delete("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.detail").value("완료했어요."))
+        } finally {
+            stubWithdrawnTokenStore.reset()
+        }
+
+        // DB 는 정상 탈퇴(tombstone)돼야 한다 — 무효화 실패가 탈퇴를 되돌리지 않는다.
+        entityManager.flush()
+        entityManager.clear()
+        val deletedAt =
+            jdbcTemplate.queryForObject(
+                "SELECT deleted_at FROM users WHERE id = ?",
+                java.sql.Timestamp::class.java,
+                uuidToBytes(userId),
+            )
+        assertNotNull(deletedAt)
+        // 최종 실패가 메트릭으로 관측돼야 한다.
+        val after =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+        assertEquals(before + 1.0, after)
+    }
+
+    @Test
+    fun `refresh 토큰 삭제가 실패해도 탈퇴는 200 이고 markWithdrawn 은 정상 실행된다`() {
+        val userId = UUID.randomUUID()
+        insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
+        // refresh 삭제만 던지고, 이후 단계(markWithdrawn)는 정상이어야 한다 — best-effort 격리.
+        stubRefreshTokenStore.onDelete = { throw RuntimeException("redis down") }
+        val before =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_REFRESH,
+                ).count()
+
+        try {
+            mockMvc()
+                .perform(
+                    delete("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isOk)
+        } finally {
+            stubRefreshTokenStore.reset()
+        }
+
+        // refresh 실패가 markWithdrawn 을 막지 않았어야 한다 — denylist 에 마킹돼 있다.
+        assertTrue(stubWithdrawnTokenStore.isWithdrawn(userId))
+        // refresh 실패도 STEP_REFRESH 메트릭으로 관측돼야 한다 — record 호출이 지워지거나
+        // 잘못된 step 을 넘기면 이 단언이 잡는다.
+        val after =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_REFRESH,
+                ).count()
+        assertEquals(before + 1.0, after)
+    }
+
+    @Test
+    fun `markWithdrawn 이 1회 실패해도 즉시 재시도로 성공하면 메트릭이 오르지 않는다`() {
+        val userId = UUID.randomUUID()
+        insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
+        // 1회째만 던지고 2회째는 실제 저장(순간 blip 재현).
+        var calls = 0
+        stubWithdrawnTokenStore.behavior = { id ->
+            calls++
+            if (calls == 1) throw RuntimeException("redis blip") else stubWithdrawnTokenStore.defaultBehavior(id)
+        }
+        val before =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+
+        try {
+            mockMvc()
+                .perform(
+                    delete("/api/v1/users/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+                ).andExpect(status().isOk)
+
+            // 2회 호출(최초 + 재시도 1회)로 끝나야 한다. reset() 이 markWithdrawnInvocations 도 비우므로 finally 전에 단언한다.
+            assertEquals(2, stubWithdrawnTokenStore.markWithdrawnInvocations.count { it == userId })
+            // 재시도가 성공했으니 denylist 에 마킹돼 있고, 실패 메트릭은 오르지 않았어야 한다.
+            assertTrue(stubWithdrawnTokenStore.isWithdrawn(userId))
+        } finally {
+            stubWithdrawnTokenStore.reset()
+        }
+
+        val after =
+            meterRegistry
+                .counter(
+                    com.depromeet.piki.user.service.WithdrawalMetrics.METRIC,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.TAG_STEP,
+                    com.depromeet.piki.user.service.WithdrawalMetrics.STEP_MARK_WITHDRAWN,
+                ).count()
+        assertEquals(before, after)
     }
 }

@@ -179,6 +179,24 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `탈퇴한 회원의 살아있는 access token 으로 위시리스트를 조회하면 409 가 반환된다`() {
+        // 탈퇴 시 access token 은 denylist 로 막히지만, 그 무효화가 부분 실패하면(#689) tombstone 이 서비스까지 닿는다.
+        // 회원 가드가 identityType 만 보면 탈퇴 회원이 MEMBER 인 채로 통과해버리므로, 활성 여부까지 함께 끊는다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(userId))
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-003"))
+            .andExpect(jsonPath("$.detail").value("탈퇴한 계정이에요."))
+    }
+
+    @Test
     fun `게스트는 멱등 삭제 경로보다 회원 가드가 먼저 걸려 403 이 반환된다`() {
         // 회원 가드는 소유권·존재 검증(멱등 no-op)보다 먼저 돈다 — 없는 위시 삭제도 게스트면 200 이 아니라 403.
         val mockMvc = buildMockMvc()

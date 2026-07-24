@@ -69,7 +69,10 @@ interface NotificationHistoryApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "유효하지 않은 cursor 값 (숫자로 변환 불가) · 유효하지 않은 category 값 (ACTIVITY/SYSTEM 외)",
+                description =
+                    "잘못된 요청\n\n" +
+                        "- cursor 가 숫자로 변환되지 않음 (`NOTIFICATION-001`)\n" +
+                        "- category 가 ACTIVITY/SYSTEM 외 값 (enum 바인딩 실패 → `COMMON-INVALID-INPUT`)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

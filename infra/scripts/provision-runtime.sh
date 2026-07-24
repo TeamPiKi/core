@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
 # (swap / redis / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
-# swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 config 가 레포에서 오므로 매 배포 갱신·재기동한다. (#217)
+# swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
 set -euo pipefail
+
+# dockerized aws-cli — mysql(3절)·alloy(4절)의 SSM pull 이 공유한다. 박스엔 aws cli 가 없다.
+# 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
+AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
 
 # 1) swap — 메모리 906Mi 라 1G swap 이 필수다. 없을 때만 생성하고 fstab 에 등록해 재부팅에도 유지되게 한다.
 if sudo swapon --show | grep -q '/swapfile'; then
@@ -68,8 +72,6 @@ if [ "${ENVIRONMENT:-}" = "dev" ] || [ "${ENVIRONMENT:-}" = "staging" ]; then
   # 컨테이너가 이미 있어 값이 안 쓰이는 배포에서도 pull 은 항상 실행한다 — 박스 재생성 때만 도는 경로로
   # 두면 조용히 썩은 채 가장 필요한 순간(재생성)에 터지므로, 매 배포가 이 경로를 살아있게 검증한다.
   # --network host: IMDSv2 hop limit(기본 1) 탓에 bridge 컨테이너는 인스턴스 role 자격증명을 못 받는다.
-  # 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
-  AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
   # --region 명시: docker run 은 호스트 리전 설정을 상속하지 않는다 (deploy.yml 의 SSM pull 과 동일 고정).
   ssm_param() {
     docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
@@ -125,42 +127,41 @@ else
   echo "[nginx] default 없음 — skip"
 fi
 
-# 4) grafana-alloy — 앱 메트릭 scrape + team3-* 컨테이너 로그를 Grafana Cloud 로 보내는 단일 수집기.
-#    Alloy 는 stateless 이고 config 가 레포(infra/alloy/config.alloy)에서 오므로, redis 의 "있으면 skip" 과 달리
-#    매 배포마다 config 를 갱신하고 재기동한다 (restart 비용은 작고 scrape 공백도 수초 수준).
-#    자격증명(GRAFANA_*)이 없으면(secret 미등록) 기동을 skip 한다 — 빈 endpoint 로 부팅하면 config 검증 실패로
-#    crash loop 가 나기 때문. secret 등록 후 다음 배포에 자동 기동된다.
-#    --network host: 앱 포트가 127.0.0.1 바인딩(#290)이라 localhost:8080/8081 을 scrape 하려면 필요.
-#    --server.http.listen-addr=127.0.0.1: host 네트워크라 debug UI(12345)를 루프백에만 묶어 외부 노출을 막는다.
-#    /proc·/sys·/ 마운트: node_exporter(config 의 prometheus.exporter.unix)가 컨테이너 안에서 호스트
-#    메모리·swap·디스크를 읽으려면 필요하다. config 의 *_path 가 /host/* 를 가리킨다. ro,rslave 로 읽기전용.
-if [ -z "${GRAFANA_METRICS_URL:-}" ]; then
-  echo "[alloy] GRAFANA_* 미설정 — skip (secret 등록 후 다음 배포에 기동)"
-else
-  echo "[alloy] config 갱신 후 (재)기동"
-  sudo mkdir -p /etc/alloy-team3
-  sudo cp /tmp/piki-deploy/config.alloy /etc/alloy-team3/config.alloy
-  docker rm -f team3-alloy 2>/dev/null || true
-  docker run -d \
-    --name team3-alloy \
-    --restart unless-stopped \
-    --network host \
-    -v /etc/alloy-team3/config.alloy:/etc/alloy/config.alloy:ro \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -v /proc:/host/proc:ro,rslave \
-    -v /sys:/host/sys:ro,rslave \
-    -v /:/host/root:ro,rslave \
-    -e ENVIRONMENT="${ENVIRONMENT:-}" \
-    -e GRAFANA_METRICS_URL="${GRAFANA_METRICS_URL:-}" \
-    -e GRAFANA_METRICS_USER="${GRAFANA_METRICS_USER:-}" \
-    -e GRAFANA_LOGS_URL="${GRAFANA_LOGS_URL:-}" \
-    -e GRAFANA_LOGS_USER="${GRAFANA_LOGS_USER:-}" \
-    -e GRAFANA_TRACES_URL="${GRAFANA_TRACES_URL:-}" \
-    -e GRAFANA_TRACES_USER="${GRAFANA_TRACES_USER:-}" \
-    -e GRAFANA_CLOUD_TOKEN="${GRAFANA_CLOUD_TOKEN:-}" \
-    -e EXTRACTOR_METRICS_TARGET="${EXTRACTOR_METRICS_TARGET:-}" \
-    grafana/alloy:v1.16.1 \
-      run --server.http.listen-addr=127.0.0.1:12345 /etc/alloy/config.alloy
+# 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
+#    deploy.yml 의 'Upload deploy files' 가 /tmp/piki-deploy/alloy/ 로 올려둔다. 여기는 core 박스 값
+#    (--environment/--box)으로 호출만 한다. skip 가드(GRAFANA_METRICS_URL 빈 값 시 exit 0)·기동 전
+#    validate 게이트·--network host·호스트 마운트·Running 확인은 전부 블록이 책임진다.
+#    자격증명(GRAFANA_*)은 SSM 공유 경로(/piki/observability/grafana-*)에서 박스가 직접 읽는다(#771) —
+#    세 서비스 박스가 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다. GH secrets 경유 폐기.
+#    필수 5종(metrics·logs URL/USER, token) 실패는 즉시 중단, traces 2종은 빈 값 허용(블록이 더미로 무해 처리).
+obs_param() {
+  docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter     --name "/piki/observability/$1" --with-decryption     --region ap-northeast-2 --query Parameter.Value --output text
+}
+GRAFANA_METRICS_URL="$(obs_param grafana-metrics-url)" || { echo "[alloy] SSM grafana-metrics-url 조회 실패 — IAM(app_ssm_read)·파라미터 존재 확인"; exit 1; }
+GRAFANA_METRICS_USER="$(obs_param grafana-metrics-user)" || { echo "[alloy] SSM grafana-metrics-user 조회 실패"; exit 1; }
+GRAFANA_LOGS_URL="$(obs_param grafana-logs-url)" || { echo "[alloy] SSM grafana-logs-url 조회 실패"; exit 1; }
+GRAFANA_LOGS_USER="$(obs_param grafana-logs-user)" || { echo "[alloy] SSM grafana-logs-user 조회 실패"; exit 1; }
+GRAFANA_CLOUD_TOKEN="$(obs_param grafana-cloud-token)" || { echo "[alloy] SSM grafana-cloud-token 조회 실패"; exit 1; }
+GRAFANA_TRACES_URL="$(obs_param grafana-traces-url)" || GRAFANA_TRACES_URL=""
+GRAFANA_TRACES_USER="$(obs_param grafana-traces-user)" || GRAFANA_TRACES_USER=""
+export GRAFANA_METRICS_URL GRAFANA_METRICS_USER GRAFANA_LOGS_URL GRAFANA_LOGS_USER
+export GRAFANA_TRACES_URL GRAFANA_TRACES_USER GRAFANA_CLOUD_TOKEN
+echo "[alloy] Grafana 자격 SSM 로드 완료 (/piki/observability/grafana-*)"
+#    수집 대상은 컨테이너 label opt-in(piki.observe 등, contracts/observability.md) — 서비스 열거 regex 와
+#    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
+# 전환기 잔재 정리: 구 수집기(team3-alloy)·구 config 경로가 남으면 새 수집기(piki-alloy, 블록이 기동)와
+# 이중 수집된다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
+# 제거 실패는 조용히 넘기지 않는다 - 새 수집기가 다른 이름이라 docker run 의 이름 충돌 안전망이 없어,
+# rm 이 조용히 실패하면 두 수집기가 같은 신호를 이중 전송하는 상태가 소리 없이 성립하기 때문.
+if docker inspect team3-alloy >/dev/null 2>&1; then
+  timeout 30 docker rm -f team3-alloy \
+    || { echo "[alloy] 구 수집기(team3-alloy) 제거 실패 - 이중 수집 방지를 위해 중단"; exit 1; }
 fi
+sudo rm -rf /etc/alloy-team3
+bash /tmp/piki-deploy/alloy/provision-alloy.sh \
+  --config /tmp/piki-deploy/alloy/config.alloy \
+  --name piki-alloy \
+  --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
+  --box piki-core
 
 echo "런타임 프로비저닝 완료"

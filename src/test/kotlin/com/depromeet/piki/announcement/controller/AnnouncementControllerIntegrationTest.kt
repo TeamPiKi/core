@@ -78,13 +78,13 @@ class AnnouncementControllerIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(get("/api/v1/announcements/${draft.getId()}").header(HttpHeaders.AUTHORIZATION, authHeader()))
             .andExpect(status().isNotFound)
-            .andExpect(jsonPath("$.detail", notNullValue()))
+            .andExpect(jsonPath("$.code").value("ANNOUNCEMENT-001"))
 
         // 없는 id — 404
         mockMvc
             .perform(get("/api/v1/announcements/999999").header(HttpHeaders.AUTHORIZATION, authHeader()))
             .andExpect(status().isNotFound)
-            .andExpect(jsonPath("$.detail", notNullValue()))
+            .andExpect(jsonPath("$.code").value("ANNOUNCEMENT-001"))
     }
 
     @Test
@@ -157,11 +157,11 @@ class AnnouncementControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `유효하지 않은 cursor 는 400 으로 거른다`() {
+    fun `유효하지 않은 cursor 는 400 ANNOUNCEMENT-002 로 거른다`() {
         buildMockMvc()
             .perform(get("/api/v1/announcements").param("cursor", "abc").header(HttpHeaders.AUTHORIZATION, authHeader()))
             .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.detail", notNullValue()))
+            .andExpect(jsonPath("$.code").value("ANNOUNCEMENT-002"))
     }
 
     @Test

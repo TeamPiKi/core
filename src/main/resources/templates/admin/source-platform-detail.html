@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title th:text="${platform.domain} + ' · 출처 몰 표시명'">출처 몰 표시명</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;--danger:#b91c1c;--danger-soft:#fee2e2;}
+    /* keep-all: 한국어가 어절 중간에서 꺾이지 않게 한다. 공백 없는 긴 토큰이 칸을 밀어내지 않도록
+       anywhere 를 안전판으로 함께 둔다 (.domain 의 break-all 은 그대로 우선한다). */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:640px;margin:0 auto;padding:26px 24px;}
+    .domain{font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:800;color:#1f2937;word-break:break-all;}
+    .meta{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:12.5px;color:var(--muted);}
+
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px;margin-top:18px;}
+    label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 6px;}
+    label:first-child{margin-top:0;}
+    input{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
+    input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
+    .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
+    .btn{margin-top:18px;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--border);margin-left:8px;text-decoration:none;display:inline-block;padding:11px 18px;}
+    .err{margin-top:16px;background:var(--danger-soft);border:1px solid #fecaca;color:var(--danger);border-radius:8px;padding:9px 12px;font-size:13px;}
+
+    /* 파괴적 액션은 저장 폼과 시각적으로 분리한다. 상세 진입 자체가 확인 단계라 confirm() 다이얼로그는 두지 않는다. */
+    .danger{margin-top:18px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:18px;}
+    .danger .t{font-size:13px;font-weight:800;color:var(--danger);}
+    .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.6;}
+    .danger button{margin-top:14px;background:#fff;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .danger button:hover{background:var(--danger);color:#fff;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin/source-platforms', '← 표시명 목록')}"></div>
+  <div class="wrap">
+    <div class="domain" th:text="${platform.domain}">example.com</div>
+    <div class="meta">
+      <span>마지막 수정 <b th:text="${#temporals.format(platform.updatedAt, 'yyyy-MM-dd HH:mm')}">-</b></span>
+    </div>
+
+    <div class="err" th:if="${error}" th:text="${error}">에러</div>
+
+    <form class="card" method="post" th:action="@{/admin/source-platforms/{d}(d=${platform.domain})}">
+      <label for="displayName">표시명</label>
+      <input id="displayName" name="displayName" type="text" maxlength="255" autocomplete="off" required
+             placeholder="예: 29CM"
+             th:value="${draftDisplayName} ?: ${platform.displayName}">
+      <div class="hint">클라이언트 위시 화면에 그대로 노출되는 사용자 대면 표기입니다. 저장 즉시 과거 항목에도 적용됩니다.</div>
+
+      <button class="btn" type="submit">저장</button>
+      <a class="btn ghost" th:href="@{/admin/source-platforms}">취소</a>
+    </form>
+
+    <div class="danger">
+      <div class="t">표시명 삭제</div>
+      <!-- 유도 규칙을 산문으로 풀지 않고, 이 도메인의 실제 fallback 계산값을 보여준다 — "삭제하면 무엇이 되나"에 바로 답한다. -->
+      <div class="d">삭제 즉시 이 도메인은 URL 에서 유도한 임시 표시명(<b th:text="${fallbackName}">29cm</b>)으로 돌아갑니다.
+        되돌리려면 표시명을 새로 등록해야 합니다.</div>
+      <form method="post" th:action="@{/admin/source-platforms/{d}/delete(d=${platform.domain})}">
+        <button type="submit">이 표시명 삭제</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

@@ -13,6 +13,7 @@ import com.depromeet.piki.image.domain.ProductImageException
 import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
+import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
@@ -42,6 +43,7 @@ class WishlistApiExamples(
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 추출 라우팅 정책 기준)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
             if (handlerMethod.binds(WishlistController::getWishlist)) {
@@ -76,6 +78,7 @@ class WishlistApiExamples(
                     add(WishException.invalidCursor(), name = "유효하지 않은 cursor")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
             if (handlerMethod.binds(WishlistController::getWish)) {
@@ -86,6 +89,7 @@ class WishlistApiExamples(
                         payload = ApiResponseBody.ok(sampleEntry),
                     )
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     unauthorized()
@@ -103,8 +107,9 @@ class WishlistApiExamples(
                         name = "아직 추출 성공 이력 없음 (빈 히스토리)",
                         payload = ApiResponseBody.ok(emptyPriceHistorySample),
                     )
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
-                    forbidden("권한 없음 (MEMBER 필요)")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     unauthorized()
                 }
@@ -128,6 +133,7 @@ class WishlistApiExamples(
                     )
                     add(ItemException.nameRequiredForReady(), name = "상품명 없이 복구 시도")
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     add(ItemException.alreadyReady(), name = "이미 등록 완료(READY) 항목 — 수정 불가")
@@ -151,6 +157,7 @@ class WishlistApiExamples(
                     add(WishException.notRefreshable(), name = "링크 없는 항목(이미지 등록) — 새로고침 불가")
                     add(WishException.failedNotRefreshable(), name = "추출 실패(FAILED) 항목 — 보정으로 복구")
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     unauthorized()
@@ -164,6 +171,7 @@ class WishlistApiExamples(
                         payload = ApiResponseBody.ok<Unit>(),
                     )
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     unauthorized()
                 }
@@ -177,6 +185,7 @@ class WishlistApiExamples(
                     )
                     add(WishException.invalidIdCount(), name = "ids 누락/빈 목록/100개 초과")
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아닌 항목 포함")
                     unauthorized()
                 }
@@ -193,6 +202,7 @@ class WishlistApiExamples(
                     add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
             if (handlerMethod.binds(WishlistController::presignImageUploads)) {
@@ -207,6 +217,7 @@ class WishlistApiExamples(
                     add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
             if (handlerMethod.binds(WishlistController::confirmImageRegistration)) {
@@ -222,6 +233,7 @@ class WishlistApiExamples(
                     add(ImageStorageException.existsCheckFailed(), name = "이미지 존재 확인 실패 (스토리지 장애)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
             operation
@@ -237,6 +249,8 @@ class WishlistApiExamples(
         WishPriceHistoryResponse(
             itemId = 512,
             sourceUrl = "https://www.example-shop.com/products/12345",
+            // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
+            sourcePlatform = "example-shop",
             activeSnapshotId = 1088,
             entries =
                 listOf(
@@ -266,6 +280,7 @@ class WishlistApiExamples(
         WishPriceHistoryResponse(
             itemId = 515,
             sourceUrl = "https://www.example-shop.com/products/67891",
+            sourcePlatform = "example-shop",
             activeSnapshotId = 1090,
             entries = emptyList(),
         )
@@ -287,6 +302,8 @@ class WishlistApiExamples(
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
+                    // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -307,6 +324,7 @@ class WishlistApiExamples(
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -327,6 +345,7 @@ class WishlistApiExamples(
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67890",
+                    sourcePlatform = "example-shop",
                 ),
         )
 
@@ -371,6 +390,7 @@ class WishlistApiExamples(
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
+                        sourcePlatform = null,
                     ),
             ),
             WishItemResponse(
@@ -388,6 +408,7 @@ class WishlistApiExamples(
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
+                        sourcePlatform = null,
                     ),
             ),
         )

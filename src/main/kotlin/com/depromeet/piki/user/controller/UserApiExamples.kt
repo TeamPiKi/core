@@ -45,6 +45,7 @@ class UserApiExamples(
                         unauthorized()
                         // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
                         add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
+                        add(UserException.deletedUser(), name = "탈퇴한 유저")
                     }
 
                 handlerMethod.binds(UserController::updateMe) ->

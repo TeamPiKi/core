@@ -56,10 +56,10 @@ interface OAuthApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청\n\n" +
-                        "- `code`+`redirectUri` 도 `accessToken` 도 없음\n" +
-                        "- `accessToken` 과 `code` 를 동시 전달\n" +
-                        "- 지원하지 않는 provider\n" +
-                        "- provider 인가코드(`code`)가 만료/재사용/무효 — 재로그인으로 새 code 를 받아 재시도",
+                        "- 흐름 검증 실패 (`COMMON-INVALID-INPUT`) — v1(`code`+`redirectUri`)·v2(`accessToken`) 중\n" +
+                        "  정확히 하나여야 하는데 둘 다 전달했거나 둘 다 누락/공백\n" +
+                        "- 지원하지 않는 provider (`OAUTH-003`)\n" +
+                        "- provider 인가코드(`code`)가 만료/재사용/무효 (`OAUTH-005`) — 재로그인으로 새 code 를 받아 재시도",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -71,8 +71,8 @@ interface OAuthApi {
                 responseCode = "401",
                 description =
                     "인증 실패\n\n" +
-                        "- `state` 검증 실패 (만료·미발급·이미 소비됨) — `GET /auth/{provider}/url` 로 재발급 필요\n" +
-                        "- provider access token 무효/만료 — 재로그인으로 새 토큰을 받아 재시도",
+                        "- `state` 검증 실패 (만료·미발급·이미 소비됨) (`OAUTH-004`) — `GET /auth/{provider}/url` 로 재발급 필요\n" +
+                        "- provider access token 무효/만료 (`OAUTH-006`) — 재로그인으로 새 토큰을 받아 재시도",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -83,9 +83,18 @@ interface OAuthApi {
             ApiResponse(
                 responseCode = "502",
                 description =
-                    "소셜 제공자 호출 경계 실패 (응답 body 의 `category` 로 구분)\n\n" +
-                        "- **RETRYABLE** — provider 장애(네트워크·5xx·점검·user_info 조회 실패·미지 에러코드 fallback). 동일 요청으로 재시도 가능.\n" +
-                        "- **SERVER_ERROR** — 우리 OAuth 설정·요청 오류(client_id/secret·client_secret JWT·필수 인자 누락 등). 재시도 무의미, 서버 설정 수정 필요.",
+                    "소셜 제공자 장애 (`OAUTH-001`) — 네트워크·5xx·점검·user_info 조회 실패·미지 에러코드 fallback. 동일 요청으로 재시도 가능.",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "500",
+                description =
+                    "우리 OAuth 설정·요청 오류 (`OAUTH-007`) — client_id/secret·client_secret JWT·scope·필수 인자 누락 등을 provider 가 거부. 상류 장애가 아니라 서버 버그라 재시도 무의미, 서버 설정 수정 필요.",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

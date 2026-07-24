@@ -19,7 +19,7 @@ interface AnnouncementApi {
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "조회 성공 (목록 + 페이지 정보)"),
-            ApiResponse(responseCode = "400", description = "유효하지 않은 cursor (숫자로 변환 불가)"),
+            ApiResponse(responseCode = "400", description = "유효하지 않은 cursor (숫자로 변환 불가) (`ANNOUNCEMENT-002`)"),
             ApiResponse(responseCode = "401", description = "인증 필요 (로그인하지 않음)"),
         ],
     )
@@ -37,7 +37,7 @@ interface AnnouncementApi {
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "조회 성공"),
-            ApiResponse(responseCode = "404", description = "존재하지 않거나 아직 발송되지 않은 공지"),
+            ApiResponse(responseCode = "404", description = "존재하지 않거나 아직 발송되지 않은 공지 (`ANNOUNCEMENT-001`)"),
             ApiResponse(responseCode = "401", description = "인증 필요 (로그인하지 않음)"),
         ],
     )

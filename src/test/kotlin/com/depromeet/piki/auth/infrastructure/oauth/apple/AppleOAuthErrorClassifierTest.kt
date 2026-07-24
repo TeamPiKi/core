@@ -11,8 +11,8 @@ import kotlin.test.assertEquals
 
 // AppleOAuthErrorClassifier 의 분기를 망라하는 순수 단위 테스트 (Spring·DB 없음).
 // PLAN.md 의 실제 Apple ErrorResponse 샘플({"error":"..."} 단일 필드)을 픽스처로 쓴다.
-// 우리 설정 오류와 provider 장애는 둘 다 502 라 httpStatus 만으로 구분되지 않으므로
-// category(SERVER_ERROR vs RETRYABLE)까지 함께 단언한다 (GeminiApiException 과 같은 결).
+// 우리 설정 오류는 500/SERVER_ERROR(우리 버그), provider 장애는 502/RETRYABLE 로 이제 status 로도 구분되지만,
+// 의도(재시도 여부·책임 소재)를 명확히 하려고 category 까지 함께 단언한다.
 class AppleOAuthErrorClassifierTest {
     @ParameterizedTest(name = "[{index}] {3} → {1}/{2}")
     @MethodSource("cases")
@@ -37,18 +37,18 @@ class AppleOAuthErrorClassifierTest {
             Stream.of(
                 // 400 INVALID_INPUT: code 만료(5분)/재사용 — 멀쩡한 클라가 정상 요청으로 도달 가능(계약). 보수 매핑.
                 Arguments.of(http(400), HttpStatus.BAD_REQUEST, ErrorCategory.INVALID_INPUT, "invalid_grant → 400", """{"error":"invalid_grant"}"""),
-                // 502 SERVER_ERROR: 우리 client_secret JWT·요청 구성 오류(우리 설정 버그). 외부 경계 실패라 502, 재시도 무의미라 SERVER_ERROR.
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "invalid_client → 502/SERVER_ERROR", """{"error":"invalid_client"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "invalid_request → 502/SERVER_ERROR", """{"error":"invalid_request"}"""),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "unauthorized_client → 502/SERVER_ERROR", """{"error":"unauthorized_client"}"""),
+                // 500 SERVER_ERROR: 우리 client_secret JWT·요청 구성 오류(우리 설정 버그). 우리 서버 버그라 500, 재시도 무의미라 SERVER_ERROR.
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "invalid_client → 500/SERVER_ERROR", """{"error":"invalid_client"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "invalid_request → 500/SERVER_ERROR", """{"error":"invalid_request"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "unauthorized_client → 500/SERVER_ERROR", """{"error":"unauthorized_client"}"""),
                 Arguments.of(
                     http(400),
-                    HttpStatus.BAD_GATEWAY,
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     ErrorCategory.SERVER_ERROR,
-                    "unsupported_grant_type → 502/SERVER_ERROR",
+                    "unsupported_grant_type → 500/SERVER_ERROR",
                     """{"error":"unsupported_grant_type"}""",
                 ),
-                Arguments.of(http(400), HttpStatus.BAD_GATEWAY, ErrorCategory.SERVER_ERROR, "invalid_scope → 502/SERVER_ERROR", """{"error":"invalid_scope"}"""),
+                Arguments.of(http(400), HttpStatus.INTERNAL_SERVER_ERROR, ErrorCategory.SERVER_ERROR, "invalid_scope → 500/SERVER_ERROR", """{"error":"invalid_scope"}"""),
                 // error_description 이 동봉돼도 안정 필드인 error 코드로만 분류한다 (메시지 의존 금지).
                 Arguments.of(
                     http(400),

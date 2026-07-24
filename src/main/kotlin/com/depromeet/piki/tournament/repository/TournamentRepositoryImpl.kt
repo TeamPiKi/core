@@ -4,6 +4,9 @@ import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import java.time.LocalDateTime
+import java.util.UUID
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Repository
 
 @Repository
@@ -36,16 +39,17 @@ class TournamentRepositoryImpl(
         if (ids.isEmpty()) emptyList()
         else tournamentHistoryJpaRepository.findAllByTournamentIdInAndDeletedAtIsNull(ids)
 
-    override fun findByIdsAndStatuses(
-        ids: List<Long>,
+    override fun findVisibleByUserId(
+        userId: UUID,
         statuses: List<TournamentStatus>?,
-    ): List<Tournament> {
-        if (ids.isEmpty()) return emptyList()
-        return statuses
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { tournamentJpaRepository.findByIdInAndStatusInAndDeletedAtIsNullOrderByCreatedAtDesc(ids, it) }
-            ?: tournamentJpaRepository.findByIdInAndDeletedAtIsNullOrderByCreatedAtDesc(ids)
-    }
+        limit: Int?,
+    ): List<Tournament> =
+        tournamentJpaRepository.findVisibleByUserId(
+            userId = userId,
+            // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
+            statuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries,
+            pageable = limit?.let { PageRequest.of(0, it) } ?: Pageable.unpaged(),
+        )
 
     override fun findBySourceTournamentId(sourceTournamentId: Long): List<Tournament> =
         tournamentJpaRepository.findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId)

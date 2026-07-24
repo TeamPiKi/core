@@ -208,6 +208,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"inviteCode":"$inviteCode"}"""),
             ).andExpect(status().isConflict)
+            // tournament 이관(#764)으로 409(CONFLICT)가 처음으로 도메인 code 를 싣는다 — alreadyParticipant → TOURNAMENT-022.
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-022"))
     }
 
     @Test
@@ -414,6 +416,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"itemIds":[100,200]}"""),
             ).andExpect(status().isForbidden)
+            // 참여자가 아닌 경우 forbiddenTournament → TOURNAMENT-001 (도메인 code 회귀 가드).
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-001"))
     }
 
     @Test
@@ -791,6 +795,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                         .param("limit", limit),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-033"))
                 .andExpect(jsonPath("$.detail").value("조회 개수는 1 이상이어야 해요."))
         }
     }
@@ -867,6 +872,54 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data[0].thumbnailUrls.length()").value(2))
             .andExpect(jsonPath("$.data[0].thumbnailUrls[0]").value("https://img.example.com/root2.jpg"))
             .andExpect(jsonPath("$.data[0].thumbnailUrls[1]").value("https://img.example.com/root1.jpg"))
+    }
+
+    @Test
+    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // userId 소유 ROOT 에 otherUserId 가 소셜 참여
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+
+        // PENDING 동안엔 멤버 목록에도 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+
+        // 소유자가 start → ROOT IN_PROGRESS 전환
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+
+        // 시작 후 멤버 목록에선 빠진다 (멤버는 본인 CLONE 으로 플레이·표시)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        // 소유자 목록엔 계속 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
     }
 
     @Test
