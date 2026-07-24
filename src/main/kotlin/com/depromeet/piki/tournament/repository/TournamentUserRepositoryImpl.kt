@@ -16,9 +16,6 @@ class TournamentUserRepositoryImpl(
         userId: UUID,
     ): TournamentUser? = tournamentUserJpaRepository.findByTournamentIdAndUserIdAndDeletedAtIsNull(tournamentId, userId)
 
-    override fun findTournamentIdsByUserId(userId: UUID): List<Long> =
-        tournamentUserJpaRepository.findTournamentIdsByUserId(userId)
-
     override fun findByTournamentId(tournamentId: Long): List<TournamentUser> =
         tournamentUserJpaRepository.findByTournamentIdAndDeletedAtIsNull(tournamentId)
 
