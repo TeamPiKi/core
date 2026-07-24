@@ -875,6 +875,54 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // userId 소유 ROOT 에 otherUserId 가 소셜 참여
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+
+        // PENDING 동안엔 멤버 목록에도 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+
+        // 소유자가 start → ROOT IN_PROGRESS 전환
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+
+        // 시작 후 멤버 목록에선 빠진다 (멤버는 본인 CLONE 으로 플레이·표시)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        // 소유자 목록엔 계속 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+    }
+
+    @Test
     fun `GET tournaments-id 는 COMPLETED 토너먼트에서 1위부터 4위까지 순위 결과를 반환한다`() {
         val mockMvc = buildMockMvc()
         val item1Id = saveWishItem(name = "1위아이템", price = 10_000)
