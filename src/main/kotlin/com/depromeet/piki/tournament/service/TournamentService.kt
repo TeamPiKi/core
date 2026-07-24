@@ -486,13 +486,12 @@ class TournamentService(
     ): List<TournamentSummary> {
         limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
 
-        val tournamentIds = tournamentUserRepository.findTournamentIdsByUserId(userId)
-        if (tournamentIds.isEmpty()) return emptyList()
-        val tournaments = tournamentRepository.findByIdsAndStatuses(tournamentIds, statuses)
-        if (tournaments.isEmpty()) return emptyList()
+        // 가시성 필터(ROOT 는 소유자·PENDING 만 — 멤버는 본인 CLONE 으로 플레이·표시)·최근순·limit 을 쿼리가 끝낸다.
+        // 참가자·프로필은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
+        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, limit)
+        if (limited.isEmpty()) return emptyList()
 
-        val tournamentUsers = tournamentUserRepository.findByTournamentIds(tournaments.map { it.getId() })
-        val myTUByTournamentId = tournamentUsers.filter { it.userId == userId }.associateBy { it.tournamentId }
+        val tournamentUsers = tournamentUserRepository.findByTournamentIds(limited.map { it.getId() })
         val userIds =
             tournamentUsers
                 .map { it.userId }
@@ -506,17 +505,7 @@ class TournamentService(
                 .groupBy { it.tournamentId }
                 .mapValues { (_, users) -> users.mapNotNull { profileImageByUserId[it.userId] } }
 
-        // ROOT(소셜) 토너먼트는 PENDING 이후 멤버 목록에서 제외한다(멤버는 본인 CLONE 으로 플레이·표시).
-        // 목록은 이미 createdAt DESC(최근순)라, 필터 뒤 take(limit) 로 "보이는 것 중 최근 N개"만 남긴다.
-        val visible =
-            tournaments.filter { tournament ->
-                val myTU = myTUByTournamentId[tournament.getId()]
-                val isTournamentOwner = myTU?.getId() == tournament.ownerTournamentUserId
-                !tournament.isRoot() || isTournamentOwner || tournament.isPending()
-            }
-        val limited = limit?.let { visible.take(it) } ?: visible
-
-        // 썸네일은 잘리고 남은 토너먼트에 대해서만 조회한다 (잘릴 것의 아이템은 안 읽음).
+        // 썸네일도 남은 토너먼트에 대해서만 조회한다 (잘릴 것의 아이템은 안 읽음).
         // CLONE 은 자기 tournament_item 이 없고 sourceTournamentId(ROOT)의 아이템을 쓰므로, ROOT id 로 조회한 뒤 CLONE 에 매핑한다.
         val rootIdByTournamentId = limited.associate { it.getId() to (it.sourceTournamentId ?: it.getId()) }
         val thumbnailsByRootId = thumbnailUrlsByTournamentId(rootIdByTournamentId.values.distinct())

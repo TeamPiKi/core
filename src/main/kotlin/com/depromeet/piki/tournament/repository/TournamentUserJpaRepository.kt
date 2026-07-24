@@ -14,11 +14,6 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
         userId: UUID,
     ): TournamentUser?
 
-    @Query("SELECT tu.tournamentId FROM TournamentUser tu WHERE tu.userId = :userId AND tu.deletedAt IS NULL")
-    fun findTournamentIdsByUserId(
-        @Param("userId") userId: UUID,
-    ): List<Long>
-
     fun findByTournamentIdAndDeletedAtIsNull(tournamentId: Long): List<TournamentUser>
 
     fun countByTournamentIdAndDeletedAtIsNull(tournamentId: Long): Int
