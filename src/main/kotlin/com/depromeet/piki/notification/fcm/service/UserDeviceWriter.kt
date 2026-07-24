@@ -3,6 +3,7 @@ package com.depromeet.piki.notification.fcm.service
 import com.depromeet.piki.common.logging.SensitiveData
 import com.depromeet.piki.notification.fcm.domain.UserDevice
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
+import com.depromeet.piki.user.service.UserService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
@@ -15,6 +16,7 @@ import java.util.UUID
 @Component
 class UserDeviceWriter(
     private val userDeviceRepository: UserDeviceRepository,
+    private val userService: UserService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -28,6 +30,11 @@ class UserDeviceWriter(
         deviceId: String,
         fcmToken: String,
     ): UserDevice {
+        // 활성 유저 확인·쓰기 경합 차단(#776) — user 행을 잠가 tombstone 이면 거부한다. 이 락을 upsert 의 첫 걸음으로
+        // 잡아, 탈퇴 cascade(user 행 UPDATE 로 시작 → user_devices 삭제)와 직렬화한다: 탈퇴가 먼저면 여기서 409,
+        // 등록이 먼저면 탈퇴 cascade 가 뒤에서 이 기기를 지운다 — 어느 순서든 tombstone 유저의 기기 행이 남지 않는다.
+        // users 행이 없으면(인증만 된 미가입 등 기존 계약) 통과시킨다 — 유효 토큰이면 prod 엔 항상 행이 있다.
+        userService.rejectIfWithdrawnForUpdate(userId)
         // deviceId·fcmToken 은 유니크 키다. 앞뒤 공백을 입력 경계에서 정규화해야 "x"/"x " 가 다른 키로
         // 갈려 upsert 가 쪼개지거나 죽은 토큰 정리가 빗나가는 일을 막는다. (@NotBlank 는 공백-only 만 거른다)
         val device = deviceId.trim()
