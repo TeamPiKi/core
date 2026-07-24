@@ -1,4 +1,10 @@
 server:
+  # 응답 gzip 압축 — example 로 비대한 /v3/api-docs OpenAPI JSON 의 전송 시간을 크게 줄인다(문서 로딩 DX, #788).
+  # 앱 전역 응답에 적용된다(모바일 API JSON 도 함께 축소되는 이득). min-response-size 미만의 작은 응답은 압축 생략.
+  compression:
+    enabled: true
+    mime-types: application/json,application/javascript,text/css,text/html,image/svg+xml
+    min-response-size: 1024
   servlet:
     session:
       # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin form-login 세션에만 적용된다.

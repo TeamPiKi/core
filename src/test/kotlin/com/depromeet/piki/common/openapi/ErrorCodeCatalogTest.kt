@@ -41,6 +41,14 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("### ANNOUNCEMENT"), md)
         assertTrue(md.contains("| ANNOUNCEMENT-001 | 404 | 존재하지 않는 공지예요. |"), md)
         assertTrue(md.contains("| ANNOUNCEMENT-002 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
+
+        // tournament 도메인 이관(#764) — 33개. 이 도메인부터 409(CONFLICT) 응답이 처음으로 도메인 code 를 싣는다
+        // (#744 는 CONFLICT 공통 code 를 두지 않아 그동안 code=null 이었다). 4xx·403·404·409 를 대표로 단언한다.
+        assertTrue(md.contains("### TOURNAMENT"), md)
+        assertTrue(md.contains("| TOURNAMENT-001 | 403 | 이 토너먼트에 접근할 수 없어요. |"), md)
+        assertTrue(md.contains("| TOURNAMENT-002 | 404 | 토너먼트를 찾을 수 없어요. 이미 삭제됐을 수 있어요. |"), md)
+        assertTrue(md.contains("| TOURNAMENT-005 | 409 | 토너먼트가 시작되기 전에만 할 수 있어요. |"), md)
+        assertTrue(md.contains("| TOURNAMENT-033 | 400 | 조회 개수는 1 이상이어야 해요. |"), md)
     }
 
     @Test

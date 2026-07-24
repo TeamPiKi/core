@@ -80,8 +80,13 @@ resource "aws_iam_instance_profile" "app" {
 # -----------------------------------------------------------------------------
 data "aws_iam_policy_document" "app_ssm_read" {
   statement {
-    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/*"]
+    actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    # /piki/observability/* : Grafana Cloud 자격 공유 경로 — 세 서비스 박스가 같은 경로를 읽어
+    # 토큰 회전이 1곳 put-parameter 로 끝난다 (#771, extractor·renderer 도 자기 role 에 동일 확장).
+    resources = [
+      "arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/*",
+      "arn:aws:ssm:${var.aws_region}:*:parameter/piki/observability/*",
+    ]
   }
 }
 

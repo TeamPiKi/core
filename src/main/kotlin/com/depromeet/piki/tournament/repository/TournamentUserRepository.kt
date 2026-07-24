@@ -11,8 +11,6 @@ interface TournamentUserRepository {
         userId: UUID,
     ): TournamentUser?
 
-    fun findTournamentIdsByUserId(userId: UUID): List<Long>
-
     fun findByTournamentId(tournamentId: Long): List<TournamentUser>
 
     fun countByTournamentId(tournamentId: Long): Int
