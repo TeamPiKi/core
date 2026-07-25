@@ -48,37 +48,70 @@ class ParsingHeartbeat(
         registry.compute(snapshotId) { _, beat -> beat?.takeUnless { it.attempt == attempt } }
     }
 
+    // 워커의 단건 실행을 박동 수명주기로 감싼다 — 두 워커(URL·이미지)가 복제하던 뼈대를 한 곳에 캡슐화한다.
+    //   등록 → 시작 가드(fenced touch) → 본문 → 해제(finally).
+    // 시작 가드가 소유권 상실(0행)을 감지하면 body 를 실행하지 않고 onOwnershipLost 를 부른다 — 워커는 ext 호출·부수효과 없이 스킵한다.
+    // Observation 래핑·스킵 로그·전이는 각 워커가 소유하므로 콜백으로 받는다.
+    fun guarded(
+        snapshotId: Long,
+        attempt: Int,
+        onOwnershipLost: () -> Unit,
+        body: () -> Unit,
+    ) {
+        register(snapshotId, attempt)
+        try {
+            if (!touchOnStart(snapshotId, attempt)) {
+                onOwnershipLost()
+                return
+            }
+            body()
+        } finally {
+            deregister(snapshotId, attempt)
+        }
+    }
+
     // 시작 가드 — 워커가 ext 호출 직전 fenced touch 를 1회 실행한다. 소유권을 쥐고 있으면(1행 매치) true,
-    // 큐에 묵다 재클레임돼 소유권을 잃었으면(0행) false 다. false 면 워커가 ext 호출·부수효과 없이 스킵한다.
+    // 큐에 묵다 재클레임돼 소유권을 잃었으면(0행) false 다. false 면 guarded 가 body 를 건너뛴다.
     // 이 touch 는 stale 시계를 "claim 시각"이 아니라 "실제 시작 시각"으로 리셋해, 큐 대기가 재시도 예산을 잠식하는 구멍도 닫는다.
-    fun touchOnStart(
+    private fun touchOnStart(
         snapshotId: Long,
         attempt: Int,
     ): Boolean = heartbeatTouch.touch(snapshotId, attempt) > 0
 
     // 박동 루프 — 등록된 각 실행 중 작업의 updated_at 을 fenced touch 로 민다. stale 임계(60s) ≥ 이 주기(15s) x 3 + 여유라,
     // 산 워커는 박동을 연속으로 놓치지 않는 한 stale 로 오판되지 않는다.
+    // 항목별 runCatching 으로 격리한다 — 한 항목의 touch 가 DB 블립으로 던져도 그 사이클의 나머지 항목 박동이 통째로 스킵되지 않는다.
+    // 실패는 warn 만 남기고 넘어간다(레지스트리 유지 → 다음 사이클이 재시도).
     @Scheduled(fixedDelay = BEAT_INTERVAL_MS)
     fun beat() {
         val now = LocalDateTime.now()
         registry.forEach { (snapshotId, beat) ->
-            // 절대 캡 — 등록 후 5분이 지나도 안 끝난 작업(무한 행잉)은 갱신을 멈춰 침묵시킨다. 그러면 updated_at 이 굳어
-            // recover 가 stale 로 회수한다(박동이 좀비를 영구 보호하는 것을 끊는다). 갱신 없이 레지스트리에서만 제거한다.
-            if (Duration.between(beat.registeredAt, now) > ABSOLUTE_CAP) {
-                registry.remove(snapshotId, beat)
-                log.warn(
-                    "snapshot {} 박동 절대 캡({}분) 초과 — 갱신 중단, recover 회수에 맡김 (attempt={})",
-                    snapshotId,
-                    ABSOLUTE_CAP.toMinutes(),
-                    beat.attempt,
-                )
-                return@forEach
-            }
-            if (heartbeatTouch.touch(snapshotId, beat.attempt) == 0) {
-                // 0행 = 소유권 없음(재클레임됐거나 이미 READY/FAILED 로 전이). 좀비 박동을 멈춘다.
-                registry.remove(snapshotId, beat)
-                log.info("snapshot {} 박동 대상 아님(재클레임·이미 전이) — 레지스트리 제거 (attempt={})", snapshotId, beat.attempt)
-            }
+            runCatching { beatOne(snapshotId, beat, now) }
+                .onFailure { e -> log.warn("snapshot {} 박동 실패 — 다음 사이클 재시도 (attempt={}): {}", snapshotId, beat.attempt, e.message) }
+        }
+    }
+
+    private fun beatOne(
+        snapshotId: Long,
+        beat: Beat,
+        now: LocalDateTime,
+    ) {
+        // 절대 캡 — 등록 후 5분이 지나도 안 끝난 작업(무한 행잉)은 갱신을 멈춰 침묵시킨다. 그러면 updated_at 이 굳어
+        // recover 가 stale 로 회수한다(박동이 좀비를 영구 보호하는 것을 끊는다). 갱신 없이 레지스트리에서만 제거한다.
+        if (Duration.between(beat.registeredAt, now) > ABSOLUTE_CAP) {
+            registry.remove(snapshotId, beat)
+            log.warn(
+                "snapshot {} 박동 절대 캡({}분) 초과 — 갱신 중단, recover 회수에 맡김 (attempt={})",
+                snapshotId,
+                ABSOLUTE_CAP.toMinutes(),
+                beat.attempt,
+            )
+            return
+        }
+        if (heartbeatTouch.touch(snapshotId, beat.attempt) == 0) {
+            // 0행 = 소유권 없음(재클레임됐거나 이미 READY/FAILED 로 전이). 좀비 박동을 멈춘다.
+            registry.remove(snapshotId, beat)
+            log.info("snapshot {} 박동 대상 아님(재클레임·이미 전이) — 레지스트리 제거 (attempt={})", snapshotId, beat.attempt)
         }
     }
 

@@ -41,21 +41,19 @@ class AsyncItemParsingWorker(
         // 파싱 한 건을 "item.parse" span 하나로 묶는다 — 원격 extractor 호출이 그 자식 span 으로 붙고, extractor 내부의
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
         // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
+        // 등록→시작 가드→해제 뼈대는 guarded 가 쥔다. 소유권 상실 시 body 를 건너뛰고 스킵 로그만 남긴다(ext 호출·부수효과 없음).
         Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
-            parsingHeartbeat.register(snapshotId, attempt)
-            try {
-                // 시작 가드 — 큐에 묵다 재클레임돼 소유권을 잃었으면(fenced touch 0행) ext 호출·부수효과 없이 스킵한다.
-                // 이 touch 가 stale 시계를 실제 시작 시각으로 리셋해, 큐 대기가 재시도 예산을 잠식하는 구멍도 닫는다.
-                if (!parsingHeartbeat.touchOnStart(snapshotId, attempt)) {
+            parsingHeartbeat.guarded(
+                snapshotId,
+                attempt,
+                onOwnershipLost = {
                     log.info("item.parse.skip item={} snapshot={} reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
-                    return@observe
-                }
+                },
+            ) {
                 val started = System.nanoTime()
                 runCatching { productLinkExtractor.extract(link) }
                     .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt) }
                     .onFailure { e -> onExtractFailed(itemId, snapshotId, link, e, attempt) }
-            } finally {
-                parsingHeartbeat.deregister(snapshotId, attempt)
             }
         }
     }

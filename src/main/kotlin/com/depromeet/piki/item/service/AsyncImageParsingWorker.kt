@@ -40,19 +40,18 @@ class AsyncImageParsingWorker(
         imageKey: String,
         attempt: Int,
     ) {
-        parsingHeartbeat.register(snapshotId, attempt)
-        try {
-            // 시작 가드 — 큐에 묵다 재클레임돼 소유권을 잃었으면(fenced touch 0행) ext 호출 없이, 어떤 부수효과도 없이 스킵한다.
-            // 특히 raw 원본 회수(deleteRaw)를 하지 않는다 — 소유권을 쥔 새 시도가 그 원본으로 재실행해야 하기 때문.
-            if (!parsingHeartbeat.touchOnStart(snapshotId, attempt)) {
+        // 등록→시작 가드→해제 뼈대는 guarded 가 쥔다. 소유권 상실 시 body 를 건너뛰고 스킵 로그만 남긴다 —
+        // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
+        parsingHeartbeat.guarded(
+            snapshotId,
+            attempt,
+            onOwnershipLost = {
                 log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
-                return
-            }
+            },
+        ) {
             runCatching { imageSnapshotExtractor.extract(imageKey) }
                 .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
                 .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
-        } finally {
-            parsingHeartbeat.deregister(snapshotId, attempt)
         }
     }
 
