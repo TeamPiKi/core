@@ -56,6 +56,28 @@ class ParsingHeartbeatTimingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `beat 는 소유권을 쥔 산 항목을 touch 해 stale 에서 빼고 레지스트리에 유지한다`() {
+        // heartbeatTouch.touch 직접 호출이 아니라 @Scheduled 진입점 beat() 를 경유해 정상 갱신 분기(1행 매치 → 유지)를 회귀로 고정한다.
+        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/beat-${UUID.randomUUID()}")))
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
+        val snapshotId = snapshot.getId()
+        try {
+            // 등록 전(auto-beat 대상 아님)에 threshold 를 잡으면 방금 만든 행은 그 시점 이전이라 stale 로 잡힌다 — 결정론.
+            val threshold = LocalDateTime.now()
+            assertTrue(snapshotId in staleIds(threshold), "beat 전(생성 직후)에는 threshold 이전이라 stale 이어야 한다")
+
+            parsingHeartbeat.register(snapshotId, 1)
+            parsingHeartbeat.beat()
+
+            assertFalse(snapshotId in staleIds(threshold), "beat 의 정상 분기가 touch 해 updated_at 을 threshold 뒤로 밀어야 한다")
+            assertTrue(parsingHeartbeat.isTracking(snapshotId), "소유권을 쥔 산 항목은 beat 후에도 레지스트리에 남아야 한다")
+        } finally {
+            parsingHeartbeat.deregister(snapshotId, 1)
+            deleteItem(item.getId())
+        }
+    }
+
+    @Test
     fun `재클레임된 행에 대한 옛 시도의 touch 는 0행이고 beat 가 그 좀비를 레지스트리에서 제거한다`() {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/zombie-${UUID.randomUUID()}")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1

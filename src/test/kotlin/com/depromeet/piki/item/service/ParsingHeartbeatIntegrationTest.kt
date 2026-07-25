@@ -68,8 +68,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `소유권 attempt 가 일치하면 markReady 가 정상 전이한다`() {
-        // fencing 대조군 — 어긋날 때만 막고, 일치하면 그대로 전이함을 함께 고정한다.
-        stubProductLinkExtractor.build = { error("이 테스트는 워커를 태우지 않는다") }
+        // fencing 대조군 — 어긋날 때만 막고, 일치하면 그대로 전이함을 함께 고정한다. 워커를 태우지 않으므로 stub 세팅은 불필요하다.
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/match-${UUID.randomUUID()}")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
         val snapshotId = snapshot.getId()
