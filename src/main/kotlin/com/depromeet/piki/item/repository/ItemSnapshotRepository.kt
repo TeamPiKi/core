@@ -20,6 +20,10 @@ interface ItemSnapshotRepository {
     // 단건 조회(위시 단건·토너먼트 아이템 단건)용. 삭제된 행은 제외, 없으면 null.
     fun findById(id: Long): ItemSnapshot?
 
+    // 전이의 fence 검사→쓰기를 원자화하는 비관적 락(FOR UPDATE) 단건 조회. 삭제된 행 제외, 없으면 null.
+    // recover 의 reclaim 과 같은 행 락에서 직렬화된다(자세한 이유는 ItemSnapshotJpaRepository.findByIdForUpdate).
+    fun findByIdForUpdate(id: Long): ItemSnapshot?
+
     // 여러 snapshot 을 id 목록으로 한 번에 조회(목록·결과 조회의 메모리 조인용). 존재하는 것만 반환.
     fun findByIds(ids: List<Long>): List<ItemSnapshot>
 

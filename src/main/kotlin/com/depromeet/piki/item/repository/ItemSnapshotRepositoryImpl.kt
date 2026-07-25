@@ -23,6 +23,8 @@ class ItemSnapshotRepositoryImpl(
 
     override fun findById(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdAndDeletedAtIsNull(id)
 
+    override fun findByIdForUpdate(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdForUpdate(id)
+
     override fun findByIds(ids: List<Long>): List<ItemSnapshot> =
         itemSnapshotJpaRepository.findByIdInAndDeletedAtIsNull(ids)
 

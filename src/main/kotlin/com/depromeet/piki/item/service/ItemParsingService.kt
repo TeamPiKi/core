@@ -37,8 +37,9 @@ class ItemParsingService(
         // 워커가 claim 한 그 snapshot 을 id 로 직접 전이한다 — findLatestByItemId(최신)가 아니다.
         // 갱신(5단계)으로 한 item 에 여러 버전이 공존하면 "최신"이 이 워커가 추출한 행과 다를 수 있어(stale/좀비 워커가
         // 다른 버전을 오전이), claim 시점에 고정한 snapshotId 로 정확히 짚는다. 없으면 영속화 경로가 깨진 코드 버그다.
+        // FOR UPDATE 로 로드해 fence 검사→전이 write 를 한 행 락 구간으로 원자화한다(무락 read 와 write 사이 reclaim 커밋 방지).
         val target =
-            itemSnapshotRepository.findById(snapshotId)
+            itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
         if (isZombieResult(target, expectedAttempt)) return
         target.markReady(snapshot)
@@ -51,8 +52,9 @@ class ItemParsingService(
         snapshotId: Long,
         expectedAttempt: Int,
     ) {
+        // markReady 와 같은 이유로 FOR UPDATE 로드 — fence 검사와 종결 write 를 원자화한다.
         val target =
-            itemSnapshotRepository.findById(snapshotId)
+            itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
         if (isZombieResult(target, expectedAttempt)) return
         target.markFailed()

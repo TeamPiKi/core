@@ -37,6 +37,17 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     // 살아있는 단건 조회. JpaRepository.findById(Optional) 와 충돌하지 않도록 deletedAt 조건을 붙여 이름을 구분한다.
     fun findByIdAndDeletedAtIsNull(id: Long): ItemSnapshot?
 
+    // 전이(markReady/markFailed)가 fence 검사→쓰기를 원자화하기 위한 비관적 락 단건 조회.
+    // 무락 findById 로 읽고 메모리에서 attempt 를 검사한 뒤 dirty checking 으로 쓰면, 검사와 쓰기 사이에 recover 의
+    // reclaim(attempt++)이 커밋돼 좀비가 새 시도의 행을 덮을 수 있다(ItemSnapshot 은 @Version 없음). FOR UPDATE 로
+    // 로드하면 recover 의 FOR UPDATE(SKIP LOCKED)·touchHeartbeat UPDATE 와 같은 행 락에서 자연 직렬화되어, 검사와
+    // 전이 write 가 한 락 구간 안에 묶인다. 단건 PK 락 + 짧은 트랜잭션이라 비용은 무시 가능하다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from ItemSnapshot s where s.id = :id and s.deletedAt is null")
+    fun findByIdForUpdate(
+        @Param("id") id: Long,
+    ): ItemSnapshot?
+
     // 살아있는 행만 id 목록으로 일괄 조회.
     fun findByIdInAndDeletedAtIsNull(ids: Collection<Long>): List<ItemSnapshot>
 
