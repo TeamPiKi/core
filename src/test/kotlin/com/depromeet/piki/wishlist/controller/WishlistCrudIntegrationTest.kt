@@ -264,6 +264,22 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `숫자로 변환할 수 없는 cursor 로 조회하면 400 WISH-003 이 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                    .param("cursor", "not-a-number"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("WISH-003"))
+            .andExpect(jsonPath("$.detail").value("페이지를 불러오지 못했어요. 새로고침 해주세요."))
+    }
+
+    @Test
     fun `본인 위시만 최신 등록순으로 반환하고 다른 유저 wish 는 섞이지 않으며 status 가 함께 내려간다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
