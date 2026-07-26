@@ -157,9 +157,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${guestToken(userId)}")
                     .content(body),
             ).andExpect(status().isForbidden)
-            // WishException 은 아직 code 미배정이라, handleBaseException 이 category(FORBIDDEN)로 공통 code 를 폴백해 COMMON-FORBIDDEN 을 싣는다.
-            // (위시 도메인이 자기 code 를 이관하면 이 단언을 WISH-xxx 로 바꾼다 — 그때 깨져서 갱신을 강제하는 게 의도다.)
-            .andExpect(jsonPath("$.code").value("COMMON-FORBIDDEN"))
+            // wish 도메인 이관(#797)으로 guestCannotUseWishlist 가 도메인 code(WISH-001)를 싣는다.
+            .andExpect(jsonPath("$.code").value("WISH-001"))
             .andExpect(jsonPath("$.detail").value("위시리스트는 회원만 이용할 수 있어요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
@@ -262,6 +261,22 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.length()").value(0))
             .andExpect(jsonPath("$.pageResponse.hasNext").value(false))
             .andExpect(jsonPath("$.pageResponse.nextCursor").value(nullValue()))
+    }
+
+    @Test
+    fun `숫자로 변환할 수 없는 cursor 로 조회하면 400 WISH-003 이 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                    .param("cursor", "not-a-number"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("WISH-003"))
+            .andExpect(jsonPath("$.detail").value("페이지를 불러오지 못했어요. 새로고침 해주세요."))
     }
 
     @Test
@@ -797,6 +812,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 delete("/api/v1/wishlists")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("WISH-006"))
             .andExpect(jsonPath("$.detail").value("한 번에 최대 100개까지 삭제할 수 있어요."))
     }
 

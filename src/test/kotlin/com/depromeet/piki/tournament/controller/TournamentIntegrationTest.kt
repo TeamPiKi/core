@@ -875,6 +875,54 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // userId 소유 ROOT 에 otherUserId 가 소셜 참여
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+
+        // PENDING 동안엔 멤버 목록에도 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+
+        // 소유자가 start → ROOT IN_PROGRESS 전환
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+
+        // 시작 후 멤버 목록에선 빠진다 (멤버는 본인 CLONE 으로 플레이·표시)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        // 소유자 목록엔 계속 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+    }
+
+    @Test
     fun `GET tournaments-id 는 COMPLETED 토너먼트에서 1위부터 4위까지 순위 결과를 반환한다`() {
         val mockMvc = buildMockMvc()
         val item1Id = saveWishItem(name = "1위아이템", price = 10_000)
@@ -2394,6 +2442,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.tournamentName").isString)
             .andExpect(jsonPath("$.data.itemCount").value(0))
             .andExpect(jsonPath("$.data.participantCount").value(1))
+            // 토큰 없이 호출 → 참여 여부를 알 수 없으므로 joined=false
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET invite-preview 는 참여자 토큰이면 joined=true 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _) = createTournamentWithInviteCode(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/invite-preview")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(true))
+    }
+
+    @Test
+    fun `GET invite-preview 는 미참여 유저 토큰이면 joined=false 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/invite-preview")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
     }
 
     @Test
@@ -2416,6 +2493,61 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.tournamentId").value(tournamentId))
             .andExpect(jsonPath("$.data.tournamentName").isString)
+            // 토큰 없이 호출 → joined=false
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET by-invite-code 는 참여자 토큰이면 joined=true 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (_, inviteCode) = createTournamentWithInviteCode(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(true))
+    }
+
+    @Test
+    fun `GET by-invite-code 는 미참여 유저 토큰이면 joined=false 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (_, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET by-invite-code 는 탈퇴(soft-delete)한 참여자 토큰이면 joined=false 를 반환한다`() {
+        // existsBy...AndDeletedAtIsNull 로 탈퇴 참여를 제외하는 계약을 잠근다.
+        // 참여 후 참여만 soft-delete 하고 토너먼트는 PENDING 으로 남겨 preview 가 여전히 응답하게 둔다.
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":"$inviteCode"}"""),
+        ).andExpect(status().isOk)
+        tournamentUserJpaRepository.softDeleteByTournamentIdAndUserId(tournamentId, otherUserId, LocalDateTime.now())
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
     }
 
     @Test

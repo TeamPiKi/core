@@ -527,9 +527,12 @@ class TournamentApiExamples(
                                         tournamentName = "내 토너먼트",
                                         itemCount = 8,
                                         participantCount = 2,
+                                        joined = false,
                                     ),
                                 ),
                         )
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.inviteExpired(), name = "초대 링크 만료")
                     }
 
                 handlerMethod.binds(TournamentController::getInvitePreviewByCode) ->
@@ -543,6 +546,7 @@ class TournamentApiExamples(
                                     tournamentName = "내 토너먼트",
                                     itemCount = 8,
                                     participantCount = 2,
+                                    joined = false,
                                 ),
                             ),
                         )
