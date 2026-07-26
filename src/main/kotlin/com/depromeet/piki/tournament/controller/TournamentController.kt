@@ -61,17 +61,20 @@ class TournamentController(
 
     @GetMapping("/{tournamentId}/invite-preview")
     override fun getInvitePreview(
+        // preview 는 permitAll — 토큰이 있으면 principal 이 채워지고, 없으면 null.
+        @AuthenticationPrincipal userId: UUID?,
         @PathVariable tournamentId: Long,
     ): ApiResponseBody<TournamentInvitePreviewResponse> {
-        val preview = tournamentService.getInvitePreview(tournamentId)
+        val preview = tournamentService.getInvitePreview(tournamentId, userId)
         return ApiResponseBody.ok(TournamentInvitePreviewResponse.from(preview))
     }
 
     @GetMapping("/by-invite-code")
     override fun getInvitePreviewByCode(
+        @AuthenticationPrincipal userId: UUID?,
         @RequestParam code: String,
     ): ApiResponseBody<TournamentInvitePreviewResponse> {
-        val preview = tournamentService.getInvitePreviewByCode(code)
+        val preview = tournamentService.getInvitePreviewByCode(code, userId)
         return ApiResponseBody.ok(TournamentInvitePreviewResponse.from(preview))
     }
 

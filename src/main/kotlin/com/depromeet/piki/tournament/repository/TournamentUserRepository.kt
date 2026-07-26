@@ -11,6 +11,12 @@ interface TournamentUserRepository {
         userId: UUID,
     ): TournamentUser?
 
+    // 참여 여부만 필요한 preview 용 — soft-delete(탈퇴) 된 참여는 제외한다.
+    fun existsByTournamentIdAndUserId(
+        tournamentId: Long,
+        userId: UUID,
+    ): Boolean
+
     fun findByTournamentId(tournamentId: Long): List<TournamentUser>
 
     fun countByTournamentId(tournamentId: Long): Int
