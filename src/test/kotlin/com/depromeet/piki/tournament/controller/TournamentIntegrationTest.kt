@@ -2512,6 +2512,45 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET by-invite-code 는 미참여 유저 토큰이면 joined=false 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (_, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET by-invite-code 는 탈퇴(soft-delete)한 참여자 토큰이면 joined=false 를 반환한다`() {
+        // existsBy...AndDeletedAtIsNull 로 탈퇴 참여를 제외하는 계약을 잠근다.
+        // 참여 후 참여만 soft-delete 하고 토너먼트는 PENDING 으로 남겨 preview 가 여전히 응답하게 둔다.
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":"$inviteCode"}"""),
+        ).andExpect(status().isOk)
+        tournamentUserJpaRepository.softDeleteByTournamentIdAndUserId(tournamentId, otherUserId, LocalDateTime.now())
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
     fun `GET by-invite-code 는 JWT 없이도 호출 가능하다`() {
         val mockMvc = buildMockMvc()
         val (_, inviteCode) = createTournamentWithInviteCode(mockMvc)
