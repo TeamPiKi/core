@@ -110,12 +110,18 @@ class ItemParsingService(
     //   - attempt 가 상한(maxAttempts)에 도달했으면 더 시도하지 않고 FAILED (무한 재큐잉 방지, 절대 3분 초과 금지).
     //   - 그 외에는 reclaim(attempt++, PROCESSING 유지)해 재실행 대상으로 반환한다 — 실제 워커 제출은 스케줄러가 트랜잭션 밖에서 한다.
     //
+    // 재실행은 retrySlots(호출부의 가용 워커 슬롯)만큼만 한다. reclaim 이 attempt 를 먼저 태우므로, 제출도 못 할
+    // 재실행을 예약하면 재시도 기회만 잃기 때문이다. 슬롯이 없어 미룬 행은 손대지 않아 attempt 도 그대로고, 다음
+    // 사이클이 다시 집는다. 반면 **종결(FAILED)은 retrySlots 와 무관하게 진행**한다 — 워커 슬롯이 필요 없는 판정이라
+    // 슬롯으로 막으면 풀이 오래 포화일 때 종결이 영영 밀린다.
+    //
     // snapshot 은 FOR UPDATE 로 PROCESSING 으로 잠겨 reclaim·markFailed 가 throw 하지 않으므로 batch poison 이 없다.
     @Transactional
     fun retryOrFailStaleProcessing(
         threshold: LocalDateTime,
         batchSize: Int,
         maxAttempts: Int,
+        retrySlots: Int,
     ): StaleProcessingOutcome {
         val stale = itemSnapshotRepository.findStaleProcessing(threshold, batchSize)
         if (stale.isEmpty()) return StaleProcessingOutcome(emptyList(), 0)
@@ -143,6 +149,8 @@ class ItemParsingService(
                 failedCount++
                 return@forEach
             }
+            // 가용 슬롯 소진: 이번 사이클엔 손대지 않는다(reclaim 을 안 하므로 attempt 도 안 태운다). 다음 사이클이 다시 집는다.
+            if (toRetry.size >= retrySlots) return@forEach
             // 재실행: PROCESSING 유지 + attempt++ (updated_at 갱신으로 stale 시계 리셋). 디스패치는 스케줄러가.
             snapshot.reclaim()
             toRetry.add(claim)
