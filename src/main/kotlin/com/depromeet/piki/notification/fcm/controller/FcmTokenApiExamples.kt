@@ -7,6 +7,7 @@ import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.notification.fcm.controller.dto.FcmDeviceUnregisterRequest
 import com.depromeet.piki.notification.fcm.controller.dto.FcmTokenRegisterRequest
+import com.depromeet.piki.user.domain.UserException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -35,6 +36,8 @@ class FcmTokenApiExamples(
                                 detail = FcmTokenRegisterRequest.BLANK_MESSAGE,
                             ),
                     )
+                    // 탈퇴 유저 등록 거부(#776) — status·code·detail 을 예외 정의(UserException.deletedUser)에서 자동 추출한다.
+                    add(UserException.deletedUser(), name = "탈퇴한 계정 (denylist 마킹 실패 창)")
                     unauthorized()
                 }
             }
