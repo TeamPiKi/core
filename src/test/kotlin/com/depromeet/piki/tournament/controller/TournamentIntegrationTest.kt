@@ -2442,6 +2442,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.tournamentName").isString)
             .andExpect(jsonPath("$.data.itemCount").value(0))
             .andExpect(jsonPath("$.data.participantCount").value(1))
+            // 토큰 없이 호출 → 참여 여부를 알 수 없으므로 joined=false
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET invite-preview 는 참여자 토큰이면 joined=true 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _) = createTournamentWithInviteCode(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/invite-preview")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(true))
+    }
+
+    @Test
+    fun `GET invite-preview 는 미참여 유저 토큰이면 joined=false 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/invite-preview")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(false))
     }
 
     @Test
@@ -2464,6 +2493,22 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.tournamentId").value(tournamentId))
             .andExpect(jsonPath("$.data.tournamentName").isString)
+            // 토큰 없이 호출 → joined=false
+            .andExpect(jsonPath("$.data.joined").value(false))
+    }
+
+    @Test
+    fun `GET by-invite-code 는 참여자 토큰이면 joined=true 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (_, inviteCode) = createTournamentWithInviteCode(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/by-invite-code")
+                    .param("code", inviteCode)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.joined").value(true))
     }
 
     @Test
