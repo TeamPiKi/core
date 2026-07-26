@@ -125,6 +125,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                         .content(body),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("WISH-005"))
                 .andExpect(jsonPath("$.detail").value("이미지는 1~5장만 올릴 수 있어요."))
         } finally {
             cleanup(userId)
@@ -145,6 +146,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${guestToken(userId)}")
                         .content(body),
                 ).andExpect(status().isForbidden)
+                .andExpect(jsonPath("$.code").value("WISH-001"))
                 .andExpect(jsonPath("$.detail").value("위시리스트는 회원만 이용할 수 있어요."))
         } finally {
             cleanup(userId)
