@@ -170,6 +170,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     post("/api/v1/wishlists/${wish.getId()}/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("WISH-007"))
                 .andExpect(jsonPath("$.detail").value("링크가 없는 항목은 새로고침할 수 없습니다."))
         } finally {
             cleanup(userId)
@@ -240,6 +241,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     post("/api/v1/wishlists/${wish.getId()}/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("WISH-008"))
                 .andExpect(jsonPath("$.detail").value("추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요."))
         } finally {
             cleanup(userId)

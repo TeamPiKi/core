@@ -176,6 +176,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 get("/api/v1/wishlists/$wishId/history")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(otherId)}"),
             ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("WISH-002"))
             .andExpect(jsonPath("$.detail").value("내 위시 아이템만 볼 수 있어요."))
     }
 
@@ -190,6 +191,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 get("/api/v1/wishlists/99999999/history")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("WISH-004"))
             .andExpect(jsonPath("$.detail").value("이미 삭제된 아이템이에요."))
     }
 

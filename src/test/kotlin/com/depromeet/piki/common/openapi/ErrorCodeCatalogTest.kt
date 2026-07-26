@@ -49,6 +49,13 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| TOURNAMENT-002 | 404 | 토너먼트를 찾을 수 없어요. 이미 삭제됐을 수 있어요. |"), md)
         assertTrue(md.contains("| TOURNAMENT-005 | 409 | 토너먼트가 시작되기 전에만 할 수 있어요. |"), md)
         assertTrue(md.contains("| TOURNAMENT-033 | 400 | 조회 개수는 1 이상이어야 해요. |"), md)
+
+        // wish 도메인 이관(#797) — 8개. 403·400·404·409 를 대표로 단언한다.
+        assertTrue(md.contains("### WISH"), md)
+        assertTrue(md.contains("| WISH-001 | 403 | 위시리스트는 회원만 이용할 수 있어요. |"), md)
+        assertTrue(md.contains("| WISH-003 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
+        assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 아이템이에요. |"), md)
+        assertTrue(md.contains("| WISH-008 | 409 | 추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요. |"), md)
     }
 
     @Test
