@@ -6,6 +6,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthErrorCode
 import com.depromeet.piki.auth.infrastructure.oauth.apple.AppleErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.notification.domain.NotificationErrorCode
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.UserErrorCode
@@ -29,6 +30,7 @@ object ErrorCodeRegistry {
             addAll(AnnouncementErrorCode.entries)
             addAll(TournamentErrorCode.entries)
             addAll(WishErrorCode.entries)
+            addAll(ItemErrorCode.entries)
             // AnnouncementImageErrorCode 는 어드민 SSR 전용이라 의도적으로 미등록(해당 enum 주석 참고).
             // 도메인 이관 시 여기에 addAll(XxxErrorCode.entries) 추가
 

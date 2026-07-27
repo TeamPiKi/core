@@ -325,7 +325,8 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (보정 후에도 상품명 없음 · currentPrice 음수 · name/currency 길이 초과 · " +
+                    "잘못된 요청 (보정 후에도 상품명 없음 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · currentPrice 음수 · name/currency 길이 초과 · " +
                         "빈 이미지 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
                 content = [
                     Content(
@@ -366,7 +367,9 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "수정할 수 없는 상태 (이미 등록 완료(READY) · 아직 대기·처리 중(PENDING·PROCESSING)) · 탈퇴한 계정(code: USER-003)",
+                description =
+                    "수정할 수 없는 상태 (이미 등록 완료(READY) — code: ITEM-001 · " +
+                        "아직 대기·처리 중(PENDING·PROCESSING) — code: ITEM-002) · 탈퇴한 계정(code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

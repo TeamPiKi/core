@@ -56,6 +56,14 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| WISH-003 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
         assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 아이템이에요. |"), md)
         assertTrue(md.contains("| WISH-008 | 409 | 추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요. |"), md)
+
+        // item 도메인 이관(#798) — 5개. 전부 FAILED 항목 보정(위시·토너먼트 아이템 공용 경로)에서 나온다.
+        // 409(수정 불가 상태) 2개와 400(필수값 누락) 3개를 대표로 단언한다.
+        assertTrue(md.contains("### ITEM"), md)
+        assertTrue(md.contains("| ITEM-001 | 409 | 이미 등록된 상품은 수정할 수 없어요. |"), md)
+        assertTrue(md.contains("| ITEM-002 | 409 | 상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요. |"), md)
+        assertTrue(md.contains("| ITEM-003 | 400 | 상품 이름을 입력해 주세요. |"), md)
+        assertTrue(md.contains("| ITEM-005 | 400 | 상품 이미지를 등록해 주세요. |"), md)
     }
 
     @Test

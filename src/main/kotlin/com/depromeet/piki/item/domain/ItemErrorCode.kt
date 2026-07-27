@@ -1,0 +1,27 @@
+package com.depromeet.piki.item.domain
+
+import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.ErrorCode
+
+// ItemException 의 code 배정표(에픽 #728). 번호는 append-only — 재배치·결번 침범 금지.
+// code·category·message 를 한 엔트리에 모아 single source 로 둔다: status 는 category.httpStatus 로,
+// 응답 detail·로그·OpenAPI 카탈로그는 message 로 파생된다.
+//
+// 5개 전부 공개 JSON API 도달이라 ErrorCodeRegistry 에 등록한다(어드민 SSR 전용이라 미등록인
+// AnnouncementImageErrorCode 와 갈리는 지점). 던지는 곳은 ItemSnapshot.recover 하나지만, 그 경로가
+// 위시 보정(PATCH /wishlists/{id})·토너먼트 아이템 보정(PATCH /tournaments/{id}/items/{itemId}) 두
+// 엔드포인트에서 GlobalExceptionHandler 를 거쳐 wire code 로 나간다.
+enum class ItemErrorCode(
+    override val code: String,
+    override val category: ErrorCategory,
+    override val message: String,
+) : ErrorCode {
+    ALREADY_READY("ITEM-001", ErrorCategory.CONFLICT, "이미 등록된 상품은 수정할 수 없어요."),
+    STILL_PROCESSING("ITEM-002", ErrorCategory.CONFLICT, "상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요."),
+
+    // 필수값 누락 셋은 합치지 않는다 — recover 의 순차 guard 가 각각 다른 필드를 가리키므로,
+    // code 를 나눠 둬야 클라가 "어느 필드가 비었는지" 를 안내할 수 있다.
+    NAME_REQUIRED_FOR_READY("ITEM-003", ErrorCategory.INVALID_INPUT, "상품 이름을 입력해 주세요."),
+    PRICE_REQUIRED_FOR_READY("ITEM-004", ErrorCategory.INVALID_INPUT, "상품 가격을 입력해 주세요."),
+    IMAGE_REQUIRED_FOR_READY("ITEM-005", ErrorCategory.INVALID_INPUT, "상품 이미지를 등록해 주세요."),
+}
