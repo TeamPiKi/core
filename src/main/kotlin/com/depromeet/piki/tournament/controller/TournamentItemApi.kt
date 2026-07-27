@@ -543,7 +543,10 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (이름 없이 수정 시도 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · 빈 이미지 · 이미지 타입 미지정 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                description =
+                    "잘못된 요청 (이름 없이 수정 시도 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
+                        "빈 이미지 · 이미지 타입 미지정 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -583,7 +586,9 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트 · READY·PENDING·PROCESSING 상태 아이템)",
+                description =
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록 완료(READY) 아이템 — code: ITEM-001 · " +
+                        "아직 대기·처리 중(PENDING·PROCESSING) 아이템 — code: ITEM-002)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
