@@ -1,5 +1,7 @@
 package com.depromeet.piki.user.service
 
+import com.depromeet.piki.image.domain.PendingUpload
+import com.depromeet.piki.image.repository.PendingUploadRepository
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
+import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -46,6 +49,8 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var userDeviceRepository: UserDeviceRepository
 
+    @Autowired private lateinit var pendingUploadRepository: PendingUploadRepository
+
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
     private fun newMember(): UUID = userService.createMember("wr${UUID.randomUUID().toString().take(4)}").id
@@ -65,6 +70,13 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     private fun wishCount(userId: UUID): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId)) ?: 0
+
+    private fun pendingUploadCount(imageKey: String): Int =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM pending_uploads WHERE image_key = ?",
+            Int::class.java,
+            imageKey,
+        ) ?: 0
 
     // 탈퇴와 writeAction 을 동시 출발시키고 둘 다 끝날 때까지 기다린다. 예외는 흡수(어느 쪽이 이기든 유효한 결과).
     private fun raceWithWithdrawal(
@@ -136,6 +148,46 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
                         jdbcTemplate.update("DELETE FROM item_snapshots WHERE id = ?", it.snapshot.getId())
                         jdbcTemplate.update("DELETE FROM items WHERE id = ?", it.item.getId())
                     }
+                    cleanupUser(userId)
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    // 지연 이미지 등록(스케줄러·confirm 공용)만 예외 대신 boolean(isActiveForUpdate)으로 조용히 skip 하는 유일한 분기라
+    // 별도로 덮는다 — 회귀해도 예외가 안 터져 발견이 늦는 지점이다. 두 계약을 동시에 본다:
+    // (1) tombstone 유저의 wish 가 남지 않는다, (2) claim 은 어느 인터리빙에서도 소비된다(롤백으로 되살아나면 스케줄러 무한 재시도).
+    @Test
+    fun `탈퇴와 지연 이미지 등록이 동시에 일어나도 wish 가 남지 않고 claim 은 소비된다`() {
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            repeat(ITERATIONS) { i ->
+                val userId = newMember()
+                val imageKey = "items/raw/${UUID.randomUUID()}.jpg"
+                val expiresAt = LocalDateTime.now().plusMinutes(10)
+                pendingUploadRepository.saveAll(listOf(PendingUpload.wish(imageKey, userId, expiresAt)))
+                val created = AtomicReference<List<WishWithItem>>(emptyList())
+                try {
+                    raceWithWithdrawal(pool, userId) {
+                        created.set(wishPersistenceService.registerClaimedImages(listOf(imageKey), userId))
+                    }
+                    val row = userRow(userId)
+                    assertNotNull(row.deletedAt, "탈퇴가 관여했으면 종단은 tombstone (iter=$i)")
+                    assertEquals(0, wishCount(userId), "tombstone 유저의 wish 행이 남으면 안 된다 (iter=$i)")
+                    assertEquals(
+                        0,
+                        pendingUploadCount(imageKey),
+                        "claim 은 어느 쪽이 이기든 소비돼야 한다 — 되살아나면 스케줄러가 무한 재시도한다 (iter=$i)",
+                    )
+                } finally {
+                    created.get().forEach {
+                        jdbcTemplate.update("DELETE FROM wishes WHERE snapshot_id = ?", it.snapshot.getId())
+                        jdbcTemplate.update("DELETE FROM item_snapshots WHERE id = ?", it.snapshot.getId())
+                        jdbcTemplate.update("DELETE FROM items WHERE id = ?", it.item.getId())
+                    }
+                    jdbcTemplate.update("DELETE FROM pending_uploads WHERE image_key = ?", imageKey)
                     cleanupUser(userId)
                 }
             }

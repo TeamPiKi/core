@@ -74,12 +74,19 @@ class WishPersistenceService(
         imageKeys: List<String>,
         userId: UUID,
     ): List<WishWithItem> {
+        // 활성 유저 확인·쓰기 경합 차단(#776). claim(pending_uploads 락)보다 **먼저** user 행을 잠가, 이 프로젝트의
+        // 락 순서 규약 "user → 자식" 을 지킨다(WithdrawalPersistenceService.withdraw 와 동일). 지금은 user 를 먼저
+        // 잠근 뒤 pending_uploads 를 건드리는 경로가 없어 역순 교차가 성립하지 않지만, 탈퇴 cascade 가 이 유저의
+        // pending_uploads 를 함께 정리하는 순간 users→pending_uploads 가 생겨 이 경로와 교차 데드락이 된다.
+        // 부수 효과로 확인~claim 구간이 user 락 안에 들어와, 그 사이 탈퇴가 끼어들 창 자체가 사라진다.
+        //
+        // 이 경로는 스케줄러(지연 처리)·confirm 공용이라, tombstone 이라고 예외를 던지면 트랜잭션 롤백으로
+        // claim(pending_uploads 삭제)이 되살아나 스케줄러가 무한 재시도한다. 그래서 예외 대신 boolean 으로 받아
+        // claim 은 소비하되 wish 생성만 건너뛴다 — 탈퇴 후 남은 pending upload 가 죽은 유저 wish 로 되살아나지 않는다.
+        val active = userService.isActiveForUpdate(userId)
         val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.WISH, userId, tournamentId = null)
         if (claimedKeys.isEmpty()) return emptyList()
-        // 활성 유저 확인·쓰기 경합 차단(#776). 이 경로는 스케줄러(지연 처리)·confirm 공용이라, tombstone 이라고 예외를
-        // 던지면 트랜잭션 롤백으로 claim(pending_uploads 삭제)이 되살아나 스케줄러가 무한 재시도한다. 그래서 예외 대신
-        // claim 은 소비하되 wish 생성만 건너뛴다 — 탈퇴 후 남은 pending upload 가 죽은 유저 wish 로 되살아나지 않는다.
-        if (!userService.isActiveForUpdate(userId)) {
+        if (!active) {
             log.info("탈퇴 유저의 지연 이미지 등록 건너뜀(claim 은 소비) userId={} keys={}", userId, claimedKeys.size)
             return emptyList()
         }
