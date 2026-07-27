@@ -36,7 +36,7 @@ class AsyncItemParsingWorker(
         itemId: Long,
         snapshotId: Long,
         link: ProductLink,
-        attempt: Int,
+        expectedAttempt: Int,
     ) {
         // 파싱 한 건을 "item.parse" span 하나로 묶는다 — 원격 extractor 호출이 그 자식 span 으로 붙고, extractor 내부의
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
@@ -45,11 +45,11 @@ class AsyncItemParsingWorker(
         Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
             parsingHeartbeat.guarded(
                 snapshotId,
-                attempt,
+                expectedAttempt,
                 onOwnershipLost = {
-                    log.info("item.parse.skip item={} snapshot={} reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
+                    log.info("item.parse.skip item={} snapshot={} reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
                 },
-            ) {
+            ) { attempt ->
                 val started = System.nanoTime()
                 runCatching { productLinkExtractor.extract(link) }
                     .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt) }

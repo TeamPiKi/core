@@ -39,8 +39,8 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
 
     // 전이(markReady/markFailed)가 fence 검사→쓰기를 원자화하기 위한 비관적 락 단건 조회.
     // 무락 findById 로 읽고 메모리에서 attempt 를 검사한 뒤 dirty checking 으로 쓰면, 검사와 쓰기 사이에 recover 의
-    // reclaim(attempt++)이 커밋돼 좀비가 새 시도의 행을 덮을 수 있다(ItemSnapshot 은 @Version 없음). FOR UPDATE 로
-    // 로드하면 recover 의 FOR UPDATE(SKIP LOCKED)·touchHeartbeat UPDATE 와 같은 행 락에서 자연 직렬화되어, 검사와
+    // 다른 시도의 소유권 획득(attempt++)이 커밋돼 좀비가 새 시도의 행을 덮을 수 있다(ItemSnapshot 은 @Version 없음). FOR UPDATE 로
+    // 로드하면 recover 의 FOR UPDATE(SKIP LOCKED)·acquireOwnership/renewOwnership UPDATE 와 같은 행 락에서 자연 직렬화되어, 검사와
     // 전이 write 가 한 락 구간 안에 묶인다. 단건 PK 락 + 짧은 트랜잭션이라 비용은 무시 가능하다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from ItemSnapshot s where s.id = :id and s.deletedAt is null")
@@ -78,17 +78,50 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         pageable: Pageable,
     ): List<ItemSnapshot>
 
-    // 박동(heartbeat) fenced touch — 이 snapshot 이 여전히 :attempt 의 PROCESSING 일 때만 updated_at 을 :now 로 민다.
+    // 마감(deadline) 초과 행 — created_at 이 threshold 이전인 비-터미널(PENDING·PROCESSING) snapshot 을 limit 개, FOR UPDATE SKIP LOCKED.
+    // stale 스캔(updated_at)과 다른 시계를 본다: updated_at 은 박동·집기가 계속 밀어 "살아있음"을 뜻하는 반면, created_at 은
+    // 움직이지 않아 "이 작업이 얼마나 오래 끌고 있나"를 답한다. 그래서 박동이 멀쩡히 뛰는 느린 실행도, 슬롯이 없어 집히지 못한
+    // PENDING 도 이 스캔에는 걸린다 — 종결을 보증하는 최후 시계다. idx_item_snapshots_status_created_at 이 커버한다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(QueryHint(name = "jakarta.persistence.lock.timeout", value = SKIP_LOCKED))
+    @Query(
+        "select s from ItemSnapshot s where s.status in :statuses and s.createdAt < :threshold and s.deletedAt is null " +
+            "order by s.createdAt asc, s.id asc",
+    )
+    fun findOverdueForUpdate(
+        @Param("statuses") statuses: Collection<ItemStatus>,
+        @Param("threshold") threshold: LocalDateTime,
+        pageable: Pageable,
+    ): List<ItemSnapshot>
+
+    // 소유권 획득 — 워커가 실행에 진입하는 순간 attemptCount 를 +1 하며 이 시도의 토큰을 확정한다.
+    // 조건(status·직전 attempt 일치)이 원자적 test-and-set 이라, 같은 행에 두 워커가 제출돼도 하나만 1행을 받아 실행하고
+    // 나머지는 0행으로 튕긴다. **집기·되살림이 아니라 여기서만 시도가 소모되므로**, 제출이 거부돼 실행이 0회면 예산도 안 준다.
+    // @Modifying bulk update 라 JPA auditing 을 우회하므로 updated_at 을 명시로 넘긴다(획득 시점부터 stale 시계 재시작).
+    // 반환은 영향받은 행 수(1=획득 성공, 0=이미 남이 가져갔거나 종결됨).
+    @Modifying
+    @Query(
+        "update ItemSnapshot s set s.attemptCount = s.attemptCount + 1, s.updatedAt = :now " +
+            "where s.id = :id and s.status = :status and s.attemptCount = :expectedAttempt and s.deletedAt is null",
+    )
+    fun acquireOwnership(
+        @Param("id") id: Long,
+        @Param("status") status: ItemStatus,
+        @Param("expectedAttempt") expectedAttempt: Int,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
+    // 소유권 갱신(박동) — 이 snapshot 이 여전히 :attempt 의 PROCESSING 일 때만 updated_at 을 :now 로 민다. attempt 는 안 건드린다.
     // 산 워커가 도는 동안 recover 의 stale 판정 시각을 계속 갱신해, 느린 단건을 stale 로 오판해 죽이지 않게 한다.
-    // fencing(status·attempt 일치)이 소유권을 건다: 재클레임(attempt++)됐거나 이미 READY/FAILED 로 전이한 행은 0행 매치라,
-    // 좀비 워커의 박동이 남의 시도를 되살리지 못한다. @Modifying bulk update 라 JPA auditing(@LastModifiedDate)을 우회하므로
-    // updated_at 을 명시로 넘긴다. 반환은 영향받은 행 수(1=소유권 유지, 0=상실).
+    // fencing(status·attempt 일치)이 소유권을 건다: 소유권이 넘어갔거나 이미 READY/FAILED 로 전이한 행은 0행 매치라,
+    // 좀비 워커의 박동이 남의 시도를 되살리지 못한다. auditing 우회는 acquireOwnership 과 같다.
+    // 반환은 영향받은 행 수(1=소유권 유지, 0=상실).
     @Modifying
     @Query(
         "update ItemSnapshot s set s.updatedAt = :now " +
             "where s.id = :id and s.status = :status and s.attemptCount = :attempt and s.deletedAt is null",
     )
-    fun touchHeartbeat(
+    fun renewOwnership(
         @Param("id") id: Long,
         @Param("status") status: ItemStatus,
         @Param("attempt") attempt: Int,

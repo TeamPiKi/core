@@ -12,6 +12,6 @@ interface ItemParsingWorker {
         itemId: Long,
         snapshotId: Long,
         link: ProductLink,
-        attempt: Int,
+        expectedAttempt: Int,
     )
 }

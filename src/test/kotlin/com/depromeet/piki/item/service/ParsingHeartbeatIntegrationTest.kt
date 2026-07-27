@@ -35,6 +35,8 @@ import kotlin.test.assertTrue
 class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
+    @Autowired private lateinit var parsingOwnership: ParsingOwnership
+
     @Autowired private lateinit var asyncItemParsingWorker: AsyncItemParsingWorker
 
     @Autowired private lateinit var asyncImageParsingWorker: AsyncImageParsingWorker
@@ -57,7 +59,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
         val snapshotId = snapshot.getId()
         try {
-            // 재클레임으로 attempt 2 가 된(소유권 이전) 상황을 DB 에 반영. updated_at=now 라 배경 recover 가 안 건드린다.
+            // 소유권이 다른 시도로 넘어가 attempt 2 가 된 상황을 DB 에 반영. updated_at=now 라 배경 recover 가 안 건드린다.
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
             // 옛 시도(attempt 1)의 결과로 markReady → fencing 으로 전이 없이 폐기(좀비 결과).
@@ -86,11 +88,13 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
         val snapshotId = snapshot.getId()
         try {
+            // 실제 흐름대로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
+            val attempt = parsingOwnership.acquire(snapshotId, 0) ?: error("소유권 획득 실패")
             val applied =
                 itemParsingService.markReady(
                     snapshotId,
                     ProductSnapshot(link = item.link, name = "정상결과", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
-                    expectedAttempt = 1,
+                    expectedAttempt = attempt,
                 )
 
             assertTrue(applied, "소유권이 일치하면 '적용됨'(true)으로 보고돼야 한다")
@@ -118,7 +122,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         workerLogger.addAppender(appender)
         try {
-            // 재클레임으로 attempt 2 가 된 뒤(소유권 이전), 옛 시도(attempt 1)의 claim 이 뒤늦게 워커에 도착한 상황.
+            // 소유권이 넘어가 attempt 2 가 된 뒤, 옛 시도(attempt 1)의 지목이 뒤늦게 워커에 도착한 상황.
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
             // 옛 시도(attempt 1)로 워커 실행 — 시작 가드의 fenced touch 가 0행이라 ext 호출 없이 스킵해야 한다.
@@ -138,7 +142,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `추출 도중 재클레임되면 좀비가 된 이미지 워커는 raw 원본을 지우지 않는다`() {
+    fun `추출 도중 소유권을 잃어 좀비가 된 이미지 워커는 raw 원본을 지우지 않는다`() {
         // 이미지 경로에서 좀비 폐기가 조용하면(전이 스킵을 호출부가 모르면) 워커가 자기 결과를 성공으로 착각해
         // raw 를 회수해버린다 — 재클레임된 새 시도가 재실행할 원본을 잃는 데이터 유실 경로다. 그 회귀를 고정한다.
         val imageKey = "items/raw/zombie-${UUID.randomUUID()}.jpg"
@@ -146,8 +150,8 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
         val snapshotId = snapshot.getId()
 
-        // 추출이 도는 사이 recover 가 재클레임(attempt 2)한 상황을 stub 안에서 재현한다 — 시작 가드는 통과하고
-        // (그 시점엔 아직 attempt 1) 결과 전이 시점에만 소유권이 어긋나는, 절대 캡을 넘긴 느린 추출의 재현이다.
+        // 추출이 도는 사이 소유권이 다른 시도로 넘어간(attempt 2) 상황을 stub 안에서 재현한다 — 시작 시 획득은 성공하고
+        // (0 -> 1) 결과 전이 시점에만 소유권이 어긋나는, 절대 캡을 넘긴 느린 추출의 재현이다.
         stubImageSnapshotExtractor.build = {
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
             StubImageSnapshotExtractor.defaultSnapshot()
@@ -156,7 +160,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         workerLogger.addAppender(appender)
         try {
-            asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 1)
+            asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 0)
 
             // 좀비 폐기 로그가 유일한 완료 신호다(전이·회수를 둘 다 안 하므로 관측할 부수효과가 없다).
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {

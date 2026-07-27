@@ -15,12 +15,15 @@ import java.time.LocalDateTime
 // PENDING 은 반드시 한 번은 claim 돼 실행이 시작된다. item_snapshots 테이블 자체가 outbox(상태머신을 가진 작업 큐)라
 // 별도 테이블이 없다.
 //
-// 보장은 execution at-least-once(#461): claim 직후 크래시(실행 0회)·실행 중 크래시·일시 외부 오류로 단건 실행이
-// 끝나지 않은 작업을 recover 가 재실행으로 되살린다. stale 판정을 지탱하는 것은 시간 추정이 아니라 ParsingHeartbeat 다:
-//   1. 산 워커는 박동으로 updated_at 을 계속 갱신한다(박동 간격 15s). 그래서 updated_at 이 stale 임계(60s = 박동 x 3 + 여유)보다
-//      오래된 PROCESSING 은 "박동이 연속으로 끊겼다 = 프로세스가 죽었다" 는 뜻이고, 정상적으로 (느리게라도) 도는 시도는 stale 로 오판하지 않는다.
-//      좀비(재클레임돼 소유권 잃은 옛 시도)는 fenced touch·전이의 attempt fencing 이 막고, 무한 행잉은 박동의 절대 캡(5분)이 끊어 회수에 넘긴다.
-//   2. 재실행 상한 2회(MAX_ATTEMPTS). 재실행 대상은 죽은 워커의 행이므로 상한과 함께 종결이 보장된다.
+// 보장은 execution at-least-once(#461): 집힌 직후 크래시(실행 0회)·실행 중 크래시·일시 외부 오류로 단건 실행이
+// 끝나지 않은 작업을 recover 가 되살린다. 판정을 지탱하는 것은 시간 추정이 아니라 세 개의 시계이고, 역할이 겹치지 않는다:
+//   1. stale 임계(60s, updated_at) — **프로세스의 죽음**. 산 워커는 ParsingHeartbeat 가 15s 주기로 updated_at 을 갱신하므로,
+//      이 창에 걸린 행은 "박동이 연속으로 끊겼다 = 죽었다" 는 뜻이다. 느리게라도 도는 시도는 오판하지 않는다.
+//   2. 박동 절대 캡(2분, 인메모리 등록 시각) — **살아있는 행잉**. 박동을 멈춰 침묵시키면 1번이 회수한다.
+//   3. 마감(3분, created_at) — **종결 보증**. attempt·박동·슬롯과 무관한 벽시계라, 박동이 멀쩡한 느린 실행도
+//      슬롯이 없어 집히지 못한 PENDING 도 여기서 끝난다.
+// 소유권은 attemptCount 가 토큰이다: 워커가 실행에 진입할 때만 +1 되며(집기·되살림은 안 건드림), 소유권을 잃은
+// 좀비의 박동(renew)·전이는 불일치로 걸러진다. 실행 상한 2회(MAX_ATTEMPTS)는 순수한 **실행 예산**이다.
 // 재시도해도 결과가 뻔한 확정 실패(상품 아님 등)는 워커가 즉시 FAILED 하고, recover 는 "실행이 안 끝난" 행만 맡는다.
 //
 // **claim 은 지금 당장 실행할 수 있는 만큼만 한다** (claim = 가용 워커 슬롯). 워커 풀에 대기실(큐)이 없어서
@@ -69,8 +72,8 @@ class ItemParsingScheduler(
     private fun dispatchToWorker(claimed: ClaimedItem) {
         runCatching {
             when (claimed) {
-                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.attempt)
-                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.attempt)
+                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.expectedAttempt)
+                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.expectedAttempt)
             }
         }.onFailure { e -> log.warn("item {} 워커 디스패치 거부 → PROCESSING 유지, recover 가 재실행: {}", claimed.itemId, e.message) }
     }
@@ -78,19 +81,26 @@ class ItemParsingScheduler(
     // recover — 프로세스 죽음으로 박동이 끊긴 stale PROCESSING 을 재실행하거나(execution at-least-once) 상한 도달·되살림 불가 시 종결한다.
     // stale 판정은 updated_at(박동·claim·재실행 시각) 기준이다. 산 워커는 박동이 updated_at 을 갱신하므로 60s 윈도에 걸리지 않고,
     // 걸린 행은 박동이 끊긴(죽은) 워커의 것이다.
-    // 재실행은 dispatch 와 같은 풀을 쓰므로 가용 슬롯만큼만 되살린다 — reclaim 이 attempt 를 먼저 태우기 때문에,
-    // 제출도 못 할 재실행을 예약하면 재시도 기회만 잃는다. 반면 **종결(FAILED)은 슬롯과 무관하게 진행**한다:
+    // 되살림은 dispatch 와 같은 풀을 쓰므로 가용 슬롯만큼만 지목한다. 반면 **종결(FAILED)은 슬롯과 무관하게 진행**한다:
     // 워커 슬롯이 필요 없는 판정이고, 슬롯으로 막으면 8스레드가 전부 행잉일 때 종결조차 못 하는 교착이 된다.
+    //
+    // 두 시계를 순서대로 본다 — 마감(created_at)이 먼저다. 마감 넘은 행을 종결하고 나면 되살림 대상에서 자연히 빠진다.
     @Scheduled(fixedDelay = RECOVER_INTERVAL_MS)
     fun recover() {
+        // 1) 마감 초과 종결 — 벽시계 판정이라 attempt 예산·박동·슬롯 어느 것과도 무관하다.
+        val expired = itemParsingService.failOverdue(LocalDateTime.now().minusMinutes(DEADLINE_MINUTES), SCAN_LIMIT)
+        if (expired > 0) {
+            log.warn("마감({}분) 초과 {}건 → FAILED", DEADLINE_MINUTES, expired)
+        }
+        // 2) 박동이 끊긴 stale 되살림
         val threshold = LocalDateTime.now().minusSeconds(STALE_TIMEOUT_SECONDS)
-        val outcome = itemParsingService.retryOrFailStaleProcessing(threshold, SCAN_LIMIT, MAX_ATTEMPTS, freeSlots())
-        if (outcome.toRetry.isNotEmpty()) {
-            log.warn("stale PROCESSING {}건 재실행 디스패치", outcome.toRetry.size)
-            outcome.toRetry.forEach { dispatchToWorker(it) }
+        val outcome = itemParsingService.reviveOrFailStale(threshold, SCAN_LIMIT, MAX_ATTEMPTS, freeSlots())
+        if (outcome.toRevive.isNotEmpty()) {
+            log.warn("stale PROCESSING {}건 되살림 디스패치", outcome.toRevive.size)
+            outcome.toRevive.forEach { dispatchToWorker(it) }
         }
         if (outcome.failedCount > 0) {
-            log.warn("stale PROCESSING {}건 → FAILED (재시도 상한 도달 또는 되살릴 수 없음)", outcome.failedCount)
+            log.warn("stale PROCESSING {}건 → FAILED (실행 상한 도달 또는 되살릴 수 없음)", outcome.failedCount)
         }
     }
 
@@ -108,7 +118,13 @@ class ItemParsingScheduler(
         // 박동 간격(ParsingHeartbeat.BEAT_INTERVAL_MS = 15s) x 3 + 여유라, 산 워커가 박동을 연속으로 놓치지 않는 한 오판되지 않는다.
         private const val STALE_TIMEOUT_SECONDS = 60L
 
-        // 실행 시도 상한(초회 1 + 재시도 1). 재실행 대상은 죽은 워커의 행이라, 상한과 함께 종결이 보장된다.
+        // **실행** 시도 상한(초회 1 + 되살림 1). 집기·되살림이 아니라 워커가 실행에 진입할 때만 소모되므로,
+        // 제출이 거부돼 실행이 0회인 행은 이 예산을 잃지 않는다.
         private const val MAX_ATTEMPTS = 2
+
+        // 마감 — created_at 기준 이 시간을 넘긴 비-터미널 행은 attempt·박동과 무관하게 종결한다(종결 보증).
+        // 예산(attempt)과 마감(시간)의 역할을 갈라 둔 시계다. 박동 절대 캡(2분) + stale 임계(60초) = 3분이라,
+        // "캡으로 침묵 → stale 회수" 경로도 이 마감 안에서 끝난다.
+        private const val DEADLINE_MINUTES = 3L
     }
 }

@@ -38,17 +38,17 @@ class AsyncImageParsingWorker(
         itemId: Long,
         snapshotId: Long,
         imageKey: String,
-        attempt: Int,
+        expectedAttempt: Int,
     ) {
         // 등록→시작 가드→해제 뼈대는 guarded 가 쥔다. 소유권 상실 시 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
         parsingHeartbeat.guarded(
             snapshotId,
-            attempt,
+            expectedAttempt,
             onOwnershipLost = {
-                log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost attempt={}", itemId, snapshotId, attempt)
+                log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
             },
-        ) {
+        ) { attempt ->
             runCatching { imageSnapshotExtractor.extract(imageKey) }
                 .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
                 .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }

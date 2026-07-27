@@ -10,6 +10,6 @@ interface ImageParsingWorker {
         itemId: Long,
         snapshotId: Long,
         imageKey: String,
-        attempt: Int,
+        expectedAttempt: Int,
     )
 }

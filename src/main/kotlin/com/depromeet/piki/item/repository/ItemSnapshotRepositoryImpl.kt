@@ -41,9 +41,25 @@ class ItemSnapshotRepositoryImpl(
             PageRequest.of(0, batchSize),
         )
 
-    override fun touchHeartbeat(
+    override fun findOverdue(
+        threshold: LocalDateTime,
+        batchSize: Int,
+    ): List<ItemSnapshot> =
+        itemSnapshotJpaRepository.findOverdueForUpdate(
+            listOf(ItemStatus.PENDING, ItemStatus.PROCESSING),
+            threshold,
+            PageRequest.of(0, batchSize),
+        )
+
+    override fun acquireOwnership(
         snapshotId: Long,
         expectedAttempt: Int,
         now: LocalDateTime,
-    ): Int = itemSnapshotJpaRepository.touchHeartbeat(snapshotId, ItemStatus.PROCESSING, expectedAttempt, now)
+    ): Int = itemSnapshotJpaRepository.acquireOwnership(snapshotId, ItemStatus.PROCESSING, expectedAttempt, now)
+
+    override fun renewOwnership(
+        snapshotId: Long,
+        attempt: Int,
+        now: LocalDateTime,
+    ): Int = itemSnapshotJpaRepository.renewOwnership(snapshotId, ItemStatus.PROCESSING, attempt, now)
 }

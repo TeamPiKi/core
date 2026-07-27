@@ -31,9 +31,9 @@ import kotlin.test.assertTrue
 // 옛 설정(큐 100)에서는 8 스레드가 다 차 있어도 100건을 집어 큐가 받았고, 그 행들은 실행 전인데도 PROCESSING 으로
 // 위장됐다(크래시 시 recover 비용, 큐가 차면 거부돼 attempt 소진). 이 테스트가 그 회귀를 고정한다.
 //
-// recover 쪽은 비대칭이 본질이다: 재실행은 워커 슬롯을 쓰므로 슬롯만큼만 하고(reclaim 이 attempt 를 먼저 태우므로
-// 제출도 못 할 재실행을 예약하면 재시도 기회만 잃는다), 종결(FAILED)은 슬롯이 필요 없어 무관하게 진행한다
-// (슬롯으로 막으면 풀이 오래 포화일 때 종결이 영영 밀린다).
+// recover 쪽은 비대칭이 본질이다: 되살림은 워커 슬롯을 쓰므로 슬롯만큼만 지목하고, 종결(FAILED)은 슬롯이 필요 없어
+// 무관하게 진행한다(슬롯으로 막으면 풀이 오래 포화일 때 종결이 영영 밀린다).
+// 마감(created_at) 종결도 여기서 함께 고정한다 — attempt 예산·박동과 무관한 벽시계라 PENDING 도 대상이다.
 //
 // CLAUDE.md '동시성 통합 테스트' 규약: 비-@Transactional(풀 점유가 별도 스레드에서 진행되는 것이 본질), 자기 데이터 직접 정리.
 class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
@@ -92,21 +92,55 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `재실행 슬롯이 없어도 종결은 진행하고 재실행 대상의 attempt 는 태우지 않는다`() {
-        val exhausted = staleProcessing(attempt = 2) // 상한 도달 → 종결 대상
-        val retryable = staleProcessing(attempt = 1) // 재실행 대상
+    fun `되살림 슬롯이 없어도 종결은 진행하고 되살림 대상의 attempt 는 태우지 않는다`() {
+        val exhausted = staleProcessing(attempt = 2) // 실행 상한 도달 → 종결 대상
+        val revivable = staleProcessing(attempt = 1) // 되살림 대상
         try {
-            // retrySlots = 0 — 워커 슬롯이 하나도 없는 상황을 직접 재현한다.
-            val outcome = itemParsingService.retryOrFailStaleProcessing(LocalDateTime.now(), 100, 2, 0)
+            // reviveSlots = 0 — 워커 슬롯이 하나도 없는 상황을 직접 재현한다.
+            val outcome = itemParsingService.reviveOrFailStale(LocalDateTime.now(), 100, 2, 0)
 
-            assertTrue(outcome.toRetry.isEmpty(), "슬롯이 없으면 재실행 대상을 예약하지 않아야 한다")
+            assertTrue(outcome.toRevive.isEmpty(), "슬롯이 없으면 되살림 대상을 지목하지 않아야 한다")
             assertEquals(ItemStatus.FAILED, statusOf(exhausted.second), "종결은 슬롯과 무관하게 진행돼야 한다")
-            assertEquals(ItemStatus.PROCESSING, statusOf(retryable.second), "재실행 대상은 손대지 않고 남겨야 한다")
-            assertEquals(1, attemptOf(retryable.second), "reclaim 을 미뤘으므로 attempt 를 태우지 않아야 한다")
+            assertEquals(ItemStatus.PROCESSING, statusOf(revivable.second), "되살림 대상은 손대지 않고 남겨야 한다")
+            assertEquals(1, attemptOf(revivable.second), "지목을 미뤘으므로 실행 예산을 태우지 않아야 한다")
         } finally {
             deleteItem(exhausted.first)
-            deleteItem(retryable.first)
+            deleteItem(revivable.first)
         }
+    }
+
+    @Test
+    fun `마감을 넘긴 행은 attempt 가 남아 있어도 박동이 뛰어도 종결된다`() {
+        // 마감은 예산(attempt)이 아니라 벽시계(created_at)를 본다. 그래서 (a) 아직 집히지도 않은 PENDING 과
+        // (b) 실행 예산이 남아 있고 박동으로 updated_at 이 신선한 PROCESSING 이 함께 종결된다 — 종결 보증의 최후 시계다.
+        val pending = overdue(ItemStatus.PENDING)
+        val beating = overdue(ItemStatus.PROCESSING)
+        try {
+            // threshold 를 지금으로 잡으면 위에서 created_at 을 과거로 민 두 행이 마감 대상이 된다.
+            val expired = itemParsingService.failOverdue(LocalDateTime.now(), 100)
+
+            assertTrue(expired >= 2, "마감 초과 행은 종결돼야 한다")
+            assertEquals(ItemStatus.FAILED, statusOf(pending.second), "집히지 못한 PENDING 도 마감 대상이다")
+            assertEquals(ItemStatus.FAILED, statusOf(beating.second), "박동이 신선해도 마감은 종결한다")
+            assertEquals(0, attemptOf(beating.second), "마감은 예산을 소모하지 않고 종결한다")
+        } finally {
+            deleteItem(pending.first)
+            deleteItem(beating.first)
+        }
+    }
+
+    // created_at 을 과거로 민 마감 대상 행. updated_at 은 now 로 둬 "박동이 신선한데도 마감에 걸린다"를 재현한다.
+    private fun overdue(status: ItemStatus): Pair<Long, Long> {
+        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/overdue-${UUID.randomUUID()}")))
+        val snapshot = ItemSnapshot.pending(item.getId()).apply { if (status == ItemStatus.PROCESSING) markProcessing() }
+        val snapshotId = itemSnapshotRepository.save(snapshot).getId()
+        jdbcTemplate.update(
+            "UPDATE item_snapshots SET created_at = ?, updated_at = ? WHERE id = ?",
+            LocalDateTime.now().minusMinutes(10),
+            LocalDateTime.now(),
+            snapshotId,
+        )
+        return item.getId() to snapshotId
     }
 
     // stale 판정 대상이 될 PROCESSING 행을 만든다. updated_at 은 배경 recover(threshold = now-60s)에는 안 걸리고

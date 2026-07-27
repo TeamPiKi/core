@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingService
+import com.depromeet.piki.item.service.ParsingOwnership
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
@@ -70,6 +71,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired
+    private lateinit var parsingOwnership: ParsingOwnership
 
     @Autowired
     private lateinit var wishPersistenceService: WishPersistenceService
@@ -332,11 +336,13 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
             val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
 
-            // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다. markProcessing 만 한 v1 의 attempt 는 1.
+            // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
+            // 집기는 attempt 를 안 올리므로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
+            val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
             itemParsingService.markReady(
                 v1.getId(),
                 ProductSnapshot(link = null, name = "버전1", currentPrice = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-                expectedAttempt = 1,
+                expectedAttempt = attempt,
             )
 
             assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(v1.getId())?.status)

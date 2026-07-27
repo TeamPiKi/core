@@ -241,34 +241,40 @@ class ItemSnapshotTest {
         assertEquals(ItemStatus.PENDING, snapshot.status)
     }
 
-    // --- 재실행 claim (reclaim) — execution at-least-once (#461) ---
+    // --- 집기·마감 전이 — execution at-least-once (#461) 와 종결 보증 (#802) ---
 
     @Test
-    fun `markProcessing 은 attemptCount 를 1 로 올려 첫 실행 시도를 기록한다`() {
+    fun `markProcessing 은 상태만 옮기고 attemptCount 는 건드리지 않는다`() {
+        // 집기(claim)는 "워커에게 넘긴다"는 지목일 뿐이다. 시도 소모는 워커가 실행에 진입할 때(소유권 획득) 일어나므로,
+        // 집혔지만 제출이 거부돼 실행이 0회인 행이 예산을 잃지 않는다.
         val snapshot = ItemSnapshot.pending(itemId = 1L)
         assertEquals(0, snapshot.attemptCount)
         snapshot.markProcessing()
-        assertEquals(1, snapshot.attemptCount)
-    }
-
-    @Test
-    fun `reclaim 은 PROCESSING 을 유지하며 attemptCount 를 올린다`() {
-        // 워커 크래시 등으로 PROCESSING 에 갇힌 행을 recover 가 재실행할 때의 전이.
-        val snapshot = ItemSnapshot.pending(itemId = 1L).apply { markProcessing() } // PROCESSING, attempt 1
-        snapshot.reclaim()
         assertEquals(ItemStatus.PROCESSING, snapshot.status)
-        assertEquals(2, snapshot.attemptCount)
+        assertEquals(0, snapshot.attemptCount, "집기는 실행 예산을 소모하지 않는다")
     }
 
     @Test
-    fun `PROCESSING 이 아닌 스냅샷을 reclaim 하면 IllegalStateException`() {
-        // PENDING(claim 전)·READY(완료)·FAILED(실패)는 재실행 claim 대상이 아니다 — recover 가 잘못된 행을 집은 코드 버그 방어.
-        assertFailsWith<IllegalStateException> { ItemSnapshot.pending(1L).reclaim() }
+    fun `expire 는 PENDING·PROCESSING 을 FAILED 로 종결한다`() {
+        // 마감(created_at 기준 상한)은 attempt 예산·박동과 무관한 벽시계라, 아직 집히지 않은 PENDING 도 대상이다.
+        assertEquals(ItemStatus.FAILED, ItemSnapshot.pending(1L).apply { expire() }.status)
+        assertEquals(
+            ItemStatus.FAILED,
+            ItemSnapshot.pending(1L).apply {
+                markProcessing()
+                expire()
+            }.status,
+        )
+    }
+
+    @Test
+    fun `이미 종결된 스냅샷을 expire 하면 IllegalStateException`() {
+        // READY(완료)·FAILED(실패)는 마감 대상이 아니다 — recover 가 잘못된 행을 집은 코드 버그 방어.
         assertFailsWith<IllegalStateException> {
             ItemSnapshot(itemId = 1L)
                 .apply { markReady(ProductSnapshot(name = "x", currentPrice = 1_000, imageUrl = "https://img.example.com/a.png")) }
-                .reclaim()
+                .expire()
         }
-        assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.reclaim() }
+        assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.expire() }
     }
 }

@@ -364,8 +364,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `link 있는 stale PROCESSING 을 recover 가 재실행해 READY 로 되살린다`() {
-        // 디스패처가 claim(attempt 1)한 직후 워커가 크래시해 실행 0회로 PROCESSING 에 갇힌 상황.
-        // recover 가 재실행(reclaim)해 완성시킨다 — claim-at-least-once 를 execution at-least-once 로 끌어올리는 핵심(#461).
+        // 디스패처가 집은 직후 워커가 크래시해 **실행 0회**로 PROCESSING 에 갇힌 상황(그래서 attempt 는 0 이다 —
+        // 집기는 예산을 소모하지 않는다). recover 가 되살려 완성시킨다 — execution at-least-once 의 핵심(#461).
         stubProductLinkExtractor.build = {
             ProductSnapshot(link = it, name = "되살아난 상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
         }
@@ -381,12 +381,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 snapshot.getId(),
             )
 
-            itemParsingScheduler.recover() // reclaim(attempt 2) + 재실행 디스패치
+            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 상품", recovered.name)
-            assertEquals(2, recovered.attemptCount) // 초회 claim 1 + 재실행 1
+            // 실행은 되살림으로 시작한 이 한 번뿐이다 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았다.
+            assertEquals(1, recovered.attemptCount)
         } finally {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
@@ -395,7 +396,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `재시도 상한에 도달한 stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
-        // 이미 상한(2회)까지 시도된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지, 절대 3분 초과 금지).
+        // 이미 상한(2회)까지 **실행**된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지).
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhausted")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
         val itemId = item.getId()
@@ -435,12 +436,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 snapshot.getId(),
             )
 
-            itemParsingScheduler.recover() // reclaim(attempt 2) + 재실행 디스패치
+            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 이미지", recovered.name)
-            assertEquals(2, recovered.attemptCount) // 초회 claim 1 + 재실행 1
+            // link 경로와 대칭 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았으므로 실행은 한 번뿐이다.
+            assertEquals(1, recovered.attemptCount)
         } finally {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)

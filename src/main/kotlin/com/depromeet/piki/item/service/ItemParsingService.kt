@@ -39,7 +39,7 @@ class ItemParsingService(
         // 워커가 claim 한 그 snapshot 을 id 로 직접 전이한다 — findLatestByItemId(최신)가 아니다.
         // 갱신(5단계)으로 한 item 에 여러 버전이 공존하면 "최신"이 이 워커가 추출한 행과 다를 수 있어(stale/좀비 워커가
         // 다른 버전을 오전이), claim 시점에 고정한 snapshotId 로 정확히 짚는다. 없으면 영속화 경로가 깨진 코드 버그다.
-        // FOR UPDATE 로 로드해 fence 검사→전이 write 를 한 행 락 구간으로 원자화한다(무락 read 와 write 사이 reclaim 커밋 방지).
+        // FOR UPDATE 로 로드해 fence 검사→전이 write 를 한 행 락 구간으로 원자화한다(무락 read 와 write 사이 소유권 이전 커밋 방지).
         val target =
             itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
@@ -66,9 +66,9 @@ class ItemParsingService(
         return true
     }
 
-    // fencing — 로드한 snapshot 의 attemptCount 가 claim(또는 reclaim) 시점 expectedAttempt 와 어긋나면, 큐에 묵다 재클레임된
-    // 좀비 워커의 결과다. 전이 없이 폐기(로그만)해, 옛 시도가 새 시도의 행을 오전이·오종결하지 못하게 한다. true=폐기.
-    // recover 내부의 FAILED 종결은 소유권 회수 행위 자체라 이 fencing 을 타지 않는다(entity 의 markFailed 를 직접 호출한다).
+    // fencing — 로드한 snapshot 의 attemptCount 가 워커가 획득한 토큰(expectedAttempt)과 어긋나면, 실행 도중 소유권이
+    // 다른 시도로 넘어간 좀비 워커의 결과다. 전이 없이 폐기(로그만)해, 옛 시도가 새 시도의 행을 오전이·오종결하지 못하게 한다. true=폐기.
+    // recover 내부의 FAILED 종결·마감 종결은 소유권 회수 행위 자체라 이 fencing 을 타지 않는다(entity 전이를 직접 호출한다).
     private fun isZombieResult(
         target: ItemSnapshot,
         expectedAttempt: Int,
@@ -100,7 +100,7 @@ class ItemParsingService(
         val itemById = itemRepository.findByIds(snapshots.map { it.itemId }).associateBy { it.getId() }
         return snapshots.mapNotNull { snapshot ->
             snapshot.markProcessing()
-            // markProcessing 이 attemptCount 를 1 로 올린 직후라, 이 claim 의 fencing 토큰(attempt)은 1 이다.
+            // markProcessing 은 attemptCount 를 건드리지 않으므로 현재값이 곧 "획득 시 기대하는 직전 값"이다.
             toClaim(snapshot, itemById[snapshot.itemId], snapshot.attemptCount)
         }
     }
@@ -113,33 +113,31 @@ class ItemParsingService(
     // 그런 행을:
     //   - link·imageKey 가 둘 다 없으면(입력 없는 orphan) 되살릴 수 없으므로 즉시 FAILED. 이미지(imageKey)는 S3 raw 로 durable 해 link 처럼 재실행한다.
     //   - attempt 가 상한(maxAttempts)에 도달했으면 더 시도하지 않고 FAILED (무한 재큐잉 방지, 절대 3분 초과 금지).
-    //   - 그 외에는 reclaim(attempt++, PROCESSING 유지)해 재실행 대상으로 반환한다 — 실제 워커 제출은 스케줄러가 트랜잭션 밖에서 한다.
+    //   - 그 외에는 되살림 대상으로 지목해 반환한다(DB 는 그대로) — 워커 제출은 스케줄러가 트랜잭션 밖에서 하고, attempt 는 워커가 실행에 진입할 때 소모한다.
     //
-    // 재실행은 retrySlots(호출부의 가용 워커 슬롯)만큼만 한다. reclaim 이 attempt 를 먼저 태우므로, 제출도 못 할
-    // 재실행을 예약하면 재시도 기회만 잃기 때문이다. 슬롯이 없어 미룬 행은 손대지 않아 attempt 도 그대로고, 다음
-    // 사이클이 다시 집는다. 반면 **종결(FAILED)은 retrySlots 와 무관하게 진행**한다 — 워커 슬롯이 필요 없는 판정이라
-    // 슬롯으로 막으면 풀이 오래 포화일 때 종결이 영영 밀린다.
+    // 되살림은 reviveSlots(호출부의 가용 워커 슬롯)만큼만 지목한다 — 제출도 못 할 지목은 로그만 늘린다. 미룬 행은
+    // 아무것도 안 건드리므로 다음 사이클이 그대로 다시 집는다. 반면 **종결(FAILED)은 reviveSlots 와 무관하게 진행**한다 —
+    // 워커 슬롯이 필요 없는 판정이라, 슬롯으로 막으면 풀이 오래 포화일 때 종결이 영영 밀린다.
     //
-    // snapshot 은 FOR UPDATE 로 PROCESSING 으로 잠겨 reclaim·markFailed 가 throw 하지 않으므로 batch poison 이 없다.
+    // snapshot 은 FOR UPDATE 로 PROCESSING 으로 잠겨 markFailed 가 throw 하지 않으므로 batch poison 이 없다.
     @Transactional
-    fun retryOrFailStaleProcessing(
+    fun reviveOrFailStale(
         threshold: LocalDateTime,
         batchSize: Int,
         maxAttempts: Int,
-        retrySlots: Int,
+        reviveSlots: Int,
     ): StaleProcessingOutcome {
         val stale = itemSnapshotRepository.findStaleProcessing(threshold, batchSize)
         if (stale.isEmpty()) return StaleProcessingOutcome(emptyList(), 0)
         // per-snapshot N+1 대신 item 을 한 번에 로드한다 (snapshot 은 itemId 만 들고 입력(link/imageKey)은 item 소관).
         val itemById = itemRepository.findByIds(stale.map { it.itemId }).associateBy { it.getId() }
-        val toRetry = mutableListOf<ClaimedItem>()
+        val toRevive = mutableListOf<ClaimedItem>()
         var failedCount = 0
         stale.forEach { snapshot ->
             // 되살릴 입력(link/imageKey)이 없으면(둘 다 부재 = orphan, 또는 item 부재) 종결. toClaim 이 null 로 일괄 판정한다.
-            // claim 의 fencing 토큰(attempt)은 reclaim 이 attemptCount 를 +1 할 값(현재값+1)이다 — reclaim 후 행의 attemptCount 와 일치해,
-            // 재실행된 워커가 자기 시도의 소유권으로 시작 가드·전이를 통과한다. 상한·orphan 으로 종결되는 claim 은 버려지므로 이 값이 쓰이지 않는다.
+            // 지목은 attemptCount 를 안 올리므로 현재값을 그대로 실어 보낸다 — 워커가 실행에 진입하며 이 값으로 +1 을 시도한다.
             val claim =
-                toClaim(snapshot, itemById[snapshot.itemId], snapshot.attemptCount + 1) ?: run {
+                toClaim(snapshot, itemById[snapshot.itemId], snapshot.attemptCount) ?: run {
                     snapshot.markFailed()
                     eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_NO_SOURCE)
@@ -154,31 +152,49 @@ class ItemParsingService(
                 failedCount++
                 return@forEach
             }
-            // 가용 슬롯 소진: 이번 사이클엔 손대지 않는다(reclaim 을 안 하므로 attempt 도 안 태운다). 다음 사이클이 다시 집는다.
-            if (toRetry.size >= retrySlots) return@forEach
-            // 재실행: PROCESSING 유지 + attempt++ (updated_at 갱신으로 stale 시계 리셋). 디스패치는 스케줄러가.
-            snapshot.reclaim()
-            toRetry.add(claim)
+            // 가용 슬롯 소진: 이번 사이클엔 지목하지 않는다. 다음 사이클이 같은 행을 다시 집는다.
+            if (toRevive.size >= reviveSlots) return@forEach
+            // 되살림 = 지목뿐. DB 는 건드리지 않는다 — 소유권(attempt)은 워커가 실행에 진입할 때 스스로 가져간다.
+            toRevive.add(claim)
         }
-        return StaleProcessingOutcome(toRetry, failedCount)
+        return StaleProcessingOutcome(toRevive, failedCount)
+    }
+
+    // 마감(deadline) 초과 종결 — created_at 이 threshold 이전인 비-터미널 행을 FAILED 로 끝낸다. 종결한 건수를 반환한다.
+    //
+    // attempt 예산과 별개인 **벽시계** 판정이다. attempt 는 "실행을 몇 번 했나"(예산)를, 이 마감은 "얼마나 오래 끌 수 있나"를
+    // 답한다. 예전엔 이 둘이 한 숫자에 얽혀 있어서, 실행하지도 않은 제출 거부가 종결 시점까지 앞당기는 불공정이 있었다.
+    // 마감은 박동과도 무관해 "박동은 멀쩡한데 너무 느린 실행"도, "슬롯이 없어 집히지 못한 PENDING"도 함께 종결한다.
+    @Transactional
+    fun failOverdue(
+        threshold: LocalDateTime,
+        batchSize: Int,
+    ): Int {
+        val overdue = itemSnapshotRepository.findOverdue(threshold, batchSize)
+        overdue.forEach { snapshot ->
+            snapshot.expire()
+            eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
+            ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_DEADLINE)
+        }
+        return overdue.size
     }
 
     // snapshot 의 item 입력(link XOR imageKey)으로 claim 객체를 만든다. link 우선, 없으면 imageKey, 둘 다 없으면
     // (입력 없는 orphan 또는 item 부재) null — claim 경로는 워커에 안 넘기고(다음 recover 가 stale 로 잡아 FAILED),
     // recover 경로는 즉시 FAILED 한다. 정상 흐름(URL·이미지 등록)엔 항상 입력이 있어 null 은 영속화 경로가 깨진 신호다.
-    // attempt 는 이 claim 의 fencing 토큰 — 워커가 시작 가드·전이에 실어 좀비 결과를 걸러낸다.
+    // expectedAttempt 는 소유권 획득 시 기대하는 직전 attemptCount — 워커가 이 값으로 조건부 +1 을 시도한다.
     private fun toClaim(
         snapshot: ItemSnapshot,
         item: Item?,
-        attempt: Int,
+        expectedAttempt: Int,
     ): ClaimedItem? {
         val resolved =
             item ?: run {
                 log.error("snapshot {} 의 item {} 이 없어 claim 제외", snapshot.getId(), snapshot.itemId)
                 return null
             }
-        resolved.link?.let { return LinkClaim(snapshot.itemId, snapshot.getId(), it, attempt) }
-        resolved.sourceImageKey?.let { return ImageClaim(snapshot.itemId, snapshot.getId(), it, attempt) }
+        resolved.link?.let { return LinkClaim(snapshot.itemId, snapshot.getId(), it, expectedAttempt) }
+        resolved.sourceImageKey?.let { return ImageClaim(snapshot.itemId, snapshot.getId(), it, expectedAttempt) }
         log.error("snapshot {} (item {}) 에 link·imageKey 둘 다 없어 claim 제외 (입력 없는 orphan)", snapshot.getId(), snapshot.itemId)
         return null
     }
