@@ -40,6 +40,13 @@ interface FcmTokenApi {
                 description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
+            ApiResponse(
+                responseCode = "409",
+                description =
+                    "탈퇴한 계정의 기기 등록 (`USER-003`) — 정상 흐름에선 탈퇴 access 토큰이 denylist 로 401 에 먼저 막히나, " +
+                        "denylist 마킹이 실패한 창(#689)에서 토큰이 필터를 통과하면 여기서 거부된다(활성 유저 잠금 방어, #776).",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
         ],
     )
     fun register(

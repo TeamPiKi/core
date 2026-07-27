@@ -6,10 +6,12 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -27,7 +29,10 @@ class WishPersistenceService(
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val pendingUploadClaimer: PendingUploadClaimer,
+    private val userService: UserService,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
     // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
     // snapshot 을 PENDING 으로 커밋하는 것이 곧 outbox 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
@@ -36,6 +41,11 @@ class WishPersistenceService(
         userId: UUID,
         item: Item,
     ): WishWithItem {
+        // 활성 유저 확인·쓰기 경합 차단(#776) — user 행을 잠가 tombstone 이면 409. requireMember(비잠금)의
+        // 확인과 이 트랜잭션의 wish INSERT 사이에 탈퇴 cascade 가 끼어들어 죽은 유저 wish 가 남는 것을 막는다.
+        // absent(users 행 없음)는 여기서 막지 않는다 — 정상 경로는 앞단(WishlistService.requireMember)이 이미 거르고,
+        // 이 방어는 "확인 후 탈퇴가 끼어든" tombstone race 전용이다(FCM 과 같은 결). 행이 있으면 잠가 직렬화한다.
+        userService.rejectIfWithdrawnForUpdate(userId)
         val saved = itemRepository.save(item)
         // 저장한 snapshot 의 id 를 wish 의 활성 포인터(snapshotId)로 박는다. 5단계 갱신에서 새 버전으로 스왑된다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
@@ -49,7 +59,12 @@ class WishPersistenceService(
     fun persistPendingImages(
         userId: UUID,
         imageKeys: List<String>,
-    ): List<WishWithItem> = persistImagesInternal(userId, imageKeys)
+    ): List<WishWithItem> {
+        // 실시간(v1 multipart) 경로 — persist 와 같은 활성 유저 잠금 가드(#776). tombstone race 를 막고,
+        // absent 는 앞단(requireMember)이 거른다(persist 주석 참고).
+        userService.rejectIfWithdrawnForUpdate(userId)
+        return persistImagesInternal(userId, imageKeys)
+    }
 
     // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
     // 잠가 삭제(claim)하고, claim 에 성공한(=이 트랜잭션이 가져간) WISH 매핑만 적재한다 — confirm·폴링이 같은 key 를
@@ -59,8 +74,22 @@ class WishPersistenceService(
         imageKeys: List<String>,
         userId: UUID,
     ): List<WishWithItem> {
+        // 활성 유저 확인·쓰기 경합 차단(#776). claim(pending_uploads 락)보다 **먼저** user 행을 잠가, 이 프로젝트의
+        // 락 순서 규약 "user → 자식" 을 지킨다(WithdrawalPersistenceService.withdraw 와 동일). 지금은 user 를 먼저
+        // 잠근 뒤 pending_uploads 를 건드리는 경로가 없어 역순 교차가 성립하지 않지만, 탈퇴 cascade 가 이 유저의
+        // pending_uploads 를 함께 정리하는 순간 users→pending_uploads 가 생겨 이 경로와 교차 데드락이 된다.
+        // 부수 효과로 확인~claim 구간이 user 락 안에 들어와, 그 사이 탈퇴가 끼어들 창 자체가 사라진다.
+        //
+        // 이 경로는 스케줄러(지연 처리)·confirm 공용이라, tombstone 이라고 예외를 던지면 트랜잭션 롤백으로
+        // claim(pending_uploads 삭제)이 되살아나 스케줄러가 무한 재시도한다. 그래서 예외 대신 boolean 으로 받아
+        // claim 은 소비하되 wish 생성만 건너뛴다 — 탈퇴 후 남은 pending upload 가 죽은 유저 wish 로 되살아나지 않는다.
+        val active = userService.isActiveForUpdate(userId)
         val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.WISH, userId, tournamentId = null)
         if (claimedKeys.isEmpty()) return emptyList()
+        if (!active) {
+            log.info("탈퇴 유저의 지연 이미지 등록 건너뜀(claim 은 소비) userId={} keys={}", userId, claimedKeys.size)
+            return emptyList()
+        }
         return persistImagesInternal(userId, claimedKeys)
     }
 
