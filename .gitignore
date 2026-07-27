@@ -5,12 +5,14 @@
 .claude/settings.local.json
 .claude/worktrees/
 # infra(TeamPiKi/infra)가 SessionStart 에 설치하는 공용 스킬 — 정본은 infra 이고 여기선 설치본이라
-# 추적하지 않는다. 파일 단위로 지정해 나머지 로컬 스킬(session-* 등)은 계속 추적한다.
+# 추적하지 않는다. 파일 단위로 지정해 나머지 로컬 스킬(pre-pr 등)은 계속 추적한다.
 .claude/commands/commit.md
 .claude/commands/gc.md
 .claude/commands/coderabbit.md
 .claude/commands/pr.md
 .claude/commands/issue.md
+.claude/commands/session-check.md
+.claude/commands/session-close.md
 
 # IDE - 개인 설정 제외
 .idea/*
