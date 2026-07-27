@@ -64,7 +64,13 @@ class AsyncImageParsingWorker(
     ) {
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
         runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
-            .onSuccess {
+            .onSuccess { applied ->
+                // 좀비 폐기(소유권 상실)면 전이가 스킵된다 — 결과를 성공으로 세지 않고, **특히 raw 를 지우지 않는다**.
+                // 재클레임된 새 시도가 바로 그 원본으로 재실행해야 하므로, 여기서 지우면 되살릴 입력을 잃는다.
+                if (!applied) {
+                    log.info("item {} 이미지 좀비 결과 — 전이·raw 회수 생략 (attempt={})", itemId, attempt)
+                    return@onSuccess
+                }
                 log.info("item {} 이미지 파싱 완료 → READY", itemId)
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
                 deleteRawQuietly(imageKey)
@@ -72,9 +78,11 @@ class AsyncImageParsingWorker(
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없음 → PROCESSING 방치 대신 FAILED.
                 log.warn("item {} READY 전이 거부 → FAILED: {}", itemId, e.message)
-                markFailedQuietly(itemId, snapshotId, attempt)
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
-                deleteRawQuietly(imageKey)
+                // 종결이 실제로 적용됐을 때만 결과를 세고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존).
+                if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
+                    deleteRawQuietly(imageKey)
+                }
             }
     }
 
@@ -103,10 +111,11 @@ class AsyncImageParsingWorker(
             return
         }
         // 확정 실패 — 상품 아님·추출값 신뢰 불가 등. 다시 해도 결과가 같으니 즉시 FAILED + raw 회수.
+        // 단 전이가 실제로 적용됐을 때만이다 — 좀비 폐기·전이 실패면 결과를 세지도, raw 를 지우지도 않는다.
         val reason = reasonOf(e)
+        if (!markFailedQuietly(itemId, snapshotId, attempt)) return
         log.info("item.parse.result item={} type=image result={} reason={}", itemId, ItemParsingMetrics.RESULT_FAILED, reason)
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
-        markFailedQuietly(itemId, snapshotId, attempt)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
         deleteRawQuietly(imageKey)
     }
@@ -125,19 +134,19 @@ class AsyncImageParsingWorker(
     }
 
     // 일시 DB 오류는 짧게 재시도한다(TransitionRetry). 영구 오류·sweeper 레이스는 즉시 전파돼 아래에서 흡수된다.
+    // 반환값 = 전이가 실제로 적용됐는지 (false: 좀비 폐기 또는 전이 실패). raw 회수 여부를 이 값으로 가른다.
     private fun markFailedQuietly(
         itemId: Long,
         snapshotId: Long,
         attempt: Int,
-    ) {
+    ): Boolean =
         runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)
                     else -> log.error("item {} FAILED 전이 실패, PROCESSING 방치 위험", itemId, e)
                 }
-            }
-    }
+            }.getOrDefault(false)
 
     companion object {
         // AsyncItemParsingWorker.isRetryable 과 달리 비-HttpMappable 예외를 재시도하지 않는다 — 이미지 경로의 외부

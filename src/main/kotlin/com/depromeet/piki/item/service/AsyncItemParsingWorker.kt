@@ -70,7 +70,10 @@ class AsyncItemParsingWorker(
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
         runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
-            .onSuccess {
+            .onSuccess { applied ->
+                // 좀비 폐기(소유권 상실)면 이 워커의 결과는 반영되지 않았다 — 결과 원장(로그·메트릭)에 성공으로 세지 않는다.
+                // 폐기 사유 자체는 서비스가 남긴다.
+                if (!applied) return@onSuccess
                 log.info(
                     "item.parse.result item={} result={} reason={} latency={}ms url={}",
                     itemId,
@@ -92,8 +95,9 @@ class AsyncItemParsingWorker(
                 )
                 // 예외 상세(스택)는 별도 줄로 — 구조화(item.parse.result) 줄에 스택을 붙이면 logfmt 파싱이 깨진다.
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
-                markFailedQuietly(itemId, snapshotId, attempt)
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
+                if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
+                }
             }
     }
 
@@ -127,6 +131,8 @@ class AsyncItemParsingWorker(
         // 확정 실패 — 상품 아님·추출값 신뢰 불가·호스트 차단·4xx 접근 불가 등. 같은 URL 을 다시 파싱해도 결과가
         // 같으므로 즉시 FAILED 로 종결한다(사용자에게 빨리 알림). 클라이언트 입력 계약 위반이라 서버 입장에선 정상 동작(info).
         val reason = reasonOf(e)
+        // 전이가 실제로 적용됐을 때만 결과를 원장에 남긴다 — 좀비 폐기·전이 실패면 이 워커의 결과는 반영되지 않았다.
+        if (!markFailedQuietly(itemId, snapshotId, attempt)) return
         log.info(
             "item.parse.result item={} result={} reason={} url={}",
             itemId,
@@ -136,7 +142,6 @@ class AsyncItemParsingWorker(
         )
         // 실패 사유 원문(공백 포함 가능)은 별도 줄로 — 구조화 줄의 logfmt 필드 파싱을 깨지 않게 분리한다.
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
-        markFailedQuietly(itemId, snapshotId, attempt)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
     }
 
@@ -149,19 +154,19 @@ class AsyncItemParsingWorker(
         }
 
     // FAILED 전이도 sweeper 와의 레이스로 실패할 수 있어(이미 전이됨) 잡아 흡수한다. 일시 DB 오류는 짧게 재시도한다.
+    // 반환값 = 전이가 실제로 적용됐는지 (false: 좀비 폐기 또는 전이 실패).
     private fun markFailedQuietly(
         itemId: Long,
         snapshotId: Long,
         attempt: Int,
-    ) {
+    ): Boolean =
         runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)
                     else -> log.error("item {} FAILED 전이 실패, PROCESSING 방치 위험", itemId, e)
                 }
-            }
-    }
+            }.getOrDefault(false)
 
     companion object {
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.

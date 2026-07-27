@@ -28,12 +28,14 @@ class ItemParsingService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // 반환값은 **이 전이가 실제로 적용됐는지** 다. false(좀비 폐기)면 호출부는 자기 결과를 반영된 것으로 세면 안 된다 —
+    // 특히 이미지 워커의 raw 원본 회수는 반드시 이 값으로 막아야 한다(소유권을 쥔 새 시도가 그 원본으로 재실행하므로).
     @Transactional
     fun markReady(
         snapshotId: Long,
         snapshot: ProductSnapshot,
         expectedAttempt: Int,
-    ) {
+    ): Boolean {
         // 워커가 claim 한 그 snapshot 을 id 로 직접 전이한다 — findLatestByItemId(최신)가 아니다.
         // 갱신(5단계)으로 한 item 에 여러 버전이 공존하면 "최신"이 이 워커가 추출한 행과 다를 수 있어(stale/좀비 워커가
         // 다른 버전을 오전이), claim 시점에 고정한 snapshotId 로 정확히 짚는다. 없으면 영속화 경로가 깨진 코드 버그다.
@@ -41,24 +43,27 @@ class ItemParsingService(
         val target =
             itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
-        if (isZombieResult(target, expectedAttempt)) return
+        if (isZombieResult(target, expectedAttempt)) return false
         target.markReady(snapshot)
         // 트랜잭션 안에서 발행 → AFTER_COMMIT 리스너가 커밋 성공 후에만 알림을 보낸다 (롤백 시 발송 안 됨). itemId 는 snapshot 단일 출처.
         eventPublisher.publishEvent(ItemParsingCompleted(target.itemId))
+        return true
     }
 
+    // markReady 와 같이 적용 여부를 돌려준다 (false = 좀비 폐기).
     @Transactional
     fun markFailed(
         snapshotId: Long,
         expectedAttempt: Int,
-    ) {
+    ): Boolean {
         // markReady 와 같은 이유로 FOR UPDATE 로드 — fence 검사와 종결 write 를 원자화한다.
         val target =
             itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
-        if (isZombieResult(target, expectedAttempt)) return
+        if (isZombieResult(target, expectedAttempt)) return false
         target.markFailed()
         eventPublisher.publishEvent(ItemParsingFailed(target.itemId))
+        return true
     }
 
     // fencing — 로드한 snapshot 의 attemptCount 가 claim(또는 reclaim) 시점 expectedAttempt 와 어긋나면, 큐에 묵다 재클레임된

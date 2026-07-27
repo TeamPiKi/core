@@ -11,6 +11,8 @@ import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.StubImageSnapshotExtractor
+import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubProductLinkExtractor
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
@@ -22,6 +24,7 @@ import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 // 소유권 fencing(#802) 검증 — attempt 토큰이 어긋난 좀비 워커의 결과가 전이·ext 호출로 새지 않음을 확인한다.
@@ -33,7 +36,13 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var asyncItemParsingWorker: AsyncItemParsingWorker
 
+    @Autowired private lateinit var asyncImageParsingWorker: AsyncImageParsingWorker
+
     @Autowired private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+
+    @Autowired private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
+
+    @Autowired private lateinit var stubImageStorage: StubImageStorage
 
     @Autowired private lateinit var itemRepository: ItemRepository
 
@@ -116,6 +125,39 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             assertEquals(0, extCalls.get(), "소유권을 잃은 좀비 워커는 ext 를 호출하면 안 된다")
             // 소유권을 쥔 attempt 2 는 여전히 PROCESSING (좀비가 아무 전이도 안 함).
             assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(snapshotId)?.status)
+        } finally {
+            workerLogger.detachAppender(appender)
+            deleteItem(item.getId())
+        }
+    }
+
+    @Test
+    fun `추출 도중 재클레임되면 좀비가 된 이미지 워커는 raw 원본을 지우지 않는다`() {
+        // 이미지 경로에서 좀비 폐기가 조용하면(전이 스킵을 호출부가 모르면) 워커가 자기 결과를 성공으로 착각해
+        // raw 를 회수해버린다 — 재클레임된 새 시도가 재실행할 원본을 잃는 데이터 유실 경로다. 그 회귀를 고정한다.
+        val imageKey = "items/raw/zombie-${UUID.randomUUID()}.jpg"
+        val item = itemRepository.save(Item(sourceImageKey = imageKey))
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
+        val snapshotId = snapshot.getId()
+
+        // 추출이 도는 사이 recover 가 재클레임(attempt 2)한 상황을 stub 안에서 재현한다 — 시작 가드는 통과하고
+        // (그 시점엔 아직 attempt 1) 결과 전이 시점에만 소유권이 어긋나는, 절대 캡을 넘긴 느린 추출의 재현이다.
+        stubImageSnapshotExtractor.build = {
+            jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
+            StubImageSnapshotExtractor.defaultSnapshot()
+        }
+        val workerLogger = LoggerFactory.getLogger(AsyncImageParsingWorker::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        workerLogger.addAppender(appender)
+        try {
+            asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 1)
+
+            // 좀비 폐기 로그가 유일한 완료 신호다(전이·회수를 둘 다 안 하므로 관측할 부수효과가 없다).
+            await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
+                appender.list.any { it.formattedMessage.contains("item ${item.getId()} 이미지 좀비 결과") }
+            }
+            assertFalse(imageKey in stubImageStorage.deletedKeys, "좀비 워커가 raw 를 지우면 재클레임된 새 시도가 재실행할 원본을 잃는다")
+            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(snapshotId)?.status, "좀비는 전이도 하지 않아야 한다")
         } finally {
             workerLogger.detachAppender(appender)
             deleteItem(item.getId())
