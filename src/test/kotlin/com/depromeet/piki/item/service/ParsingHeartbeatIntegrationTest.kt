@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // 소유권 fencing(#802) 검증 — attempt 토큰이 어긋난 좀비 워커의 결과가 전이·ext 호출로 새지 않음을 확인한다.
 //
@@ -60,12 +61,15 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
             // 옛 시도(attempt 1)의 결과로 markReady → fencing 으로 전이 없이 폐기(좀비 결과).
-            itemParsingService.markReady(
-                snapshotId,
-                ProductSnapshot(link = item.link, name = "좀비결과", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
-                expectedAttempt = 1,
-            )
+            val applied =
+                itemParsingService.markReady(
+                    snapshotId,
+                    ProductSnapshot(link = item.link, name = "좀비결과", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
+                    expectedAttempt = 1,
+                )
 
+            // 반환값이 계약이다 — 호출부(특히 이미지 워커의 raw 회수)가 이 값으로 갈리므로, DB 상태와 함께 고정한다.
+            assertFalse(applied, "좀비 결과는 '적용되지 않음'(false)으로 보고돼야 한다")
             val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.PROCESSING, reloaded.status, "좀비 결과는 READY 로 전이하면 안 된다")
             assertNull(reloaded.name, "좀비 결과의 추출값이 반영되면 안 된다")
@@ -82,12 +86,14 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
         val snapshotId = snapshot.getId()
         try {
-            itemParsingService.markReady(
-                snapshotId,
-                ProductSnapshot(link = item.link, name = "정상결과", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
-                expectedAttempt = 1,
-            )
+            val applied =
+                itemParsingService.markReady(
+                    snapshotId,
+                    ProductSnapshot(link = item.link, name = "정상결과", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
+                    expectedAttempt = 1,
+                )
 
+            assertTrue(applied, "소유권이 일치하면 '적용됨'(true)으로 보고돼야 한다")
             val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.READY, reloaded.status)
             assertEquals("정상결과", reloaded.name)
