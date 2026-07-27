@@ -433,6 +433,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("ITEM-001"))
+            .andExpect(jsonPath("$.detail").value("이미 등록된 상품은 수정할 수 없어요."))
     }
 
     @Test
@@ -454,6 +455,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("ITEM-002"))
+            .andExpect(jsonPath("$.detail").value("상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요."))
     }
 
     @Test
@@ -501,6 +503,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("ITEM-003"))
+            .andExpect(jsonPath("$.detail").value("상품 이름을 입력해 주세요."))
     }
 
     @Test
