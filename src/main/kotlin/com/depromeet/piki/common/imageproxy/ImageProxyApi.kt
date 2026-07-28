@@ -30,7 +30,9 @@ interface ImageProxyApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (허용되지 않은 도메인 · https 외 스킴 · 이미지 크기 5 MB 초과)",
+                description =
+                    "잘못된 요청 (허용되지 않은 도메인 · https 외 스킴 — code: PROXY-001 · " +
+                        "이미지 크기 5 MB 초과 — code: PROXY-002)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -50,7 +52,7 @@ interface ImageProxyApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "외부 이미지 서버 오류 (이미지를 불러올 수 없음 · 재시도 가능)",
+                description = "외부 이미지 서버 오류 (이미지를 불러올 수 없음 · 재시도 가능) — code: PROXY-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

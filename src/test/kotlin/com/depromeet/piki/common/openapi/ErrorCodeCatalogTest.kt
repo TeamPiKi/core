@@ -74,6 +74,43 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| LINK-001 | 400 | 올바른 링크 형식이 아니에요. 다시 확인해 주세요. |"), md)
         assertTrue(md.contains("| LINK-002 | 400 | https 링크만 등록할 수 있어요. |"), md)
         assertTrue(md.contains("| LINK-003 | 400 | 아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요. |"), md)
+
+        // image 계열 이관(#800) — 4클래스 12개 중 공개 도달 11개를 전량 단언한다(삭제 실패 1개는 아래 미등록 가드가 잠근다).
+        // 대표만 뽑으면 빠진 code 가 registry 에서 누락돼도 통과하므로, 등록 대상은 빠짐없이 행 단위로 고정한다.
+        // prefix 는 클래스별로 갈리며, IMAGE-PROXY 가 아니라 단일 토큰인 이유는 아래 형식 가드가 글자와 숫자를
+        // 섞은 3세그먼트를 허용하지 않기 때문이다(각 enum 주석 참고). 그 제약도 이 단언들이 함께 고정한다.
+        assertTrue(md.contains("### PROXY"), md)
+        assertTrue(md.contains("| PROXY-001 | 400 | 허용되지 않은 이미지 도메인입니다. |"), md)
+        assertTrue(md.contains("| PROXY-002 | 400 | 이미지 크기가 너무 큽니다. |"), md)
+        assertTrue(md.contains("| PROXY-003 | 502 | 이미지를 불러올 수 없습니다. |"), md)
+
+        // STORAGE 는 전부 같은 502·RETRYABLE 이라, 실패한 연산별로 code 가 갈리는지를 전량 단언해 고정한다.
+        // 삭제 실패(STORAGE-004)는 여기 없다 — 아래 미등록 가드가 따로 잠근다.
+        assertTrue(md.contains("### STORAGE"), md)
+        assertTrue(md.contains("| STORAGE-001 | 502 | 이미지를 저장하지 못했어요. 잠시 후 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("| STORAGE-002 | 502 | 이미지 업로드 URL 을 발급하지 못했어요. 잠시 후 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("| STORAGE-003 | 502 | 이미지 업로드 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요. |"), md)
+
+        assertTrue(md.contains("### UPLOAD"), md)
+        assertTrue(md.contains("| UPLOAD-001 | 400 | 올바르지 않은 이미지 업로드 정보예요. 업로드를 다시 시도해 주세요. |"), md)
+        assertTrue(md.contains("| UPLOAD-002 | 400 | 아직 업로드되지 않은 이미지예요. 업로드를 마친 뒤 다시 시도해 주세요. |"), md)
+
+        assertTrue(md.contains("### PRODUCTIMAGE"), md)
+        assertTrue(md.contains("| PRODUCTIMAGE-001 | 400 | 빈 이미지 파일은 올릴 수 없어요. |"), md)
+        assertTrue(md.contains("| PRODUCTIMAGE-002 | 400 | 이미지 형식을 확인할 수 없어요. |"), md)
+        assertTrue(md.contains("| PRODUCTIMAGE-003 | 400 | 지원하지 않는 이미지 형식이에요. |"), md)
+    }
+
+    @Test
+    fun `삭제 실패 code 는 공개 카탈로그에 등록되지 않는다 (호출부가 전부 runCatching 으로 삼킴)`() {
+        // ImageStorageException.deleteFailed 는 S3ImageStorage 가 실제로 던지지만, 호출부 세 곳(탈퇴 프로필 파기·
+        // 공지 이미지 정리·raw 회수)이 전부 runCatching 으로 삼키고 warn 로그만 남긴다 — GlobalExceptionHandler 에
+        // 닿지 않아 wire code 로 나갈 수 없다. 클라가 못 받는 code 를 카탈로그에 두면 매핑 노이즈가 되므로 미등록.
+        // 같은 enum 의 나머지는 등록되므로, addAll 로 되돌려 이 하나가 딸려 들어가는 회귀를 막는 가드다.
+        val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
+
+        assertTrue(ErrorCodeRegistry.all.none { it.code == "STORAGE-004" }, "도달 불가한 삭제 실패 code 가 registry 에 새어들어옴")
+        assertTrue(!md.contains("| STORAGE-004 |"), md)
     }
 
     @Test

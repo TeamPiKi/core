@@ -163,7 +163,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "외부 의존성 실패 (이미지 저장소(S3) 업로드 실패 — 재시도 가능)",
+                description = "외부 의존성 실패 (이미지 저장소(S3) 업로드 실패 — 재시도 가능) — code: STORAGE-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

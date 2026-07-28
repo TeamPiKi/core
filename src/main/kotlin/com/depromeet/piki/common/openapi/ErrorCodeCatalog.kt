@@ -6,6 +6,10 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthErrorCode
 import com.depromeet.piki.auth.infrastructure.oauth.apple.AppleErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
+import com.depromeet.piki.common.imageproxy.ImageProxyErrorCode
+import com.depromeet.piki.common.storage.ImageStorageErrorCode
+import com.depromeet.piki.image.domain.ImageUploadErrorCode
+import com.depromeet.piki.image.domain.ProductImageErrorCode
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.notification.domain.NotificationErrorCode
 import com.depromeet.piki.product.domain.ProductLinkErrorCode
@@ -33,6 +37,12 @@ object ErrorCodeRegistry {
             addAll(WishErrorCode.entries)
             addAll(ItemErrorCode.entries)
             addAll(ProductLinkErrorCode.entries)
+            addAll(ImageProxyErrorCode.entries)
+            // DELETE_FAILED 만 제외한다 — 호출부가 전부 runCatching 으로 삼켜 응답에 실릴 수 없다
+            // (해당 enum 주석 참고). enum 단위 addAll 에서 유일하게 벗어나는 자리라 이유를 여기 남긴다.
+            addAll(ImageStorageErrorCode.entries.filter { it != ImageStorageErrorCode.DELETE_FAILED })
+            addAll(ImageUploadErrorCode.entries)
+            addAll(ProductImageErrorCode.entries)
             // AnnouncementImageErrorCode 는 어드민 SSR 전용이라 의도적으로 미등록(해당 enum 주석 참고).
             // ProductSnapshotErrorCode·ProductExtractorErrorCode 도 비동기 파싱 워커 전용이라 같은 이유로 미등록.
             // 도메인 이관 시 여기에 addAll(XxxErrorCode.entries) 추가

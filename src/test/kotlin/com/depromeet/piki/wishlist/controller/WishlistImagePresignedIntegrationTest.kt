@@ -105,6 +105,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                         .content(body),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("PRODUCTIMAGE-003"))
                 .andExpect(jsonPath("$.detail").value("지원하지 않는 이미지 형식이에요."))
         } finally {
             cleanup(userId)
@@ -247,6 +248,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                         .content(body),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("UPLOAD-002"))
                 .andExpect(jsonPath("$.detail").value("아직 업로드되지 않은 이미지예요. 업로드를 마친 뒤 다시 시도해 주세요."))
 
             val wishCount =
@@ -272,6 +274,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                         .content(body),
                 ).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.code").value("UPLOAD-001"))
                 .andExpect(jsonPath("$.detail").value("올바르지 않은 이미지 업로드 정보예요. 업로드를 다시 시도해 주세요."))
         } finally {
             cleanup(userId)
