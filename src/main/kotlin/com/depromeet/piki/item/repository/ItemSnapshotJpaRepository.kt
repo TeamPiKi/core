@@ -62,8 +62,8 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         pageable: Pageable,
     ): List<ItemSnapshot>
 
-    // recover 가 집을 stale 작업 — updated_at(claim 시각)이 threshold 이전인 PROCESSING snapshot 을 limit 개,
-    // FOR UPDATE SKIP LOCKED. created_at 이 아니라 updated_at 기준이라, PENDING 으로 오래 갇혔다 방금 claim 된 행은
+    // recover 가 집을 stale 작업 — updated_at(집기·소유권 획득·박동 중 마지막 시각)이 threshold 이전인 PROCESSING snapshot 을
+    // limit 개, FOR UPDATE SKIP LOCKED. created_at 이 아니라 updated_at 기준이라, PENDING 으로 오래 갇혔다 방금 claim 된 행은
     // stale 로 오판하지 않는다. SKIP LOCKED 는 claim 과 같은 교착 제거 목적 — 워커의 상태 전이(READY/FAILED) 트랜잭션과
     // recover 스캔이 얽히는 같은 구조의 사이클을 예방한다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

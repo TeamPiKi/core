@@ -20,7 +20,7 @@ class ProductExtractorException private constructor(
         // 두 사유가 같은 사용자 대면 문구를 공유한다 — 원격이 왜 실패했는지는 사용자 관심사가 아니고, 구분은 category·로그가 진다.
         private const val EXTRACTION_UNAVAILABLE = "상품 정보를 가져오지 못했어요."
 
-        // 원격 호출이 일시적으로 실패(5xx·타임아웃·연결 실패·빈 응답). 워커가 PROCESSING 유지 → recover 재시도.
+        // 원격 호출이 일시적으로 실패(5xx·타임아웃·연결 실패·빈 응답). 워커가 소유권을 반납(PROCESSING→PENDING) → 다음 tick 이 다시 집는다.
         fun transientFailure(cause: Throwable?): ProductExtractorException =
             ProductExtractorException(EXTRACTION_UNAVAILABLE, ErrorCategory.RETRYABLE, HttpStatus.BAD_GATEWAY, cause)
 

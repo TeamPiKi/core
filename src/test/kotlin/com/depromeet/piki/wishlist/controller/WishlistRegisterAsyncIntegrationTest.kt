@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
+import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
@@ -274,9 +275,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다.
-        // 이미지 입력은 S3 raw 로 durable 하므로 recover 가 그 key 로 원본을 다시 읽어 재실행한다(#461).
+    fun `이미지 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
+        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고,
+        // 소유권을 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 곧바로 다시 집게 한다.
+        // 이미지 입력은 S3 raw 로 durable 하므로 재실행이 그 key 로 원본을 다시 읽는다(#461).
+        //
+        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
+        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
         val calls = AtomicInteger(0)
         stubImageSnapshotExtractor.build = {
             calls.incrementAndGet()
@@ -288,10 +293,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
-            // 디스패처 claim → 워커가 일시 오류로 throw → 워커가 실제로 한 번 실행됐는지 확인.
-            await().atMost(Duration.ofSeconds(5)).until { calls.get() >= 1 }
-            // 확정 실패가 아니므로 FAILED 로 떨어지지 않고 PROCESSING 으로 남아야 한다 (recover 재시도 대상).
-            assertEquals(ItemStatus.PROCESSING, latestSnapshot(itemId)?.status)
+            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
+            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
+            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
         }
@@ -475,8 +481,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `URL 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다 — 재시도 판정은 recover 몫(#461).
+    fun `URL 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
+        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고, 소유권을
+        // 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 다시 집게 한다. 종결 판정은 여전히 서비스 몫이다(#461).
+        //
+        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
+        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
         val calls = AtomicInteger(0)
         stubProductLinkExtractor.build = {
             calls.incrementAndGet()
@@ -487,10 +497,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
-            // 디스패처 claim → 워커가 일시 오류로 throw → 워커가 실제로 한 번 실행됐는지 확인.
-            await().atMost(Duration.ofSeconds(5)).until { calls.get() >= 1 }
-            // 확정 실패가 아니므로 FAILED 로 떨어지지 않고 PROCESSING 으로 남아야 한다 (recover 재시도 대상).
-            assertEquals(ItemStatus.PROCESSING, latestSnapshot(itemId)?.status)
+            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
+            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
+            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
         }

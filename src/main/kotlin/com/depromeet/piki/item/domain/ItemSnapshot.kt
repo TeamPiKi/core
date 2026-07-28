@@ -104,6 +104,16 @@ class ItemSnapshot(
         status = ItemStatus.PROCESSING
     }
 
+    // PROCESSING → PENDING. 일시 오류로 이번 실행이 결론 없이 끝났을 때, 워커가 소유권을 **즉시 반납**한다.
+    // 반납하지 않으면 다음 실행이 stale 판정(마지막 박동 + 임계)을 기다려야 해, 산 워커가 멀쩡히 박동한 시간만큼
+    // 회수가 통째로 늦어진다 — 박동이 "죽음 감지"를 정확하게 만든 대가로 생긴 지연이라 반납으로 되돌린다(#802).
+    // attemptCount 는 유지한다: 실행은 실제로 한 번 일어났으므로 예산은 소모된 게 맞다. 상한 도달 여부는 서비스가 보고
+    // 반납 대신 종결한다 — 도메인은 "되돌린다"는 사실만 표현한다.
+    fun release() {
+        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 반납할 수 없다" }
+        status = ItemStatus.PENDING
+    }
+
     // PENDING·PROCESSING → FAILED. 마감(created_at 기준 상한) 초과로 종결한다.
     // attempt 예산·박동과 무관한 벽시계 판정이라, 아직 집히지 않은 PENDING 도 대상이다(영구 정체 방지).
     // 이미 터미널인 행에 호출되면 recover 가 잘못된 행을 집은 코드 버그이므로 check(500).
@@ -211,7 +221,9 @@ class ItemSnapshot(
         // 등록 시작점 — 추출 전 PENDING 버전(outbox 적재). URL·이미지 두 경로가 공유한다(이미지 입력도 S3 raw 로 durable
         // 적재되므로 같은 outbox 에 태운다). 등록은 이 행을 커밋만 하고 즉시 반환하며, 디스패처가 PENDING 을 집어
         // markProcessing 으로 claim 한 뒤 워커가 파싱한다. @Async 유실(인스턴스 재시작 등)과 무관하게 DB 의 PENDING 행이
-        // 작업의 진실 원천이라, 반드시 한 번은 claim 돼 실행이 시작된다(최소 1회 실행 보장).
+        // 작업의 진실 원천이라, **마감 안에 슬롯이 나기만 하면** 반드시 claim 돼 실행이 시작된다.
+        // (마감까지 슬롯이 끝내 나지 않으면 실행 0회로 FAILED 종결된다 — expire. 지속 과부하에서 무한 대기하느니
+        //  사용자에게 결론을 주는 쪽을 택한 것이고, 그 빈도는 REASON_DEADLINE 메트릭이 관측한다.)
         fun pending(itemId: Long): ItemSnapshot = ItemSnapshot(itemId = itemId, status = ItemStatus.PENDING)
     }
 }

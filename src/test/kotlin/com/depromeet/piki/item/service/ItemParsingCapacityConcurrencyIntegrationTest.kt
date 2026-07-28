@@ -97,7 +97,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
         val revivable = staleProcessing(attempt = 1) // 되살림 대상
         try {
             // reviveSlots = 0 — 워커 슬롯이 하나도 없는 상황을 직접 재현한다.
-            val outcome = itemParsingService.reviveOrFailStale(LocalDateTime.now(), 100, 2, 0)
+            val outcome = itemParsingService.reviveOrFailStale(LocalDateTime.now(), 100, 0)
 
             assertTrue(outcome.toRevive.isEmpty(), "슬롯이 없으면 되살림 대상을 지목하지 않아야 한다")
             assertEquals(ItemStatus.FAILED, statusOf(exhausted.second), "종결은 슬롯과 무관하게 진행돼야 한다")
@@ -130,13 +130,17 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     }
 
     // created_at 을 과거로 민 마감 대상 행. updated_at 은 now 로 둬 "박동이 신선한데도 마감에 걸린다"를 재현한다.
+    //
+    // created_at 은 배경 recover 의 마감 스캔(now - DEADLINE_MINUTES=3분)에는 **안 걸리고** 이 테스트가 넘기는
+    // threshold(now)에는 걸리도록 90초 전으로 둔다 — 배경 스케줄러가 먼저 종결해 테스트 호출의 반환 건수를 가로채는
+    // 경합을 없앤다(stale 쪽에서 updated_at 으로 쓰는 것과 같은 기법).
     private fun overdue(status: ItemStatus): Pair<Long, Long> {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/overdue-${UUID.randomUUID()}")))
         val snapshot = ItemSnapshot.pending(item.getId()).apply { if (status == ItemStatus.PROCESSING) markProcessing() }
         val snapshotId = itemSnapshotRepository.save(snapshot).getId()
         jdbcTemplate.update(
             "UPDATE item_snapshots SET created_at = ?, updated_at = ? WHERE id = ?",
-            LocalDateTime.now().minusMinutes(10),
+            LocalDateTime.now().minusSeconds(90),
             LocalDateTime.now(),
             snapshotId,
         )

@@ -18,7 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// ParsingHeartbeat 의 시계 조작 검증 (#802). 박동·fenced touch·절대 캡은 시간 축이 본질이라 별도 타이밍 분류로 둔다.
+// ParsingHeartbeat 의 시계 조작 검증 (#802). 박동(renew)과 stale 판정은 시간 축이 본질이라 별도 타이밍 분류로 둔다.
 //
 // CLAUDE.md '동시성·시간 의존 통합 테스트' 규약: 비-@Transactional(박동은 별도 짧은 트랜잭션이 본질), 자기 데이터 직접 정리.
 // 시계는 sleep 이 아니라 updated_at·registeredAt 데이터 조작으로 돌린다. 배경 recover(@Scheduled, threshold=now-60s)가
@@ -103,33 +103,9 @@ class ParsingHeartbeatTimingIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    @Test
-    fun `절대 캡을 넘긴 항목은 beat 가 갱신 없이 레지스트리에서 제거해 recover 회수에 맡긴다`() {
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/cap-${UUID.randomUUID()}")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 1
-        val snapshotId = snapshot.getId()
-        try {
-            // 행의 updated_at 을 now-40s 로 — 배경 recover(now-60s) 대상은 아니면서(간섭 차단),
-            // "beat 가 touch 했다면 now 로 밀렸을" 값과 구분 가능한 과거값.
-            val staleMark = LocalDateTime.now().minusSeconds(40).truncatedTo(ChronoUnit.MICROS)
-            jdbcTemplate.update("UPDATE item_snapshots SET updated_at = ? WHERE id = ?", staleMark, snapshotId)
-
-            // 등록 시각을 절대 캡(5분) 이전으로 seed — 무한 행잉 워커 재현.
-            parsingHeartbeat.trackFrom(snapshotId, 1, LocalDateTime.now().minusMinutes(6))
-            parsingHeartbeat.beat()
-
-            // 레지스트리에서 제거됐고,
-            assertFalse(parsingHeartbeat.isTracking(snapshotId), "절대 캡 초과 항목은 레지스트리에서 제거돼야 한다")
-            // updated_at 은 밀리지 않아 여전히 과거다(touch 였다면 now 였을 것) → recover 가 stale 로 회수한다.
-            val after =
-                jdbcTemplate.queryForObject("SELECT updated_at FROM item_snapshots WHERE id = ?", LocalDateTime::class.java, snapshotId)
-                    ?: error("행 없음")
-            assertTrue(after.isBefore(LocalDateTime.now().minusSeconds(20)), "절대 캡 초과 항목은 touch 되지 않아 updated_at 이 과거로 남아야 한다")
-        } finally {
-            parsingHeartbeat.deregister(snapshotId, 1)
-            deleteItem(item.getId())
-        }
-    }
+    // 무한 행잉(박동은 성실한데 실행이 안 끝나는 경우)의 종결은 여기서 검증하지 않는다 — 박동에 별도 절대 캡을 두던 층을
+    // 걷어내고 마감(created_at 기준)이 단독으로 책임지게 했기 때문이다. 그 회귀는
+    // ItemParsingCapacityConcurrencyIntegrationTest 의 `마감을 넘긴 행은 attempt 가 남아 있어도 박동이 뛰어도 종결된다` 가 고정한다.
 
     // stale 스캔(FOR UPDATE SKIP LOCKED)은 트랜잭션이 필요하므로 짧은 트랜잭션으로 감싸 읽고 즉시 커밋(락 해제)한다.
     private fun staleIds(threshold: LocalDateTime): List<Long> =

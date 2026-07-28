@@ -277,4 +277,20 @@ class ItemSnapshotTest {
         }
         assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.expire() }
     }
+
+    @Test
+    fun `release 는 PROCESSING 을 PENDING 으로 되돌리되 소모한 예산은 유지한다`() {
+        // 일시 오류로 결론 없이 끝난 실행의 소유권 반납. 예산을 되돌려주면 무한 재시도가 되므로 attemptCount 는 그대로 둔다.
+        val snapshot = ItemSnapshot(itemId = 1L, attemptCount = 1)
+        snapshot.release()
+        assertEquals(ItemStatus.PENDING, snapshot.status)
+        assertEquals(1, snapshot.attemptCount, "반납은 소모한 실행 예산을 되돌리지 않는다")
+    }
+
+    @Test
+    fun `PROCESSING 이 아닌 스냅샷을 release 하면 IllegalStateException`() {
+        // 반납은 "실행 중이던 내 소유권을 놓는다"는 뜻이라 PROCESSING 에서만 성립한다.
+        assertFailsWith<IllegalStateException> { ItemSnapshot.pending(1L).release() }
+        assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.release() }
+    }
 }

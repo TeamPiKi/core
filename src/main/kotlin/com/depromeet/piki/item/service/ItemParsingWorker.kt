@@ -7,7 +7,8 @@ import com.depromeet.piki.product.domain.ProductLink
 // 구현(@Async)을 인터페이스 뒤에 두어, 추후 메시지 큐 기반 워커로 교체하더라도
 // 호출부(WishlistService)가 바뀌지 않게 한다.
 interface ItemParsingWorker {
-    // attempt 는 claim 의 fencing 토큰(ClaimedItem.attempt) — 워커가 시작 가드·상태 전이에 실어 좀비 결과를 걸러낸다.
+    // expectedAttempt 는 소유권을 획득할 때 기대하는 **직전** attemptCount(ClaimedItem.expectedAttempt)다.
+    // 워커는 이 값으로 조건부 +1 을 시도해 소유권을 얻고, 그렇게 얻은 토큰(expectedAttempt + 1)을 박동·전이에 실어 좀비 결과를 걸러낸다.
     fun parse(
         itemId: Long,
         snapshotId: Long,

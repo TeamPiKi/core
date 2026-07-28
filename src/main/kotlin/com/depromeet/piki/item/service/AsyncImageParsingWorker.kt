@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component
 // 결과는 셋으로 갈린다(AsyncItemParsingWorker 와 동일한 execution at-least-once 정책, #461):
 //   - 성공 → READY. 파싱이 끝났으니 raw 원본을 회수(delete)한다.
 //   - 확정 실패(상품 아님·추출값 신뢰 불가·READY 전이 거부) → 즉시 FAILED + raw 회수. 다시 해도 결과가 같다.
-//   - 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등 RETRYABLE) → 아무것도 안 하고 PROCESSING 유지. raw 는 보존하고 recover 가 상한까지 재실행한다.
+//   - 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등 RETRYABLE) → 소유권 반납(release, PROCESSING→PENDING). raw 는 보존하고 다음 tick 이 다시 집는다.
 @Component
 class AsyncImageParsingWorker(
     private val imageSnapshotExtractor: ImageSnapshotExtractor,
@@ -40,7 +40,7 @@ class AsyncImageParsingWorker(
         imageKey: String,
         expectedAttempt: Int,
     ) {
-        // 등록→시작 가드→해제 뼈대는 guarded 가 쥔다. 소유권 상실 시 body 를 건너뛰고 스킵 로그만 남긴다 —
+        // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
         parsingHeartbeat.guarded(
             snapshotId,
@@ -86,8 +86,8 @@ class AsyncImageParsingWorker(
             }
     }
 
-    // 파싱 실패는 두 갈래다 — 일시 오류는 recover 에 맡기고(PROCESSING 유지), 확정 실패만 즉시 종결한다.
-    // 판정은 ErrorCategory 가 쥔다: RETRYABLE(원격 추출 서비스 5xx·연결 실패 등)만 PROCESSING 으로 두고,
+    // 파싱 실패는 두 갈래다 — 일시 오류는 소유권을 반납해 다시 집히게 하고, 확정 실패만 즉시 종결한다.
+    // 판정은 ErrorCategory 가 쥔다: RETRYABLE(원격 추출 서비스 5xx·연결 실패 등)만 반납하고,
     // 그 외(비-HttpMappable 예외 포함)는 즉시 FAILED — 재시도해도 같은 결과인 코드 버그성 예외라 되살리지 않는다
     // (비-HttpMappable 취급이 링크 워커와 다른 이유는 companion 의 isRetryable 주석 참고).
     private fun onExtractFailed(
@@ -98,8 +98,9 @@ class AsyncImageParsingWorker(
         attempt: Int,
     ) {
         if (isRetryable(e)) {
-            // 일시 외부 오류 — FAILED 로 종결하지 않고 PROCESSING 그대로 둔다. raw 는 보존하고 recover 가 stale 로 잡아
-            // 상한까지 재실행한다(execution at-least-once, #461). 종결이 아니라 메트릭은 여기서 세지 않는다(recover 가 종결 시 집계).
+            // 일시 외부 오류 — FAILED 로 종결하지 않고 소유권을 반납해 다음 tick(1s)이 다시 집게 한다
+            // (execution at-least-once, #461). **raw 는 보존한다** — 재실행이 바로 그 원본을 다시 읽어야 하므로
+            // 반납 경로에는 deleteRaw 가 없다. 종결이 아니라 메트릭도 여기서 세지 않는다(종결 시점에 집계).
             val mappable = e as? HttpMappable
             log.warn(
                 "item.parse.retry item={} type=image errorType={} category={} status={}",
@@ -108,6 +109,7 @@ class AsyncImageParsingWorker(
                 mappable?.category,
                 mappable?.httpStatus?.value(),
             )
+            releaseQuietly(itemId, snapshotId, attempt)
             return
         }
         // 확정 실패 — 상품 아님·추출값 신뢰 불가 등. 다시 해도 결과가 같으니 즉시 FAILED + raw 회수.
@@ -131,6 +133,17 @@ class AsyncImageParsingWorker(
     private fun deleteRawQuietly(imageKey: String) {
         runCatching { imageStorage.delete(imageKey) }
             .onFailure { e -> log.warn("raw 이미지 {} 회수 실패(lifecycle 이 만료): {}", imageKey, e.message) }
+    }
+
+    // 소유권 반납 — 실패해도 흡수한다(링크 워커의 releaseQuietly 와 같은 이유: 반납은 지연 단축이지 정합성 장치가 아니다).
+    // 반납은 raw 를 지우지 않는다 — 다음 실행의 입력이기 때문이다.
+    private fun releaseQuietly(
+        itemId: Long,
+        snapshotId: Long,
+        attempt: Int,
+    ) {
+        runCatching { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
+            .onFailure { e -> log.info("item {} 이미지 소유권 반납 생략 (이미 전이됨·소유권 상실): {}", itemId, e.message) }
     }
 
     // 일시 DB 오류는 짧게 재시도한다(TransitionRetry). 영구 오류·sweeper 레이스는 즉시 전파돼 아래에서 흡수된다.

@@ -66,6 +66,35 @@ class ItemParsingService(
         return true
     }
 
+    // 소유권 반납 — 일시 외부 오류로 이번 실행이 결론 없이 끝났을 때 워커가 부른다. PROCESSING → PENDING 으로 되돌려
+    // 디스패처가 다음 tick(1s)에 곧바로 다시 집게 한다.
+    //
+    // 반납이 없으면 다음 실행은 stale 판정(마지막 박동 + 임계 60s)을 기다려야 한다. 박동이 "산 워커를 지키는" 대가로
+    // 죽음 감지가 워커 사망 시각 기준으로 밀렸기 때문인데, 실행이 스스로 끝났다는 걸 아는 그 순간 반납하면 그 지연이 사라진다.
+    // 그 결과 stale 되살림은 본래 의미(**프로세스가 죽어 아무도 반납해 주지 못한 경우**)만 남는다.
+    //
+    // 반환값은 markReady/markFailed 와 같은 계약이다 — false 면 좀비라 아무것도 반영되지 않았다.
+    @Transactional
+    fun release(
+        snapshotId: Long,
+        expectedAttempt: Int,
+    ): Boolean {
+        // 전이 계열과 같은 이유로 FOR UPDATE 로드 — fence 검사와 되돌림 write 를 한 락 구간으로 원자화한다.
+        val target =
+            itemSnapshotRepository.findByIdForUpdate(snapshotId)
+                ?: error("파싱 대상 snapshot $snapshotId 이 없다")
+        if (isZombieResult(target, expectedAttempt)) return false
+        // 예산을 다 쓴 실행을 반납하면 무한 재큐잉이 된다 — 되살림 경로와 같은 판정·같은 reason 으로 여기서 종결한다.
+        if (target.attemptCount >= MAX_ATTEMPTS) {
+            target.markFailed()
+            eventPublisher.publishEvent(ItemParsingFailed(target.itemId))
+            ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
+            return true
+        }
+        target.release()
+        return true
+    }
+
     // fencing — 로드한 snapshot 의 attemptCount 가 워커가 획득한 토큰(expectedAttempt)과 어긋나면, 실행 도중 소유권이
     // 다른 시도로 넘어간 좀비 워커의 결과다. 전이 없이 폐기(로그만)해, 옛 시도가 새 시도의 행을 오전이·오종결하지 못하게 한다. true=폐기.
     // recover 내부의 FAILED 종결·마감 종결은 소유권 회수 행위 자체라 이 fencing 을 타지 않는다(entity 전이를 직접 호출한다).
@@ -105,14 +134,15 @@ class ItemParsingService(
         }
     }
 
-    // stale PROCESSING(프로세스 죽음으로 박동이 끊긴, 또는 시작 전 큐에서 정체된 행)을 집어 재실행 또는 종결한다.
+    // stale PROCESSING(프로세스가 죽어 박동이 끊긴 행)을 집어 재실행 또는 종결한다.
     // claim-at-least-once 를 execution at-least-once 로 끌어올리는 핵심(#461) — 기존의 "무조건 FAILED" 를 "재실행 우선"으로 바꿨다.
     //
-    // stale 판정은 updated_at 기준이다. 산 워커는 ParsingHeartbeat 가 박동으로 updated_at 을 계속 갱신하므로, updated_at 이
-    // threshold 보다 오래됐다는 건 "박동이 연속으로 끊겼다 = 프로세스가 죽었다" 는 뜻이다(더는 "단건 ≤60s" 시간 추정에 기대지 않는다).
+    // stale 판정은 updated_at 기준이다. 산 워커는 ParsingHeartbeat 가 박동으로 updated_at 을 계속 갱신하고, 일시 오류로
+    // 스스로 끝난 실행은 release 로 즉시 반납하므로, updated_at 이 threshold 보다 오래됐다는 건 "박동이 연속으로 끊겼는데
+    // 반납도 없었다 = 프로세스가 죽었다" 는 뜻이다(더는 "단건 ≤60s" 시간 추정에 기대지 않는다).
     // 그런 행을:
     //   - link·imageKey 가 둘 다 없으면(입력 없는 orphan) 되살릴 수 없으므로 즉시 FAILED. 이미지(imageKey)는 S3 raw 로 durable 해 link 처럼 재실행한다.
-    //   - attempt 가 상한(maxAttempts)에 도달했으면 더 시도하지 않고 FAILED (무한 재큐잉 방지, 절대 3분 초과 금지).
+    //   - attempt 가 실행 상한(MAX_ATTEMPTS)에 도달했으면 더 시도하지 않고 FAILED (무한 재큐잉 방지).
     //   - 그 외에는 되살림 대상으로 지목해 반환한다(DB 는 그대로) — 워커 제출은 스케줄러가 트랜잭션 밖에서 하고, attempt 는 워커가 실행에 진입할 때 소모한다.
     //
     // 되살림은 reviveSlots(호출부의 가용 워커 슬롯)만큼만 지목한다 — 제출도 못 할 지목은 로그만 늘린다. 미룬 행은
@@ -124,7 +154,6 @@ class ItemParsingService(
     fun reviveOrFailStale(
         threshold: LocalDateTime,
         batchSize: Int,
-        maxAttempts: Int,
         reviveSlots: Int,
     ): StaleProcessingOutcome {
         val stale = itemSnapshotRepository.findStaleProcessing(threshold, batchSize)
@@ -144,8 +173,8 @@ class ItemParsingService(
                     failedCount++
                     return@forEach
                 }
-            // 재시도 상한 도달: 더 되살리지 않고 종결.
-            if (snapshot.attemptCount >= maxAttempts) {
+            // 실행 상한 도달: 더 되살리지 않고 종결.
+            if (snapshot.attemptCount >= MAX_ATTEMPTS) {
                 snapshot.markFailed()
                 eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
@@ -197,5 +226,15 @@ class ItemParsingService(
         resolved.sourceImageKey?.let { return ImageClaim(snapshot.itemId, snapshot.getId(), it, expectedAttempt) }
         log.error("snapshot {} (item {}) 에 link·imageKey 둘 다 없어 claim 제외 (입력 없는 orphan)", snapshot.getId(), snapshot.itemId)
         return null
+    }
+
+    companion object {
+        // **실행** 시도 상한(초회 1 + 재실행 1). 집기(claim)·되살림(revive)이 아니라 워커가 실행에 진입할 때만 소모되므로,
+        // 제출이 거부돼 실행이 0회인 행은 이 예산을 잃지 않는다.
+        //
+        // 예산(실행 횟수)과 마감(시간)은 서로 다른 질문에 답한다 — "얼마나 오래 끌 수 있나"는 이 값이 아니라
+        // ItemParsingScheduler.DEADLINE_MINUTES 가 답한다. 상한을 소진하는 두 경로(반납 release·되살림 revive)가
+        // 같은 판정을 써야 하므로 스케줄러가 아니라 이 서비스가 정본을 쥔다.
+        const val MAX_ATTEMPTS = 2
     }
 }
