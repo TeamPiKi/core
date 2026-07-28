@@ -212,10 +212,10 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `url 이 빈 문자열이면 Bean Validation 이 먼저 걸러 400 COMMON-INVALID-INPUT 이 반환된다`() {
-        // 빈 링크의 wire code 는 LINK-001 이 아니다 — 요청 DTO 의 @NotBlank 가 컨트롤러 진입 전에 걸러
-        // MethodArgumentNotValidException → 공통 4xx code 로 나가고, ProductLink.parse 의 blank(LINK-001)
-        // 에는 닿지 않는다. LINK-001 은 도메인 자기방어(다층 방어의 안쪽 층)로만 남는다.
-        // detail 은 @NotBlank message 와 같은 문구라 사용자에겐 동일하게 보인다.
+        // 빈 링크에는 LINK code 가 없다 — 요청 DTO 의 @NotBlank 가 컨트롤러 진입 전에 걸러
+        // MethodArgumentNotValidException → 공통 4xx code 로 나가고, ProductLink.parse 의 빈 값 분기에는
+        // 닿지 않는다. 그 분기는 계약이 아닌 불변식(require)으로만 남는다.
+        // detail 은 @NotBlank message 라 사용자에겐 도메인 문구와 동일하게 보인다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -233,7 +233,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `https 가 아닌 url 은 400 LINK-003 으로 거부된다`() {
+    fun `https 가 아닌 url 은 400 LINK-002 로 거부된다`() {
         // scheme 분기 망라는 ProductLinkTest(단위)가 맡고, 여기서는 그 거부가 어떤 wire code·detail 로
         // 나가는지만 고정한다 — @NotBlank 를 통과한 뒤 ProductLink.parse 가 던지는 경로라 빈 링크와 갈린다.
         val mockMvc = buildMockMvc()
@@ -248,7 +248,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                     .content(body),
             ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("LINK-003"))
+            .andExpect(jsonPath("$.code").value("LINK-002"))
             .andExpect(jsonPath("$.detail").value("https 링크만 등록할 수 있어요."))
     }
 
@@ -270,7 +270,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                     .content(body),
             ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("LINK-002"))
+            .andExpect(jsonPath("$.code").value("LINK-001"))
             .andExpect(jsonPath("$.detail").value("올바른 링크 형식이 아니에요. 다시 확인해 주세요."))
     }
 

@@ -8,10 +8,13 @@ import kotlin.test.assertTrue
 
 class ProductLinkTest {
     @Test
-    fun `빈 문자열 또는 공백만 있으면 거부한다`() {
+    fun `빈 문자열 또는 공백만 있으면 불변식 위반으로 거부한다`() {
+        // 계약(ProductLinkException)이 아니라 불변식(require)이다 — 입력 경계의 @field:NotBlank 가 먼저 걸러
+        // 정상 요청은 여기 닿지 않으므로 code 를 배정하지 않는다. 닿았다면 어느 경계가 검증을 빠뜨린 것.
+        // message 는 캐치올 400 의 detail 로 나갈 수 있어 사용자 친화 문구를 유지한다.
         listOf("", "   ", "\t\n").forEach { raw ->
             val ex =
-                assertFailsWith<ProductLinkException>("'$raw' 는 거부되어야 함") {
+                assertFailsWith<IllegalArgumentException>("'$raw' 는 거부되어야 함") {
                     ProductLink.parse(raw)
                 }
             assertEquals("링크를 입력해 주세요.", ex.message)

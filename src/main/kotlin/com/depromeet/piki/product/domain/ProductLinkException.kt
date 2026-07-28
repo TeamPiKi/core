@@ -17,8 +17,6 @@ class ProductLinkException private constructor(
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
-        fun blank(): ProductLinkException = ProductLinkException(ProductLinkErrorCode.BLANK)
-
         // 원본 URL 은 message 에 박지 않는다. GlobalExceptionHandler 가 message 를 응답 detail·로그
         // 양쪽에 박는 구조라, 쿼리스트링/fragment 에 섞일 수 있는 토큰·세션이 외부로 새는 경로가 되기 때문.
         // 디버깅용 컨텍스트는 cause 로 연결해 stack trace 로만 남긴다.

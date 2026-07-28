@@ -66,14 +66,14 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| ITEM-004 | 400 | 상품 가격을 입력해 주세요. |"), md)
         assertTrue(md.contains("| ITEM-005 | 400 | 상품 이미지를 등록해 주세요. |"), md)
 
-        // product 도메인 이관(#799) — LINK 4개. 링크 등록 경계(위시·토너먼트 아이템 공용)의 400 이 전부 여기로 갈린다.
-        // 4개뿐이라 item 과 같이 전량 단언해 결번 없이 고정한다. 같은 400·INVALID_INPUT 이라도 사용자가 취할
-        // 행동(입력·정정·주소 교체·이미지 직접 등록)이 갈려 code 를 나눈 것이므로, 문구까지 고정해야 의미가 남는다.
+        // product 도메인 이관(#799) — LINK 3개. 링크 등록 경계(위시·토너먼트 아이템 공용)의 400 중 파싱 이후가
+        // 여기로 갈린다. 3개뿐이라 item 과 같이 전량 단언해 결번 없이 고정한다. 같은 400·INVALID_INPUT 이라도
+        // 사용자가 취할 행동(정정·주소 교체·이미지 직접 등록)이 갈려 code 를 나눈 것이므로 문구까지 고정한다.
+        // 빈 링크는 여기 없다 — @field:NotBlank 가 먼저 걸러 COMMON-INVALID-INPUT 으로 나가므로 code 미배정.
         assertTrue(md.contains("### LINK"), md)
-        assertTrue(md.contains("| LINK-001 | 400 | 링크를 입력해 주세요. |"), md)
-        assertTrue(md.contains("| LINK-002 | 400 | 올바른 링크 형식이 아니에요. 다시 확인해 주세요. |"), md)
-        assertTrue(md.contains("| LINK-003 | 400 | https 링크만 등록할 수 있어요. |"), md)
-        assertTrue(md.contains("| LINK-004 | 400 | 아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요. |"), md)
+        assertTrue(md.contains("| LINK-001 | 400 | 올바른 링크 형식이 아니에요. 다시 확인해 주세요. |"), md)
+        assertTrue(md.contains("| LINK-002 | 400 | https 링크만 등록할 수 있어요. |"), md)
+        assertTrue(md.contains("| LINK-003 | 400 | 아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요. |"), md)
     }
 
     @Test
