@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.UUID
 
 @Service
@@ -265,6 +266,41 @@ class UserService(
         return user
     }
 
+    // 잠긴 활성 조회 — 활성 확인과 쓰기를 같은 트랜잭션에서 원자화해야 하는 쓰기 경로 전용(#776).
+    // findActiveById(비잠금)와 달리 user 행을 FOR UPDATE 로 잠가, 확인~쓰기 사이에 탈퇴 cascade 가 끼어들어
+    // tombstone 위에 쓰기가 반영되는(계정 부활·PII 복원·orphan 자식 행) 경합을 닫는다. 탈퇴 cascade 도 user 행
+    // UPDATE 로 시작해 같은 락을 잡으므로, user 행을 첫 락으로 잡는 이 규약 아래 두 트랜잭션이 직렬화된다.
+    //
+    // 반드시 트랜잭션 안에서 호출한다 — FOR UPDATE 락은 트랜잭션 경계까지만 유지되므로, 트랜잭션 밖 호출은
+    // 락이 즉시 풀려 무의미한 코드 버그다(불변식 위반 → 500). 자기 트랜잭션을 열지 않고 호출부(REQUIRED)에 합류한다.
+    fun findActiveByIdForUpdate(userId: UUID): User {
+        checkInTransaction()
+        val user = userRepository.findByIdForUpdate(userId) ?: throw UserException.notFound()
+        user.deletedAt?.let { throw UserException.deletedUser() }
+        return user
+    }
+
+    // users 행 존재를 강제하지 않는 경로(FCM 토큰 등록 등, 인증만 되면 users 행 없이도 호출되던 계약)용 잠금 가드.
+    // 행이 있으면 잠그고 tombstone 이면 거부하되, 없으면 통과시킨다(기존 계약 보존). 유효한 토큰이면 prod 엔 항상
+    // users 행이 있으므로 탈퇴 유저는 여기서 걸리고, 탈퇴 cascade 와 user 행 락으로 직렬화돼 죽은 자식 행이 남지 않는다.
+    fun rejectIfWithdrawnForUpdate(userId: UUID) {
+        checkInTransaction()
+        userRepository.findByIdForUpdate(userId)?.deletedAt?.let { throw UserException.deletedUser() }
+    }
+
+    // 잠긴 활성 여부 조회(예외 없이 boolean) — 예외 대신 "조용히 건너뛰기"가 맞는 경로용(예: 스케줄러가 처리하는
+    // 지연 wish 등록). 스케줄러 경로는 tombstone 이라고 예외를 던지면 트랜잭션이 롤백돼 claim 이 되살아나 무한
+    // 재시도가 되므로, 예외 대신 이 boolean 으로 판별해 claim 은 소비하되 쓰기만 건너뛴다. 행이 없어도 false(대상 아님).
+    fun isActiveForUpdate(userId: UUID): Boolean {
+        checkInTransaction()
+        return userRepository.findByIdForUpdate(userId)?.isActive() ?: false
+    }
+
+    private fun checkInTransaction() =
+        check(TransactionSynchronizationManager.isActualTransactionActive()) {
+            "잠긴 활성 조회는 트랜잭션 안에서만 호출해야 한다 — FOR UPDATE 락은 트랜잭션 경계까지만 유지된다."
+        }
+
     // 마이페이지(GET /me) 조회 — User(정체성)와 UserDetail 의 email 을 한 트랜잭션에서 모은다.
     // email 은 미수집(게스트)·미동의·backfill 전이면 UserDetail 이 없거나 null 이라 그대로 null 로 내려간다.
     @Transactional(readOnly = true)
@@ -294,7 +330,7 @@ class UserService(
         nickname: String?,
         profileImageUrl: String?,
     ): User {
-        val user = findActiveById(userId)
+        val user = findActiveByIdForUpdate(userId)
         // 무엇이 바뀌었는지만 남긴다 — 닉네임 원문은 PII 라 값이 아니라 "어떤 필드가 변경됐나"만 로깅한다.
         val changedFields =
             buildList {
@@ -331,14 +367,14 @@ class UserService(
         userId: UUID,
         profileImageUrl: String,
     ): User {
-        val user = findActiveById(userId)
+        val user = findActiveByIdForUpdate(userId)
         user.updateProfileImage(profileImageUrl)
         return userRepository.save(user)
     }
 
     @Transactional
     fun promoteToMember(userId: UUID): User {
-        val user = findActiveById(userId)
+        val user = findActiveByIdForUpdate(userId)
         user.promoteToMember()
         return userRepository.save(user)
     }

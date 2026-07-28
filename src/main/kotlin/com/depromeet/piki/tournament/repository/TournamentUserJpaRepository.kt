@@ -14,6 +14,11 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
         userId: UUID,
     ): TournamentUser?
 
+    fun existsByTournamentIdAndUserIdAndDeletedAtIsNull(
+        tournamentId: Long,
+        userId: UUID,
+    ): Boolean
+
     fun findByTournamentIdAndDeletedAtIsNull(tournamentId: Long): List<TournamentUser>
 
     fun countByTournamentIdAndDeletedAtIsNull(tournamentId: Long): Int

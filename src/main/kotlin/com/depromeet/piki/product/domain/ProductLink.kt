@@ -39,7 +39,11 @@ class ProductLink private constructor(
 
         fun parse(raw: String): ProductLink {
             val trimmed = raw.trim()
-            if (trimmed.isBlank()) throw ProductLinkException.blank()
+            // 계약이 아니라 불변식이라 require 다 — 두 등록 DTO 의 @field:NotBlank 가 빈 값을 먼저 걸러
+            // 멀쩡한 클라이언트는 여기 닿을 수 없다. 닿았다면 어느 입력 경계가 자기 검증을 빠뜨린 것이다.
+            // 그래도 message 는 사용자 친화 문구로 둔다 — IllegalArgumentException 캐치올이 400 응답의
+            // detail 로 그대로 싣기 때문에 내부 문구를 쓰면 그 순간 사용자에게 노출된다.
+            require(trimmed.isNotBlank()) { "링크를 입력해 주세요." }
             val uri =
                 try {
                     URI.create(trimmed)

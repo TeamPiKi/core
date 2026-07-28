@@ -2,35 +2,24 @@ package com.depromeet.piki.common.imageproxy
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
+// 외부 이미지 프록시(SSRF 방어 · 크기 상한 · fetch) 실패의 계약 예외.
+// message·category·httpStatus 는 전부 errorCode 하나에서 파생한다(ImageProxyErrorCode 가 single source).
 class ImageProxyException private constructor(
-    message: String,
-    override val category: ErrorCategory,
-    override val httpStatus: HttpStatus,
-) : BaseException(message),
+    override val errorCode: ErrorCode,
+) : BaseException(errorCode.message),
     HttpMappable {
+    override val category: ErrorCategory get() = errorCode.category
+    override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
+
     companion object {
-        fun blockedDomain(): ImageProxyException =
-            ImageProxyException(
-                "허용되지 않은 이미지 도메인입니다.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun blockedDomain(): ImageProxyException = ImageProxyException(ImageProxyErrorCode.BLOCKED_DOMAIN)
 
-        fun imageTooLarge(): ImageProxyException =
-            ImageProxyException(
-                "이미지 크기가 너무 큽니다.",
-                ErrorCategory.INVALID_INPUT,
-                HttpStatus.BAD_REQUEST,
-            )
+        fun imageTooLarge(): ImageProxyException = ImageProxyException(ImageProxyErrorCode.IMAGE_TOO_LARGE)
 
-        fun fetchFailed(): ImageProxyException =
-            ImageProxyException(
-                "이미지를 불러올 수 없습니다.",
-                ErrorCategory.RETRYABLE,
-                HttpStatus.BAD_GATEWAY,
-            )
+        fun fetchFailed(): ImageProxyException = ImageProxyException(ImageProxyErrorCode.FETCH_FAILED)
     }
 }

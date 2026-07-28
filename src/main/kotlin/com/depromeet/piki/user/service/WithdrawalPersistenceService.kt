@@ -34,7 +34,11 @@ class WithdrawalPersistenceService(
     // 따라서 2회 실행돼도 같은 종단 상태가 되고 UNIQUE 충돌·예외가 나지 않는다. 완전 직렬화(락)는 불필요.
     @Transactional
     fun withdraw(userId: UUID) {
-        val user = userRepository.findById(userId) ?: throw UserException.notFound()
+        // user 행을 FOR UPDATE 로 먼저 잠근다(#776). 활성 유저 쓰기 경로(프로필 수정·wish 등록·FCM 등록)는
+        // 전부 user 행을 첫 락으로 잡으므로, 탈퇴 cascade 도 자식 테이블(wishes·user_devices 등)을 건드리기 전에
+        // user 행을 먼저 잠가 락 순서를 "user → 자식" 하나로 통일한다. 이 통일이 없으면 cascade 는 자식부터 지우고
+        // user UPDATE 는 커밋까지 미뤄져(save), 쓰기 경로(user→자식)와 락 순서가 엇갈려 데드락이 난다.
+        val user = userRepository.findByIdForUpdate(userId) ?: throw UserException.notFound()
         user.deletedAt?.let {
             log.info("이미 탈퇴 처리된 유저 — cascade 생략(멱등) userId={}", userId)
             return

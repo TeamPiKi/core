@@ -44,7 +44,10 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (URL 이 비어 있음 · 유효한 URL 형식이 아님 · https 외 스킴 · 지원하지 않는 쇼핑몰)",
+                description =
+                    "잘못된 요청 (URL 이 비어 있음 · 2048자 초과 — code: COMMON-INVALID-INPUT · " +
+                        "유효한 URL 형식이 아님 — code: LINK-001 · https 외 스킴 — code: LINK-002 · " +
+                        "지원하지 않는 쇼핑몰 — code: LINK-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -325,8 +328,10 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (보정 후에도 상품명 없음 · currentPrice 음수 · name/currency 길이 초과 · " +
-                        "빈 이미지 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                    "잘못된 요청 (보정 후에도 상품명 없음 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · currentPrice 음수 · name/currency 길이 초과 · " +
+                        "빈 이미지 — code: PRODUCTIMAGE-001 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -366,7 +371,9 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "수정할 수 없는 상태 (이미 등록 완료(READY) · 아직 대기·처리 중(PENDING·PROCESSING)) · 탈퇴한 계정(code: USER-003)",
+                description =
+                    "수정할 수 없는 상태 (이미 등록 완료(READY) — code: ITEM-001 · " +
+                        "아직 대기·처리 중(PENDING·PROCESSING) — code: ITEM-002) · 탈퇴한 계정(code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -376,7 +383,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "이미지 저장소(S3) 업로드 실패 — 재시도 가능",
+                description = "이미지 저장소(S3) 업로드 실패 — 재시도 가능 — code: STORAGE-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -625,8 +632,9 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (이미지 개수 1~5 위반 · 빈 이미지 · 이미지 타입 미지정 · " +
-                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                    "잘못된 요청 (이미지 개수 1~5 위반 · 빈 이미지 — code: PRODUCTIMAGE-001 · " +
+                        "이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -666,7 +674,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "이미지 저장 실패 (원본을 S3 에 적재하는 중 스토리지 장애 — 클라이언트는 재시도)",
+                description = "이미지 저장 실패 (원본을 S3 에 적재하는 중 스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -705,8 +713,8 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (content-type 개수 1~5 위반 · content-type 미지정 · " +
-                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                    "잘못된 요청 (content-type 개수 1~5 위반 · content-type 미지정 — code: PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -746,7 +754,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도)",
+                description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-002",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -785,7 +793,8 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (imageKey 개수 1~5 위반 · 발급 형식이 아닌 key · 아직 업로드되지 않은 이미지)",
+                    "잘못된 요청 (imageKey 개수 1~5 위반 · 발급 형식이 아닌 key — code: UPLOAD-001 · " +
+                        "아직 업로드되지 않은 이미지 — code: UPLOAD-002)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -825,7 +834,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "이미지 존재 확인 실패 (S3 HEAD 중 스토리지 장애 — 클라이언트는 재시도)",
+                description = "이미지 존재 확인 실패 (S3 HEAD 중 스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

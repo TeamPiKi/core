@@ -7,6 +7,8 @@ data class TournamentInvitePreviewResponse(
     val tournamentName: String,
     val itemCount: Int,
     val participantCount: Int,
+    // 현재 요청 유저의 참여 여부. 인증 토큰이 있으면 그 유저 기준, 없으면 false.
+    val joined: Boolean,
 ) {
     companion object {
         fun from(preview: TournamentInvitePreview): TournamentInvitePreviewResponse =
@@ -15,6 +17,7 @@ data class TournamentInvitePreviewResponse(
                 tournamentName = preview.tournamentName,
                 itemCount = preview.itemCount,
                 participantCount = preview.participantCount,
+                joined = preview.joined,
             )
     }
 }

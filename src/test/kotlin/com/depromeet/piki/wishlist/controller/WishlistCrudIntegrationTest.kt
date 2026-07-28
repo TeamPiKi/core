@@ -162,9 +162,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${guestToken(userId)}")
                     .content(body),
             ).andExpect(status().isForbidden)
-            // WishException 은 아직 code 미배정이라, handleBaseException 이 category(FORBIDDEN)로 공통 code 를 폴백해 COMMON-FORBIDDEN 을 싣는다.
-            // (위시 도메인이 자기 code 를 이관하면 이 단언을 WISH-xxx 로 바꾼다 — 그때 깨져서 갱신을 강제하는 게 의도다.)
-            .andExpect(jsonPath("$.code").value("COMMON-FORBIDDEN"))
+            // wish 도메인 이관(#797)으로 guestCannotUseWishlist 가 도메인 code(WISH-001)를 싣는다.
+            .andExpect(jsonPath("$.code").value("WISH-001"))
             .andExpect(jsonPath("$.detail").value("위시리스트는 회원만 이용할 수 있어요."))
             .andExpect(jsonPath("$.data").value(nullValue()))
     }
@@ -217,7 +216,11 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `url 이 빈 문자열이면 400 BAD_REQUEST 가 반환된다`() {
+    fun `url 이 빈 문자열이면 Bean Validation 이 먼저 걸러 400 COMMON-INVALID-INPUT 이 반환된다`() {
+        // 빈 링크에는 LINK code 가 없다 — 요청 DTO 의 @NotBlank 가 컨트롤러 진입 전에 걸러
+        // MethodArgumentNotValidException → 공통 4xx code 로 나가고, ProductLink.parse 의 빈 값 분기에는
+        // 닿지 않는다. 그 분기는 계약이 아닌 불변식(require)으로만 남는다.
+        // detail 은 @NotBlank message 라 사용자에겐 도메인 문구와 동일하게 보인다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -230,6 +233,28 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                     .content(body),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
+            .andExpect(jsonPath("$.detail").value("링크를 입력해 주세요."))
+    }
+
+    @Test
+    fun `https 가 아닌 url 은 400 LINK-002 로 거부된다`() {
+        // scheme 분기 망라는 ProductLinkTest(단위)가 맡고, 여기서는 그 거부가 어떤 wire code·detail 로
+        // 나가는지만 고정한다 — @NotBlank 를 통과한 뒤 ProductLink.parse 가 던지는 경로라 빈 링크와 갈린다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val body = objectMapper.writeValueAsString(mapOf("url" to "http://shop.example.com/products/42"))
+
+        mockMvc
+            .perform(
+                post("/api/v1/wishlists")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                    .content(body),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("LINK-002"))
+            .andExpect(jsonPath("$.detail").value("https 링크만 등록할 수 있어요."))
     }
 
     @Test
@@ -250,6 +275,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                     .content(body),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("LINK-001"))
             .andExpect(jsonPath("$.detail").value("올바른 링크 형식이 아니에요. 다시 확인해 주세요."))
     }
 
@@ -267,6 +293,22 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.length()").value(0))
             .andExpect(jsonPath("$.pageResponse.hasNext").value(false))
             .andExpect(jsonPath("$.pageResponse.nextCursor").value(nullValue()))
+    }
+
+    @Test
+    fun `숫자로 변환할 수 없는 cursor 로 조회하면 400 WISH-003 이 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                    .param("cursor", "not-a-number"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("WISH-003"))
+            .andExpect(jsonPath("$.detail").value("페이지를 불러오지 못했어요. 새로고침 해주세요."))
     }
 
     @Test
@@ -422,6 +464,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("ITEM-001"))
             .andExpect(jsonPath("$.detail").value("이미 등록된 상품은 수정할 수 없어요."))
     }
 
@@ -443,6 +486,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("ITEM-002"))
             .andExpect(jsonPath("$.detail").value("상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요."))
     }
 
@@ -490,6 +534,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("ITEM-003"))
             .andExpect(jsonPath("$.detail").value("상품 이름을 입력해 주세요."))
     }
 
@@ -802,6 +847,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 delete("/api/v1/wishlists")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("WISH-006"))
             .andExpect(jsonPath("$.detail").value("한 번에 최대 100개까지 삭제할 수 있어요."))
     }
 

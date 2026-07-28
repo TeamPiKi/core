@@ -164,13 +164,17 @@ interface TournamentApi {
 
     @Operation(
         summary = "초대 링크로 참여 화면 진입",
-        description = "초대 링크 직접 접근 시 tournamentId 만으로 토너먼트 정보(이름·아이템 수·참여자 수)를 반환한다. 인증 불필요.",
+        description = """
+            초대 링크 직접 접근 시 tournamentId 만으로 토너먼트 정보(이름·아이템 수·참여자 수)와 현재 유저의 참여 여부(joined)를 반환한다.
+            인증은 선택 — 토큰이 있으면 그 유저 기준 joined 를 계산하고, 없으면 joined=false 로 내린다.
+            joined=true 면 이미 참여한 토너먼트이므로 클라이언트는 참여 절차 없이 토너먼트 화면으로 바로 진입할 수 있다.
+        """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "조회 성공 (토너먼트 이름·아이템 수·참여자 수 반환)",
+                description = "조회 성공 (토너먼트 이름·아이템 수·참여자 수·현재 유저 참여 여부(joined) 반환)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -186,6 +190,7 @@ interface TournamentApi {
         ],
     )
     fun getInvitePreview(
+        @Parameter(hidden = true) userId: UUID?,
         @Parameter(description = "토너먼트 ID", example = "1") tournamentId: Long,
     ): ApiResponseBody<TournamentInvitePreviewResponse>
 
@@ -193,7 +198,8 @@ interface TournamentApi {
         summary = "초대 코드로 참여 화면 진입",
         description = """
             홈 다이얼로그에서 6자리 코드만 입력하는 경로 전용 — tournamentId 없이 코드만으로 조회한다.
-            코드가 유효하면 tournamentId·이름·아이템 수·참여자 수를 반환한다.
+            코드가 유효하면 tournamentId·이름·아이템 수·참여자 수와 현재 유저의 참여 여부(joined)를 반환한다.
+            인증은 선택 — 토큰이 있으면 그 유저 기준 joined 를 계산하고, 없으면 joined=false 로 내린다.
             이후 /join 또는 /join/guest 호출 시 응답의 tournamentId를 사용하면 된다.
         """,
     )
@@ -201,7 +207,7 @@ interface TournamentApi {
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "조회 성공 (tournamentId·토너먼트 이름·아이템 수·참여자 수 반환)",
+                description = "조회 성공 (tournamentId·토너먼트 이름·아이템 수·참여자 수·현재 유저 참여 여부(joined) 반환)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -217,6 +223,7 @@ interface TournamentApi {
         ],
     )
     fun getInvitePreviewByCode(
+        @Parameter(hidden = true) userId: UUID?,
         @Parameter(description = "초대 코드 (영어 대문자 3자리 + 숫자 3자리)", example = "ABC123") code: String,
     ): ApiResponseBody<TournamentInvitePreviewResponse>
 

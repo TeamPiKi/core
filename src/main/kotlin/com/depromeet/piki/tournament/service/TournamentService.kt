@@ -715,35 +715,47 @@ class TournamentService(
         return newExpiresAt
     }
 
+    // userId 는 optional — preview 는 permitAll 이라 미인증(토큰 없음)이면 null 로 들어온다.
+    // 토큰이 있으면 그 유저의 참여 여부(joined)를 계산하고, 없으면 알 수 없으므로 false.
     @Transactional(readOnly = true)
-    fun getInvitePreview(tournamentId: Long): TournamentInvitePreview {
+    fun getInvitePreview(
+        tournamentId: Long,
+        userId: UUID?,
+    ): TournamentInvitePreview {
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
         tournament.checkJoinable(null)
         val itemCount = tournamentItemRepository.countByTournamentId(tournamentId)
         val participantCount = tournamentUserRepository.countByTournamentId(tournamentId)
+        val joined = userId?.let { tournamentUserRepository.existsByTournamentIdAndUserId(tournamentId, it) } ?: false
         return TournamentInvitePreview(
             tournamentId = tournamentId,
             tournamentName = tournament.name,
             itemCount = itemCount,
             participantCount = participantCount,
+            joined = joined,
         )
     }
 
     @Transactional(readOnly = true)
-    fun getInvitePreviewByCode(code: String): TournamentInvitePreview {
+    fun getInvitePreviewByCode(
+        code: String,
+        userId: UUID?,
+    ): TournamentInvitePreview {
         val tournament =
             tournamentRepository.findTournamentByInviteCode(code)
                 ?: throw TournamentException.invalidInviteCode()
         tournament.checkJoinable(null)
         val itemCount = tournamentItemRepository.countByTournamentId(tournament.getId())
         val participantCount = tournamentUserRepository.countByTournamentId(tournament.getId())
+        val joined = userId?.let { tournamentUserRepository.existsByTournamentIdAndUserId(tournament.getId(), it) } ?: false
         return TournamentInvitePreview(
             tournamentId = tournament.getId(),
             tournamentName = tournament.name,
             itemCount = itemCount,
             participantCount = participantCount,
+            joined = joined,
         )
     }
 

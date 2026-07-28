@@ -192,7 +192,10 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (URL 미입력 · URL 형식 오류(비어 있음/유효하지 않음/https 외 스킴) · URL 2048자 초과 · 지원하지 않는 쇼핑몰 · 아이템 최대 32개 초과)",
+                description =
+                    "잘못된 요청 (URL 미입력 · URL 2048자 초과 — code: COMMON-INVALID-INPUT · " +
+                        "URL 형식 오류 — code: LINK-001(유효하지 않음)/LINK-002(https 외 스킴) · " +
+                        "지원하지 않는 쇼핑몰 — code: LINK-003 · 아이템 최대 32개 초과)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -272,7 +275,10 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (이미지 1~5장 범위 초과 · 빈 이미지 · 이미지 타입 미지정 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) · 아이템 최대 32개 초과)",
+                description =
+                    "잘못된 요청 (이미지 1~5장 범위 초과 · 빈 이미지 — code: PRODUCTIMAGE-001 · " +
+                        "이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003 · 아이템 최대 32개 초과)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -322,7 +328,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "이미지 저장 실패 (원본을 S3 에 적재하는 중 스토리지 장애 — 클라이언트는 재시도)",
+                description = "이미지 저장 실패 (원본을 S3 에 적재하는 중 스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -362,8 +368,8 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (content-type 개수 1~5 위반 · content-type 미지정 · " +
-                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                    "잘못된 요청 (content-type 개수 1~5 위반 · content-type 미지정 — code: PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -413,7 +419,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도)",
+                description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-002",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -452,7 +458,8 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (imageKey 개수 1~5 위반 · 발급 형식이 아닌 key · 아직 업로드되지 않은 이미지 · 아이템 최대 32개 초과)",
+                    "잘못된 요청 (imageKey 개수 1~5 위반 · 발급 형식이 아닌 key — code: UPLOAD-001 · " +
+                        "아직 업로드되지 않은 이미지 — code: UPLOAD-002 · 아이템 최대 32개 초과)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -502,7 +509,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "이미지 존재 확인 실패 (S3 HEAD 중 스토리지 장애 — 클라이언트는 재시도)",
+                description = "이미지 존재 확인 실패 (S3 HEAD 중 스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-003",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -543,7 +550,11 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (이름 없이 수정 시도 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · 빈 이미지 · 이미지 타입 미지정 · 지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용))",
+                description =
+                    "잘못된 요청 (이름 없이 수정 시도 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
+                        "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -583,7 +594,9 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트 · READY·PENDING·PROCESSING 상태 아이템)",
+                description =
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록 완료(READY) 아이템 — code: ITEM-001 · " +
+                        "아직 대기·처리 중(PENDING·PROCESSING) 아이템 — code: ITEM-002)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -593,7 +606,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "502",
-                description = "외부 의존성 실패 (이미지 저장소(S3) 업로드 실패 — 재시도 가능)",
+                description = "외부 의존성 실패 (이미지 저장소(S3) 업로드 실패 — 재시도 가능) — code: STORAGE-001",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
