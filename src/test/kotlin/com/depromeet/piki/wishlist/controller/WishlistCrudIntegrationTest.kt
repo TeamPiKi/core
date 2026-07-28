@@ -244,6 +244,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
                     .content(body),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("LINK-002"))
             .andExpect(jsonPath("$.detail").value("올바른 링크 형식이 아니에요. 다시 확인해 주세요."))
     }
 

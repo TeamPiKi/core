@@ -1761,6 +1761,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"url":"https://kream.co.kr/products/950123"}"""),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("LINK-004"))
             .andExpect(jsonPath("$.detail").value("아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요."))
 
         // 등록 입력 경계에서 차단되므로 tournament item 이 생성되면 안 된다(검증 위치가 뒤로 밀려 일부라도 영속화되는 회귀 방지).
