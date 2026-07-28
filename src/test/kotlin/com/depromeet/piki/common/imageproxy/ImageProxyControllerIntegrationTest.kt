@@ -60,8 +60,9 @@ class ImageProxyControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
                     .param("url", "https://msscdn.net/image.jpg"),
             ).andExpect(status().isBadGateway)
-            // 미이관 도메인 5xx(RETRYABLE)도 handleBaseException 폴백으로 COMMON-RETRYABLE 을 body 에 싣는다 — 5xx body 계약 가드.
-            .andExpect(jsonPath("$.code").value("COMMON-RETRYABLE"))
+            // code 이관(#800) 전에는 공통 폴백 COMMON-RETRYABLE 이 실렸다. 이제 도메인 code 가 실려 클라가
+            // "외부 이미지 서버 실패" 를 다른 502(스토리지 장애 등)와 구분할 수 있다 — 5xx body 계약 가드.
+            .andExpect(jsonPath("$.code").value("PROXY-003"))
             .andExpect(jsonPath("$.detail").value(ImageProxyException.fetchFailed().message))
     }
 
