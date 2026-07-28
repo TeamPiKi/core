@@ -46,7 +46,25 @@ class ImageProxyControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
                     .param("url", "https://not-allowed-domain.com/image.jpg"),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("PROXY-001"))
             .andExpect(jsonPath("$.detail").value(ImageProxyException.blockedDomain().message))
+    }
+
+    @Test
+    fun `상한을 넘는 이미지면 400 imageTooLarge 응답이 반환된다`() {
+        // 같은 400 이라도 차단 도메인(PROXY-001)과 크기 초과(PROXY-002)는 사용자가 취할 행동이 달라 code 로 갈린다.
+        // 두 사유가 실제 응답에서 서로 다른 code 로 나가는지 고정한다 — 카탈로그 테스트는 문서만 볼 뿐 wire 를 못 본다.
+        val token = jwtProvider.generateAccessToken(UUID.randomUUID(), IdentityType.GUEST)
+        stubImageProxyFetcher.handler = { throw ImageProxyException.imageTooLarge() }
+
+        buildMockMvc()
+            .perform(
+                get("/api/v1/image-proxy")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
+                    .param("url", "https://msscdn.net/huge.jpg"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("PROXY-002"))
+            .andExpect(jsonPath("$.detail").value(ImageProxyException.imageTooLarge().message))
     }
 
     @Test
