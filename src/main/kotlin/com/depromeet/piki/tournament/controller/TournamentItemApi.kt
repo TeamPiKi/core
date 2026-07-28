@@ -192,7 +192,10 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (URL 미입력 · URL 형식 오류(비어 있음/유효하지 않음/https 외 스킴) · URL 2048자 초과 · 지원하지 않는 쇼핑몰 · 아이템 최대 32개 초과)",
+                description =
+                    "잘못된 요청 (URL 미입력 · URL 2048자 초과 — code: COMMON-INVALID-INPUT · " +
+                        "URL 형식 오류 — code: LINK-001(유효하지 않음)/LINK-002(https 외 스킴) · " +
+                        "지원하지 않는 쇼핑몰 — code: LINK-003 · 아이템 최대 32개 초과)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
