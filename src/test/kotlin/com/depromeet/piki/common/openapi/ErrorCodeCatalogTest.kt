@@ -65,6 +65,29 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| ITEM-003 | 400 | 상품 이름을 입력해 주세요. |"), md)
         assertTrue(md.contains("| ITEM-004 | 400 | 상품 가격을 입력해 주세요. |"), md)
         assertTrue(md.contains("| ITEM-005 | 400 | 상품 이미지를 등록해 주세요. |"), md)
+
+        // product 도메인 이관(#799) — LINK 3개. 링크 등록 경계(위시·토너먼트 아이템 공용)의 400 중 파싱 이후가
+        // 여기로 갈린다. 3개뿐이라 item 과 같이 전량 단언해 결번 없이 고정한다. 같은 400·INVALID_INPUT 이라도
+        // 사용자가 취할 행동(정정·주소 교체·이미지 직접 등록)이 갈려 code 를 나눈 것이므로 문구까지 고정한다.
+        // 빈 링크는 여기 없다 — @field:NotBlank 가 먼저 걸러 COMMON-INVALID-INPUT 으로 나가므로 code 미배정.
+        assertTrue(md.contains("### LINK"), md)
+        assertTrue(md.contains("| LINK-001 | 400 | 올바른 링크 형식이 아니에요. 다시 확인해 주세요. |"), md)
+        assertTrue(md.contains("| LINK-002 | 400 | https 링크만 등록할 수 있어요. |"), md)
+        assertTrue(md.contains("| LINK-003 | 400 | 아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요. |"), md)
+    }
+
+    @Test
+    fun `Snapshot·Extractor code 는 공개 카탈로그에 등록되지 않는다 (비동기 파싱 워커 전용)`() {
+        // ProductSnapshotException·ProductExtractorException 의 유일한 소비자는 비동기 파싱 워커
+        // (AsyncItemParsingWorker·AsyncImageParsingWorker)다. 워커가 잡아 item 을 FAILED 로 전이시키고 메트릭으로
+        // 집계할 뿐 GlobalExceptionHandler 를 거치지 않아 wire code 로 나가지 않는다 — 클라가 절대 못 받는 code 를
+        // 공개 카탈로그에 넣으면 code→문구 매핑에 노이즈만 된다. 실수로 registry 에 등록되는 회귀를 막는 가드.
+        val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
+
+        assertTrue(ErrorCodeRegistry.all.none { it.code.startsWith("SNAPSHOT-") }, "ProductSnapshot code 가 registry 에 새어들어옴")
+        assertTrue(ErrorCodeRegistry.all.none { it.code.startsWith("EXTRACTOR-") }, "ProductExtractor code 가 registry 에 새어들어옴")
+        assertTrue(!md.contains("SNAPSHOT-"), md)
+        assertTrue(!md.contains("EXTRACTOR-"), md)
     }
 
     @Test

@@ -8,6 +8,7 @@ import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.notification.domain.NotificationErrorCode
+import com.depromeet.piki.product.domain.ProductLinkErrorCode
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.UserErrorCode
 import com.depromeet.piki.wishlist.domain.WishErrorCode
@@ -31,7 +32,9 @@ object ErrorCodeRegistry {
             addAll(TournamentErrorCode.entries)
             addAll(WishErrorCode.entries)
             addAll(ItemErrorCode.entries)
+            addAll(ProductLinkErrorCode.entries)
             // AnnouncementImageErrorCode 는 어드민 SSR 전용이라 의도적으로 미등록(해당 enum 주석 참고).
+            // ProductSnapshotErrorCode·ProductExtractorErrorCode 도 비동기 파싱 워커 전용이라 같은 이유로 미등록.
             // 도메인 이관 시 여기에 addAll(XxxErrorCode.entries) 추가
 
         }
