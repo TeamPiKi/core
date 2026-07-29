@@ -13,6 +13,7 @@
 .claude/commands/issue.md
 .claude/commands/session-check.md
 .claude/commands/session-close.md
+.claude/rules/testing-principles.md
 
 # IDE - 개인 설정 제외
 .idea/*
