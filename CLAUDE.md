@@ -246,8 +246,9 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 테스트
 
-테스트 분류·가치 판단·네이밍·모킹/stub·컨텍스트 캐싱·셋업·기계 강제 등 모든 테스트 규약은 별도 파일에 둔다.
+테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**(분류·가치 판단·결정 트리·모킹 금지·셋업·네이밍·기계 강제 + JVM/Spring 공통)이고 `install.sh` 가 설치하며, **이 repo 의 Kotlin·MySQL 바인딩**은 체크인된 파일이 갖는다.
 
+@.claude/rules/testing-principles.md
 @.claude/rules/testing-convention.md
 
 ## DTO ↔ 도메인 매핑
