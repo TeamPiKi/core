@@ -58,9 +58,12 @@ class ItemSnapshot(
     var extractedAt: LocalDateTime? = extractedAt
         protected set
 
-    // 파싱 실행 시도 횟수 (execution at-least-once, #461). claim(markProcessing)에서 1 이 되고, recover 의 재실행(reclaim)마다 +1.
-    // recover 가 이 값으로 "상한 도달 → FAILED 종결" 여부를 판단한다(무한 재큐잉 방지). 증가 자체가 updated_at 을
-    // 갱신(dirty checking)해 재실행 시점부터 stale 시계를 다시 흐르게 한다 — recover 가 막 재실행한 행을 또 stale 로 오판하지 않는다.
+    // **실행을 실제로 시작한 횟수** (execution at-least-once, #461). 워커가 실행에 진입하는 순간 원자적으로 +1 하며
+    // 그 시도의 소유권을 가져간다(ParsingOwnership.acquire). 집기(claim)·되살림(revive)은 이 값을 건드리지 않는다 —
+    // 집혔지만 워커 제출이 거부돼 실행이 0회인 행이 예산을 소모하는 불공정을 없애기 위해서다(#802).
+    // recover 가 이 값으로 "상한 도달 → FAILED 종결" 을 판단한다. 동시에 소유권 fencing 토큰이다: 획득 시점의 값을
+    // 워커까지 실어, 소유권이 넘어간 뒤 뒤늦게 도착한 좀비 워커의 박동(renew)·전이(markReady/markFailed)를 불일치로 걸러낸다.
+    // "얼마나 오래 끌 수 있나" 는 이 값이 아니라 created_at 기준 마감이 책임진다 (예산과 마감의 역할 분리).
     @Column(name = "attempt_count", nullable = false)
     var attemptCount: Int = attemptCount
         protected set
@@ -91,23 +94,34 @@ class ItemSnapshot(
         this.currency = newCurrency
     }
 
-    // PENDING → PROCESSING. 디스패처가 outbox 에서 작업을 집어(claim) 실행을 시작할 때 전이한다.
+    // PENDING → PROCESSING. 디스패처가 outbox 에서 작업을 집을(claim) 때 전이한다.
     // PENDING 이 아닌데 호출되면 디스패처가 잘못된 버전을 집은 코드 버그이므로 check(500).
-    // attemptCount 를 1 로 올려 "첫 실행 시도"를 기록한다. 이 전이로 updated_at 이 갱신돼, recover 의 stale 판정이 이 시각을 본다.
+    // **attemptCount 는 건드리지 않는다** — 집기는 "이 작업을 워커에게 넘긴다"는 지목일 뿐이고, 시도 소모는 워커가
+    // 실행에 진입할 때(ParsingOwnership.acquire) 일어난다. 제출이 거부돼 실행이 0회인 행이 예산을 잃지 않게 하는 분리다.
+    // 이 전이로 updated_at 이 갱신돼 recover 의 stale 판정 시계가 여기서 시작한다.
     fun markProcessing() {
         check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 PROCESSING 으로 claim 할 수 없다" }
         status = ItemStatus.PROCESSING
-        attemptCount++
     }
 
-    // PROCESSING 유지 + 시도 횟수 +1. recover 가 stale PROCESSING(워커 크래시·실행 누락 등으로 실행이 끝나지 않은 행)을
-    // 재실행할 때 호출한다 — claim-at-least-once 를 execution at-least-once 로 끌어올리는 핵심 전이다(#461).
-    // PROCESSING 이 아닌데 호출되면 recover 가 잘못된 행을 집은 코드 버그이므로 check(500).
-    // 상태는 그대로 두되 attemptCount 증가가 updated_at 을 갱신(dirty checking)해, 이번 재실행 시점부터 stale 윈도가 다시 흐른다.
-    // 상한 도달 여부 판단은 호출부(recover)가 attemptCount 로 한다 — 도메인은 전이만, 정책(상한 수)은 스케줄러가 쥔다.
-    fun reclaim() {
-        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 재실행 claim 할 수 없다" }
-        attemptCount++
+    // PROCESSING → PENDING. 일시 오류로 이번 실행이 결론 없이 끝났을 때, 워커가 소유권을 **즉시 반납**한다.
+    // 반납하지 않으면 다음 실행이 stale 판정(마지막 박동 + 임계)을 기다려야 해, 산 워커가 멀쩡히 박동한 시간만큼
+    // 회수가 통째로 늦어진다 — 박동이 "죽음 감지"를 정확하게 만든 대가로 생긴 지연이라 반납으로 되돌린다(#802).
+    // attemptCount 는 유지한다: 실행은 실제로 한 번 일어났으므로 예산은 소모된 게 맞다. 상한 도달 여부는 서비스가 보고
+    // 반납 대신 종결한다 — 도메인은 "되돌린다"는 사실만 표현한다.
+    fun release() {
+        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 반납할 수 없다" }
+        status = ItemStatus.PENDING
+    }
+
+    // PENDING·PROCESSING → FAILED. 마감(created_at 기준 상한) 초과로 종결한다.
+    // attempt 예산·박동과 무관한 벽시계 판정이라, 아직 집히지 않은 PENDING 도 대상이다(영구 정체 방지).
+    // 이미 터미널인 행에 호출되면 recover 가 잘못된 행을 집은 코드 버그이므로 check(500).
+    fun expire() {
+        check(status == ItemStatus.PENDING || status == ItemStatus.PROCESSING) {
+            "이미 종결된 snapshot(status=$status)은 마감 종결할 수 없다"
+        }
+        status = ItemStatus.FAILED
     }
 
     // PROCESSING → READY. 백그라운드 파싱이 성공해 추출 결과(snapshot)를 채우며 전이한다.
@@ -207,7 +221,9 @@ class ItemSnapshot(
         // 등록 시작점 — 추출 전 PENDING 버전(outbox 적재). URL·이미지 두 경로가 공유한다(이미지 입력도 S3 raw 로 durable
         // 적재되므로 같은 outbox 에 태운다). 등록은 이 행을 커밋만 하고 즉시 반환하며, 디스패처가 PENDING 을 집어
         // markProcessing 으로 claim 한 뒤 워커가 파싱한다. @Async 유실(인스턴스 재시작 등)과 무관하게 DB 의 PENDING 행이
-        // 작업의 진실 원천이라, 반드시 한 번은 claim 돼 실행이 시작된다(최소 1회 실행 보장).
+        // 작업의 진실 원천이라, **마감 안에 슬롯이 나기만 하면** 반드시 claim 돼 실행이 시작된다.
+        // (마감까지 슬롯이 끝내 나지 않으면 실행 0회로 FAILED 종결된다 — expire. 지속 과부하에서 무한 대기하느니
+        //  사용자에게 결론을 주는 쪽을 택한 것이고, 그 빈도는 REASON_DEADLINE 메트릭이 관측한다.)
         fun pending(itemId: Long): ItemSnapshot = ItemSnapshot(itemId = itemId, status = ItemStatus.PENDING)
     }
 }

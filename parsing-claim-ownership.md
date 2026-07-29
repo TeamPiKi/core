@@ -20,9 +20,10 @@
 
 ### 1.3 보장
 
-- execution at-least-once(실행이 최소 한 번은 반드시 일어남 - 유실만 막고, 중복 실행 가능성은 허용): 등록 트랜잭션이 PENDING 커밋 = 의도의 영속화. 인메모리 큐 유실과 무관하게 반드시 한 번은 claim 된다.
-- 일시 오류(네트워크·timeout·5xx)는 FAILED 로 종결하지 않고 PROCESSING 유지, 갱신이 끊긴 행은 recover 가 되살려 재실행한다. 확정 실패(extractor 가 "다시 해도 같은 결과"라는 뜻으로 돌려주는 422 응답)는 즉시 종결.
-- 재실행 상한(2회)이 종결을 보증한다. 재시도 가치 판정(어떤 실패가 일시인가)은 extractor 의 422 계약이 쥔다. 되살림 판정의 세부(시계·임계)에는 미약한 결함이 알려져 있어 별도로 개선 중이며, 이 문서는 그 세부를 고정하지 않는다.
+- execution at-least-once(실행이 최소 한 번은 반드시 일어남 - 유실만 막고, 중복 실행 가능성은 허용): 등록 트랜잭션이 PENDING 커밋 = 의도의 영속화. 인메모리 큐 유실과 무관하게, 마감 안에 워커 슬롯이 나기만 하면 반드시 claim 된다.
+- 일시 오류(네트워크·timeout·5xx)는 FAILED 로 종결하지 않고 워커가 소유권을 반납(release, PROCESSING→PENDING)해 다음 tick 이 곧바로 다시 집는다. 반납해 줄 주체가 사라진 경우(프로세스 죽음)만 recover 가 stale 로 되살린다. 확정 실패(extractor 가 "다시 해도 같은 결과"라는 뜻으로 돌려주는 422 응답)는 즉시 종결.
+- 종결은 **두 시계가 각자 보증**한다(#802): 실행 예산(상한 2회)은 "몇 번 해봤나"를, 마감(created_at 기준 3분)은 "얼마나 오래 끌었나"를 답한다. 예산은 워커가 실행에 진입할 때만 소모되므로 제출이 거부돼 실행이 0회인 행은 예산을 잃지 않고, 마감은 예산·박동·슬롯과 무관한 벽시계라 슬롯이 없어 끝내 집히지 못한 PENDING 도 종결한다. 재시도 가치 판정(어떤 실패가 일시인가)은 extractor 의 422 계약이 쥔다.
+- 되살림 판정의 시계는 heartbeat 로 죽음 감지 전용이 됐다(#802): 산 워커가 박동(renew)으로 updated_at 을 주기적으로 갱신하므로, stale = "박동이 연속으로 끊겼는데 반납도 없었다 = 프로세스가 죽었다" 만 남고 느린 단건을 stale 로 오판하지 않는다. 되살림으로 소유권을 잃은 좀비는 attempt 를 fencing 토큰으로 쓴 박동·전이의 0행 매치가 막는다.
 
 ## 2. 패턴 분류 - outbox 인가, 상태머신인가
 
@@ -132,5 +133,5 @@ SSOT(single source of truth)는 같은 사실의 정본을 한 곳에만 둔다�
 
 ## 부록 - 관련 코드와 발견
 
-- 관련 코드: `ItemParsingScheduler`(dispatch·recover), `AsyncItemParsingWorker`·`AsyncImageParsingWorker`(단건 시도·전이), `HttpImageSnapshotExtractor`(이미지 원격 위임), `ItemStatus`(상태 계약), `ItemParsingService.retryOrFailStaleProcessing`(재실행·종결 판정).
+- 관련 코드: `ItemParsingScheduler`(dispatch·recover), `AsyncItemParsingWorker`·`AsyncImageParsingWorker`(단건 시도·전이·반납), `HttpImageSnapshotExtractor`(이미지 원격 위임), `ItemStatus`(상태 계약), `ItemParsingService`(claim·revive·release·expire 판정), `ParsingHeartbeat`·`ParsingOwnership`(박동·소유권).
 - 주석 드리프트 발견: `ItemStatus.PENDING` 의 "이미지 등록 경로는 PENDING 을 거치지 않고 곧장 PROCESSING" 은 이미지 durable 화 이전 서술로, `WishlistApiExamples` 의 "이미지도 outbox 적재 PENDING" 과 어긋난다. 별도 정리 후보.
