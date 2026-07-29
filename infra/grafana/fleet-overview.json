@@ -110,7 +110,7 @@
       "id": 1,
       "type": "stat",
       "title": "서비스 상태 (up)",
-      "description": "label opt-in 수집 대상 서비스별 생존. 스크레이프 실패(앱 다운·포트 불통)면 DOWN.",
+      "description": "label opt-in 수집 대상 서비스별 생존. 스크레이프 실패(앱 다운·포트 불통)면 DOWN. max by (job) 으로 blue-green 슬롯을 병합해 죽은 슬롯 시계열이 유령으로 남지 않는다 (#829).",
       "gridPos": {
         "h": 5,
         "w": 12,
@@ -172,7 +172,7 @@
             "type": "prometheus",
             "uid": "${DS_PROM}"
           },
-          "expr": "up{environment=\"$environment\", job=~\"$service\"}",
+          "expr": "max by (job) (up{environment=\"$environment\", job=~\"$service\"})",
           "legendFormat": "{{job}}"
         }
       ]
@@ -224,7 +224,7 @@
             "type": "prometheus",
             "uid": "${DS_PROM}"
           },
-          "expr": "process_uptime_seconds{environment=\"$environment\", job=~\"$service\"}",
+          "expr": "max by (job) (process_uptime_seconds{environment=\"$environment\", job=~\"$service\"})",
           "legendFormat": "{{job}}"
         },
         {
@@ -233,7 +233,7 @@
             "type": "prometheus",
             "uid": "${DS_PROM}"
           },
-          "expr": "time() - process_start_time_seconds{environment=\"$environment\", job=\"piki-renderer\", job=~\"$service\"}",
+          "expr": "max by (job) (time() - process_start_time_seconds{environment=\"$environment\", job=\"piki-renderer\", job=~\"$service\"})",
           "legendFormat": "piki-renderer"
         }
       ]
