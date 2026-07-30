@@ -1101,6 +1101,19 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val ti40k = items[1].getId()
         val ti20k = items[2].getId()
 
+        // 삽입 인접이지만 가격 인접이 아닌 조합은 거부된다 - 이 케이스가 이관이 막은 구멍 그 자체다.
+        // (전용 위조 페어 테스트는 삽입 순서와 가격 순서가 같아 이 구분을 못 잡는다)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti40k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.INVALID_MATCH_PAIR.code))
+
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/matches")
