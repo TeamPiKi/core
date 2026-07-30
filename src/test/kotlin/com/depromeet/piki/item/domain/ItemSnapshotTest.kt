@@ -96,6 +96,27 @@ class ItemSnapshotTest {
     }
 
     @Test
+    fun `markReady 는 추출 경로를 출처로 번역해 기록한다 - 구버전 응답은 미기록`() {
+        val fromParser = ItemSnapshot(itemId = 1L)
+        fromParser.markReady(
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000, extractionMethod = "STRUCTURED"),
+        )
+        assertEquals(ItemSnapshotSource.SERVER, fromParser.source)
+
+        val fromLlm = ItemSnapshot(itemId = 1L)
+        fromLlm.markReady(
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000, extractionMethod = "LLM"),
+        )
+        assertEquals(ItemSnapshotSource.SERVER_LLM, fromLlm.source)
+
+        val legacy = ItemSnapshot(itemId = 1L)
+        legacy.markReady(
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000),
+        )
+        assertNull(legacy.source)
+    }
+
+    @Test
     fun `markReady 시 name 이 없으면 READY 불변식 위반으로 실패한다`() {
         val snapshot = ItemSnapshot(itemId = 1L)
         assertFailsWith<IllegalArgumentException> {
