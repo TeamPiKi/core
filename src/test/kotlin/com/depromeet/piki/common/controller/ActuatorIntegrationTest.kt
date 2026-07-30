@@ -3,6 +3,7 @@ package com.depromeet.piki.common.controller
 import com.depromeet.piki.support.IntegrationTestSupport
 import io.micrometer.core.instrument.Timer
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import io.micrometer.observation.ObservationRegistry
 import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -16,6 +17,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
+import org.springframework.web.filter.ServerHttpObservationFilter
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
@@ -26,6 +28,14 @@ class ActuatorIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var metricsProperties: MetricsProperties
+
+    @Autowired
+    private lateinit var observationRegistry: ObservationRegistry
+
+    companion object {
+        // OTel 표준 explicit bucket 경계 14개 (5ms 부터 10s) — application.yml distribution.slo 와 짝
+        private val OTEL_DEFAULT_BOUNDARIES = listOf(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0)
+    }
 
     @Test
     fun `GET actuator health - 인증 없이 200, status UP 이 와야 한다 (Alloy scrape 가드)`() {
@@ -96,9 +106,41 @@ class ActuatorIntegrationTest : IntegrationTestSupport() {
                 .map { it.bucket(TimeUnit.SECONDS) }
                 .filter { it.isFinite() } // +Inf 버킷은 SLO 설정과 무관하게 붙으므로 제외
 
-        // OTel 표준 explicit bucket 경계 14개 (5ms 부터 10s)
-        val otelDefaultBoundaries = listOf(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0)
-        assertEquals(otelDefaultBoundaries, buckets)
+        assertEquals(OTEL_DEFAULT_BOUNDARIES, buckets)
+    }
+
+    @Test
+    fun `실제 요청을 기록한 뒤 actuator prometheus 가 le 경계 전부를 노출한다 (exposition 경로 가드)`() {
+        // 위 바인딩 가드는 로컬 SimpleMeterRegistry 격리라 실제 MVC 계측(ServerHttpObservationFilter)과
+        // PrometheusMeterRegistry 의 텍스트 노출 경로를 안 탄다 — 그 경로가 끊겨도(예: 관측 필터·핸들러 배선
+        // 회귀) 초록인 사각이 남는다. 그래서 실제 요청 한 건을 관측 필터로 기록하고, Alloy 가 긁는 바로 그
+        // 텍스트에 bucket family 와 14개 le 경계가 전부 나오는지 검증한다. 요청 대상은 /health —
+        // permitAll 이면서 /actuator 밖이라 ObservationConfig 의 actuator 제외에도 안 걸린다.
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .addFilters<DefaultMockMvcBuilder>(ServerHttpObservationFilter(observationRegistry))
+                .build()
+
+        mockMvc.perform(get("/health")).andExpect(status().isOk)
+
+        val metricsText =
+            mockMvc
+                .perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk)
+                .andReturn()
+                .response
+                .contentAsString
+
+        // le 값은 렌더링 표기(1.0 vs 1 등)에 묶이지 않게 숫자로 파싱해 비교한다. +Inf 는 숫자 패턴에 안 걸려 자연 제외.
+        val exposedBoundaries =
+            Regex("http_server_requests_seconds_bucket\\{[^}]*le=\"([0-9.]+)\"")
+                .findAll(metricsText)
+                .map { it.groupValues[1].toDouble() }
+                .toSortedSet()
+                .toList()
+        assertEquals(OTEL_DEFAULT_BOUNDARIES, exposedBoundaries)
     }
 
     @Test
