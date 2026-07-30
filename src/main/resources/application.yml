@@ -187,6 +187,14 @@ management:
     tags:
       # Grafana Cloud 에서 서비스 단위로 메트릭을 구분하는 공통 라벨.
       application: ${spring.application.name}
+    distribution:
+      slo:
+        # 지연 분위수(histogram_quantile)용 버킷 — 대시보드 지연 패널(p50/p95/p99)이
+        # http_server_requests_seconds_bucket 을 읽으므로 이 설정이 빠지면 그 패널이 전부 No data 다.
+        # 경계는 OTel 표준 14개. 풀 히스토그램(percentiles-histogram, 약 66버킷)은 현재 http 라벨 조합
+        # 102개 기준 +약 6,700 시리즈로 Grafana Cloud 무료 포함량(10k)을 초과해 쓰지 않는다 —
+        # 이 14경계는 +약 1,530 으로 한도 안 (#839 실측).
+        "[http.server.requests]": 5ms,10ms,25ms,50ms,75ms,100ms,250ms,500ms,750ms,1s,2500ms,5s,7500ms,10s
   tracing:
     sampling:
       # 모든 응답·로그에 traceId 가 빠짐없이 찍히고 모든 요청이 trace 로 export 되도록 1.0 으로 둔다
