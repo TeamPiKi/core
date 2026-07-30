@@ -214,6 +214,50 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
     }
 
+    @Test
+    fun `결승을 재전송하면 COMPLETED 여도 409 가 아니라 같은 순위 결과를 다시 받는다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = startTournament(mockMvc, itemCount = 2)
+        val items = tournamentItemIdsOf(tournamentId)
+
+        mockMvc
+            .perform(recordMatch(tournamentId, items[0], items[1], winner = items[0], round = 2))
+            .andExpect(status().isOk)
+        val afterFirst = historyCountOf(tournamentId)
+
+        // 결승 응답을 못 받고 재전송하는 경우가 가장 흔한 재시도다. 결승 기록으로 토너먼트가 COMPLETED 로
+        // 바뀌므로, 진행 중 검사가 멱등 판정보다 앞에 있으면 이 케이스만 멱등에서 빠져 409 가 났다.
+        mockMvc
+            .perform(recordMatch(tournamentId, items[0], items[1], winner = items[0], round = 2))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.code").doesNotExist())
+            .andExpect(jsonPath("$.data.nextMatch").doesNotExist())
+            .andExpect(jsonPath("$.data.completed.result[0].rank").value(1))
+            .andExpect(jsonPath("$.data.completed.result[0].tournamentItemId").value(items[0]))
+            .andExpect(jsonPath("$.data.completed.result[1].tournamentItemId").value(items[1]))
+
+        assertEquals(afterFirst, historyCountOf(tournamentId), "결승 재전송이 기록을 중복 적재했다")
+    }
+
+    @Test
+    fun `완료된 토너먼트의 결승을 다른 승자로 재전송하면 409 TOURNAMENT-035 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = startTournament(mockMvc, itemCount = 2)
+        val items = tournamentItemIdsOf(tournamentId)
+
+        mockMvc
+            .perform(recordMatch(tournamentId, items[0], items[1], winner = items[0], round = 2))
+            .andExpect(status().isOk)
+
+        // 완료 후에도 결과 뒤집기는 멱등이 아니다 - 진행 중 검사(409 TOURNAMENT-006)보다
+        // 구체적인 사유인 "이미 기록된 대결" 로 답한다.
+        mockMvc
+            .perform(recordMatch(tournamentId, items[0], items[1], winner = items[1], round = 2))
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.MATCH_ALREADY_RECORDED.code))
+            .andExpect(jsonPath("$.data").doesNotExist())
+    }
+
     private data class Match(
         val first: Long,
         val second: Long,

@@ -557,7 +557,9 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentByIdForUpdate(command.tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        if (!tournament.isInProgress()) throw TournamentException.notInProgressTournament()
+        // 진행 중 검사는 "새 매치를 기록해도 되나" 를 묻는 것이라 멱등 판정 뒤로 미룬다 —
+        // 결승을 기록하면 토너먼트가 즉시 COMPLETED 로 바뀌므로, 여기서 먼저 막으면
+        // 가장 흔한 재시도(결승 응답을 못 받고 재전송)만 멱등에서 빠진다.
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(command.tournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
@@ -599,6 +601,19 @@ class TournamentService(
                 if (recorded.selectedTournamentItemId != command.selectedTournamentItemId) {
                     throw TournamentException.matchAlreadyRecorded()
                 }
+                // 결승을 재전송한 경우 토너먼트는 이미 COMPLETED 다 — 최초 응답과 같은 순위 결과를 재구성해 돌려준다.
+                // 그러지 않으면 클라이언트가 최종 순위를 못 받고, 방금 선택을 마친 사용자에게
+                // "토너먼트가 진행 중일 때만 할 수 있어요" 가 뜬다.
+                if (tournament.isCompleted()) {
+                    return RecordMatchResult(
+                        nextMatch = null,
+                        completed = buildCompleted(
+                            tournament, histories, computeHasGroupResult(tournament),
+                            tournamentUser.getId() == tournament.ownerTournamentUserId,
+                            canAddItemForTournament(tournament, userId),
+                        ),
+                    )
+                }
                 // 그 매치가 속한 라운드로 다음 매치를 다시 파생한다. 라운드가 이미 끝났으면 null 이 나오고,
                 // 클라이언트는 현행대로 GET 을 다시 불러 다음 라운드를 받는다.
                 return RecordMatchResult(
@@ -608,6 +623,9 @@ class TournamentService(
                     completed = null,
                 )
             }
+
+        // 재시도가 아닌 새 매치 기록이므로 여기서부터는 진행 중이어야 한다.
+        if (!tournament.isInProgress()) throw TournamentException.notInProgressTournament()
 
         val eliminatedItemIds = histories.map { it.loser() }.toSet()
         if (command.firstTournamentItemId in eliminatedItemIds || command.secondTournamentItemId in eliminatedItemIds) {

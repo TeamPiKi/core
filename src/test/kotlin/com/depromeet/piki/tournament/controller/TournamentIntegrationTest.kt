@@ -26,6 +26,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
@@ -515,26 +516,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-matches 에서 이미 COMPLETED 인 토너먼트이면 409 를 반환한다`() {
+    fun `POST tournaments-id-matches 에서 COMPLETED 인 토너먼트에 기록되지 않은 매치를 보내면 409 를 반환한다`() {
+        // 같은 매치 재전송은 멱등 성공이므로(#683) 409 를 보려면 "기록되지 않은 새 매치" 여야 한다.
+        // 그 판정이 진행 중 검사보다 앞에 있어, 완료된 토너먼트에 새 매치를 보내면 여기서 걸린다.
         val mockMvc = buildMockMvc()
-        val (tournamentId, item1Id, item2Id) = startTournamentWith2Items(mockMvc)
-        val matchBody =
-            """{"currentRound":2,"firstTournamentItemId":$item1Id,"secondTournamentItemId":$item2Id,"selectedTournamentItemId":$item1Id}"""
-
+        val item1Id = saveWishItem(name = "아이템1", price = 10_000)
+        val item2Id = saveWishItem(name = "아이템2", price = 20_000)
+        val item3Id = saveWishItem(name = "아이템3", price = 30_000)
+        val item4Id = saveWishItem(name = "아이템4", price = 40_000)
+        val tournamentId = createTournament(mockMvc)
+        addItemsToTournament(mockMvc, tournamentId, userId, item1Id, item2Id, item3Id, item4Id)
         mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(matchBody),
+            post("/api/v1/tournaments/$tournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
+        val ti = items.map { it.getId() }
 
+        // 4강 두 매치 + 결승까지 치러 COMPLETED 로 만든다.
+        listOf(
+            """{"currentRound":4,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[1]},"selectedTournamentItemId":${ti[0]}}""",
+            """{"currentRound":4,"firstTournamentItemId":${ti[2]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[2]}}""",
+            """{"currentRound":2,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[2]},"selectedTournamentItemId":${ti[0]}}""",
+        ).forEach { body ->
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/matches")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body),
+                ).andExpect(status().isOk)
+        }
+
+        // 한 번도 치른 적 없는 조합(4강에서 탈락한 둘) → 멱등에 안 걸리고 진행 중 검사에서 409
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/matches")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(matchBody),
+                    .content(
+                        """{"currentRound":2,"firstTournamentItemId":${ti[1]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[1]}}""",
+                    ),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.NOT_IN_PROGRESS_TOURNAMENT.code))
     }
 
     @Test
