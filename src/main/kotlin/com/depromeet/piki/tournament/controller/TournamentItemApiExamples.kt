@@ -148,17 +148,15 @@ class TournamentItemApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "수정 성공 (FAILED → READY)",
+                            name = "수기 수정 성공 (MANUAL 새 버전으로 교체)",
                             payload = ApiResponseBody.ok<Unit>(),
                         )
-                        add(ItemException.nameRequiredForReady(), name = "상품명 없이 보정 시도")
+                        add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notFoundTournamentItem(), name = "토너먼트 아이템을 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
-                        add(ItemException.alreadyReady(), name = "이미 등록 완료(READY) 항목 — 수정 불가")
-                        add(ItemException.stillProcessing(), name = "아직 처리 중(PROCESSING) 항목 — 수정 불가")
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패")
                     }
 

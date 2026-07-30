@@ -303,21 +303,22 @@ interface WishlistApi {
     ): ApiResponseBody<WishPriceHistoryResponse>
 
     @Operation(
-        summary = "위시 항목 복구 (추출 실패 보정)",
+        summary = "위시 항목 수기 수정",
         description = """
-            추출에 실패(item.status=FAILED)한 위시 항목의 상품 정보를 사용자가 직접 채워 복구한다(multipart/form-data).
+            위시 항목의 상품 정보를 사용자가 직접 수정한다(multipart/form-data). 상태 제한이 없다 —
+            추출 실패(FAILED) 복구뿐 아니라 완료(READY)·진행 중(PENDING·PROCESSING) 항목도 언제든 수정할 수 있다.
             텍스트(이름·현재가·통화)는 form 필드로, 이미지는 image 파트로 받는다 — 이미지는 URL 이 아니라 파일로만 받아
-            서버가 그대로 S3 에 올려 대표 이미지로 채운다(추출·크롭 없음). 들어온 값만 갱신하고, 보정에 성공하면 READY 로 복구된다.
-            item 데이터는 링크에서 기계 추출한 사실이라, 이미 완성(READY)된 항목은 수정할 수 없고(409 CONFLICT),
-            대기·파싱 중(PENDING·PROCESSING)인 항목은 백그라운드 워커 소관이라 끼어들 수 없다(409 CONFLICT).
-            본인 위시만 보정 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
+            서버가 그대로 S3 에 올려 대표 이미지로 쓴다(추출·크롭 없음).
+            수정은 기존 버전을 고치지 않고 **수기(MANUAL) 새 버전**으로 쌓인다 — 들어온 값은 현재 버전 값 위에 병합되고,
+            이 위시의 표시가 그 버전으로 바뀐다. 진행 중이던 파싱은 계속돼 완료 시 이력으로 남는다.
+            본인 위시만 수정 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "추출 실패(FAILED) 항목 보정 성공 — status 가 READY 로 복구됨",
+                description = "수기 수정 성공 — 수기(MANUAL) 새 버전이 이 위시의 표시 버전이 됨",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -371,9 +372,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description =
-                    "수정할 수 없는 상태 (이미 등록 완료(READY) — code: ITEM-001 · " +
-                        "아직 대기·처리 중(PENDING·PROCESSING) — code: ITEM-002) · 탈퇴한 계정(code: USER-003)",
+                description = "탈퇴한 계정 (code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

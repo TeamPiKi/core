@@ -115,25 +115,39 @@ class WishPersistenceService(
         }
     }
 
-    // FAILED 버전의 수동 보정 영속화 — S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고,
-    // 여기선 snapshot.recover(값 변경 + FAILED→READY 전이)만 짧은 트랜잭션으로 묶는다(dirty checking).
-    // recover 가 READY/PROCESSING 을 409, 이름 없음을 400 으로 막는다(도메인 자기방어). item 은 정체성이라 건드리지 않는다.
-    // 호출부가 검증한 그 snapshot 을 id 로 직접 보정한다 — findLatestByItemId(최신)가 아니다. 갱신(refresh)이 끼어들어
-    // 활성≠최신이 되어도, 검증한 행과 보정 대상 행이 어긋나지 않는다(refresh-vs-recover race 로 엉뚱한 버전 보정·409 방지).
+    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
+    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든
+    // 덮어써질 위험 자체가 없고, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
+    // wish 행 락으로 refresh 와 직렬화한다 — 둘 다 활성 포인터를 스왑하는 경로라, 락 없이는 서로의 스왑을 덮는다
+    // (옛 FAILED-상태 분리 방어를 대체하는 장치). base 는 락 안에서 읽은 현재 활성 버전이다.
     @Transactional
-    fun recoverItem(
-        snapshotId: Long,
+    fun manualEdit(
+        userId: UUID,
+        wishId: Long,
         name: String?,
         currentPrice: Int?,
         imageUrl: String?,
         currency: String?,
-    ): Item {
-        val snapshot =
-            itemSnapshotRepository.findById(snapshotId)
-                ?: error("snapshot $snapshotId 이 없다")
-        val item = itemRepository.findById(snapshot.itemId) ?: error("item ${snapshot.itemId} 가 없다")
-        snapshot.recover(name = name, currentPrice = currentPrice, imageUrl = imageUrl, currency = currency)
-        return item
+    ): WishWithItem {
+        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(userId)
+        val base =
+            itemSnapshotRepository.findById(wish.snapshotId)
+                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
+        val manual =
+            itemSnapshotRepository.save(
+                ItemSnapshot.manual(
+                    base = base,
+                    name = name,
+                    currentPrice = currentPrice,
+                    imageUrl = imageUrl,
+                    currency = currency,
+                    editedBy = userId,
+                ),
+            )
+        wish.swapSnapshot(manual.getId())
+        return WishWithItem(wish = wish, item = item, snapshot = manual)
     }
 
     // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고

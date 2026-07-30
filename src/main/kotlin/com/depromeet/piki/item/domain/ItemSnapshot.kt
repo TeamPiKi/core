@@ -62,7 +62,8 @@ class ItemSnapshot(
     var currency: String? = currency
         protected set
 
-    // 이 버전의 추출 생애주기. PROCESSING(추출 중)→READY(완료)/FAILED(실패), FAILED→READY(보정).
+    // 이 버전의 추출 생애주기. PENDING(대기)→PROCESSING(추출 중)→READY(완료)/FAILED(실패).
+    // 상태는 되돌리지 않는다 — 수기 수정은 이 행을 고치지 않고 MANUAL 새 버전을 쌓는다(#825 결정 4).
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     var status: ItemStatus = status
@@ -166,40 +167,11 @@ class ItemSnapshot(
         status = ItemStatus.FAILED
     }
 
-    // 클라이언트가 추출 버전을 직접 바꾸는 유일한 통로 — 추출 실패(FAILED) 항목의 수동 보정.
-    // FAILED 는 추출이 맺히다 만 미완성 버전이라, 사용자가 채우면 정상 버전이 된 것이므로 READY 로 복구한다.
-    // READY(등록 완료)는 기계 추출 사실이라 손으로 못 바꾸고(409), PROCESSING(파싱 중)은 워커 소관이라 끼어들 수 없다(409).
-    // 둘 다 멀쩡한 클라이언트가 PATCH 로 닿을 수 있는 계약이므로 이 버전이 직접 던진다 — 4a 에서 item 으로부터 승격받은 책임이다.
-    fun recover(
-        name: String? = null,
-        currentPrice: Int? = null,
-        imageUrl: String? = null,
-        currency: String? = null,
-    ) {
-        when (status) {
-            ItemStatus.READY -> throw ItemException.alreadyReady()
-            // PENDING(아직 claim 전)·PROCESSING(파싱 중) 모두 워커 소관이라 클라이언트가 끼어들 수 없다(409).
-            ItemStatus.PENDING, ItemStatus.PROCESSING -> throw ItemException.stillProcessing()
-            ItemStatus.FAILED -> {
-                apply(name = name, currentPrice = currentPrice, imageUrl = imageUrl, currency = currency)
-                // 입력 경계 계약 — 보정 후에도 필수 필드가 없으면 쓸 수 없는 버전이 READY 로 새어 들어간다(400).
-                if (this.name.isNullOrBlank()) throw ItemException.nameRequiredForReady()
-                this.currentPrice ?: throw ItemException.priceRequiredForReady()
-                this.imageUrl ?: throw ItemException.imageRequiredForReady()
-                // 보정값과 추출시각을 채운 뒤 markReady 와 같은 불변식을 거쳐 READY 로 전이한다(입력 경계 + 엔티티 불변식 다층 방어).
-                this.extractedAt = LocalDateTime.now()
-                requireReadyInvariant()
-                status = ItemStatus.READY
-            }
-        }
-    }
-
     // 파싱이 끝나 추출 결과가 채워진 버전인지. 토너먼트 출전·목록 노출처럼 "완성된 버전만" 요구하는 게이트에서 쓴다.
     // PROCESSING(파싱 중)·FAILED(실패)는 false — 이름·가격이 비어 출전에 부적합하다.
     fun isReady(): Boolean = status == ItemStatus.READY
 
-    // 클라이언트 보정(recover) 대상인지 — FAILED 만 보정 가능. 서비스가 S3 업로드 같은 외부 작업 전에
-    // 미리 걸러 헛된 비용(orphan 업로드)을 막는 사전 가드용. 도메인 최후 보루는 recover 가 진다.
+    // 추출이 실패로 종결된 버전인지. 새로고침의 FAILED 차단(수기 수정 유도) 등 상태 분기에서 쓴다.
     fun isFailed(): Boolean = status == ItemStatus.FAILED
 
     // 추출 작업이 아직 끝나지 않은(진행 중) 버전인지 — PENDING(claim 대기)·PROCESSING(파싱 중). 수동 새로고침의 멱등
@@ -207,9 +179,9 @@ class ItemSnapshot(
     fun isInProgress(): Boolean = status == ItemStatus.PENDING || status == ItemStatus.PROCESSING
 
     // READY 불변식 — 유저가 가격·이미지·이름을 보고 아이템을 선택하고, 가격 이력은 추출시각(extractedAt)을 축으로
-    // 보여주므로 이 네 필드가 다 있어야 쓸 수 있는 버전이다. READY 로 전이하는 두 경로(markReady·recover)가
-    // 추출값과 extractedAt 을 채운 뒤 이 검증을 거쳐 "READY ⟹ 네 필드 non-null" 을 엔티티가 보장한다(최후의 보루).
-    // 정상 흐름에선 입력 경계(recover 의 *RequiredForReady, 추출 워커의 FAILED 흡수)가 먼저 거른다.
+    // 보여주므로 이 네 필드가 다 있어야 쓸 수 있는 버전이다. READY 를 만드는 두 경로(markReady·manual)가
+    // 값과 extractedAt 을 채운 뒤 이 검증을 거쳐 "READY ⟹ 네 필드 non-null" 을 엔티티가 보장한다(최후의 보루).
+    // 정상 흐름에선 입력 경계(manual 의 *RequiredForReady, 추출 워커의 FAILED 흡수)가 먼저 거른다.
     // 메시지에 status 를 넣지 않는다 — 이 검사는 status 를 READY 로 바꾸기 전에 호출돼 전이 직전 상태가 찍히면 오해를 부른다.
     private fun requireReadyInvariant() {
         require(!name.isNullOrBlank()) { "READY snapshot 은 name 이 있어야 한다" }
@@ -242,5 +214,41 @@ class ItemSnapshot(
         // (마감까지 슬롯이 끝내 나지 않으면 실행 0회로 FAILED 종결된다 — expire. 지속 과부하에서 무한 대기하느니
         //  사용자에게 결론을 주는 쪽을 택한 것이고, 그 빈도는 REASON_DEADLINE 메트릭이 관측한다.)
         fun pending(itemId: Long): ItemSnapshot = ItemSnapshot(itemId = itemId, status = ItemStatus.PENDING)
+
+        // 수기 수정 버전(#825 결정 4) — 사용자가 입력한 값으로 만드는 새 READY 버전. 기존 행을 고치지 않는 이유:
+        // 기계 버전은 불변이어야 이력이 보존되고, 카드·가격 추적이 "마지막 SERVER* READY" 를 믿는 구조에서
+        // 수기값은 출처 MANUAL 의 별도 행이어야 기본 뷰에서 접힌다. 상태 제한이 없다 — 어떤 상태의 버전이든
+        // base 삼아 새 행을 쌓을 뿐, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
+        //
+        // base(현재 활성 버전)의 값 위에 입력을 덮어 병합하며, 병합 결과에 필수 필드가 없으면 쓸 수 없는
+        // 버전이라 계약 예외(400)로 막는다 — 멀쩡한 클라이언트가 빈 항목(FAILED base)에 일부 필드만 보내면
+        // 닿는 경로라 require 가 아니라 커스텀 예외다. 엔티티 불변식(validate)은 생성자가 최후 보루로 다시 본다.
+        fun manual(
+            base: ItemSnapshot,
+            name: String?,
+            currentPrice: Int?,
+            imageUrl: String?,
+            currency: String?,
+            editedBy: UUID,
+        ): ItemSnapshot {
+            val mergedName = name ?: base.name
+            val mergedPrice = currentPrice ?: base.currentPrice
+            val mergedImage = imageUrl ?: base.imageUrl
+            val mergedCurrency = currency ?: base.currency
+            if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
+            mergedPrice ?: throw ItemException.priceRequiredForReady()
+            mergedImage ?: throw ItemException.imageRequiredForReady()
+            return ItemSnapshot(
+                itemId = base.itemId,
+                name = mergedName,
+                imageUrl = mergedImage,
+                currentPrice = mergedPrice,
+                currency = mergedCurrency,
+                status = ItemStatus.READY,
+                extractedAt = LocalDateTime.now(),
+                source = ItemSnapshotSource.MANUAL,
+                editedBy = editedBy,
+            )
+        }
     }
 }

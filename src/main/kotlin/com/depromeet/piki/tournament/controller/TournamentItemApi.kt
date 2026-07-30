@@ -595,8 +595,7 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "409",
                 description =
-                    "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록 완료(READY) 아이템 — code: ITEM-001 · " +
-                        "아직 대기·처리 중(PENDING·PROCESSING) 아이템 — code: ITEM-002)",
+                    "상태 충돌 (PENDING이 아닌 토너먼트)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

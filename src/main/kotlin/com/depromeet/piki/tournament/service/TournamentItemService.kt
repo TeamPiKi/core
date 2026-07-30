@@ -5,6 +5,7 @@ import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
@@ -102,9 +103,9 @@ class TournamentItemService(
         return key
     }
 
-    // recoverWishItem 과 동일한 패턴 — 이미지 형식 검증 후 S3 업로드는 트랜잭션 밖에서,
-    // 권한·상태 검증 + snapshot.recover() 는 recoverItem(@Transactional) 에 위임한다.
-    // S3 업로드 전 출전 시점 snapshot 상태를 사전 확인해 orphan 업로드를 방지한다(도메인 최후 보루는 recoverItem).
+    // recoverWishItem 과 동일한 패턴(#825 결정 4) — 수기 수정은 상태 무관 허용이며 MANUAL 새 버전 + pin 이동으로
+    // 영속화한다(manualEdit). 이미지 형식 검증 후 S3 업로드는 트랜잭션 밖에서, 권한 검증·적재는 manualEdit 에 위임한다.
+    // S3 업로드 전 병합 결과 필수 필드를 사전 확인해 orphan 업로드를 방지한다(최종 판정은 manualEdit).
     fun updateItem(
         userId: UUID,
         tournamentId: Long,
@@ -124,18 +125,20 @@ class TournamentItemService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 출전 시점 고정 snapshot 으로 사전 상태 검증 — FAILED 가 아니면 S3 업로드 전에 막는다(orphan 방지).
-        // recover 가 READY/PROCESSING 에 사유별 409 를 던진다(트랜잭션 밖 조회라 던지기 전용, 실제 보정은 recoverItem).
+        // 업로드 전 사전 검증(orphan 방지) — pin 버전과 병합해도 필수 필드가 비면 어차피 400 이므로 S3 전에 거른다.
+        // 트랜잭션 밖 조회라 던지기 전용이고, 최종 판정은 manualEdit 이 다시 한다.
         val snapshotId = tournamentItem.snapshotId
         val snapshot =
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        if (!snapshot.isFailed()) snapshot.recover()
+        if (productImage == null) {
+            ItemSnapshot.manual(base = snapshot, name = name, currentPrice = price, imageUrl = null, currency = currency, editedBy = userId)
+        }
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        tournamentItemPersistenceService.recoverItem(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
+        tournamentItemPersistenceService.manualEdit(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
     }
 
     companion object {

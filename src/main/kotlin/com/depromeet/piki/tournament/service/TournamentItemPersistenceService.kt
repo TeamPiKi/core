@@ -119,11 +119,11 @@ class TournamentItemPersistenceService(
         }
     }
 
-    // FAILED 버전의 수동 보정 영속화 — S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고,
-    // 여기선 권한·소유 검증 + snapshot.recover(값 변경 + FAILED→READY 전이)만 짧은 트랜잭션으로 묶는다(dirty checking).
-    // recover 가 READY/PROCESSING 을 409 로 막는다(도메인 자기방어). item 은 정체성이라 건드리지 않는다.
+    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 출전 pin 을 옮긴다(repinSnapshot).
+    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고, 여기선 권한·소유 검증 + 새 버전 적재 + pin 이동만
+    // 짧은 트랜잭션으로 묶는다. 상태 제한이 없다 — 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
     @Transactional
-    fun recoverItem(
+    fun manualEdit(
         userId: UUID,
         tournamentId: Long,
         tournamentItemId: Long,
@@ -143,13 +143,24 @@ class TournamentItemPersistenceService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 토너먼트는 출전 시점 고정 snapshot 을 본다. 최신(findLatestByItemId)이 아니라 tournamentItem.snapshotId 를
-        // 갱신해야, 5단계 갱신으로 같은 item 에 snapshot 이 여러 개 생겨도 토너먼트가 고정한 버전만 보정돼 격리가 유지된다.
+        // 토너먼트는 출전 시점 pin snapshot 을 base 로 쓴다. 최신(findLatestByItemId)이 아니라 tournamentItem.snapshotId
+        // 기준이어야, 같은 item 에 버전이 여러 개 생겨도 이 카드가 보던 버전 위에 수정이 얹혀 격리가 유지된다.
         val snapshotId = tournamentItem.snapshotId
-        val snapshot =
+        val base =
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        snapshot.recover(name = name, currentPrice = price, imageUrl = imageUrl, currency = currency)
+        val manual =
+            itemSnapshotRepository.save(
+                ItemSnapshot.manual(
+                    base = base,
+                    name = name,
+                    currentPrice = price,
+                    imageUrl = imageUrl,
+                    currency = currency,
+                    editedBy = userId,
+                ),
+            )
+        tournamentItem.repinSnapshot(manual.getId())
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.
