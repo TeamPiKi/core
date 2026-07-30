@@ -15,7 +15,7 @@ import jakarta.persistence.Table
 // 한쪽의 수정이 다른 쪽에 번지지 않는다(수정 격리). 입력은 바뀌면 사실상 다른 상품이라 재등록 영역으로 보고 불변(val).
 //
 // 입력은 link XOR sourceImageKey 다 — URL 추출 경로는 link 를, 이미지 추출 경로는 sourceImageKey 를 채운다(두 경로가 같은 item 을 만든다).
-// 두 값 모두 durable 하므로(URL 문자열·S3 key) outbox 의 dispatch/recover 가 어느 입력이든 재실행할 수 있다.
+// 두 값 모두 durable 하므로(URL 문자열·S3 key) 작업 큐의 dispatch/recover 가 어느 입력이든 재실행할 수 있다.
 @Entity
 @Table(name = "items")
 class Item(

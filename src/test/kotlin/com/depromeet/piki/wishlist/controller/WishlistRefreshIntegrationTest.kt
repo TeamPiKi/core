@@ -41,7 +41,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
-// 위시 새로고침(#358)은 등록과 같은 비동기 outbox 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
+// 위시 새로고침(#358)은 등록과 같은 비동기 작업 큐 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
 // 디스패처(@Scheduled)가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
 // 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 Awaitility 로 전이를 기다린다. 자기가 만든 행은 격리 userId 로 정리한다.
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {

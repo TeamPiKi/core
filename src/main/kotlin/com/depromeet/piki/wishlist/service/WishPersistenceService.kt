@@ -21,7 +21,7 @@ import java.util.UUID
 // 거치지 않아 @Transactional 가 무력화되기 때문이다.
 //
 // item 은 정체성(link)만 들고 추출값·상태는 ItemSnapshot 이 보유한다. URL 등록 경로는 link 만 가진 item 과
-// PENDING snapshot(outbox 적재)을 같은 트랜잭션에서 함께 저장하고, wish 가 그 snapshot 을 활성 포인터로 가리킨다.
+// PENDING snapshot(작업 큐 적재)을 같은 트랜잭션에서 함께 저장하고, wish 가 그 snapshot 을 활성 포인터로 가리킨다.
 // 파싱은 디스패처(@Scheduled)가 PENDING 을 집어 시작하므로, 여기선 워커를 트리거하지 않는다.
 @Service
 class WishPersistenceService(
@@ -35,7 +35,7 @@ class WishPersistenceService(
 
     // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
     // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
-    // snapshot 을 PENDING 으로 커밋하는 것이 곧 outbox 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
+    // snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
     @Transactional
     fun persist(
         userId: UUID,
@@ -54,7 +54,7 @@ class WishPersistenceService(
     }
 
     // v1(multipart) 이미지 다건 등록 — 서버가 바이트를 받아 S3 에 올린 뒤 pending 매핑 없이 바로 적재한다.
-    // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 outbox 에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
+    // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 작업 큐에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
     @Transactional
     fun persistPendingImages(
         userId: UUID,
@@ -93,7 +93,7 @@ class WishPersistenceService(
         return persistImagesInternal(userId, claimedKeys)
     }
 
-    // 이미지 key 들을 item(정체성) → PENDING snapshot(outbox 적재) → wish 순서로 배치 적재하는 공통 코어.
+    // 이미지 key 들을 item(정체성) → PENDING snapshot(작업 큐 적재) → wish 순서로 배치 적재하는 공통 코어.
     // 트랜잭션은 호출부(persistPendingImages·registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
     private fun persistImagesInternal(
         userId: UUID,
@@ -131,7 +131,7 @@ class WishPersistenceService(
         return item
     }
 
-    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 outbox 에 적재하고
+    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고
     // wish 활성 포인터를 즉시 그 버전으로 스왑한다 — 디스패처가 PENDING 을 집어 추출해 READY/FAILED 로 전이한다(등록과 동일 흐름).
     // 옛 snapshot 행은 유지돼 토너먼트 출전 격리를 지킨다. 외부 호출(추출)은 디스패처가 트랜잭션 밖에서 하므로 여기선 적재만 한다.
     // 동시 새로고침은 wish 행 락(findByIdForUpdate)으로 직렬화하고, 이미 진행 중이면 멱등(no-op)으로 새 추출을 만들지 않는다.
@@ -157,7 +157,7 @@ class WishPersistenceService(
         // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
         // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).
         if (activeSnapshot.isFailed()) throw WishException.failedNotRefreshable()
-        // 새 PENDING 버전을 outbox 에 적재하고 활성 포인터를 즉시 스왑한다.
+        // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다.
         val newSnapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         wish.swapSnapshot(newSnapshot.getId())
         return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)

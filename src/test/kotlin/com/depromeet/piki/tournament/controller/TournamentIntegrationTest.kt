@@ -1723,7 +1723,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 assertEquals(1, it.size)
             }.first()
             assertEquals(tournamentItemId, tournamentItem.getId())
-            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(outbox 적재)으로 시작한다.
+            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(작업 큐 적재)으로 시작한다.
             // @Transactional 테스트라 등록이 커밋되지 않아 디스패처(별도 트랜잭션)가 이 PENDING 을 집지 못한다 → PENDING 고정.
             // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
             val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
@@ -2163,7 +2163,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
 
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
-    // 이미지 경로도 link 처럼 PENDING 으로 outbox 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
+    // 이미지 경로도 link 처럼 PENDING 으로 작업 큐 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
     // 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()

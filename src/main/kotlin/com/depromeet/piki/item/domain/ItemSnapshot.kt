@@ -94,7 +94,7 @@ class ItemSnapshot(
         this.currency = newCurrency
     }
 
-    // PENDING → PROCESSING. 디스패처가 outbox 에서 작업을 집을(claim) 때 전이한다.
+    // PENDING → PROCESSING. 디스패처가 작업 큐에서 작업을 집을(claim) 때 전이한다.
     // PENDING 이 아닌데 호출되면 디스패처가 잘못된 버전을 집은 코드 버그이므로 check(500).
     // **attemptCount 는 건드리지 않는다** — 집기는 "이 작업을 워커에게 넘긴다"는 지목일 뿐이고, 시도 소모는 워커가
     // 실행에 진입할 때(ParsingOwnership.acquire) 일어난다. 제출이 거부돼 실행이 0회인 행이 예산을 잃지 않게 하는 분리다.
@@ -218,8 +218,8 @@ class ItemSnapshot(
         const val IMAGE_URL_MAX_LENGTH = 2048
         const val CURRENCY_MAX_LENGTH = 8
 
-        // 등록 시작점 — 추출 전 PENDING 버전(outbox 적재). URL·이미지 두 경로가 공유한다(이미지 입력도 S3 raw 로 durable
-        // 적재되므로 같은 outbox 에 태운다). 등록은 이 행을 커밋만 하고 즉시 반환하며, 디스패처가 PENDING 을 집어
+        // 등록 시작점 — 추출 전 PENDING 버전(작업 큐 적재). URL·이미지 두 경로가 공유한다(이미지 입력도 S3 raw 로 durable
+        // 적재되므로 같은 작업 큐에 태운다). 등록은 이 행을 커밋만 하고 즉시 반환하며, 디스패처가 PENDING 을 집어
         // markProcessing 으로 claim 한 뒤 워커가 파싱한다. @Async 유실(인스턴스 재시작 등)과 무관하게 DB 의 PENDING 행이
         // 작업의 진실 원천이라, **마감 안에 슬롯이 나기만 하면** 반드시 claim 돼 실행이 시작된다.
         // (마감까지 슬롯이 끝내 나지 않으면 실행 0회로 FAILED 종결된다 — expire. 지속 과부하에서 무한 대기하느니
