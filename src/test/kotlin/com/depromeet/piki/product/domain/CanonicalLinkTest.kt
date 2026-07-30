@@ -133,6 +133,15 @@ class CanonicalLinkTest {
     }
 
     @Test
+    fun `저장 상한 2048자를 넘는 URL 은 exceedsStorageLimit 로 표시된다 - 절단은 거짓 정체성이라 하지 않는다`() {
+        val longPath = "/product/" + "%EC%A0%80".repeat(300)
+        val over = canonical("https://unknown-mall.example.com$longPath")
+        kotlin.test.assertTrue(over.url.length > 2048)
+        kotlin.test.assertTrue(over.exceedsStorageLimit)
+        kotlin.test.assertFalse(canonical("https://unknown-mall.example.com/p/1").exceedsStorageLimit)
+    }
+
+    @Test
     fun `hash 는 정규화된 url 의 SHA-256 hex 64자다`() {
         val link = canonical("https://www.musinsa.com/products/6760200")
         assertEquals(64, link.hash.length)

@@ -14,6 +14,13 @@ class CanonicalLink private constructor(
     val url: String,
     val hash: String,
 ) {
+    // 저장 한계: canonical 은 items.canonical_url·item_links.url 의 VARCHAR(2048) 에 저장된다. 정규화는 구성요소
+    // 재조립뿐이라 입력을 늘리지 않지만, 입력 자체(특히 리다이렉트 귀결점 finalUrl)는 우리 밖에서 와 상한이 없다.
+    // 초과 URL 은 자를 수 없다 — 절단된 canonical 은 다른 상품과 충돌할 수 있는 거짓 정체성이다. 그래서 영속 경로가
+    // 이 플래그를 보고 canonical 확정·별칭 기록을 건너뛴다(그 item 은 정체성 미확정으로 남고, 빈도는 메트릭으로 관측).
+    val exceedsStorageLimit: Boolean
+        get() = url.length > STORAGE_MAX_LENGTH
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is CanonicalLink) return false
@@ -46,6 +53,9 @@ class CanonicalLink private constructor(
         private val ZIGZAG_SHORT_PATH = Regex("^/p/(\\d+)$")
 
         private const val HASH_LENGTH = 64
+
+        // items.canonical_url · item_links.url 컬럼 길이와 일치시킨다.
+        const val STORAGE_MAX_LENGTH = 2048
 
         // fragment 는 여기서 별도 처리하지 않는다 — 재조립이 rawPath·rawQuery 만 쓰므로 구조적으로 탈락한다.
         // fragment 는 HTTP 요청에 실리지 않아 서버 렌더 몰에선 상품을 바꿀 수 없고(원리), prod 582건 중 의미 있는

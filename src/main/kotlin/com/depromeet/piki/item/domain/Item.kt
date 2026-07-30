@@ -53,6 +53,11 @@ class Item(
     // 파싱이 알아낸 귀결점으로 정체성을 확정한다. 정체성은 불변이 원칙이라 재확정은 코드 버그다(check 500) —
     // 재추출(갱신)은 이미 canonical 이 확정된 item 의 새 버전을 만들 뿐 이 메서드를 다시 타지 않는다.
     // 같은 값 재확정은 멱등 허용: 병합 경합에서 진 쪽이 재시도할 때 같은 귀결점이면 무해하다.
+    //
+    // 동시성 주의: 이 검사는 로드된 인스턴스의 인메모리 값만 본다 — 같은 item 을 두 트랜잭션이 동시에 확정하는
+    // 경합(둘 다 null 로 읽고 각자 다른 값 커밋)은 여기서 못 막고, 영속 계층의 조건부 claim
+    // (UPDATE ... WHERE canonical_hash IS NULL, 기록 단계 PR에서 도입)이 직렬화를 진다.
+    // 여기는 단일 트랜잭션 안의 오사용을 잡는 최후 보루다.
     fun claimCanonical(canonical: CanonicalLink) {
         val current = canonicalHash
         current?.let {
