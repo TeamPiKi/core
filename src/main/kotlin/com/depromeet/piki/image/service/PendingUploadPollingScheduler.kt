@@ -20,7 +20,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 
 // 이미지 등록 v2 폴링 백스톱 — 클라 confirm 에 의존하지 않고 "업로드된 pending 을 서버가 스스로 확인해 등록"한다.
-// SQS 같은 이벤트 인프라 없이, 기존 outbox 폴링(ItemParsingScheduler)과 같은 방식으로 동작한다:
+// SQS 같은 이벤트 인프라 없이, 기존 작업 큐 폴링(ItemParsingScheduler)과 같은 방식으로 동작한다:
 //   1. 아직 안 만료됐고 grace 가 지난 pending 을 집어 S3 HEAD(exists)로 업로드 여부 확인 → 올라온 것을 confirm 과 같은 배치로 등록.
 //   2. 유효기간이 지난 pending 은 정리하되, 업로드는 됐는데 등록이 밀린 것은 유실 대신 마지막으로 배치 등록을 시도한다.
 // 등록은 confirm 과 같은 registerClaimedImages(claim = FOR UPDATE 삭제)를 거치므로 멱등이다.

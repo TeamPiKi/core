@@ -322,7 +322,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                     .perform(request)
                     .andExpect(status().isCreated)
                     .andExpect(jsonPath("$.data.length()").value(5))
-                    // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 outbox 에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
+                    // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 작업 큐에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
                     .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
                     .andExpect(jsonPath("$.data[4].item.status").value("PENDING"))
                     .andReturn()

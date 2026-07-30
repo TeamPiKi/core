@@ -93,7 +93,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     // 조회·수정·삭제 시나리오의 데이터 시딩. 등록 API(비동기)를 거치지 않고 영속화 빈으로 READY item+wish 를
     // 바로 만든다 — 이 테스트들의 관심사는 "완성된 위시가 있을 때"이지 등록 흐름이 아니기 때문.
-    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(outbox 적재)으로 시작하므로
+    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(작업 큐 적재)으로 시작하므로
     // 디스패처 claim(claimDuePending)을 재현해 PROCESSING 으로 전이한 뒤 markReady 로 추출값을 채운다 — 등록 후 파싱 성공과 동형이다.
     private fun seedReadyWish(
         userId: UUID,
@@ -905,7 +905,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isCreated)
             .andExpect(jsonPath("$.data.length()").value(2))
-            // 등록 직후라 두 항목 모두 PENDING(link 처럼 outbox 적재) — 추출 결과는 비어 있고 sourceUrl 도 null(이미지 등록).
+            // 등록 직후라 두 항목 모두 PENDING(link 처럼 작업 큐 적재) — 추출 결과는 비어 있고 sourceUrl 도 null(이미지 등록).
             // 실제 파싱 완료(READY/FAILED)·크롭 imageUrl 은 WishlistRegisterAsyncIntegrationTest 가 검증한다.
             .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
             .andExpect(jsonPath("$.data[0].item.name").value(nullValue()))
