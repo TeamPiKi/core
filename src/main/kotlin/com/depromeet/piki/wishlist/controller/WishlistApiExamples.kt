@@ -131,13 +131,11 @@ class WishlistApiExamples(
                                 detail = WishlistUpdateRequest.PRICE_MIN_MESSAGE,
                             ),
                     )
-                    add(ItemException.nameRequiredForReady(), name = "상품명 없이 복구 시도")
+                    add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
-                    add(ItemException.alreadyReady(), name = "이미 등록 완료(READY) 항목 — 수정 불가")
-                    add(ItemException.stillProcessing(), name = "아직 대기·처리 중(PENDING·PROCESSING) 항목 — 수정 불가")
                     add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패")
                     unauthorized()
                 }

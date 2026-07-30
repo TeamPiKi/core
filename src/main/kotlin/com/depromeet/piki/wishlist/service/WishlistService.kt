@@ -6,6 +6,7 @@ import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
@@ -200,10 +201,10 @@ class WishlistService(
         return WishPriceHistory(wish = wish, item = item, history = history)
     }
 
-    // 추출 실패(FAILED) item 을 사용자가 직접 보정해 READY 로 복구한다. 이미지를 함께 주면 그대로 S3 에 올려
-    // imageUrl 을 채운다(추출·크롭 없음 — 사용자가 고른 이미지를 그대로 대표 이미지로). READY·PROCESSING 은
-    // recover 가 409 로 막는다. 외부 호출(S3)을 트랜잭션에 넣지 않기 위해 검증·소유권·상태 사전확인·업로드를
-    // 트랜잭션 밖에서 끝내고, 영속화만 wishPersistenceService.recoverItem(@Transactional)에 위임한다.
+    // 위시 item 의 수기 수정(#825 결정 4) — 상태 무관 언제든 허용하며, 기존 버전을 고치지 않고 MANUAL 새 버전을
+    // 쌓아 활성 포인터를 스왑한다(편집자 기록·이력 보존). 이미지를 함께 주면 그대로 S3 에 올려 imageUrl 로 쓴다
+    // (추출·크롭 없음 — 사용자가 고른 이미지를 그대로 대표 이미지로). 외부 호출(S3)을 트랜잭션에 넣지 않기 위해
+    // 검증·소유권 사전확인·업로드를 트랜잭션 밖에서 끝내고, 영속화만 manualEdit(@Transactional, wish 행 락)에 위임한다.
     fun recoverWishItem(
         userId: UUID,
         wishId: Long,
@@ -217,27 +218,33 @@ class WishlistService(
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // 활성 snapshot 으로 사전 상태 검증 — FAILED 가 아니면 S3 에 올리기 전에 막는다(orphan 업로드 방지).
-        // recover 가 READY/PROCESSING 에 사유별 409 를 던진다(트랜잭션 밖 조회라 던지기 전용, 실제 보정은 recoverItem).
-        // item 정체성은 snapshot.itemId 단일 출처다. snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그).
+        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 에 올리기 전에 같은 규칙으로 거른다.
+        // 이미지가 오면 업로드가 imageUrl 을 채울 것이므로 자리표시 URL 로 그 자리만 메워 이름·가격 병합을 검증한다
+        // (이 값은 저장되지 않는다 — 던지기 전용 dry-run). 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
         val activeSnapshot =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item =
-            itemRepository.findById(activeSnapshot.itemId)
-                ?: error("wish ${wish.getId()} 의 item ${activeSnapshot.itemId} 가 없다")
-        if (!activeSnapshot.isFailed()) activeSnapshot.recover()
+        ItemSnapshot.manual(
+            base = activeSnapshot,
+            name = name,
+            currentPrice = currentPrice,
+            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
+            currency = currency,
+            editedBy = userId,
+        )
         // 이미지가 있으면 S3 업로드(트랜잭션 밖). 실패 시 ImageStorageException(502).
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        wishPersistenceService.recoverItem(activeSnapshot.getId(), name, currentPrice, imageUrl, currency)
-        // recoverItem 이 같은 트랜잭션에서 활성 snapshot 을 보정했다. 응답 표시값은 그 snapshot 을 재조회해 읽는다.
-        val snapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+        return wishPersistenceService.manualEdit(
+            userId = userId,
+            wishId = wishId,
+            name = name,
+            currentPrice = currentPrice,
+            imageUrl = imageUrl,
+            currency = currency,
+        )
     }
 
     // 위시 item 의 상품 정보를 원본 링크로 재추출해 최신화한다(수동 새로고침). 추출(Gemini)은 디스패처가 비동기로
@@ -283,3 +290,6 @@ class WishlistService(
         private const val MAX_IMAGE_COUNT = 5
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

@@ -147,15 +147,6 @@ class ItemSnapshotTest {
         assertEquals(ItemStatus.FAILED, snapshot.status)
     }
 
-    @Test
-    fun `FAILED 스냅샷을 recover 하면 채워지고 READY 와 extractedAt 이 설정된다`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        snapshot.markFailed()
-        snapshot.recover(name = "수동 보정", currentPrice = 5_000, imageUrl = "https://img.example.com/a.png", currency = "KRW")
-        assertEquals(ItemStatus.READY, snapshot.status)
-        assertEquals("수동 보정", snapshot.name)
-        assertNotNull(snapshot.extractedAt)
-    }
 
     @Test
     fun `PROCESSING 이 아닌 스냅샷을 markReady 하면 IllegalStateException`() {
@@ -166,49 +157,70 @@ class ItemSnapshotTest {
         }
     }
 
-    // --- recover 계약 검증 (4a: item 으로부터 승격) — 클라이언트 도달 가능한 409/400 을 도메인이 직접 던진다 ---
+    // --- 수기 수정(manual) 계약 검증(#825 결정 4) — 새 MANUAL 버전 생성, 기존 행 불변, 병합 400 은 도메인이 직접 던진다 ---
 
     @Test
-    fun `READY 스냅샷을 recover 하면 이미 완료라 ItemException(409)`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        snapshot.markReady(ProductSnapshot(name = "나이키", currentPrice = 99_000, imageUrl = "https://img.example.com/a.png"))
-        assertFailsWith<ItemException> {
-            snapshot.recover(name = "수정", currentPrice = null, imageUrl = null, currency = null)
+    fun `manual 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
+        val base = ItemSnapshot(itemId = 1L)
+        base.markReady(ProductSnapshot(name = "나이키", currentPrice = 99_000, imageUrl = "https://img.example.com/a.png", currency = "KRW"))
+        val editor = java.util.UUID.randomUUID()
+
+        val manual = ItemSnapshot.manual(base = base, name = null, currentPrice = 79_000, imageUrl = null, currency = null, editedBy = editor)
+
+        assertEquals(ItemStatus.READY, manual.status)
+        assertEquals("나이키", manual.name)
+        assertEquals(79_000, manual.currentPrice)
+        assertEquals("https://img.example.com/a.png", manual.imageUrl)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertEquals(editor, manual.editedBy)
+        assertNotNull(manual.extractedAt)
+        // 기계 버전 불변 — 이력 보존의 핵심.
+        assertEquals(99_000, base.currentPrice)
+        assertEquals(ItemStatus.READY, base.status)
+    }
+
+    @Test
+    fun `manual 은 상태 제한이 없다 - PENDING·PROCESSING·FAILED base 로도 새 버전을 만든다`() {
+        val editor = java.util.UUID.randomUUID()
+        listOf(
+            ItemSnapshot.pending(itemId = 1L),
+            ItemSnapshot(itemId = 1L),
+            ItemSnapshot(itemId = 1L).apply { markFailed() },
+        ).forEach { base ->
+            val manual = ItemSnapshot.manual(
+                base = base,
+                name = "수기 입력",
+                currentPrice = 5_000,
+                imageUrl = "https://img.example.com/m.png",
+                currency = "KRW",
+                editedBy = editor,
+            )
+            assertEquals(ItemStatus.READY, manual.status)
+            assertEquals(ItemSnapshotSource.MANUAL, manual.source)
         }
     }
 
     @Test
-    fun `PROCESSING 스냅샷을 recover 하면 처리 중이라 ItemException(409)`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
+    fun `manual 병합 후에도 name 이 비면 ItemException(400)`() {
+        val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            snapshot.recover(name = "수정", currentPrice = null, imageUrl = null, currency = null)
+            ItemSnapshot.manual(base = base, name = null, currentPrice = 1_000, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
     @Test
-    fun `FAILED 스냅샷을 보정해도 name 이 비면 ItemException(400)`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        snapshot.markFailed()
+    fun `manual 병합 후에도 price 가 없으면 ItemException(400)`() {
+        val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            snapshot.recover(name = null, currentPrice = 1_000, imageUrl = "https://img.example.com/a.png", currency = "KRW")
+            ItemSnapshot.manual(base = base, name = "수기", currentPrice = null, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
     @Test
-    fun `FAILED 스냅샷을 보정해도 price 가 없으면 ItemException(400)`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        snapshot.markFailed()
+    fun `manual 병합 후에도 imageUrl 이 없으면 ItemException(400)`() {
+        val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            snapshot.recover(name = "수동 보정", currentPrice = null, imageUrl = "https://img.example.com/a.png", currency = "KRW")
-        }
-    }
-
-    @Test
-    fun `FAILED 스냅샷을 보정해도 imageUrl 이 없으면 ItemException(400)`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        snapshot.markFailed()
-        assertFailsWith<ItemException> {
-            snapshot.recover(name = "수동 보정", currentPrice = 5_000, imageUrl = null, currency = "KRW")
+            ItemSnapshot.manual(base = base, name = "수기", currentPrice = 5_000, imageUrl = null, currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
@@ -251,15 +263,6 @@ class ItemSnapshotTest {
                 .markProcessing()
         }
         assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.markProcessing() }
-    }
-
-    @Test
-    fun `PENDING 스냅샷을 recover 하면 워커 소관이라 stillProcessing(409)로 거부된다`() {
-        // 디스패처가 집기 전(PENDING)이라도 status 전이는 워커 경로가 책임진다 — 클라이언트 보정이 끼어들 수 없다.
-        val snapshot = ItemSnapshot.pending(itemId = 1L)
-        val ex = assertFailsWith<ItemException> { snapshot.recover(name = "끼어든 수정") }
-        assertEquals(HttpStatus.CONFLICT, ex.httpStatus)
-        assertEquals(ItemStatus.PENDING, snapshot.status)
     }
 
     // --- 집기·마감 전이 — execution at-least-once (#461) 와 종결 보증 (#802) ---

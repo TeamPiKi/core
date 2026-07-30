@@ -17,6 +17,8 @@ class TournamentItemRepositoryImpl(
     override fun findIdsByTournamentId(tournamentId: Long): List<Long> =
         tournamentItemJpaRepository.findIdsByTournamentId(tournamentId)
 
+    override fun findByIdForUpdate(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdForUpdate(id)
+
     override fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID> =
         tournamentItemJpaRepository.findUserIdsBySnapshotId(snapshotId)
 

@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -360,9 +361,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `recoverItem 은 넘겨받은 snapshot 을 보정하고 같은 item 의 최신 버전을 건드리지 않는다`() {
-        // F1 회귀 — recoverWishItem 이 검증한 활성 snapshot(id)을 recoverItem 에 넘겨 그 행만 보정한다.
-        // findLatestByItemId 였다면 refresh 가 끼워 넣은 더 최신 버전을 보정 시도해 엉뚱한 409·오보정이 났을 것.
+    fun `manualEdit 은 위시 활성 버전을 base 로 MANUAL 새 버전을 쌓아 스왑하고 기존 행들은 건드리지 않는다`() {
+        // 수기 수정(#825 결정 4) 회귀 — 활성(FAILED) 버전이 최신이 아니어도 base 는 wish 활성 포인터가 결정하고,
+        // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PROCESSING) 행도 그대로 남는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/recover-version")))
@@ -375,15 +376,32 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     },
                 )
             val newer = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
+            val wish = wishRepository.save(Wish(userId, failed.getId()))
 
-            // FAILED 인 failed(최신 아님)를 지정해 보정 — findLatest 였다면 newer(최신, PROCESSING)를 잡아 stillProcessing 409 였을 것.
-            wishPersistenceService.recoverItem(failed.getId(), name = "보정", currentPrice = 200, imageUrl = "https://img.example.com/a.png", currency = "KRW")
+            val result =
+                wishPersistenceService.manualEdit(
+                    userId = userId,
+                    wishId = wish.getId(),
+                    name = "보정",
+                    currentPrice = 200,
+                    imageUrl = "https://img.example.com/a.png",
+                    currency = "KRW",
+                )
 
-            assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(failed.getId())?.status)
-            assertEquals("보정", itemSnapshotRepository.findById(failed.getId())?.name)
-            // 최신(newer)은 그대로 PROCESSING — 보정은 지정한 행에만 적용됐다.
+            // 새 MANUAL 버전이 활성으로 스왑됐다 — 편집자·출처가 박힌다.
+            val active =
+                itemSnapshotRepository.findById(wishRepository.findById(wish.getId())!!.snapshotId)
+                    ?: error("활성 snapshot 이 없다")
+            assertEquals(result.snapshot.getId(), active.getId())
+            assertEquals(ItemStatus.READY, active.status)
+            assertEquals("보정", active.name)
+            assertEquals(ItemSnapshotSource.MANUAL, active.source)
+            assertEquals(userId, active.editedBy)
+            // 기존 행들은 불변 — FAILED 는 FAILED 로(이력), 최신 PROCESSING 은 파싱 계속.
+            assertEquals(ItemStatus.FAILED, itemSnapshotRepository.findById(failed.getId())?.status)
             assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(newer.getId())?.status)
         } finally {
+            jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))

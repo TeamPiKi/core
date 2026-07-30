@@ -3,6 +3,7 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
@@ -1573,16 +1574,23 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        // 보정 대상은 tournament_item 이 가리키는 고정 snapshot 이다 — 표시값·상태는 그 snapshot 에서 읽는다(4a).
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("수정된 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals("KRW", updated.currency)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 수기 수정(#825 결정 4)은 기존 행을 고치지 않고 MANUAL 새 버전으로 쌓여 pin 이 옮겨진다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        assertNotEquals(snapshot.getId(), repinned.snapshotId)
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정된 이름", manual.name)
+        assertEquals(50000, manual.currentPrice)
+        assertEquals("KRW", manual.currency)
+        assertEquals(ItemStatus.READY, manual.status)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertEquals(userId, manual.editedBy)
+        // 기존 FAILED 행은 이력으로 불변.
+        assertEquals(ItemStatus.FAILED, itemSnapshotJpaRepository.findById(snapshot.getId()).get().status)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 수기 수정하면 200 과 MANUAL 새 버전으로 교체된다`() {
+        // 수기 수정 상시 허용(#825 결정 4) — READY 는 더 이상 409 가 아니다.
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val readyItemId = saveWishItem()
@@ -1594,11 +1602,18 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isOk)
+
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정 시도", manual.name)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템은 일부 필드만 보내면 병합 필수값 부재로 400 이다`() {
+        // 상태 충돌(409)이 아니다(#825 결정 4) — PROCESSING base 는 값이 비어 있어 병합 결과 필수값 부재(400)로 떨어질 뿐,
+        // 필수값을 다 채우면 진행 중이어도 수정된다(위 READY 케이스와 동일 규칙).
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val processingItem = itemJpaRepository.save(Item())
@@ -1613,7 +1628,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isBadRequest)
     }
 
     @Test
@@ -1675,10 +1690,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("기존 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 병합은 MANUAL 새 버전에서 일어난다 — base 의 이름·이미지가 유지된 채 가격만 바뀐 새 버전이 pin 된다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("기존 이름", manual.name)
+        assertEquals(50000, manual.currentPrice)
+        assertEquals(ItemStatus.READY, manual.status)
     }
 
     @Test
