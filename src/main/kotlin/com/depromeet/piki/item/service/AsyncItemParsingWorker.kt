@@ -185,7 +185,8 @@ class AsyncItemParsingWorker(
 
     companion object {
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.
-        private const val PARSE_OBSERVATION = "item.parse"
+        // 이미지 파싱(AsyncImageParsingWorker)도 같은 이름을 공유한다 — 대시보드 필터가 링크·이미지를 한 탭으로 본다.
+        internal const val PARSE_OBSERVATION = "item.parse"
 
         // 재시도(일시)로 볼지 판정. 치명적 JVM 오류(Error: OutOfMemory·StackOverflow 등)는 재시도해도 소용없고
         // runCatching 이 Throwable 을 다 잡아 여기로 들어오므로 먼저 제외한다(재시도 대상 아님, 즉시 종결). 분류 가능한
