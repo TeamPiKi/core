@@ -8,6 +8,7 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
 import java.time.LocalDateTime
+import java.util.UUID
 
 // item(정체성=link)의 한 추출 버전. 추출값(name·price·image·currency)·상태(status)·추출시각을 들고,
 // item 이 갱신될 때마다 새 행이 쌓여 가격·이름·이미지 이력을 보존한다.
@@ -29,7 +30,21 @@ class ItemSnapshot(
     status: ItemStatus = ItemStatus.PROCESSING,
     extractedAt: LocalDateTime? = null,
     attemptCount: Int = 0,
+    source: ItemSnapshotSource? = null,
+    editedBy: UUID? = null,
 ) : LongBaseEntity() {
+    // 이 버전의 출처(#825 결정 4) — SERVER(파서)/SERVER_LLM(LLM)/MANUAL(수기). 카드·가격 추적은 마지막
+    // SERVER* READY 만 믿는다. 도입 전 기존 행은 소급 불가라 null("모름")로 남는다(forward-only).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", length = 16)
+    var source: ItemSnapshotSource? = source
+        protected set
+
+    // MANUAL 버전의 편집자. "타인이 고친 값" 표시의 근거이며 SERVER* 버전은 null 이다.
+    @Column(name = "edited_by", columnDefinition = "BINARY(16)")
+    var editedBy: UUID? = editedBy
+        protected set
+
     // 추출 필드 — setter 직접 노출 대신, 의도가 박힌 명령(markReady·markFailed·recover)으로만 바꾼다.
     @Column(name = "name", length = 512)
     var name: String? = name
