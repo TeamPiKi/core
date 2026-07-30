@@ -2,6 +2,7 @@ package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import java.time.LocalDateTime
 import java.util.UUID
@@ -42,12 +43,17 @@ class TournamentRepositoryImpl(
     override fun findVisibleByUserId(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        playType: TournamentPlayType?,
         limit: Int?,
     ): List<Tournament> =
         tournamentJpaRepository.findVisibleByUserId(
             userId = userId,
             // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
             statuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries,
+            // playType 미지정(null)이면 두 플래그가 다 TRUE 가 되어 파생 술어가 항상 성립한다(= 필터 없음).
+            // statuses 를 전체 바인딩하는 것과 같은 방식으로, nullable 파라미터를 쿼리에 넘기지 않는다.
+            includeSolo = playType != TournamentPlayType.SOCIAL,
+            includeSocial = playType != TournamentPlayType.SOLO,
             pageable = limit?.let { PageRequest.of(0, it) } ?: Pageable.unpaged(),
         )
 

@@ -14,6 +14,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentInviteService
 import com.depromeet.piki.tournament.service.TournamentService
@@ -44,9 +45,10 @@ class TournamentController(
     override fun getTournaments(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) status: List<TournamentStatus>?,
+        @RequestParam(required = false) playType: TournamentPlayType?,
         @RequestParam(required = false) limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>> {
-        val summaries = tournamentService.getTournaments(userId, status, limit)
+        val summaries = tournamentService.getTournaments(userId, status, playType, limit)
         return ApiResponseBody.ok(summaries.map(TournamentSummaryResponse::from))
     }
 
