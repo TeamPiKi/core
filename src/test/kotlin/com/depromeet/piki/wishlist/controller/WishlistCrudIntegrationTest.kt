@@ -698,6 +698,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     multipart("/api/v1/wishlists/$wishId")
                         .file(image)
                         .param("name", "이름")
+                        // 사전 검증(dry-run)을 통과해야 S3 업로드에 도달한다 — 가격까지 채워 502 경로를 연다.
+                        .param("currentPrice", "1000")
                         .with {
                             it.method = "PATCH"
                             it

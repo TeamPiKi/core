@@ -125,15 +125,20 @@ class TournamentItemService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 업로드 전 사전 검증(orphan 방지) — pin 버전과 병합해도 필수 필드가 비면 어차피 400 이므로 S3 전에 거른다.
-        // 트랜잭션 밖 조회라 던지기 전용이고, 최종 판정은 manualEdit 이 다시 한다.
+        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 전에 거른다. 이미지가 오면 업로드가 imageUrl 을
+        // 채울 것이므로 자리표시 URL 로 그 자리만 메워 검증한다(저장 안 됨 — dry-run). 최종 판정은 manualEdit 이 다시 한다.
         val snapshotId = tournamentItem.snapshotId
         val snapshot =
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        if (productImage == null) {
-            ItemSnapshot.manual(base = snapshot, name = name, currentPrice = price, imageUrl = null, currency = currency, editedBy = userId)
-        }
+        ItemSnapshot.manual(
+            base = snapshot,
+            name = name,
+            currentPrice = price,
+            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
+            currency = currency,
+            editedBy = userId,
+        )
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
@@ -146,3 +151,6 @@ class TournamentItemService(
         private const val MAX_IMAGE_COUNT = 5
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

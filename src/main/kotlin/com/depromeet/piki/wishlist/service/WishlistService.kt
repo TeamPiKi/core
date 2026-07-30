@@ -218,21 +218,20 @@ class WishlistService(
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // 업로드 전 사전 검증(orphan 방지) — 활성 버전과 병합해도 필수 필드가 비면 어차피 400 이므로, S3 에 올리기
-        // 전에 같은 규칙으로 미리 거른다. 락 밖 조회라 던지기 전용이고, 최종 판정은 manualEdit(락 안)이 다시 한다.
+        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 에 올리기 전에 같은 규칙으로 거른다.
+        // 이미지가 오면 업로드가 imageUrl 을 채울 것이므로 자리표시 URL 로 그 자리만 메워 이름·가격 병합을 검증한다
+        // (이 값은 저장되지 않는다 — 던지기 전용 dry-run). 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
         val activeSnapshot =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        if (productImage == null) {
-            ItemSnapshot.manual(
-                base = activeSnapshot,
-                name = name,
-                currentPrice = currentPrice,
-                imageUrl = null,
-                currency = currency,
-                editedBy = userId,
-            )
-        }
+        ItemSnapshot.manual(
+            base = activeSnapshot,
+            name = name,
+            currentPrice = currentPrice,
+            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
+            currency = currency,
+            editedBy = userId,
+        )
         // 이미지가 있으면 S3 업로드(트랜잭션 밖). 실패 시 ImageStorageException(502).
         val imageUrl =
             productImage?.let {
@@ -291,3 +290,6 @@ class WishlistService(
         private const val MAX_IMAGE_COUNT = 5
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

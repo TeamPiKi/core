@@ -138,8 +138,9 @@ class TournamentItemPersistenceService(
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
+        // 행 락 — 동시 수기 수정 두 건이 같은 pin 을 읽고 나중 커밋이 먼저 만든 MANUAL 버전을 덮는(유령 버전) 경합을 직렬화한다.
         val tournamentItem =
-            tournamentItemRepository.findById(tournamentItemId)
+            tournamentItemRepository.findByIdForUpdate(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
