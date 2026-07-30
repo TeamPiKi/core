@@ -144,13 +144,18 @@ val roundItems = allItems - histories.filter { it.currentRound != currentRound }
 
 ```kotlin
 var players = totalItems
-while (players > FINAL_ROUND_SIZE) {
+while (players >= FINAL_ROUND_SIZE) {
     val expected = matchCountOf(players)
     val played = countByRound[players] ?: 0
     if (played < expected) return players
-    players -= expected          // 승자 + 부전승
+    if (players == FINAL_ROUND_SIZE) break   // 결승까지 다 치렀다 → 더 내려갈 라운드 없음
+    players -= expected                      // 승자 + 부전승
 }
 ```
+
+루프 조건이 `>` 면 **결승 자체를 검사하지 않는다.** 4강 2매치를 치른 뒤 `players` 가 2로 줄면 `2 > 2` 가 false 라
+결승(2)을 반환하지 못하고 루프를 빠져나가 `error()` 로 떨어진다. `>=` 로 결승을 검사 범위에 넣고,
+결승까지 완료된 경우는 `break` 로 빠져 기존과 같이 "모든 라운드 완료인데 IN_PROGRESS" 불변식 위반을 알린다.
 
 ---
 
