@@ -1,4 +1,4 @@
-# 파싱 outbox 와 claim 소유권 - 설계 결론
+# 파싱 작업 큐와 claim 소유권 - 설계 결론
 
 > 2026-07-23. "claim 을 extractor 로 이관해야 하는가"를 놓고 벌인 설계 논쟁의 결론 기록. claim 은 큐에 쌓인 작업을 자기 몫으로 집어가 선점하는 행위를 말한다.
 > 배경: 링크·이미지 파싱 실행은 이미 원격 extractor 로 이관 완료된 상태에서, 남은 claim 머신 - dispatch(대기 작업을 집어 워커에 넘기는 루프)와 recover(오래 멈춘 작업을 되살리는 루프) - 의 소유권을 검토했다.
@@ -7,7 +7,7 @@
 
 ### 1.1 구성
 
-- `item_snapshots` 가 도메인 상태머신과 작업 큐를 겸한다. 별도 outbox 테이블 없음. outbox 는 "확실히 처리해야 할 일"을 도메인 변경과 같은 트랜잭션으로 DB 에 적어 두는 패턴이다(엄밀한 정의는 2.1).
+- `item_snapshots` 가 도메인 상태머신과 작업 큐를 겸한다. 별도 큐 테이블 없음 - "확실히 처리해야 할 일"을 도메인 변경과 같은 트랜잭션으로 DB 에 적어 두고, 폴러가 집어 실행한다(정석 outbox 패턴과의 구분·명명 이력은 2).
 - claim 머신은 core 소유: `ItemParsingScheduler` 의 dispatch(1s 주기, PENDING 을 FOR UPDATE claim)와 recover(15s 주기, 갱신이 끊긴 채 방치된 PROCESSING 재실행·종결).
 - 실행은 전부 원격: 링크는 `/extractions`, 이미지는 `/internal/extractions/image` (download, OCR, crop, 결과 업로드까지 extractor 가 수행). core 워커는 얇은 HTTP 호출자 + 상태 전이자다.
 - extractor 는 무상태 HTTP 서비스: DB 의존 0, 도메인 자격증명 0, staging·prod 가 박스 1대 공유.
@@ -25,9 +25,9 @@
 - 종결은 **두 시계가 각자 보증**한다(#802): 실행 예산(상한 2회)은 "몇 번 해봤나"를, 마감(created_at 기준 3분)은 "얼마나 오래 끌었나"를 답한다. 예산은 워커가 실행에 진입할 때만 소모되므로 제출이 거부돼 실행이 0회인 행은 예산을 잃지 않고, 마감은 예산·박동·슬롯과 무관한 벽시계라 슬롯이 없어 끝내 집히지 못한 PENDING 도 종결한다. 재시도 가치 판정(어떤 실패가 일시인가)은 extractor 의 422 계약이 쥔다.
 - 되살림 판정의 시계는 heartbeat 로 죽음 감지 전용이 됐다(#802): 산 워커가 박동(renew)으로 updated_at 을 주기적으로 갱신하므로, stale = "박동이 연속으로 끊겼는데 반납도 없었다 = 프로세스가 죽었다" 만 남고 느린 단건을 stale 로 오판하지 않는다. 되살림으로 소유권을 잃은 좀비는 attempt 를 fencing 토큰으로 쓴 박동·전이의 0행 매치가 막는다.
 
-## 2. 패턴 분류 - outbox 인가, 상태머신인가
+## 2. 패턴 분류 - 왜 outbox 가 아니라 작업 큐인가 (명명 이력)
 
-두 패턴을 엄격히 분리해 정의한 뒤 우리 코드가 어느 쪽인지 판정한다. 코드 주석은 "transactional outbox" 라는 이름을 쓰지만, 이는 보장 수준의 느슨한 명명이다(아래 2.5).
+두 패턴을 엄격히 분리해 정의한 뒤 우리 코드가 어느 쪽인지 판정한다. 코드·문서는 한때 이 구조를 "transactional outbox" 라 불렀으나(보장 수준의 느슨한 차용, 아래 2.3·2.5), **2026-07-31 명명을 작업 큐(job queue)로 전면 통일**했다. 이 절이 그 개칭의 근거 기록이다 - 과거 커밋·이슈·PR 의 "outbox" 는 전부 이 작업 큐 구조를 가리킨다.
 
 ### 2.1 정석 outbox 의 정의
 
@@ -47,7 +47,7 @@
 ### 2.3 공통점 - 패밀리 수준에서는 동족
 
 - "의도를 도메인 트랜잭션과 함께 영속화하고, 별도 프로세스가 최소 1회 확실히 처리한다"는 **보장 구조는 동일**하다. 전달 수단이 relay→브로커냐 스케줄러 직접 실행이냐의 차이일 뿐, at-least-once 성질은 같다.
-- 이 수준의 서술로는 우리 구조를 outbox 라 불러도 틀리지 않는다 - 코드 주석의 명명은 이 수준이다.
+- 이 수준의 서술이 과거 코드 주석이 outbox 라는 이름을 빌려 쓴 근거였다. 그러나 패밀리 유사성은 명명의 근거로 약하다 - 이름은 아래 종 수준 차이가 결정한다.
 
 ### 2.4 차이점 - 종(種) 수준의 엄격 대비
 
@@ -69,7 +69,7 @@ visibility timeout: 큐 소비자가 메시지를 받으면 그 시간 동안 �
 
 - **"원자적으로 일치시켜야 할 사실이 둘인가?"** 외부 발행물이 있어 도메인 변경과 원자적으로 묶어야 하면 outbox 가 필요하고, 상태 수렴만 있으면 상태머신·폴러로 충분하다. 우리는 후자다 - 외부 발행물이 없어 dual-write 가 발생하지 않고, `ItemParsingScheduler` 가 상태 행을 직접 claim 하며 브로커도 relay 도 없다.
 - 단, 둘은 배타적 분류가 아니라 **조합 가능한 도구**다. 상태머신을 유지한 채 외부 발행이 생기면 그 발행에 한해 outbox 를 얹으면 된다 - 4.2 의 큐 삽입 시나리오가 정확히 그 조합이다(PENDING 행이 발행 의도 역할을 겸하고, relay 가 발행기가 된다).
-- 코드 주석의 "transactional outbox" 는 2.3 의 보장 수준 명명으로 읽는다. 이를 "별도 outbox 테이블이 정석"의 근거로 끌어다 쓰면 2.6 의 착시가 생긴다.
+- 과거 코드 주석의 "transactional outbox" 는 2.3 의 보장 수준 명명이었고, 이를 "별도 outbox 테이블이 정석"의 근거로 끌어다 쓰면 2.6 의 착시가 생긴다. 이 착시의 뿌리를 없애기 위해 코드·문서의 명명을 작업 큐로 통일했다(개칭 판정: 외부 발행물·수신자·relay 가 없으므로 정석 outbox 가 아니고, FOR UPDATE SKIP LOCKED 기반 DB 작업 큐 - Solid Queue·GoodJob·Oban 과 같은 골격 - 가 정확한 분류다).
 
 ### 2.6 왜 이 구분이 실무에 중요한가
 
@@ -94,7 +94,7 @@ visibility timeout: 큐 소비자가 메시지를 받으면 그 시간 동안 �
 - **스키마의 계약 승격**: `item_snapshots` 는 활발히 진화하는 테이블(버저닝 에픽 6단계)인데, writer 가 둘이면 모든 마이그레이션이 두 repo 배포 순서 조율거리가 된다.
 - **재건축 리스크**: 실전 버그를 거치며 다듬어진 at-least-once 머신을 다른 언어·repo 에 다시 짓는 회귀 비용.
 
-### 3.3 별도 outbox 테이블 안의 SSOT 검토
+### 3.3 별도 잡 테이블 안의 SSOT 검토
 
 SSOT(single source of truth)는 같은 사실의 정본을 한 곳에만 둔다는 원칙이다. 상태가 사용자 계약(1.2)이므로, 테이블을 나누면 갈래가 셋뿐이다.
 
@@ -134,4 +134,4 @@ SSOT(single source of truth)는 같은 사실의 정본을 한 곳에만 둔다�
 ## 부록 - 관련 코드와 발견
 
 - 관련 코드: `ItemParsingScheduler`(dispatch·recover), `AsyncItemParsingWorker`·`AsyncImageParsingWorker`(단건 시도·전이·반납), `HttpImageSnapshotExtractor`(이미지 원격 위임), `ItemStatus`(상태 계약), `ItemParsingService`(claim·revive·release·expire 판정), `ParsingHeartbeat`·`ParsingOwnership`(박동·소유권).
-- 주석 드리프트 발견: `ItemStatus.PENDING` 의 "이미지 등록 경로는 PENDING 을 거치지 않고 곧장 PROCESSING" 은 이미지 durable 화 이전 서술로, `WishlistApiExamples` 의 "이미지도 outbox 적재 PENDING" 과 어긋난다. 별도 정리 후보.
+- 주석 드리프트 발견: `ItemStatus.PENDING` 의 "이미지 등록 경로는 PENDING 을 거치지 않고 곧장 PROCESSING" 은 이미지 durable 화 이전 서술로, `WishlistApiExamples` 의 "이미지도 작업 큐 적재 PENDING" 과 어긋난다. 별도 정리 후보.

@@ -63,7 +63,7 @@ class WishlistService(
         return wishPersistenceService.persist(userId, Item(link))
     }
 
-    // 이미지 등록은 registerFromUrl(link)와 같은 비동기 outbox 흐름 — 입력이 이미지(다건)일 뿐이다.
+    // 이미지 등록은 registerFromUrl(link)와 같은 비동기 작업 큐 흐름 — 입력이 이미지(다건)일 뿐이다.
     // 개수·형식을 동기로 검증(400)한 뒤, 원본을 S3 에 durable 적재(raw key 확보)하고 link 경로처럼 PENDING item·wish 를
     // 배치 저장해 즉시 반환한다. 실제 추출(Gemini·크롭·결과 업로드)은 디스패처(@Scheduled)가 PENDING 을 집어 워커에 넘긴다.
     // raw 를 먼저 올려 입력이 durable 하므로, @Async 유실·일시 오류로 재실행돼도 워커가 그 key 로 원본을 다시 읽는다.
@@ -112,7 +112,7 @@ class WishlistService(
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
     }
 
-    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다. upload 는 공개 URL 을 반환하지만 outbox 입력엔
+    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다. upload 는 공개 URL 을 반환하지만 작업 큐 입력엔
     // 우리가 만든 key 가 필요하다(워커가 download(key)로 다시 읽는다). 파싱이 끝나면 워커가 이 raw 를 회수한다.
     private fun uploadRaw(image: ProductImage): String {
         val key = "items/raw/${UUID.randomUUID()}.${image.extension}"

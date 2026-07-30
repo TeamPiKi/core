@@ -611,7 +611,7 @@ interface WishlistApi {
     @Operation(
         summary = "위시리스트 등록 (이미지)",
         description = """
-            상품 페이지를 캡처한 이미지 1~5장을 받아, 각 이미지를 PENDING 상태의 위시 항목으로 즉시 등록하고(link 처럼 outbox 적재) 목록을 반환한다.
+            상품 페이지를 캡처한 이미지 1~5장을 받아, 각 이미지를 PENDING 상태의 위시 항목으로 즉시 등록하고(link 처럼 작업 큐 적재) 목록을 반환한다.
             실제 상품 정보 추출(Gemini Vision)은 백그라운드에서 비동기로 진행되어 각 항목을 READY 또는 FAILED 로 전이시킨다.
             URL 등록과 결과 모양(WishItemResponse)이 같다. 이미지 등록 항목은 URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 완료·실패를 통보받아 재조회하며, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 직접 채워 복구한다.
@@ -773,7 +773,7 @@ interface WishlistApi {
         summary = "위시리스트 이미지 등록 v2 - 업로드 확정",
         description = """
             이미지 등록 v2 의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PENDING 위시로 즉시 등록하고 목록을 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 outbox 에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 작업 큐에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
             결과 모양(WishItemResponse)은 v1 이미지 등록과 동일하다 — URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 복구한다.
         """,

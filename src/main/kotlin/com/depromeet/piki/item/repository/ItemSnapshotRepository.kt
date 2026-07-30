@@ -27,7 +27,7 @@ interface ItemSnapshotRepository {
     // 여러 snapshot 을 id 목록으로 한 번에 조회(목록·결과 조회의 메모리 조인용). 존재하는 것만 반환.
     fun findByIds(ids: List<Long>): List<ItemSnapshot>
 
-    // 디스패처가 집을 PENDING snapshot 을 FIFO 로 batchSize 개, FOR UPDATE 로 잠가 가져온다(outbox claim 대상).
+    // 디스패처가 집을 PENDING snapshot 을 FIFO 로 batchSize 개, FOR UPDATE 로 잠가 가져온다(작업 큐 claim 대상).
     fun findDuePending(batchSize: Int): List<ItemSnapshot>
 
     // recover 가 집을 stale PROCESSING snapshot — claim 시각(updated_at)이 threshold 이전인 것 batchSize 개, FOR UPDATE.

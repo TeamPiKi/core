@@ -372,7 +372,7 @@ class WishlistApiExamples(
                 ),
         )
 
-    // 이미지 등록 직후 항목들 — link 도 없이 imageKey 로 outbox 적재된 PENDING(sourceUrl=null). 디스패처가 집어 PROCESSING→READY/FAILED 로 전이한다.
+    // 이미지 등록 직후 항목들 — link 도 없이 imageKey 로 작업 큐 적재된 PENDING(sourceUrl=null). 디스패처가 집어 PROCESSING→READY/FAILED 로 전이한다.
     private val imagePendingEntries =
         listOf(
             WishItemResponse(

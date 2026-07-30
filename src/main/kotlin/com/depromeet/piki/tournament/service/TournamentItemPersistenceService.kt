@@ -52,7 +52,7 @@ class TournamentItemPersistenceService(
         // 원본 입력을 별칭(item_links)으로 기록한다(#825 관측 단계) — 위시 등록과 같은 결이다.
         itemIdentityRecorder.recordRegistrationAlias(item)
         // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
-        // URL 경로는 PENDING 으로 적재(outbox)하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
+        // URL 경로는 PENDING 으로 작업 큐에 적재하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         val tournamentItem = tournamentItemRepository.saveAll(
             listOf(

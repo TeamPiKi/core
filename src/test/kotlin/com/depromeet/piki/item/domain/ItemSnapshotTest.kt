@@ -212,7 +212,7 @@ class ItemSnapshotTest {
         }
     }
 
-    // --- outbox claim 전이 (PENDING → PROCESSING) ---
+    // --- 작업 큐 claim 전이 (PENDING → PROCESSING) ---
 
     @Test
     fun `pending 팩토리는 PENDING 스냅샷을 만들고 isReady 는 false 다`() {
