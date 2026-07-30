@@ -179,7 +179,7 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "기록 성공 (라운드 진행 중) — nextMatch 에 다음 매치",
+                            name = "기록 성공 (라운드 진행 중) - nextMatch 에 다음 매치",
                             payload =
                                 ApiResponseBody.ok(
                                     RecordMatchResponse(
@@ -190,7 +190,7 @@ class TournamentApiExamples(
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "기록 성공 (라운드 종료) — nextMatch=null, GET 재조회 필요",
+                            name = "기록 성공 (라운드 종료) - nextMatch 생략으로 data 가 빈 객체, GET 재조회 필요",
                             payload =
                                 ApiResponseBody.ok(
                                     RecordMatchResponse(nextMatch = null, completed = null),
@@ -198,7 +198,7 @@ class TournamentApiExamples(
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "기록 성공 (결승 라운드) — 순위 결과 포함",
+                            name = "기록 성공 (결승 라운드) - 순위 결과 포함, 재전송 시 같은 응답",
                             payload =
                                 ApiResponseBody.ok(
                                     RecordMatchResponse(

@@ -106,7 +106,8 @@ interface TournamentApi {
                 - remainingItems: 현재 라운드에서 아직 대결하지 않은 생존 아이템 목록, 가격 오름차순. 진행률 표시용이며 페어링에는 쓰지 않는다
                 - currentMatch: 서버가 브래킷에서 파생한 "지금 치를 매치"(first · second 아이템). 클라이언트는 이걸 그대로 그리고 페어링·셔플을 하지 않는다.
                   POST /tournaments/{id}/matches 에 이 조합을 그대로 되돌려주면 된다.
-                  정상 흐름에서는 항상 존재한다 — 이 이관 배포 시점에 이미 IN_PROGRESS 였던 토너먼트처럼 기록과 서버 브래킷이 어긋난 경우에만 null 이다
+                  정상 흐름에서는 항상 존재한다. 이 이관 배포 시점에 이미 IN_PROGRESS 였던 토너먼트처럼 기록과 서버 브래킷이 어긋난 경우에만 빠지는데,
+                  그때는 `currentMatch: null` 이 아니라 **키 자체가 응답에서 생략**된다 (이 API 의 모든 nullable 필드가 같은 규약)
                 - 첫 라운드는 인원이 2의 거듭제곱이 되도록 정규화된다 (예: 25명 → 9매치·부전승 7 → 16강 → 8강 → 4강 → 결승).
                   따라서 currentRound 는 항상 16 · 8 · 4 · 2 처럼 2의 거듭제곱으로 흐르며(첫 라운드만 예외), 부전승은 첫 라운드에서만 발생한다
               - 아직 매치를 시작하지 않은 멤버(isOwner=false): pending 필드 (ROOT 아이템·참여자 목록)
@@ -574,8 +575,11 @@ interface TournamentApi {
             검증하지 않으므로, 뒤집혀 오거나 순서가 달라도 통과한다.
 
             같은 조합을 같은 승자로 다시 보내면 멱등 성공(중복 기록 없이 200)이고, 다른 승자로 보내면 409 (TOURNAMENT-035) 다.
+            결승 매치도 마찬가지다 - 결승을 기록하면 토너먼트가 COMPLETED 로 바뀌지만, 같은 결승 매치를 재전송하면
+            409 가 아니라 최초 응답과 같은 completed(순위 결과)를 다시 받는다. 응답을 못 받고 재전송하는 경우가 결승에서 가장 흔하다.
 
-            nextMatch 는 같은 라운드에 남은 다음 매치이며, 라운드가 끝났으면 null 이다 —
+            응답의 nullable 필드는 `null` 로 내려가지 않고 **키 자체가 생략**된다 (이 API 공통 규약).
+            nextMatch 는 같은 라운드에 남은 다음 매치이며, 라운드가 끝났으면 생략된다 (두 필드가 다 비면 data 는 빈 객체다).
             이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
             결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
             소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
@@ -586,7 +590,7 @@ interface TournamentApi {
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "매치 결과 기록 성공 (라운드 진행 중: nextMatch 에 다음 매치 · 라운드 종료: nextMatch=null · 결승: completed.result 에 순위 아이템 목록)",
+                description = "매치 결과 기록 성공 (라운드 진행 중: nextMatch 에 다음 매치 · 라운드 종료: 두 필드 생략으로 data 가 빈 객체 · 결승: completed.result 에 순위 아이템 목록)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -636,7 +640,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트 · 이미 탈락한 아이템 · 이미 결과가 기록된 대결에 다른 승자 전송)",
+                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트에 기록되지 않은 새 매치 전송 · 이미 탈락한 아이템 · 이미 결과가 기록된 대결에 다른 승자 전송)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

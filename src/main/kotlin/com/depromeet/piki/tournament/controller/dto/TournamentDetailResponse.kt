@@ -97,6 +97,7 @@ data class TournamentDetailResponse(
         val lastHistory: HistoryResponse?,
         val remainingItems: List<ItemDetailResponse>,
         // 서버가 파생한 "지금 치를 매치"(#683). 클라이언트는 이걸 그대로 그리고 페어링·셔플을 하지 않는다.
+        // NON_NULL 이라 값이 없으면 `null` 이 아니라 키째 생략된다 - 클라 타입도 optional 로 둔다.
         val currentMatch: MatchResponse?,
     )
 
