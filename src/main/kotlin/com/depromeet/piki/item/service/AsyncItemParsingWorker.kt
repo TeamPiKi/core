@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component
 class AsyncItemParsingWorker(
     private val productLinkExtractor: ProductLinkExtractor,
     private val itemParsingService: ItemParsingService,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
     private val transitionRetry: TransitionRetry,
     private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
@@ -85,6 +86,11 @@ class AsyncItemParsingWorker(
                     link.safeLogString(),
                 )
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
+                // 정체성 기록(#825 관측 단계) — READY 전이가 커밋된 뒤 별도 트랜잭션으로 canonical·별칭을 남긴다.
+                // 전이와 분리하는 이유·병합 시 원자화 계획은 recorder 주석 참고. 기록 실패가 파싱 결과를 해치면
+                // 안 되므로 예외를 흡수한다(관측 부가 기능).
+                runCatching { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
+                    .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.

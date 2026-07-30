@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -32,6 +33,7 @@ class TournamentItemPersistenceService(
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
 ) {
     @Transactional
     fun persistLinkItem(
@@ -47,6 +49,8 @@ class TournamentItemPersistenceService(
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
         val item = itemRepository.save(Item(link))
+        // 원본 입력을 별칭(item_links)으로 기록한다(#825 관측 단계) — 위시 등록과 같은 결이다.
+        itemIdentityRecorder.recordRegistrationAlias(item)
         // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
         // URL 경로는 PENDING 으로 적재(outbox)하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))

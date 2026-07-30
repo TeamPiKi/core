@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishException
@@ -30,6 +31,7 @@ class WishPersistenceService(
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val userService: UserService,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,6 +49,9 @@ class WishPersistenceService(
         // 이 방어는 "확인 후 탈퇴가 끼어든" tombstone race 전용이다(FCM 과 같은 결). 행이 있으면 잠가 직렬화한다.
         userService.rejectIfWithdrawnForUpdate(userId)
         val saved = itemRepository.save(item)
+        // 원본 입력을 별칭(item_links)으로 기록한다(#825 관측 단계) — 같은 트랜잭션이라 등록과 원자적이고,
+        // INSERT IGNORE 라 중복(재등록)이 등록을 죽이지 않는다.
+        itemIdentityRecorder.recordRegistrationAlias(saved)
         // 저장한 snapshot 의 id 를 wish 의 활성 포인터(snapshotId)로 박는다. 5단계 갱신에서 새 버전으로 스왑된다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
