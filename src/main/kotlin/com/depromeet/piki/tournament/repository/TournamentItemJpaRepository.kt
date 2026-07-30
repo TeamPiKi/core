@@ -23,21 +23,23 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     @Query("SELECT t.id FROM TournamentItem t WHERE t.tournamentId = :tournamentId AND t.deletedAt IS NULL ORDER BY t.id ASC")
     fun findIdsByTournamentId(@Param("tournamentId") tournamentId: Long): List<Long>
 
-    // 이 아이템을 토너먼트에 추가한 사람들(adder). 같은 아이템이 여러 토너먼트에 공유될 수 있어 DISTINCT. (파싱 알림 수신자 역조회)
-    // item_id 는 snapshot 단일 출처라 tournament_item→snapshot theta join 으로 itemId 에 도달한다(FK·연관관계 없음).
+    // 이 버전(snapshot)을 pin 해 올린 사람들(adder). 파싱 알림 수신자 역조회 — 파싱 사실의 주체가 버전이라
+    // 버전으로 직결한다(#576): 같은 item 의 다른 버전을 pin 한 출전(과거 버전·갱신 전 버전)은 이 파싱의 수신자가 아니다.
+    // 공유(#825)로 한 버전이 여러 출전에 pin 되면 각 adder 가 받는다(DISTINCT).
     @Query(
-        "SELECT DISTINCT t.userId FROM TournamentItem t, ItemSnapshot s " +
-            "WHERE t.snapshotId = s.id AND s.itemId = :itemId AND t.deletedAt IS NULL",
+        "SELECT DISTINCT t.userId FROM TournamentItem t " +
+            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL",
     )
-    fun findUserIdsByItemId(@Param("itemId") itemId: Long): List<UUID>
+    fun findUserIdsBySnapshotId(@Param("snapshotId") snapshotId: Long): List<UUID>
 
-    // 이 아이템의 토너먼트 출전 좌표(tournamentId·tournament_item id). 파싱 알림 딥링크 라우팅 역조회(#408).
-    // 공유 대비 List 지만 파싱 시점엔 단일 컨텍스트라 0~1 행이다. id 오름차순으로 결정성만 둔다.
+    // 이 버전(snapshot)을 pin 한 토너먼트 출전 좌표(tournamentId·tournament_item id). 파싱 알림 딥링크·SSE 카드
+    // 라우팅 역조회(#408·#576). 버전 직결이라 이벤트 status 가 어느 좌표에서든 참이다 — itemId 라우팅 시절의
+    // spurious 갱신(다른 버전 카드에 남의 완료·실패가 전파)이 구조적으로 사라진다. id 오름차순은 결정성용.
     @Query(
-        "SELECT t.tournamentId AS tournamentId, t.id AS tournamentItemId FROM TournamentItem t, ItemSnapshot s " +
-            "WHERE t.snapshotId = s.id AND s.itemId = :itemId AND t.deletedAt IS NULL ORDER BY t.id ASC",
+        "SELECT t.tournamentId AS tournamentId, t.id AS tournamentItemId FROM TournamentItem t " +
+            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL ORDER BY t.id ASC",
     )
-    fun findRoutingByItemId(@Param("itemId") itemId: Long): List<TournamentItemRoutingView>
+    fun findRoutingBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemRoutingView>
 
     @Modifying
     @Query(

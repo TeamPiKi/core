@@ -14,11 +14,11 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
     // 이 아이템을 위시에 담은 유저들. 같은 아이템을 여러 유저가 담을 수 있어 DISTINCT. (알림 수신자 역조회)
     // item_id 는 snapshot 단일 출처라 wish→snapshot theta join 으로 itemId 에 도달한다(FK·연관관계 없음).
     @Query(
-        "SELECT DISTINCT w.userId FROM Wish w, ItemSnapshot s " +
-            "WHERE w.snapshotId = s.id AND s.itemId = :itemId AND w.deletedAt IS NULL",
+        "SELECT DISTINCT w.userId FROM Wish w " +
+            "WHERE w.snapshotId = :snapshotId AND w.deletedAt IS NULL",
     )
-    fun findUserIdsByItemId(
-        @Param("itemId") itemId: Long,
+    fun findUserIdsBySnapshotId(
+        @Param("snapshotId") snapshotId: Long,
     ): List<UUID>
 
     fun countByIdInAndUserId(

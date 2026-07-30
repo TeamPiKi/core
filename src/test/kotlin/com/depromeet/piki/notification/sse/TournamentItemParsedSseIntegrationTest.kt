@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // 토너먼트 출전 아이템의 파싱 완료/실패 → 참여자 SSE 조용한 갱신(silent-sync, type=TOURNAMENT_ITEM_PARSED)을 실제 빈으로 검증한다.
-// 브로드캐스터의 수신자·좌표 도출은 DB 역조회(tournament_item⋈item_snapshot, tournament_user)에 의존하므로 통합으로 검증한다.
+// 라우팅 키는 snapshotId(버전)다(#576) — 브로드캐스터의 수신자·좌표 도출은 DB 역조회(tournament_item pin, tournament_user)에 의존하므로 통합으로 검증한다.
 // 영속 fixture 는 @Transactional 자동 롤백. SseEmitterRegistry 는 인메모리 싱글톤이라 롤백 대상이 아니므로,
 // 각 테스트가 랜덤 userId 로 등록하고 finally 에서 자기 emitter 를 정리한다(NotificationSseIntegrationTest 와 동일 규약).
 @Transactional
@@ -45,15 +45,16 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         val participant = UUID.randomUUID()
         val outsider = UUID.randomUUID()
         listOf(adder, participant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
+        val snapshotId = snapshotIdFor(itemId)
         val tournamentItemId =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotIdFor(itemId)))).first().getId()
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
 
         val adderEmitter = ItemParsedRecordingEmitter().also { registry.register(adder, it) }
         val participantEmitter = ItemParsedRecordingEmitter().also { registry.register(participant, it) }
         val outsiderEmitter = ItemParsedRecordingEmitter().also { registry.register(outsider, it) }
 
         try {
-            broadcaster.broadcast(itemId, ItemStatus.READY)
+            broadcaster.broadcast(snapshotId, ItemStatus.READY)
 
             // 참여자 전원(올린 본인 adder 포함)이 그 토너먼트 좌표 + READY 를 받는다.
             listOf(adderEmitter, participantEmitter).forEach { emitter ->
@@ -81,11 +82,12 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         val tournamentId = 7002L
         val participant = UUID.randomUUID()
         tournamentUserRepository.save(TournamentUser(tournamentId, participant))
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, participant, snapshotIdFor(itemId))))
+        val snapshotId = snapshotIdFor(itemId)
+        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, participant, snapshotId)))
         val emitter = ItemParsedRecordingEmitter().also { registry.register(participant, it) }
 
         try {
-            broadcaster.broadcast(itemId, ItemStatus.FAILED)
+            broadcaster.broadcast(snapshotId, ItemStatus.FAILED)
 
             assertEquals(ItemStatus.FAILED, emitter.payloads().single().status)
         } finally {
@@ -95,14 +97,14 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `위시로만 담긴(어느 토너먼트에도 없는) 아이템이면 아무 emitter 에도 보내지 않는다`() {
-        // 토너먼트 출전(tournament_item)이 없으면 findRoutingByItemId 가 비어 broadcast 가 early return 한다.
+        // 이 버전을 pin 한 출전(tournament_item)이 없으면 findRoutingBySnapshotId 가 비어 broadcast 가 early return 한다.
         val itemId = 5003L
-        snapshotIdFor(itemId) // snapshot 만 있고 토너먼트엔 안 올림(위시 전용 상황 시뮬레이션)
+        val snapshotId = snapshotIdFor(itemId) // snapshot 만 있고 토너먼트엔 안 올림(위시 전용 상황 시뮬레이션)
         val someUser = UUID.randomUUID()
         val emitter = ItemParsedRecordingEmitter().also { registry.register(someUser, it) }
 
         try {
-            broadcaster.broadcast(itemId, ItemStatus.READY)
+            broadcaster.broadcast(snapshotId, ItemStatus.READY)
 
             assertTrue(emitter.payloads().isEmpty())
         } finally {
@@ -120,14 +122,14 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         val userB = UUID.randomUUID()
         tournamentUserRepository.save(TournamentUser(tournamentA, userA))
         tournamentUserRepository.save(TournamentUser(tournamentB, userB))
-        // 같은 item(=같은 snapshot)을 두 토너먼트에 각각 올린다 → 좌표(tournamentItemId)가 토너먼트별로 다르다.
+        // 같은 버전(snapshot)을 두 토너먼트가 pin 한다(공유 #825 의 세계) → 같은 사실이므로 두 좌표 모두 받는 것이 맞다.
         val itemIdA = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentA, userA, snapshotId))).first().getId()
         val itemIdB = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentB, userB, snapshotId))).first().getId()
         val emitterA = ItemParsedRecordingEmitter().also { registry.register(userA, it) }
         val emitterB = ItemParsedRecordingEmitter().also { registry.register(userB, it) }
 
         try {
-            broadcaster.broadcast(itemId, ItemStatus.READY)
+            broadcaster.broadcast(snapshotId, ItemStatus.READY)
 
             val payloadA = emitterA.payloads().single()
             assertEquals(tournamentA, payloadA.tournamentId)
@@ -142,8 +144,37 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // 알림 역조회는 tournament_item→item_snapshots 를 snapshot_id 로 조인해 s.item_id 로 매칭한다.
-    // 그 itemId 로 시딩한 snapshot 의 id 를 tournament_item 의 snapshotId 로 넘겨야 역조회가 맞아떨어진다.
+    @Test
+    fun `같은 item 의 다른 버전을 pin 한 카드는 받지 않는다 - 버전 라우팅의 spurious 차단`() {
+        // #576 의 핵심 계약: 파싱 사실은 버전의 것이다. 같은 item 이라도 다른 버전(갱신 전 버전 등)을 pin 한
+        // 카드에 남의 완료가 전파되면 "아직 안 끝난 카드가 완료로 갱신"되는 오염이 된다.
+        val itemId = 5005L
+        val versionOne = snapshotIdFor(itemId)
+        val versionTwo = snapshotIdFor(itemId)
+        val tournamentA = 7006L
+        val tournamentB = 7007L
+        val userA = UUID.randomUUID()
+        val userB = UUID.randomUUID()
+        tournamentUserRepository.save(TournamentUser(tournamentA, userA))
+        tournamentUserRepository.save(TournamentUser(tournamentB, userB))
+        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentA, userA, versionOne)))
+        val cardB = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentB, userB, versionTwo))).first().getId()
+        val emitterA = ItemParsedRecordingEmitter().also { registry.register(userA, it) }
+        val emitterB = ItemParsedRecordingEmitter().also { registry.register(userB, it) }
+
+        try {
+            broadcaster.broadcast(versionTwo, ItemStatus.READY)
+
+            // versionTwo 를 pin 한 카드만 받는다.
+            assertEquals(cardB, emitterB.payloads().single().tournamentItemId)
+            assertTrue(emitterA.payloads().isEmpty())
+        } finally {
+            registry.unregister(userA, emitterA)
+            registry.unregister(userB, emitterB)
+        }
+    }
+
+    // 파싱 중(PROCESSING) 버전을 하나 시딩한다 — pin(snapshotId)과 브로드캐스트 키가 같은 버전을 가리켜야 라우팅이 맞아떨어진다.
     private fun snapshotIdFor(itemId: Long): Long = itemSnapshotRepository.save(ItemSnapshot.pending(itemId).apply { markProcessing() }).getId()
 }
 
