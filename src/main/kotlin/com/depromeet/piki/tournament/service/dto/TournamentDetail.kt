@@ -26,6 +26,8 @@ sealed class TournamentDetail {
         val currentRound: Int,
         val lastHistory: HistoryEntry?,
         val remainingItems: List<ItemDetail>,
+        // 서버가 브래킷에서 파생한 "지금 치를 매치"(#683). 클라이언트는 페어링·셔플 없이 이걸 그대로 그린다.
+        val currentMatch: MatchDetail?,
         val isOwner: Boolean,
         val isRoot: Boolean,
         val sourceTournamentId: Long? = null,
@@ -54,6 +56,13 @@ sealed class TournamentDetail {
         val currency: String?,
         val imageUrl: String?,
         val status: ItemStatus,
+    )
+
+    // 한 매치의 두 아이템. ID 만 주고 remainingItems 에서 다시 찾게 하면 클라에 조합 로직이 남으므로
+    // 아이템을 통째로 담는다.
+    data class MatchDetail(
+        val first: ItemDetail,
+        val second: ItemDetail,
     )
 
     data class HistoryEntry(

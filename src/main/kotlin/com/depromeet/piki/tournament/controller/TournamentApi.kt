@@ -11,6 +11,7 @@ import com.depromeet.piki.tournament.controller.dto.UpdateInviteDurationRequest
 import com.depromeet.piki.tournament.controller.dto.JoinTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.PlayLinkInfoResponse
 import com.depromeet.piki.tournament.controller.dto.RecordMatchRequest
+import com.depromeet.piki.tournament.controller.dto.RecordMatchResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
@@ -102,7 +103,12 @@ interface TournamentApi {
               - 소유자(isOwner=true) 또는 이미 매치를 시작한 멤버: inProgress 필드
                 - currentRound: 다음에 진행할 라운드 번호
                 - lastHistory: 가장 최근에 기록된 매치 결과. 라운드 전환 직후에는 currentRound와 다른 라운드의 매치일 수 있음. 매치 기록이 없으면 null
-                - remainingItems: 현재 라운드에서 아직 대결하지 않은 생존 아이템 목록, 가격 오름차순. 이 순서가 클라이언트의 매치 페어링 순서([0]vs[1], [2]vs[3] …)를 결정함
+                - remainingItems: 현재 라운드에서 아직 대결하지 않은 생존 아이템 목록, 가격 오름차순. 진행률 표시용이며 페어링에는 쓰지 않는다
+                - currentMatch: 서버가 브래킷에서 파생한 "지금 치를 매치"(first · second 아이템). 클라이언트는 이걸 그대로 그리고 페어링·셔플을 하지 않는다.
+                  POST /tournaments/{id}/matches 에 이 조합을 그대로 되돌려주면 된다.
+                  정상 흐름에서는 항상 존재한다 — 이 이관 배포 시점에 이미 IN_PROGRESS 였던 토너먼트처럼 기록과 서버 브래킷이 어긋난 경우에만 null 이다
+                - 첫 라운드는 인원이 2의 거듭제곱이 되도록 정규화된다 (예: 25명 → 9매치·부전승 7 → 16강 → 8강 → 4강 → 결승).
+                  따라서 currentRound 는 항상 16 · 8 · 4 · 2 처럼 2의 거듭제곱으로 흐르며(첫 라운드만 예외), 부전승은 첫 라운드에서만 발생한다
               - 아직 매치를 시작하지 않은 멤버(isOwner=false): pending 필드 (ROOT 아이템·참여자 목록)
                 - pending.ownerStarted = true. 클라이언트는 이 플래그로 "주최자 대기" vs "주최자 시작 완료·지금 시작하세요" UI 를 분기한다
                 - pending.inviteCode, pending.inviteExpiresAt 은 null (초대 기간 종료)
@@ -561,17 +567,26 @@ interface TournamentApi {
         description = """
             IN_PROGRESS 상태의 토너먼트에서 한 매치의 결과(승자)를 기록한다.
             currentRound 는 해당 시점에 서버가 기대하는 라운드와 일치해야 한다.
-            결승(currentRound=2) 결과 기록 시 본인의 순위 결과(1위~최대 4위)가 즉시 반환된다.
+
+            firstTournamentItemId · secondTournamentItemId 는 서버가 브래킷에서 파생한 조합이어야 한다 —
+            GET /tournaments/{id} 의 inProgress.currentMatch 또는 이 API 의 이전 응답 nextMatch 를 그대로 되돌려주면 된다.
+            클라이언트가 임의로 구성한 조합은 400 (TOURNAMENT-034) 으로 거부된다. 다만 좌/우 순서와 라운드 내 매치 진행 순서는
+            검증하지 않으므로, 뒤집혀 오거나 순서가 달라도 통과한다.
+
+            같은 조합을 같은 승자로 다시 보내면 멱등 성공(중복 기록 없이 200)이고, 다른 승자로 보내면 409 (TOURNAMENT-035) 다.
+
+            nextMatch 는 같은 라운드에 남은 다음 매치이며, 라운드가 끝났으면 null 이다 —
+            이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
+            결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
             소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
             다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있으며, 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
-            결승이 아닌 라운드는 data=null 을 반환한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "매치 결과 기록 성공 (결승이 아닌 라운드: data=null · 결승 라운드: data.result에 순위 아이템 목록)",
+                description = "매치 결과 기록 성공 (라운드 진행 중: nextMatch 에 다음 매치 · 라운드 종료: nextMatch=null · 결승: completed.result 에 순위 아이템 목록)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -581,7 +596,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (승자가 대결 두 아이템 중 하나가 아님 · 해당 토너먼트에 속하지 않는 아이템 · 현재 진행해야 할 라운드가 아님)",
+                description = "잘못된 요청 (승자가 대결 두 아이템 중 하나가 아님 · 해당 토너먼트에 속하지 않는 아이템 · 현재 진행해야 할 라운드가 아님 · 서버 브래킷에 없는 페어 조합)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -621,7 +636,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트 · 이미 탈락한 아이템)",
+                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트 · 이미 탈락한 아이템 · 이미 결과가 기록된 대결에 다른 승자 전송)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -635,7 +650,7 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "토너먼트 ID", example = "1") tournamentId: Long,
         request: RecordMatchRequest,
-    ): ApiResponseBody<TournamentDetailResponse.CompletedData?>
+    ): ApiResponseBody<RecordMatchResponse>
 
     @Operation(
         summary = "플레이 링크 생성",

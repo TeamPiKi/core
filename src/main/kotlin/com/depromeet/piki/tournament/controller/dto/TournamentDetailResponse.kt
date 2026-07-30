@@ -41,6 +41,17 @@ data class TournamentDetailResponse(
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    data class MatchResponse(
+        val first: ItemDetailResponse,
+        val second: ItemDetailResponse,
+    ) {
+        companion object {
+            fun from(m: TournamentDetail.MatchDetail): MatchResponse =
+                MatchResponse(ItemDetailResponse.from(m.first), ItemDetailResponse.from(m.second))
+        }
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     data class HistoryResponse(
         val currentRound: Int,
         val firstTournamentItemId: Long,
@@ -85,6 +96,8 @@ data class TournamentDetailResponse(
         val currentRound: Int,
         val lastHistory: HistoryResponse?,
         val remainingItems: List<ItemDetailResponse>,
+        // 서버가 파생한 "지금 치를 매치"(#683). 클라이언트는 이걸 그대로 그리고 페어링·셔플을 하지 않는다.
+        val currentMatch: MatchResponse?,
     )
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -145,6 +158,7 @@ data class TournamentDetailResponse(
                                 currentRound = detail.currentRound,
                                 lastHistory = detail.lastHistory?.let { HistoryResponse.from(it) },
                                 remainingItems = detail.remainingItems.map { ItemDetailResponse.from(it) },
+                                currentMatch = detail.currentMatch?.let { MatchResponse.from(it) },
                             ),
                         completed = null,
                     )

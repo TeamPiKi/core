@@ -1070,16 +1070,22 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             post("/api/v1/tournaments/$tournamentId/start")
                 .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        // 삽입 순서(10k · 40k · 20k · 30k)는 가격 순이 아니다. 서버 브래킷은 가격 오름차순 인접 페어라
+        // (10k,20k) · (30k,40k) 로 묶이므로, 삽입 인접인 (10k,40k) 를 보내면 400 이다 (#683 브래킷 무결성).
         val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
-        val ti1 = items[0].getId()
-        val ti2 = items[1].getId()
+        val ti10k = items[0].getId()
+        val ti40k = items[1].getId()
+        val ti20k = items[2].getId()
 
-        mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"currentRound":4,"firstTournamentItemId":$ti1,"secondTournamentItemId":$ti2,"selectedTournamentItemId":$ti1}"""),
-        )
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti20k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isOk)
 
         mockMvc
             .perform(
@@ -1090,13 +1096,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending").doesNotExist())
             .andExpect(jsonPath("$.data.inProgress.currentRound").value(4))
             .andExpect(jsonPath("$.data.inProgress.lastHistory.currentRound").value(4))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti1))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti2))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti1))
-            // round-4 미대결 생존 아이템 2개(item3, item4) 가격 오름차순
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti10k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti20k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti10k))
+            // round-4 미대결 생존 아이템 2개(30k · 40k) — 삽입 순서는 40k 가 먼저지만 응답은 가격 오름차순이다
             .andExpect(jsonPath("$.data.inProgress.remainingItems.length()").value(2))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(20_000))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(40_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].tournamentItemId").value(ti40k))
     }
 
     @Test
