@@ -1,9 +1,13 @@
 package com.depromeet.piki.common.controller
 
 import com.depromeet.piki.support.IntegrationTestSupport
+import io.micrometer.core.instrument.Timer
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.micrometer.metrics.autoconfigure.MetricsProperties
+import org.springframework.boot.micrometer.metrics.autoconfigure.PropertiesMeterFilter
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
@@ -12,10 +16,16 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
+import java.io.File
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
 
 class ActuatorIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
+
+    @Autowired
+    private lateinit var metricsProperties: MetricsProperties
 
     @Test
     fun `GET actuator health - 인증 없이 200, status UP 이 와야 한다 (Alloy scrape 가드)`() {
@@ -65,6 +75,47 @@ class ActuatorIntegrationTest : IntegrationTestSupport() {
             .perform(get("/actuator/loggers"))
             .andExpect(status().isOk)
             .andExpect(content().string(containsString("DEBUG")))
+    }
+
+    @Test
+    fun `http server requests 타이머에 OTel 표준 SLO 버킷이 붙는다 (Grafana 지연 패널 데이터 가드)`() {
+        // 대시보드 지연 패널(RED p50/p95/p99 · 한눈 p99 stat)은 http_server_requests_seconds_bucket 을 읽는다.
+        // application.yml 의 distribution.slo 가 빠지면 bucket 시계열이 노출되지 않아 그 패널 전부가 조용히
+        // No data 로 죽으므로(#839), yml 바인딩(MetricsProperties)을 실제 적용 필터(PropertiesMeterFilter)에
+        // 태워 검증한다. 공유 컨텍스트의 PrometheusMeterRegistry 에 프로브 미터를 직접 등록하면 실제
+        // http.server.requests 와 라벨 키가 달라 시계열이 드롭될 수 있어(#465), 같은 필터를 로컬 레지스트리에
+        // 적용해 격리 검증한다.
+        val registry = SimpleMeterRegistry()
+        registry.config().meterFilter(PropertiesMeterFilter(metricsProperties))
+        val timer = Timer.builder("http.server.requests").register(registry)
+
+        val buckets =
+            timer
+                .takeSnapshot()
+                .histogramCounts()
+                .map { it.bucket(TimeUnit.SECONDS) }
+                .filter { it.isFinite() } // +Inf 버킷은 SLO 설정과 무관하게 붙으므로 제외
+
+        // OTel 표준 explicit bucket 경계 14개 (5ms 부터 10s)
+        val otelDefaultBoundaries = listOf(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0)
+        assertEquals(otelDefaultBoundaries, buckets)
+    }
+
+    @Test
+    fun `SLO 버킷 설정은 main 과 test 의 application yml 이 같은 값으로 유지된다 (미러 드리프트 가드)`() {
+        // test classpath 의 application.yml 이 main 을 통째로 대체하므로 위 바인딩 테스트는 test yml 만 본다.
+        // main 쪽에서만 설정이 빠지면 테스트는 초록인 채 운영 대시보드 지연 패널이 조용히 죽는 사각이 남아,
+        // 두 파일의 SLO 라인을 직접 대조한다 (소스 스캔 상대경로는 TestConventionTest 와 같은 방식).
+        fun sloValue(path: String): String {
+            val lines =
+                File(path)
+                    .readLines()
+                    .filter { it.trimStart().startsWith("\"[http.server.requests]\"") }
+            assertEquals(1, lines.size, "$path 에 http.server.requests SLO 설정 라인이 정확히 1개 있어야 한다")
+            return lines.single().substringAfter(":").trim()
+        }
+
+        assertEquals(sloValue("src/main/resources/application.yml"), sloValue("src/test/resources/application.yml"))
     }
 
     @Test
