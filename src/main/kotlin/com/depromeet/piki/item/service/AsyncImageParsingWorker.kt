@@ -8,6 +8,8 @@ import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.observation.Observation
+import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
@@ -30,6 +32,7 @@ class AsyncImageParsingWorker(
     private val transitionRetry: TransitionRetry,
     private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
+    private val observationRegistry: ObservationRegistry,
 ) : ImageParsingWorker {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -40,18 +43,23 @@ class AsyncImageParsingWorker(
         imageKey: String,
         expectedAttempt: Int,
     ) {
+        // 링크 워커와 같은 이유로 파싱 한 건을 "item.parse" span 으로 묶는다 — 디스패처가 @Scheduled 라 들어오는
+        // trace 가 없어, 여기서 열지 않으면 원격 추출 호출·DB 전이 span 이 부모 없는 파편으로 흩어진다
+        // (부모 없는 JDBC 관측은 ObservationConfig 가 거부하므로 아예 사라진다).
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
-        parsingHeartbeat.guarded(
-            snapshotId,
-            expectedAttempt,
-            onOwnershipLost = {
-                log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
-            },
-        ) { attempt ->
-            runCatching { imageSnapshotExtractor.extract(imageKey) }
-                .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
-                .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
+        Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry).observe {
+            parsingHeartbeat.guarded(
+                snapshotId,
+                expectedAttempt,
+                onOwnershipLost = {
+                    log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
+                },
+            ) { attempt ->
+                runCatching { imageSnapshotExtractor.extract(imageKey) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
+                    .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
+            }
         }
     }
 
