@@ -112,6 +112,11 @@ internal data class RemoteExtractionResponse(
     val imageUrl: String? = null,
     val currentPrice: Int? = null,
     val currency: String? = null,
+    // additive 확장(계약 §2, extractor#17): 리다이렉트 귀결점. 구버전 extractor 는 안 내려주며(null),
+    // 그 경우 정체성(canonical) 확정을 건너뛴다 — 배포 순서 무관.
+    val finalUrl: String? = null,
+    // additive 확장: 추출 경로(STRUCTURED|LLM). 출처(SERVER/SERVER_LLM) 기록의 근거이며 모르는 값은 미기록으로 둔다.
+    val method: String? = null,
 ) {
     // 외부 응답 → 도메인 매핑은 DTO 자신이 진다 (CLAUDE.md).
     // fromExtracted 를 반드시 경유한다 — https-only imageUrl(XSS 사다리 차단)·currency ISO 정규화·범위 검증은
@@ -126,6 +131,8 @@ internal data class RemoteExtractionResponse(
             imageUrl = imageUrl,
             currentPrice = currentPrice,
             currency = currency,
+            finalUrl = finalUrl,
+            extractionMethod = method,
         )
 }
 

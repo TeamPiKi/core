@@ -15,4 +15,16 @@ enum class ItemSnapshotSource {
 
     // 사용자 수기 입력. edited_by 에 편집자 userId 가 함께 기록된다.
     MANUAL,
+    ;
+
+    companion object {
+        // extractor 응답의 추출 경로(wire 문자열)를 출처로 번역한다. 모르는 값·null 은 null(출처 미기록) —
+        // tolerant reader 라 extractor 가 새 경로 값을 추가해도 여기가 깨지지 않고, 기록만 비운다(계약 §2).
+        fun fromWireMethod(method: String?): ItemSnapshotSource? =
+            when (method) {
+                "STRUCTURED" -> SERVER
+                "LLM" -> SERVER_LLM
+                else -> null
+            }
+    }
 }

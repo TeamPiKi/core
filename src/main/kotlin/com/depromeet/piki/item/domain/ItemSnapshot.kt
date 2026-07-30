@@ -150,6 +150,8 @@ class ItemSnapshot(
             imageUrl = snapshot.imageUrl,
             currency = snapshot.currency,
         )
+        // 출처(#825 결정 4) — 어느 기계가 뽑았는지를 버전에 박는다. 구버전 extractor 응답(method 없음)은 null(미기록).
+        this.source = ItemSnapshotSource.fromWireMethod(snapshot.extractionMethod)
         // 추출 결과와 추출시각을 채운 뒤 불변식을 검사한다 — READY 가 보장하는 네 필드(name·price·imageUrl·extractedAt)를
         // 한 자리에서 확정하려고 set 을 검사 앞에 둔다. 추출이 이름을 못 얻었으면 READY 부적격 —
         // 워커가 이 예외를 받아 FAILED 로 흡수한다(PROCESSING 방치 방지).
