@@ -26,8 +26,11 @@ object ItemIdentityMetrics {
     // 첫 확정을 유지하고 관측만 한다. 늘어나면 정규화 규칙 재검토 신호.
     const val CANONICAL_DRIFT = "canonical_drift"
 
-    // 다른 item 이 같은 canonical 을 이미 소유 — 병합 후보. 공유 활성화(병합 켜기) 전까지는 관측만 한다.
+    // 다른 item 이 같은 canonical 을 이미 소유했는데 병합까지 못 간 극단 경합(승자 조회 실패) — 다음 재파싱이 복구.
     const val CANONICAL_CONFLICT = "canonical_conflict"
+
+    // canonical 충돌을 병합(재부모화 + 별칭 이관 + 임시 item 폐기)으로 해소함 — 공유 활성화(#825 3단계)의 핵심 지표.
+    const val CANONICAL_MERGED = "canonical_merged"
 
     // finalUrl 없음(구버전 extractor·이미지 경로) — 확정 건너뜀.
     const val CANONICAL_NO_FINAL_URL = "canonical_no_final_url"

@@ -14,4 +14,10 @@ interface ItemLinkRepository {
     fun findByUrlHash(urlHash: String): ItemLink?
 
     fun findByItemId(itemId: Long): List<ItemLink>
+
+    // 병합(#825): 별칭 이관 + 잔여 정리.
+    fun reparentAll(
+        fromItemId: Long,
+        toItemId: Long,
+    )
 }

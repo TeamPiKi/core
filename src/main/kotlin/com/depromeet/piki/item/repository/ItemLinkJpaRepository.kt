@@ -27,5 +27,24 @@ interface ItemLinkJpaRepository : JpaRepository<ItemLink, Long> {
 
     fun findByUrlHashAndDeletedAtIsNull(urlHash: String): ItemLink?
 
+    // 병합(#825) — 진 item 의 별칭을 이긴 item 으로 이관한다. UPDATE IGNORE: 같은 url_hash 가 이미 이긴 쪽에
+    // 있으면(귀결점 별칭 등) 그 행은 이동하지 않고 남는다 — 잔여는 deleteAllByItemId 로 정리한다.
+    @Modifying
+    @Query(
+        value = "UPDATE IGNORE item_links SET item_id = :toItemId, updated_at = NOW(6) WHERE item_id = :fromItemId",
+        nativeQuery = true,
+    )
+    fun reparentAll(
+        @Param("fromItemId") fromItemId: Long,
+        @Param("toItemId") toItemId: Long,
+    ): Int
+
+    // 병합 잔여(UPDATE IGNORE 로 이동 못한 중복 별칭) 정리 — 진 item 소속 별칭은 병합 후 남으면 안 된다.
+    @Modifying
+    @Query(value = "DELETE FROM item_links WHERE item_id = :itemId", nativeQuery = true)
+    fun deleteAllByItemId(
+        @Param("itemId") itemId: Long,
+    ): Int
+
     fun findByItemIdAndDeletedAtIsNull(itemId: Long): List<ItemLink>
 }

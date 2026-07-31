@@ -20,4 +20,10 @@ interface ItemRepository {
     ): Boolean
 
     fun findByCanonicalHash(canonicalHash: String): Item?
+
+    // 공유 등록 attach 판정 직렬화용 행 락 조회(#826).
+    fun findByIdForUpdate(id: Long): Item?
+
+    // 병합: 빈 임시 item soft delete.
+    fun softDeleteById(id: Long)
 }

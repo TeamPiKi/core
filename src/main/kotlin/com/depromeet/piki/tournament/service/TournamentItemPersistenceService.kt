@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemIdentityRecorder
+import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -34,6 +35,7 @@ class TournamentItemPersistenceService(
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
     private val itemIdentityRecorder: ItemIdentityRecorder,
+    private val itemSharingService: ItemSharingService,
 ) {
     @Transactional
     fun persistLinkItem(
@@ -42,14 +44,27 @@ class TournamentItemPersistenceService(
         link: ProductLink,
     ): PersistedTournamentItem {
         validateAndCheckCapacity(userId, tournamentId, 1)
+        // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 기존 item 에 붙는다. 중복 검사도 정체성(itemId) 기준으로
+        // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
+        val shared = itemSharingService.resolveExistingItem(link)
         val existingItems = tournamentItemRepository.findAllByTournamentId(tournamentId)
         if (existingItems.isNotEmpty()) {
             val existingSnapshots = itemSnapshotRepository.findByIds(existingItems.map { it.snapshotId })
-            val existingLinks = itemRepository.findByIds(existingSnapshots.map { it.itemId }).mapNotNull { it.link }
+            val existingItemIds = existingSnapshots.map { it.itemId }
+            shared?.let { if (it.getId() in existingItemIds) throw TournamentException.duplicateTournamentItem() }
+            val existingLinks = itemRepository.findByIds(existingItemIds).mapNotNull { it.link }
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
+        shared?.let { sharedItem ->
+            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId(), link)
+            val tournamentItem = tournamentItemRepository.saveAll(
+                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())),
+            ).first()
+            eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
+            return PersistedTournamentItem(itemId = sharedItem.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
+        }
         val item = itemRepository.save(Item(link))
-        // 원본 입력을 별칭(item_links)으로 기록한다(#825 관측 단계) — 위시 등록과 같은 결이다.
+        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다(위시 등록과 같은 결).
         itemIdentityRecorder.recordRegistrationAlias(item)
         // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
         // URL 경로는 PENDING 으로 작업 큐에 적재하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.

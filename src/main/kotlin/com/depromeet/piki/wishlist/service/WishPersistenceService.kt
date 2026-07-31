@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemIdentityRecorder
+import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishException
@@ -32,6 +33,7 @@ class WishPersistenceService(
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val userService: UserService,
     private val itemIdentityRecorder: ItemIdentityRecorder,
+    private val itemSharingService: ItemSharingService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -48,9 +50,22 @@ class WishPersistenceService(
         // absent(users 행 없음)는 여기서 막지 않는다 — 정상 경로는 앞단(WishlistService.requireMember)이 이미 거르고,
         // 이 방어는 "확인 후 탈퇴가 끼어든" tombstone race 전용이다(FCM 과 같은 결). 행이 있으면 잠가 직렬화한다.
         userService.rejectIfWithdrawnForUpdate(userId)
+        // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 새 item 을 만들지 않고 기존 item 에 붙는다.
+        // 락 순서 규약(user → 자식)에 따라 user 락 뒤에 item 락(resolveAttachment)이 온다.
+        item.link?.let { link ->
+            itemSharingService.resolveExistingItem(link)?.let { shared ->
+                // 앞문 중복(결정 3c): 같은 사용자가 이미 담은 상품이면 새 카드 대신 409.
+                if (wishRepository.countByItemIdsAndUserId(listOf(shared.getId()), userId) > 0) {
+                    throw WishException.alreadyExists()
+                }
+                val snapshot = itemSharingService.resolveAttachment(shared.getId(), link)
+                val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+                return WishWithItem(wish = wish, item = shared, snapshot = snapshot)
+            }
+        }
         val saved = itemRepository.save(item)
-        // 원본 입력을 별칭(item_links)으로 기록한다(#825 관측 단계) — 같은 트랜잭션이라 등록과 원자적이고,
-        // INSERT IGNORE 라 중복(재등록)이 등록을 죽이지 않는다.
+        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다. 같은 트랜잭션이라 등록과 원자적이고,
+        // INSERT IGNORE 라 동시 등록 경합이 등록을 죽이지 않는다.
         itemIdentityRecorder.recordRegistrationAlias(saved)
         // 저장한 snapshot 의 id 를 wish 의 활성 포인터(snapshotId)로 박는다. 5단계 갱신에서 새 버전으로 스왑된다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
@@ -172,6 +187,12 @@ class WishPersistenceService(
         item.link ?: throw WishException.notRefreshable()
         // 이미 진행 중(PENDING·PROCESSING)이면 새 추출을 만들지 않고 현재 진행 상태를 그대로 반환(멱등).
         if (activeSnapshot.isInProgress()) return WishWithItem(wish = wish, item = item, snapshot = activeSnapshot)
+        // 공유(#825) — 같은 item 의 다른 참조(다른 위시·출전)가 이미 파싱을 돌리고 있으면 새 작업 대신 그 진행에
+        // 합류한다(#826). 활성 포인터를 그 버전으로 스왑해 완료 시 함께 갱신된다.
+        itemSnapshotRepository.findLatestInProgressByItemId(item.getId())?.let { inProgress ->
+            wish.swapSnapshot(inProgress.getId())
+            return WishWithItem(wish = wish, item = item, snapshot = inProgress)
+        }
         // 추출 실패(FAILED) 항목은 새로고침 대상이 아니다 — 보정(recover)으로 복구한다(409). 새로고침은 성공(READY)
         // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
         // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).

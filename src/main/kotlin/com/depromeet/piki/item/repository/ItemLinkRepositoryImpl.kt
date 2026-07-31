@@ -16,4 +16,12 @@ class ItemLinkRepositoryImpl(
     override fun findByUrlHash(urlHash: String): ItemLink? = itemLinkJpaRepository.findByUrlHashAndDeletedAtIsNull(urlHash)
 
     override fun findByItemId(itemId: Long): List<ItemLink> = itemLinkJpaRepository.findByItemIdAndDeletedAtIsNull(itemId)
+
+    override fun reparentAll(
+        fromItemId: Long,
+        toItemId: Long,
+    ) {
+        itemLinkJpaRepository.reparentAll(fromItemId, toItemId)
+        itemLinkJpaRepository.deleteAllByItemId(fromItemId)
+    }
 }

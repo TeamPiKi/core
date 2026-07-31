@@ -77,7 +77,9 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                description =
+                    "이미 위시리스트에 등록된 상품 (같은 상품을 다시 담음 — code: WISH-009) · " +
+                        "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

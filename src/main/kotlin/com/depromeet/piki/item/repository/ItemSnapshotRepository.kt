@@ -12,6 +12,18 @@ interface ItemSnapshotRepository {
     // 상태 전이(markReady/markFailed/recover) 대상을 찾는 데 쓴다. 5단계 갱신에서 여러 버전이 쌓이면 "최신 버전" 의미가 된다.
     fun findLatestByItemId(itemId: Long): ItemSnapshot?
 
+    // 공유 등록(#825): 진행 중 합류 판정.
+    fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot?
+
+    // 공유 등록(#825): 신선도 재사용 판정 — 마지막 기계 READY.
+    fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot?
+
+    // 병합(#825): 진 item 의 모든 버전을 이긴 item 으로 재부모화. 이동한 행 수 반환.
+    fun reparentAll(
+        fromItemId: Long,
+        toItemId: Long,
+    ): Int
+
     // 한 item 의 추출 완료(READY) 버전 전체를 최신순(id desc)으로. 가격 히스토리 조회용 — 갱신·새로고침마다
     // 쌓인 READY 버전을 시간순으로 노출한다. 가격이 없는 PENDING/PROCESSING/FAILED 는 제외한다.
     fun findReadyHistoryByItemId(itemId: Long): List<ItemSnapshot>

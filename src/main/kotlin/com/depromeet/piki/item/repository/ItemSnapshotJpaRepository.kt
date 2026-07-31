@@ -51,6 +51,36 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     // 살아있는 행만 id 목록으로 일괄 조회.
     fun findByIdInAndDeletedAtIsNull(ids: Collection<Long>): List<ItemSnapshot>
 
+    // 공유 등록(#825 활성화)의 합류 판정 — 이 item 에 진행 중(PENDING/PROCESSING) 버전이 있으면 새 작업을 만들지
+    // 않고 그 진행에 붙는다. 최신 우선(id desc)으로 하나만.
+    @Query(
+        "select s from ItemSnapshot s where s.itemId = :itemId and s.status in (com.depromeet.piki.item.domain.ItemStatus.PENDING, com.depromeet.piki.item.domain.ItemStatus.PROCESSING) and s.deletedAt is null order by s.id desc limit 1",
+    )
+    fun findLatestInProgressByItemId(
+        @Param("itemId") itemId: Long,
+    ): ItemSnapshot?
+
+    // 공유 등록의 신선도 재사용 판정 — 마지막 **기계**(SERVER/SERVER_LLM) READY 버전. 수기(MANUAL)는 카드·추적이
+    // 믿지 않는 값이라 재사용 대상이 아니고, 출처 null(도입 전 행)은 forward-only 라 별칭 경로에 닿지 않는다.
+    @Query(
+        "select s from ItemSnapshot s where s.itemId = :itemId and s.status = com.depromeet.piki.item.domain.ItemStatus.READY and s.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) and s.deletedAt is null order by s.id desc limit 1",
+    )
+    fun findLatestMachineReadyByItemId(
+        @Param("itemId") itemId: Long,
+    ): ItemSnapshot?
+
+    // 병합(#825) — 진(임시) item 의 모든 버전을 이긴 item 소속으로 재부모화한다. wish·tournament_item 은 snapshot 만
+    // 참조하므로 이 한 문장으로 참조가 자동 추종된다. native bulk 라 auditing 을 우회해 updated_at 을 직접 갱신한다.
+    @Modifying
+    @Query(
+        value = "UPDATE item_snapshots SET item_id = :toItemId, updated_at = NOW(6) WHERE item_id = :fromItemId",
+        nativeQuery = true,
+    )
+    fun reparentAll(
+        @Param("fromItemId") fromItemId: Long,
+        @Param("toItemId") toItemId: Long,
+    ): Int
+
     // 디스패처가 집을 작업(PENDING) snapshot 을 FIFO(created_at)로 limit 개, FOR UPDATE SKIP LOCKED 로 잠가 가져온다.
     // 락으로 같은 행을 두 디스패처가 동시에 claim 하는 것을 막고(멀티 인스턴스 대비), SKIP LOCKED 로 잠긴 entry
     // (미커밋 insert 포함)는 대기 없이 건너뛴다 — 교착 제거(위 SKIP_LOCKED 주석). limit 은 Pageable 로 주입.

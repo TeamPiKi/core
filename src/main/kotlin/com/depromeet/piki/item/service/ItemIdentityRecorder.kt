@@ -3,6 +3,7 @@ package com.depromeet.piki.item.service
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.repository.ItemLinkRepository
 import com.depromeet.piki.item.repository.ItemRepository
+import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.CanonicalLink
 import com.depromeet.piki.product.domain.ProductLink
 import io.micrometer.core.instrument.MeterRegistry
@@ -12,9 +13,8 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 
-// 상품 정체성(#825)의 기록 계층 — 별칭(item_links)과 canonical 확정을 담당한다. 공유 활성화 전 단계라
-// **기록·관측만** 한다: 별칭 히트로 기존 item 에 붙는 재사용도, canonical 충돌의 병합(재부모화)도 아직 없다.
-// 충돌은 메트릭·로그로만 남겨 활성화 단계의 판단 재료를 만든다.
+// 상품 정체성(#825)의 기록 계층 — 별칭(item_links)·canonical 확정·병합(재부모화)을 담당한다.
+// 등록 쪽의 별칭 히트 재사용은 ItemSharingService 가, 파싱 완료 쪽의 확정·병합은 여기가 진다.
 //
 // 정규화 실패·중복·충돌 어느 것도 호출부(등록·파싱 완료)를 실패시키지 않는다 — 정체성 기록은 값 전달의
 // 부가 기능이라, 여기서의 문제로 등록·READY 전이가 죽으면 주객이 전도된다.
@@ -22,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate
 class ItemIdentityRecorder(
     private val itemRepository: ItemRepository,
     private val itemLinkRepository: ItemLinkRepository,
+    private val itemSnapshotRepository: ItemSnapshotRepository,
     private val meterRegistry: MeterRegistry,
     private val transactionTemplate: TransactionTemplate,
 ) {
@@ -67,17 +68,43 @@ class ItemIdentityRecorder(
         try {
             transactionTemplate.executeWithoutResult { claim(canonical, itemId) }
         } catch (e: DataIntegrityViolationException) {
-            // uq_items_canonical_hash 위반 — 다른 item 이 같은 귀결점을 이미 소유한 병합 후보다.
-            // 활성화 전이라 병합하지 않고 관측만 한다. 소유 item 을 로그로 짚어 활성화 단계의 데이터로 남긴다.
+            // uq_items_canonical_hash 위반 — 다른 item 이 같은 귀결점을 이미 소유했다: 이 item 은 같은 상품의
+            // 임시 정체성이었던 것. 승자에게 병합한다(#825 활성화 — 재부모화 + 별칭 이관 + 임시 item 폐기).
             val owner = itemRepository.findByCanonicalHash(canonical.hash)
-            log.info(
-                "canonical 병합 후보 관측 item={} owner={} url={}",
-                itemId,
-                owner?.getIdOrNull(),
-                parsed.safeLogString(),
-            )
-            ItemIdentityMetrics.record(meterRegistry, ItemIdentityMetrics.CANONICAL_CONFLICT)
+            owner ?: run {
+                // 충돌 직후 승자가 지워진 극단 경합 — 병합 불가. 관측만 남기면 다음 재파싱이 자연 복구한다.
+                log.warn("canonical 충돌인데 소유 item 조회 실패 - 관측만 남김 item={}", itemId)
+                ItemIdentityMetrics.record(meterRegistry, ItemIdentityMetrics.CANONICAL_CONFLICT)
+                return
+            }
+            merge(loserId = itemId, winnerId = owner.getId(), parsed = parsed)
         }
+    }
+
+    // 병합(#825 결정 3b) — snapshot 재부모화 한 문장이 몸통이다: wish·tournament_item 은 snapshot 만 참조하므로
+    // (4b) 부모 포인터가 바뀌면 모든 참조가 자동 추종한다. 별칭도 승자에게 이관하고 빈 임시 item 은 soft delete.
+    // 이벤트(SSE·알림)는 snapshotId 라우팅(#576)이라 병합과 무관하게 정확하다.
+    //
+    // item 행 락을 선점하지 않는 이유: 병합 중 등록이 loser 에 끼워 넣은 새 PENDING 은 reparentAll 시점에
+    // 미커밋이라 남을 수 있지만, 그 버전의 파싱이 완료되면 loser 의 canonical 충돌이 다시 이 병합 경로를 타서
+    // 잔여 버전이 승자로 수렴한다(자연 복구). 드문 경합을 락으로 선차단하는 대신 수렴에 맡기는 결(3c TODO 와 동일)이고,
+    // 등록 쪽 관점의 보호는 ItemSharingService.resolveAttachment 의 병합 경합 재시도가 진다.
+    //
+    // TODO(#825 결정 3c): 병합으로 같은 사용자가 같은 상품의 위시를 두 장 갖게 될 수 있다(별칭 미스로 들어온 뒷문
+    // 중복). 그 정리(중복 위시 제거)가 올바른 동작이나, 드문 경우를 위해 사용자 데이터를 자동 삭제하는 위험을 지지
+    // 않기로 의도적으로 보류했다 — 추후 수정 가능성 있음.
+    private fun merge(
+        loserId: Long,
+        winnerId: Long,
+        parsed: ProductLink,
+    ) {
+        transactionTemplate.executeWithoutResult {
+            itemSnapshotRepository.reparentAll(fromItemId = loserId, toItemId = winnerId)
+            itemLinkRepository.reparentAll(fromItemId = loserId, toItemId = winnerId)
+            itemRepository.softDeleteById(loserId)
+        }
+        log.info("canonical 병합 완료 loser={} winner={} url={}", loserId, winnerId, parsed.safeLogString())
+        ItemIdentityMetrics.record(meterRegistry, ItemIdentityMetrics.CANONICAL_MERGED)
     }
 
     private fun claim(
