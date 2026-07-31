@@ -11,6 +11,7 @@ import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
 import com.depromeet.piki.item.domain.ItemException
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.user.domain.UserException
@@ -242,8 +243,10 @@ class WishlistApiExamples(
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
 
-    // 가격 히스토리 — 같은 상품(itemId=512)의 READY 버전 둘을 최신순으로. 활성(최신) 버전이 109,000원,
-    // 직전 버전이 119,000원으로 가격이 내려간 이력을 보여준다. isActive 가 활성(위시가 가리키는) 버전을 표시한다.
+    // 가격 히스토리 — 같은 상품(itemId=512)의 READY 버전 셋을 최신순으로. 활성(최신) 버전이 109,000원,
+    // 직전 버전이 119,000원으로 가격이 내려간 이력을 보여준다. isActive 가 활성(위시가 가리키는) 버전을 표시하고,
+    // source·editedByMe 가 출처(기계 vs 수기, 수기면 본인 여부)를 표시한다 — 타인 수기값(editedByMe=false)은
+    // 클라 가격 추적 뷰의 기본 필터 대상이다.
     private val priceHistorySample =
         WishPriceHistoryResponse(
             itemId = 512,
@@ -261,6 +264,20 @@ class WishlistApiExamples(
                         imageUrl = "https://cdn.example.com/p/512.jpg",
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
                         isActive = true,
+                        source = ItemSnapshotSource.SERVER,
+                        editedByMe = null,
+                    ),
+                    WishPriceHistoryResponse.PriceHistoryEntry(
+                        snapshotId = 1064,
+                        currentPrice = 115_000,
+                        currency = "KRW",
+                        name = "에어 조던 1 미드",
+                        imageUrl = "https://cdn.example.com/p/512.jpg",
+                        extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
+                        isActive = false,
+                        // 같은 상품을 공유하는 타인이 수기로 고친 버전 — 이력에는 남지만 가격 추적에선 걸러 그린다.
+                        source = ItemSnapshotSource.MANUAL,
+                        editedByMe = false,
                     ),
                     WishPriceHistoryResponse.PriceHistoryEntry(
                         snapshotId = 1040,
@@ -270,6 +287,8 @@ class WishlistApiExamples(
                         imageUrl = "https://cdn.example.com/p/512.jpg",
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                         isActive = false,
+                        source = ItemSnapshotSource.SERVER_LLM,
+                        editedByMe = null,
                     ),
                 ),
         )

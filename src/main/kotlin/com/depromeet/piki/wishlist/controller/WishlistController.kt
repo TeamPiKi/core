@@ -116,7 +116,13 @@ class WishlistController(
     ): ApiResponseBody<WishPriceHistoryResponse> {
         val result = wishlistService.getPriceHistory(userId = userId, wishId = wishId)
         return ApiResponseBody.ok(
-            WishPriceHistoryResponse.from(result.wish, result.item, result.history, sourcePlatformResolver.resolve(result.item.link)),
+            WishPriceHistoryResponse.from(
+                result.wish,
+                result.item,
+                result.history,
+                sourcePlatformResolver.resolve(result.item.link),
+                requesterId = userId,
+            ),
         )
     }
 
