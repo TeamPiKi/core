@@ -475,6 +475,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `대기실은 최신 기계 버전을 보여주고 start 가 그 표시 버전을 박제해 이후 새 버전이 생겨도 겨룬 값이 유지된다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        // 포인터는 옛 기계 버전(v1)에 박힌 출전 아이템 둘.
+        val itemA = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-a")))
+        val itemB = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-b")))
+        saveTournamentItemFor(tournamentId, itemA, name = "A 옛값", price = 100_000, currency = "KRW", imageUrl = "https://i.example/a1.png")
+        saveTournamentItemFor(tournamentId, itemB, name = "B 옛값", price = 200_000, currency = "KRW", imageUrl = "https://i.example/b1.png")
+        // 다른 참조의 갱신이 만든 새 기계 버전(v2) — 출전 포인터는 여전히 v1 이다.
+        val v2a = saveMachineVersion(itemA.getId(), "A 새값", 110_000)
+        saveMachineVersion(itemB.getId(), "B 새값", 210_000)
+
+        // 대기실(PENDING)은 파생 — 포인터가 v1 이어도 최신 기계 버전(v2) 값을 보여준다(#857).
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'B 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 옛값')]").doesNotExist())
+
+        // start = 겨루는 값 확정 — 파생 표시 버전(v2)으로 겨루고, 포인터도 v2 로 박제(repin)된다.
+        mockMvc
+            .perform(post("/api/v1/tournaments/$tournamentId/start").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.items[0].name").value("A 새값"))
+            .andExpect(jsonPath("$.data.items[0].price").value(110_000))
+            .andExpect(jsonPath("$.data.items[1].name").value("B 새값"))
+        val pinnedSnapshots = tournamentItemJpaRepository
+            .findAllByTournamentIdAndNotDeleted(tournamentId)
+            .map { itemSnapshotJpaRepository.findById(it.snapshotId).get() }
+        assertEquals(setOf("A 새값", "B 새값"), pinnedSnapshots.map { it.name }.toSet())
+        assertTrue(pinnedSnapshots.any { it.getId() == v2a.getId() }, "itemA 포인터가 표시 버전(v2)으로 repin 되어야 한다")
+
+        // 시작 후 또 새 기계 버전(v3)이 생겨도 진행 화면은 박제된 값(v2) 그대로 — 겨룬 값 = 화면 값.
+        saveMachineVersion(itemA.getId(), "A 더새값", 120_000)
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 더새값')]").doesNotExist())
+    }
+
+    @Test
     fun `POST tournaments-id-start 에서 소유자가 아니면 403 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
@@ -2157,6 +2200,25 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // snapshot 을 만들고 그 id 를 박아 저장한다. 조회 경로(getTournamentById·getTournamentItem)가 snapshot 을 읽기 때문이다.
     // item 은 정체성(link)만 들고 추출값·상태는 snapshot 이 보유한다(4a).
     // (서비스 경유 시딩 saveWishItem+addItemsToTournament 은 엔드포인트가 이미 snapshotId 를 채운다.)
+    // 파생(#857) 검증용 — 다른 참조의 갱신이 만든 새 기계(SERVER) READY 버전을 시딩한다. 포인터는 안 움직인다.
+    private fun saveMachineVersion(
+        itemId: Long,
+        name: String,
+        price: Int,
+    ): ItemSnapshot =
+        itemSnapshotJpaRepository.save(
+            ItemSnapshot(
+                itemId = itemId,
+                name = name,
+                currentPrice = price,
+                currency = "KRW",
+                imageUrl = "https://i.example/$price.png",
+                status = ItemStatus.READY,
+                extractedAt = LocalDateTime.now(),
+                source = ItemSnapshotSource.SERVER,
+            ),
+        )
+
     private fun saveTournamentItemFor(
         tournamentId: Long,
         item: Item,
