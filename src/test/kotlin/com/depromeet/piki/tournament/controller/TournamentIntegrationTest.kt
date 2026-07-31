@@ -1752,6 +1752,37 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
+        stubItemParsingWorker.enabled = false
+        try {
+            val mockMvc = buildMockMvc()
+            val tournamentId = createTournament(mockMvc)
+
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
+                ).andExpect(status().isOk)
+
+            // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
+            // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
+                .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
     fun `POST tournaments-id-items-link 에서 url 이 빈 값이면 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)

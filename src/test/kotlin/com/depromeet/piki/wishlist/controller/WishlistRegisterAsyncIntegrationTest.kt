@@ -192,34 +192,43 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `같은 URL 을 두 번 등록해도 dedup 없이 둘 다 201 PENDING 으로 별개 등록된다`() {
+    fun `같은 URL 재등록은 공유 정체성 기준 409 로 막혀 wish 가 1건만 남는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "기본 상품") }
-            val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
+            // 이 파일의 다른 테스트와 URL 을 공유하지 않는다 — 정체성 매칭(별칭)이 테스트 간 상태가 되므로 전용 URL 로 격리.
+            val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/9942"))
             val auth = "Bearer ${memberToken(userId)}"
 
-            repeat(2) {
-                mockMvc
-                    .perform(
-                        post("/api/v1/wishlists")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .header(HttpHeaders.AUTHORIZATION, auth)
-                            .content(body),
-                    ).andExpect(status().isCreated)
-                    .andExpect(jsonPath("$.data.item.status").value("PENDING"))
-            }
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .content(body),
+                ).andExpect(status().isCreated)
+                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
 
-            // dedup 없는 multi-record 모델 — 같은 URL 이라도 별개 wish 2건이 쌓인다 (persist 는 동기라 즉시 반영).
+            // 공유 정체성(#825 활성화) — 같은 사용자가 같은 상품을 다시 담으면 새 카드 대신 409.
+            // (옛 dedup 없는 multi-record 모델을 뒤집은 새 계약이다.)
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .content(body),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("WISH-009"))
+
             val wishCount =
                 jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM wishes WHERE user_id = ?",
                     Int::class.java,
                     uuidToBytes(userId),
                 )
-            assertEquals(2, wishCount)
+            assertEquals(1, wishCount)
         } finally {
             cleanup(userId)
         }
@@ -651,6 +660,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
         itemIds.takeIf { it.isNotEmpty() }?.let {
+            // 별칭(item_links)도 함께 지운다 — 남기면 다음 실행에서 stale 별칭이 삭제된 item 을 가리켜
+            // 공유 정체성 매칭(resolveExistingItem)이 null 로 빠지고 재등록 409 계약 검증이 어긋난다.
+            jdbcTemplate.update("DELETE FROM item_links WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }
