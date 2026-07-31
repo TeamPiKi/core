@@ -56,15 +56,19 @@ resource "aws_db_instance" "mysql" {
   maintenance_window      = "sun:18:00-sun:19:00"
 
   # identifier 는 dev 지만 운영 트래픽을 받는 유일한 DB 다(#813 실측). 자동 백업이 없는 상태라
-  # 실수로 지우면 복구 경로가 없어, 아래 둘로 "지우기 어렵게" 만든다.
+  # 실수로 지우면 복구 경로가 없어, 아래 값들로 "지우기 어렵게" 만든다.
+  #
+  # 둘이 적용되는 층이 다르다. 헷갈리면 삭제 보호를 푸는 절차를 잘못 이해하게 된다.
+  #   deletion_protection: RDS 인스턴스 속성이다. apply 가 ModifyDBInstance 로 AWS 에 실제 전송하며,
+  #     콘솔·CLI·SDK 등 경로를 가리지 않고 삭제를 막는다.
+  #   skip_final_snapshot / final_snapshot_identifier: terraform 이 DeleteDBInstance 를 호출할 때만
+  #     쓰는 인자다. AWS 에 저장되는 상태가 아니라서 terraform 을 거치지 않는 삭제에는 영향이 없다.
   auto_minor_version_upgrade = true
-  deletion_protection        = true  # 콘솔/코드에서 명시적으로 꺼야만 삭제된다 — 의도된 마찰이다.
-  skip_final_snapshot        = false # 그래도 지워질 때는 최종 스냅샷을 반드시 남긴다.
+  deletion_protection        = true  # 명시적으로 false 로 바꿔 apply 해야만 삭제된다. 의도된 마찰이다.
+  skip_final_snapshot        = false # terraform 으로 지울 때는 최종 스냅샷을 반드시 남긴다.
 
   # 위 skip_final_snapshot = false 가 provider 레벨에서 요구하는 짝. 이름을 고정값으로 둬서
-  # 같은 이름의 스냅샷이 이미 있으면 삭제가 실패한다 — 이 역시 마찰로 남겨 둔다.
-  # deletion_protection·skip_final_snapshot·final_snapshot_identifier 셋 다 terraform 삭제 시점
-  # 전용 인자라 AWS API 로 전송되지 않는다. 실제 인스턴스에 가해지는 변경은 deletion_protection 하나다.
+  # 같은 이름의 스냅샷이 이미 있으면 삭제가 실패한다. 이 역시 마찰로 남겨 둔다.
   final_snapshot_identifier = "${local.name_prefix}-mysql-final"
 
   # 실제 비밀번호는 콘솔/운영에서 바뀔 수 있어 state·SSM 값과 어긋날 수 있다.
