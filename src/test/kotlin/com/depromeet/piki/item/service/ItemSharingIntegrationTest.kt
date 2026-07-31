@@ -161,6 +161,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         stubItemParsingWorker.enabled = false
         val userA = newMember()
         val userB = newMember()
+        val userC = newMember()
         // 서로 다른 단축 모양이라 별칭 미스 — 각자 item 이 생기고, 파싱 완료 시 같은 귀결점으로 충돌한다(뒷문).
         val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0001")))
         val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002")))
@@ -187,9 +188,12 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             // 이후 진 쪽 단축 모양으로 재등록해도 승자 item 에 붙는다 — 병합이 정체성 조회 공간을 하나로 만든다.
             val resolved = itemSharingService.resolveExistingItem(ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002"))
             assertEquals(winnerId, resolved?.getId())
+            // 실제 등록 흐름(persist)까지 승자에 붙는지 확인 — 조회 공간만이 아니라 attach 도 병합 결과를 따른다.
+            val third = wishPersistenceService.persist(userC, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002")))
+            assertEquals(winnerId, third.item.getId())
         } finally {
             stubItemParsingWorker.enabled = true
-            cleanup(listOf(winnerId, loserId), listOf(userA, userB))
+            cleanup(listOf(winnerId, loserId), listOf(userA, userB, userC))
         }
     }
 

@@ -58,7 +58,7 @@ class WishPersistenceService(
                 if (wishRepository.countByItemIdsAndUserId(listOf(shared.getId()), userId) > 0) {
                     throw WishException.alreadyExists()
                 }
-                val snapshot = itemSharingService.resolveAttachment(shared.getId())
+                val snapshot = itemSharingService.resolveAttachment(shared.getId(), link)
                 val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
                 return WishWithItem(wish = wish, item = shared, snapshot = snapshot)
             }

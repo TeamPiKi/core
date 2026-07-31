@@ -56,7 +56,7 @@ class TournamentItemPersistenceService(
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
         shared?.let { sharedItem ->
-            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId())
+            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId(), link)
             val tournamentItem = tournamentItemRepository.saveAll(
                 listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())),
             ).first()
