@@ -23,4 +23,10 @@ class ItemRepositoryImpl(
 
     override fun findByCanonicalHash(canonicalHash: String): Item? =
         itemJpaRepository.findByCanonicalHashAndDeletedAtIsNull(canonicalHash)
+
+    override fun findByIdForUpdate(id: Long): Item? = itemJpaRepository.findByIdForUpdate(id)
+
+    override fun softDeleteById(id: Long) {
+        itemJpaRepository.softDeleteById(id)
+    }
 }

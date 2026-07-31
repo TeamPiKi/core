@@ -15,6 +15,15 @@ class ItemSnapshotRepositoryImpl(
     override fun saveAll(snapshots: List<ItemSnapshot>): List<ItemSnapshot> =
         itemSnapshotJpaRepository.saveAll(snapshots)
 
+    override fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestInProgressByItemId(itemId)
+
+    override fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestMachineReadyByItemId(itemId)
+
+    override fun reparentAll(
+        fromItemId: Long,
+        toItemId: Long,
+    ): Int = itemSnapshotJpaRepository.reparentAll(fromItemId, toItemId)
+
     override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
         itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
 
