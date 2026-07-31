@@ -69,6 +69,20 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         @Param("itemId") itemId: Long,
     ): ItemSnapshot?
 
+    // 카드 표시값 파생(#857)의 배치 조회 — item 별 마지막 기계(SERVER/SERVER_LLM) READY 하나씩.
+    // 서브쿼리로 item 별 max(id)만 골라, 이력이 긴 item 이 섞여도 행 수가 item 수를 넘지 않는다.
+    // 출처 null(도입 전 행)은 기계 여부를 모르므로 제외한다 — 그 item 은 호출부가 포인터 버전으로 fallback 한다.
+    @Query(
+        "select s from ItemSnapshot s where s.id in (" +
+            "select max(s2.id) from ItemSnapshot s2 where s2.itemId in :itemIds " +
+            "and s2.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
+            "and s2.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) " +
+            "and s2.deletedAt is null group by s2.itemId)",
+    )
+    fun findLatestMachineReadyByItemIds(
+        @Param("itemIds") itemIds: Collection<Long>,
+    ): List<ItemSnapshot>
+
     // 병합(#825) — 진(임시) item 의 모든 버전을 이긴 item 소속으로 재부모화한다. wish·tournament_item 은 snapshot 만
     // 참조하므로 이 한 문장으로 참조가 자동 추종된다. native bulk 라 auditing 을 우회해 updated_at 을 직접 갱신한다.
     @Modifying
