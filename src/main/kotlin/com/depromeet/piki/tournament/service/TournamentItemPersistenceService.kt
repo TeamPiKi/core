@@ -56,7 +56,8 @@ class TournamentItemPersistenceService(
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
         shared?.let { sharedItem ->
-            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId(), link)
+            // attach 메타(reused·refreshNeeded)는 위시 등록 응답부터 노출한다(#853) — 토너먼트 응답 노출은 클라 요구가 생기면.
+            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId(), link).snapshot
             val tournamentItem = tournamentItemRepository.saveAll(
                 listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())),
             ).first()

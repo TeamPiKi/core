@@ -34,7 +34,10 @@ interface WishlistApi {
         value = [
             ApiResponse(
                 responseCode = "201",
-                description = "위시리스트 등록 접수 (item.status=PENDING, 파싱은 백그라운드)",
+                description = "위시리스트 등록 완료 — 두 모양이 있다. (1) 새 파싱 접수: item.status=PENDING, 파싱은 백그라운드. " +
+                    "(2) 기존 값 재사용: 다른 등록이 만든 완성 값(캐시)에 파싱 없이 붙어 즉시 READY 로 내려간다. " +
+                    "reused=true 로 구분하고, 그 값이 낡았으면(서버 기준 24시간) refreshNeeded=true — " +
+                    "클라가 \"새로운 정보로 가져올까요?\" 를 물어 사용자가 원할 때 새로고침 API 로 재추출한다",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

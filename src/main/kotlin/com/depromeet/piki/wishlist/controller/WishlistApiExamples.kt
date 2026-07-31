@@ -37,7 +37,12 @@ class WishlistApiExamples(
                     add(
                         status = HttpStatus.CREATED,
                         name = "등록 접수 (파싱 대기 — PENDING)",
-                        payload = ApiResponseBody.created(pendingSampleEntry),
+                        payload = ApiResponseBody.created(pendingRegistrationEntry),
+                    )
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "기존 값 재사용 (캐시 — reused=true, 낡은 값이라 새로 가져오기 권고)",
+                        payload = ApiResponseBody.created(reusedRegistrationEntry),
                     )
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
@@ -345,6 +350,14 @@ class WishlistApiExamples(
                     sourcePlatform = "example-shop",
                 ),
         )
+
+    // URL 등록 응답 전용(#853) — 등록 경로는 attach 메타(reused·refreshNeeded)가 non-null 로 내려간다.
+    // 새 파싱을 만든 등록: 캐시에 붙지 않았으므로 둘 다 false.
+    private val pendingRegistrationEntry = pendingSampleEntry.copy(reused = false, refreshNeeded = false)
+
+    // 파싱 없이 다른 등록의 완성 값(캐시)에 붙은 등록 — 값이 갱신 권고 임계(24h)보다 낡아 refreshNeeded=true.
+    // 클라는 "새로운 정보로 가져올까요?" 를 물어 사용자가 원하면 새로고침 API 를 호출한다.
+    private val reusedRegistrationEntry = sampleEntry.copy(reused = true, refreshNeeded = true)
 
     // 파싱 진행 중 항목 (PROCESSING) — 디스패처가 집어 추출 중인 상태. 목록·단건 조회에서 등장한다.
     private val processingSampleEntry =
