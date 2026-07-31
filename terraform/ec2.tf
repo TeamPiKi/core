@@ -45,6 +45,34 @@ resource "aws_instance" "app" {
   key_name               = "team3-SE-1"
   iam_instance_profile   = aws_iam_instance_profile.app.name
 
+  # cloud-init 부트스트랩 — dev_app · staging_app 과 동일하다.
+  # 원래 prod 는 "과거 수동 설치한 인스턴스" 라 이 블록이 없었는데, 그 전제가 계정 이전(#808)에서 깨졌다.
+  # 새 계정에 apply 하니 nginx · docker · certbot 이 하나도 없는 빈 우분투가 떴고, 컷오버 창에서 배포가
+  # certbot → nginx 단계에서 연달아 실패했다(수동 설치로 복구). 인스턴스를 재생성하는 어떤 상황에서도
+  # 같은 일이 반복되지 않도록 세 EC2 의 부트스트랩을 동일하게 맞춘다.
+  #
+  # cert 발급은 여기서 하지 않는다(부팅 시점엔 EIP 연결·DNS 전파 보장이 없어 HTTP-01 이 실패할 수 있음).
+  # deploy.yml 의 idempotent "ensure cert" 스텝이 인스턴스가 확실히 닿을 때 발급한다.
+  # user_data 는 첫 부팅에만 실행되므로, 이미 부팅된 인스턴스엔 `terraform apply -replace=aws_instance.app` 로 적용한다
+  # (운영 중 실행하면 인스턴스가 교체되어 다운타임이 발생하므로 창을 잡고 할 것).
+  user_data = <<-EOF
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y ca-certificates curl nginx certbot python3-certbot-nginx
+    # Docker 공식 저장소 (arm64/t4g)
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    usermod -aG docker ubuntu
+    systemctl enable --now docker
+    systemctl enable --now nginx
+  EOF
+
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -79,7 +107,8 @@ resource "aws_instance" "dev_app" {
   iam_instance_profile = aws_iam_instance_profile.app.name
 
   # cloud-init 부트스트랩 — 빈 우분투에 배포에 필요한 base 소프트웨어(docker·nginx·certbot)를
-  # 첫 부팅 때 자동 설치한다. prod EC2 는 과거 수동 설치라 이 user_data 가 없지만, dev 는 신규라 필요.
+  # 첫 부팅 때 자동 설치한다. prod(aws_instance.app) · staging 도 동일한 블록을 갖는다
+  # (계정 이전 #808 에서 prod 만 이 블록이 없어 빈 박스가 떴던 사고 이후 세 EC2 를 정렬했다).
   # cert 발급은 여기 안 함(부팅 시점엔 EIP 연결·DNS 전파가 끝났다는 보장이 없어 HTTP-01 이 실패할 수 있음).
   # cert 는 deploy.yml 의 idempotent "ensure cert" 스텝이 인스턴스가 확실히 닿을 때 발급한다.
   # user_data 는 첫 부팅에만 실행되므로, 기존(이미 부팅된) 인스턴스엔 `terraform apply -replace=aws_instance.dev_app` 로 적용한다.
