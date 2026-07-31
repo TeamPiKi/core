@@ -53,15 +53,22 @@ class ItemSharingService(
     }
 
     private fun attachOrNull(itemId: Long): SharedAttachment? {
-        itemRepository.findByIdForUpdate(itemId) ?: return null
+        // 잠근 item 을 결과에 담아 전파한다 — 병합 재시도 경로에선 입력 itemId(loser)와 실제로 붙은
+        // item(winner)이 다르므로, 호출부의 중복 검사·응답 구성은 반드시 이 item 을 기준으로 해야 한다.
+        val item = itemRepository.findByIdForUpdate(itemId) ?: return null
         itemSnapshotRepository.findLatestInProgressByItemId(itemId)?.let {
             // 진행 중 합류 — 곧 새 값이 오므로 "캐시 값 사용" 질문 대상이 아니다.
-            return SharedAttachment(snapshot = it, reused = false, refreshNeeded = false)
+            return SharedAttachment(item = item, snapshot = it, reused = false, refreshNeeded = false)
         }
         itemSnapshotRepository.findLatestMachineReadyByItemId(itemId)?.let {
-            return SharedAttachment(snapshot = it, reused = true, refreshNeeded = staleForRefresh(it))
+            return SharedAttachment(item = item, snapshot = it, reused = true, refreshNeeded = staleForRefresh(it))
         }
-        return SharedAttachment(snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(itemId)), reused = false, refreshNeeded = false)
+        return SharedAttachment(
+            item = item,
+            snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(itemId)),
+            reused = false,
+            refreshNeeded = false,
+        )
     }
 
     private fun staleForRefresh(snapshot: ItemSnapshot): Boolean {
@@ -76,10 +83,13 @@ class ItemSharingService(
     }
 }
 
-// attach 결과 — 붙은 버전과 "어떻게 붙었는지"의 메타(#853). reused = 파싱 없이 완성된 기존 값에 붙음(캐시),
-// refreshNeeded = 그 캐시 값이 갱신 권고 임계보다 낡음(서버 판정). 등록 응답이 이 메타를 그대로 내려
-// 클라가 "기존 값 사용/새로 가져오기" 선택 UI 를 그린다.
+// attach 결과 — 실제로 붙은 정체성(item)·버전(snapshot)과 "어떻게 붙었는지"의 메타(#853).
+// item 은 행 락으로 잠근 실체다: 병합 재시도 경로에선 입력 itemId 와 다를 수 있어(승자로 재해석),
+// 호출부의 중복 검사·응답 구성은 이 item 을 정체성 기준으로 삼는다.
+// reused = 파싱 없이 완성된 기존 값에 붙음(캐시), refreshNeeded = 그 캐시 값이 갱신 권고 임계보다 낡음(서버 판정).
+// 등록 응답이 이 메타를 그대로 내려 클라가 "기존 값 사용/새로 가져오기" 선택 UI 를 그린다.
 data class SharedAttachment(
+    val item: Item,
     val snapshot: ItemSnapshot,
     val reused: Boolean,
     val refreshNeeded: Boolean,
