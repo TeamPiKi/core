@@ -49,14 +49,23 @@ resource "aws_db_instance" "mysql" {
   availability_zone = var.azs[0]
 
   # AWS 신규 Free Plan(2025-07-15 이후 가입) 은 retention > 0 을 거부한다(FreeTierRestrictionError).
+  # 자동 백업·PITR 을 쓸 수 없으므로 복구 지점은 수동 스냅샷이 전담한다(#813).
   # Paid plan 승격 시 7 로 복구할 것.
   backup_retention_period = 0
   backup_window           = "17:00-18:00" # KST 02:00-03:00, retention=0 이면 무시됨
   maintenance_window      = "sun:18:00-sun:19:00"
 
+  # identifier 는 dev 지만 운영 트래픽을 받는 유일한 DB 다(#813 실측). 자동 백업이 없는 상태라
+  # 실수로 지우면 복구 경로가 없어, 아래 둘로 "지우기 어렵게" 만든다.
   auto_minor_version_upgrade = true
-  deletion_protection        = false # dev 단계에서는 false, prod 에서는 true 로 전환
-  skip_final_snapshot        = true  # dev 단계에서만 true
+  deletion_protection        = true  # 콘솔/코드에서 명시적으로 꺼야만 삭제된다 — 의도된 마찰이다.
+  skip_final_snapshot        = false # 그래도 지워질 때는 최종 스냅샷을 반드시 남긴다.
+
+  # 위 skip_final_snapshot = false 가 provider 레벨에서 요구하는 짝. 이름을 고정값으로 둬서
+  # 같은 이름의 스냅샷이 이미 있으면 삭제가 실패한다 — 이 역시 마찰로 남겨 둔다.
+  # deletion_protection·skip_final_snapshot·final_snapshot_identifier 셋 다 terraform 삭제 시점
+  # 전용 인자라 AWS API 로 전송되지 않는다. 실제 인스턴스에 가해지는 변경은 deletion_protection 하나다.
+  final_snapshot_identifier = "${local.name_prefix}-mysql-final"
 
   # 실제 비밀번호는 콘솔/운영에서 바뀔 수 있어 state·SSM 값과 어긋날 수 있다.
   # terraform 이 apply 마다 비번을 SSM 값으로 강제 변경해 앱 DB 연결이 끊기는 사고를 막기 위해

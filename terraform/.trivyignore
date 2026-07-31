@@ -18,11 +18,6 @@ AWS-0104
 #       운영 환경으로 승격 시 반드시 활성화하고 이 항목 제거.
 AWS-0178
 
-# AWS-0177: RDS does not have Deletion Protection enabled
-# 사유: dev 단계에서 terraform destroy 로 자유롭게 재생성하기 위함.
-#       prod 전환 시 rds.tf 의 deletion_protection = true 로 변경하고 이 항목 제거.
-AWS-0177
-
 # AWS-0176: RDS does not have IAM Authentication enabled
 # 사유: 현재는 마스터 계정 + 비밀번호만 사용. IAM 인증은 추후 운영 전환 시 도입.
 #       Spring Boot 쪽 JDBC URL 도 함께 바꿔야 하므로 별도 작업으로 분리.
