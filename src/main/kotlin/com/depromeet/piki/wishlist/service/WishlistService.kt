@@ -9,6 +9,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.user.domain.IdentityType
@@ -35,6 +36,7 @@ class WishlistService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val itemDisplayService: ItemDisplayService,
     private val userService: UserService,
 ) {
     // 위시리스트는 회원 전용. 게스트(인증은 됐으나 회원 아님)는 Security 가 아니라 여기서 도메인 계약으로 막아
@@ -135,19 +137,21 @@ class WishlistService(
         val hasNext = fetched.size > size
         val pageWishes = fetched.take(size)
 
-        // 표시값은 wish 의 활성 snapshot 에서 읽는다. snapshot 은 등록 시 함께 생기고 wish.snapshotId 로 고정된다.
+        // 포인터 버전을 끌어온 뒤 표시값은 파생한다(#857) — 카드는 항상 그 상품의 마지막 기계 READY 를 향하고,
+        // 수기 존중·진행 중 유지 등 규칙은 ItemDisplayService 가 진다. 포인터는 정체성 도달·수기 존중 판정의 표식이다.
         val snapshotsById =
             itemSnapshotRepository.findByIds(pageWishes.map { it.snapshotId }).associateBy { it.getId() }
+        val displayById = itemDisplayService.resolveDisplay(snapshotsById.values)
         // item 정체성은 snapshot.itemId 단일 출처다. snapshot 에서 itemId 를 모아 item 을 한 번에 끌어온다.
         val itemsById = itemRepository.findByIds(snapshotsById.values.map { it.itemId }).associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
                 // snapshot·item 은 wish 와 함께 영속화되며 별도 삭제 경로가 없다. 없으면 영속화 경로가 깨진 코드 버그다.
-                val snapshot =
+                val pointer =
                     snapshotsById[wish.snapshotId]
                         ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-                val item = itemsById[snapshot.itemId] ?: error("wish ${wish.getId()} 의 item ${snapshot.itemId} 가 없다")
-                WishWithItem(wish = wish, item = item, snapshot = snapshot)
+                val item = itemsById[pointer.itemId] ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
+                WishWithItem(wish = wish, item = item, snapshot = displayById[pointer.getId()] ?: pointer)
             }
 
         val nextCursor =
@@ -171,12 +175,13 @@ class WishlistService(
         wish.verifyOwnedBy(userId)
         // wish 가 가리키는 snapshot·item 은 반드시 존재한다. 없으면 영속화 경로가 깨진 코드 버그다.
         // item 정체성은 snapshot.itemId 단일 출처다 — snapshot 을 먼저 끌어오고 그 itemId 로 item 을 조회한다.
-        val snapshot =
+        val pointer =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
         val item =
-            itemRepository.findById(snapshot.itemId) ?: error("wish ${wish.getId()} 의 item ${snapshot.itemId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+            itemRepository.findById(pointer.itemId) ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
+        // 표시값 파생(#857) — 목록(getWishlist)과 같은 규칙.
+        return WishWithItem(wish = wish, item = item, snapshot = itemDisplayService.resolveDisplay(pointer))
     }
 
     // 위시 상품의 가격 히스토리 조회. wish 가 가리키는 활성 snapshot 에서 item 정체성(itemId)에 도달한 뒤,
