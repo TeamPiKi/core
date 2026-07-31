@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -84,6 +85,42 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.entries[2].snapshotId").value(older))
             .andExpect(jsonPath("$.data.entries[2].currentPrice").value(119_000))
             .andExpect(jsonPath("$.data.entries[2].isActive").value(false))
+    }
+
+    @Test
+    fun `가격 히스토리 항목에 출처와 수기 본인 여부가 표시된다 - 기계는 source 만, 수기는 editedByMe 까지`() {
+        val mockMvc = buildMockMvc()
+        val me = UUID.randomUUID()
+        val other = UUID.randomUUID()
+        insertMember(me)
+        val itemId = saveItem("https://shop.example.com/products/source-labels")
+        // 출처 도입 전 행(null) → 기계(SERVER) → 타인 수기 → 내 수기 순으로 쌓는다.
+        val legacy = saveVersion(itemId, "출처 미상", 90_000, source = null, editedBy = null)
+        val machine = saveVersion(itemId, "기계 추출", 95_000, source = ItemSnapshotSource.SERVER, editedBy = null)
+        val byOther = saveVersion(itemId, "타인 수기", 80_000, source = ItemSnapshotSource.MANUAL, editedBy = other)
+        val byMe = saveVersion(itemId, "내 수기", 85_000, source = ItemSnapshotSource.MANUAL, editedBy = me)
+        val wishId = saveWish(me, byMe)
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists/$wishId/history")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(me)}"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.entries.length()").value(4))
+            // 최신순: byMe → byOther → machine → legacy
+            .andExpect(jsonPath("$.data.entries[0].snapshotId").value(byMe))
+            .andExpect(jsonPath("$.data.entries[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.entries[0].editedByMe").value(true))
+            .andExpect(jsonPath("$.data.entries[1].snapshotId").value(byOther))
+            .andExpect(jsonPath("$.data.entries[1].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.entries[1].editedByMe").value(false))
+            .andExpect(jsonPath("$.data.entries[2].snapshotId").value(machine))
+            .andExpect(jsonPath("$.data.entries[2].source").value("SERVER"))
+            .andExpect(jsonPath("$.data.entries[2].editedByMe").doesNotExist())
+            // 출처 기록 도입 전에 쌓인 행 — source 도 editedByMe 도 null 로 나간다(모름).
+            .andExpect(jsonPath("$.data.entries[3].snapshotId").value(legacy))
+            .andExpect(jsonPath("$.data.entries[3].source").doesNotExist())
+            .andExpect(jsonPath("$.data.entries[3].editedByMe").doesNotExist())
     }
 
     @Test
@@ -225,6 +262,29 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     private fun saveItem(url: String): Long = itemRepository.save(Item(ProductLink.parse(url))).getId()
+
+    // 출처 라벨 검증용 READY 시딩 — source·editedBy 를 함께 박는다. 순서(최신순)는 id 단조증가에 맡긴다.
+    private fun saveVersion(
+        itemId: Long,
+        name: String,
+        price: Int,
+        source: ItemSnapshotSource?,
+        editedBy: UUID?,
+    ): Long =
+        itemSnapshotRepository
+            .save(
+                ItemSnapshot(
+                    itemId = itemId,
+                    name = name,
+                    currentPrice = price,
+                    currency = "KRW",
+                    imageUrl = "https://cdn.example.com/p/$price.jpg",
+                    status = ItemStatus.READY,
+                    extractedAt = LocalDateTime.now(),
+                    source = source,
+                    editedBy = editedBy,
+                ),
+            ).getId()
 
     private fun saveReadySnapshot(
         itemId: Long,
