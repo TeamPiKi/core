@@ -50,7 +50,10 @@ class WishlistController(
         @Valid @RequestBody request: WishlistRegisterRequest,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
-        return ApiResponseBody.created(toResponse(result))
+        // 등록 응답만 공유 attach 메타(reused·refreshNeeded, #853)를 싣는다 — 클라의 "기존 값 사용/새로 가져오기" 선택 근거.
+        return ApiResponseBody.created(
+            WishItemResponse.fromRegistration(result, sourcePlatformResolver.resolve(result.item.link)),
+        )
     }
 
     @PostMapping("/images", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])

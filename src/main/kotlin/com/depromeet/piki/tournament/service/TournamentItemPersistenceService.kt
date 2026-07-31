@@ -48,20 +48,31 @@ class TournamentItemPersistenceService(
         // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
         val shared = itemSharingService.resolveExistingItem(link)
         val existingItems = tournamentItemRepository.findAllByTournamentId(tournamentId)
-        if (existingItems.isNotEmpty()) {
-            val existingSnapshots = itemSnapshotRepository.findByIds(existingItems.map { it.snapshotId })
-            val existingItemIds = existingSnapshots.map { it.itemId }
-            shared?.let { if (it.getId() in existingItemIds) throw TournamentException.duplicateTournamentItem() }
+        val existingItemIds =
+            existingItems
+                .takeIf { it.isNotEmpty() }
+                ?.let { items -> itemSnapshotRepository.findByIds(items.map { it.snapshotId }).map { it.itemId } }
+                .orEmpty()
+        if (existingItemIds.isNotEmpty()) {
+            // 처음 보는 링크 모양의 중복은 raw link 비교(기존 방식)로 잡는다. 정체성 기준 검사는 attach 뒤에서.
             val existingLinks = itemRepository.findByIds(existingItemIds).mapNotNull { it.link }
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
         shared?.let { sharedItem ->
-            val snapshot = itemSharingService.resolveAttachment(sharedItem.getId(), link)
+            // attach 메타(reused·refreshNeeded)는 위시 등록 응답부터 노출한다(#853) — 토너먼트 응답 노출은 클라 요구가 생기면.
+            val attachment = itemSharingService.resolveAttachment(sharedItem.getId(), link)
+            // 정체성 중복 검사·반환 itemId 는 실제로 붙은 attachment.item 기준 — 병합 재시도 경합에선 별칭으로
+            // 찾은 shared(loser)와 다르고(승자로 재해석), 이 기준이어야 반환 itemId 와 snapshot 소속이 일치한다.
+            if (attachment.item.getId() in existingItemIds) throw TournamentException.duplicateTournamentItem()
             val tournamentItem = tournamentItemRepository.saveAll(
-                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())),
+                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = attachment.snapshot.getId())),
             ).first()
             eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
-            return PersistedTournamentItem(itemId = sharedItem.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
+            return PersistedTournamentItem(
+                itemId = attachment.item.getId(),
+                snapshotId = attachment.snapshot.getId(),
+                tournamentItemId = tournamentItem.getId(),
+            )
         }
         val item = itemRepository.save(Item(link))
         // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다(위시 등록과 같은 결).

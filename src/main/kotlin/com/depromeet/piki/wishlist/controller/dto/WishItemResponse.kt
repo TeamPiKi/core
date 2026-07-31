@@ -4,6 +4,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
 
@@ -13,6 +14,21 @@ data class WishItemResponse(
     val wish: WishView,
     @field:Schema(description = "상품 스냅샷")
     val item: ItemView,
+    @field:Schema(
+        description = "URL 등록 응답 전용 — 파싱 없이 다른 등록이 만든 완성 값(캐시)에 붙었는지. " +
+            "true 면 item 의 값은 이 등록이 새로 가져온 것이 아니다. 등록 외 응답(목록·수정 등)에서는 null.",
+        example = "true",
+        nullable = true,
+    )
+    val reused: Boolean? = null,
+    @field:Schema(
+        description = "URL 등록 응답 전용 — 붙은 캐시 값이 갱신 권고 임계(서버 기준 24시간)보다 낡았는지(서버 판정). " +
+            "true 면 \"새로운 정보로 가져올까요?\" 를 물어 사용자가 원할 때 새로고침 API 를 호출한다. " +
+            "reused=true 일 때만 의미가 있으며, 등록 외 응답에서는 null.",
+        example = "false",
+        nullable = true,
+    )
+    val refreshNeeded: Boolean? = null,
 ) {
     companion object {
         fun from(
@@ -24,6 +40,19 @@ data class WishItemResponse(
             WishItemResponse(
                 wish = WishView.from(wish),
                 item = ItemView.from(item, snapshot, sourcePlatform),
+            )
+
+        // URL 등록 응답 전용 — 공유 attach 메타(#853)까지 싣는다. 등록만 이 오버로드를 쓰고,
+        // 목록·수정 등 다른 경로는 위 기본 from(플래그 null)을 유지한다.
+        fun fromRegistration(
+            result: WishWithItem,
+            sourcePlatform: String?,
+        ): WishItemResponse =
+            WishItemResponse(
+                wish = WishView.from(result.wish),
+                item = ItemView.from(result.item, result.snapshot, sourcePlatform),
+                reused = result.reused,
+                refreshNeeded = result.refreshNeeded,
             )
     }
 

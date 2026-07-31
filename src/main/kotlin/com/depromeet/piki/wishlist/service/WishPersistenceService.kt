@@ -54,13 +54,22 @@ class WishPersistenceService(
         // 락 순서 규약(user → 자식)에 따라 user 락 뒤에 item 락(resolveAttachment)이 온다.
         item.link?.let { link ->
             itemSharingService.resolveExistingItem(link)?.let { shared ->
-                // 앞문 중복(결정 3c): 같은 사용자가 이미 담은 상품이면 새 카드 대신 409.
-                if (wishRepository.countByItemIdsAndUserId(listOf(shared.getId()), userId) > 0) {
+                val attachment = itemSharingService.resolveAttachment(shared.getId(), link)
+                // 앞문 중복(결정 3c): 같은 사용자가 이미 담은 상품이면 새 카드 대신 409. 판정·응답의 정체성 기준은
+                // 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 — 병합 재시도 경합에선 둘이
+                // 다르고(shared=loser, attachment.item=winner), 행 락 뒤라 검사도 직렬화된다. 409 면 트랜잭션
+                // 롤백으로 attach 가 만든 PENDING 도 함께 사라진다.
+                if (wishRepository.countByItemIdsAndUserId(listOf(attachment.item.getId()), userId) > 0) {
                     throw WishException.alreadyExists()
                 }
-                val snapshot = itemSharingService.resolveAttachment(shared.getId(), link)
-                val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
-                return WishWithItem(wish = wish, item = shared, snapshot = snapshot)
+                val wish = wishRepository.save(Wish(userId = userId, snapshotId = attachment.snapshot.getId()))
+                return WishWithItem(
+                    wish = wish,
+                    item = attachment.item,
+                    snapshot = attachment.snapshot,
+                    reused = attachment.reused,
+                    refreshNeeded = attachment.refreshNeeded,
+                )
             }
         }
         val saved = itemRepository.save(item)

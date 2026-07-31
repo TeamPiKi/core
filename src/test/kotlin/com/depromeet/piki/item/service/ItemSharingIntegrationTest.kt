@@ -28,7 +28,7 @@ import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -85,7 +85,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `기계 READY 가 신선하면 재등록이 파싱 없이 그 버전을 재사용한다`() {
+    fun `기계 READY 가 신선하면 재등록이 파싱 없이 그 버전을 재사용하고 갱신 권고 없이 내려간다`() {
         stubItemParsingWorker.enabled = false
         val userA = newMember()
         val userB = newMember()
@@ -98,6 +98,8 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             assertEquals(first.item.getId(), second.item.getId())
             assertEquals(first.snapshot.getId(), second.snapshot.getId())
             assertEquals(ItemStatus.READY, second.snapshot.status)
+            assertTrue(second.reused)
+            assertFalse(second.refreshNeeded)
             // 새 PENDING 이 만들어지지 않았다 — 재사용은 파싱 비용 0 이 본질.
             assertNull(itemSnapshotRepository.findLatestInProgressByItemId(first.item.getId()))
         } finally {
@@ -107,20 +109,55 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `낡은 READY 만 있으면 재등록이 기존 item 에 새 PENDING 을 쌓는다 - 재추출`() {
+    fun `낡은 READY 도 재사용하되 refreshNeeded 로 갱신을 권고한다 - 등록은 자동 재추출을 만들지 않는다`() {
         stubItemParsingWorker.enabled = false
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100003"
         val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
         try {
-            // 신선도 임계(24h) 밖의 기계 READY — 재사용 부적격.
+            // 갱신 권고 임계(24h) 밖의 기계 READY — 그래도 그 값에 붙고, 재추출 여부는 사용자 선택(#853).
             seedMachineReady(first.snapshot.getId(), extractedHoursAgo = 25)
 
             val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse(url)))
             assertEquals(first.item.getId(), second.item.getId())
-            assertNotEquals(first.snapshot.getId(), second.snapshot.getId())
-            assertEquals(ItemStatus.PENDING, second.snapshot.status)
+            assertEquals(first.snapshot.getId(), second.snapshot.getId())
+            assertTrue(second.reused)
+            assertTrue(second.refreshNeeded)
+            // 등록이 새 파싱을 만들지 않았다 — 위시 행 수에 비례하는 자동 부하를 만들지 않는 것이 본질.
+            assertNull(itemSnapshotRepository.findLatestInProgressByItemId(first.item.getId()))
+        } finally {
+            stubItemParsingWorker.enabled = true
+            cleanup(listOf(first.item.getId()), listOf(userA, userB))
+        }
+    }
+
+    @Test
+    fun `캐시 재사용 등록의 HTTP 응답에 reused·refreshNeeded 플래그가 내려간다`() {
+        stubItemParsingWorker.enabled = false
+        val userA = newMember()
+        val userB = newMember()
+        val url = "https://www.musinsa.com/products/8100006"
+        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
+        try {
+            seedMachineReady(first.snapshot.getId(), extractedHoursAgo = 25)
+
+            val mockMvc =
+                MockMvcBuilders
+                    .webAppContextSetup(webApplicationContext)
+                    .apply<DefaultMockMvcBuilder>(springSecurity())
+                    .build()
+            val auth = "Bearer ${jwtProvider.generateAccessToken(userB, IdentityType.MEMBER)}"
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url": "$url"}"""),
+                ).andExpect(status().isCreated)
+                .andExpect(jsonPath("$.data.item.status").value("READY"))
+                .andExpect(jsonPath("$.data.reused").value(true))
+                .andExpect(jsonPath("$.data.refreshNeeded").value(true))
         } finally {
             stubItemParsingWorker.enabled = true
             cleanup(listOf(first.item.getId()), listOf(userA, userB))
