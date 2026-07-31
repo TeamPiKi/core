@@ -116,6 +116,25 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `갱신 중 포인터는 기계 READY 가 있어도 진행 중 상태를 유지한다 - 자기가 시작한 갱신의 UX 신호`() {
+        val mockMvc = buildMockMvc()
+        val userA = UUID.randomUUID()
+        insertMember(userA)
+        val itemId = saveItem("https://shop.example.com/products/display-5")
+        saveVersion(itemId, "기계값", 100_000, ItemSnapshotSource.SERVER)
+        // 새로고침이 만든 진행 중 버전에 포인터가 걸린 상태 — 완성 값(기계 READY)이 있어도 진행 중 표시가 유지돼야
+        // 갱신 흐름의 프로세싱 UI 가 살아 있다(값이 없어 이김/짐의 대상이 아니다).
+        val inProgress = itemSnapshotRepository.save(ItemSnapshot.pending(itemId))
+        saveWish(userA, inProgress.getId())
+
+        mockMvc
+            .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
+            .andExpect(jsonPath("$.data[0].item.name").doesNotExist())
+    }
+
+    @Test
     fun `기계 READY 가 없는 상품은 포인터 버전을 그대로 보여준다 - 수기 복구·도입 전 데이터 fallback`() {
         val mockMvc = buildMockMvc()
         val userA = UUID.randomUUID()
