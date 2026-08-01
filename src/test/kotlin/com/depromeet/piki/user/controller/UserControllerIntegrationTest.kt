@@ -8,6 +8,7 @@ import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.controller.dto.NicknameCheckRequest
 import com.depromeet.piki.user.controller.dto.UserUpdateRequest
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.domain.User
 import org.hamcrest.Matchers.startsWith
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -367,6 +368,47 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isBadRequest)
             // @ModelAttribute(multipart) 검증 실패 응답 detail 이 OpenAPI example(UserApiExamples updateMe 400)과 같은 형식인지 고정.
             .andExpect(jsonPath("$.detail").value(UserUpdateRequest.NICKNAME_SIZE_MESSAGE))
+    }
+
+    @Test
+    fun `PATCH users me - 공백만 있는 닉네임은 USER-006 으로 400 이 반환된다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId)
+
+        // @Size(min = 1) 은 길이만 보므로 공백 1자를 통과시킨다. 걸러내는 건 User.validateNickname 이고,
+        // 그래서 Bean Validation 의 COMMON-INVALID-INPUT 이 아니라 도메인 code 가 나간다(UserApiExamples 와 lockstep).
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                    .param("nickname", " ")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId)}"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("USER-006"))
+    }
+
+    @Test
+    fun `PATCH users me - 탈퇴 예약 prefix 로 시작하는 닉네임은 USER-013 으로 400 이 반환된다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId)
+
+        // 예약 prefix 선점은 형식이 아니라 정책이라 Bean Validation 이 못 잡는다 — 도메인이 막고 400 으로 나간다.
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/users/me")
+                    .param("nickname", "${User.WITHDRAWN_NICKNAME_PREFIX}닉네임")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId)}"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("USER-013"))
     }
 
     @Test
