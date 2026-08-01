@@ -50,7 +50,7 @@ jobs:
           fi
           # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod(#596)와 dev(#680 동거 대비 리사이즈)는
           # t4g.small(1.8G), staging 만 906M 박스라 현행을 유지한다. blue-green overlap(전환 중 잠깐 2개 동시) 기준:
-          #   prod 2×768=1536 < 1.8G, dev 2×512 + 동거(extractor 384 + mysql·alloy·redis 약 160) ≈ 1.57G < 1.8G,
+          #   prod 2×768=1536 < 1.8G, dev 2×512 + (mysql·alloy·redis 약 160) ≈ 1.18G < 1.8G (동거 extractor 는 #862 로 폐지),
           #   staging 2×400=800 < 906M 안에 들어가 swap thrash 를 막는다.
           # dev 576m/288m 산정(2026-07-07 실측 2회): 캡 400m(Xmx256)·512m(Xmx320) 모두 anon 이 캡을 초과해 상시
           #   swap-out 이었다. prod 실측(768m 캡에 실사용 720m, 힙 최대 512 제외 비힙 약 250m)으로 이 앱의 비힙을
@@ -321,7 +321,7 @@ jobs:
           # (/piki/observability/grafana-*)로 직접 읽는다 (#771, MySQL db-* 와 같은 결. 세 서비스 박스가
           # 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다).
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
-          # extractor prod 박스는 자체 Alloy 가 수집한다. dev 동거 extractor 는 컨테이너 라벨로 잡힌다.
+          # extractor prod 박스는 자체 Alloy 가 수집한다 (dev 동거 extractor 는 #862 로 폐지 — 전 환경이 전용 박스 사용).
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -371,10 +371,12 @@ jobs:
           # 맞고 suspect commit·regression 이 그 태그 커밋으로 이어진다(GitHub 연동 승인 후). github.sha(deploy.yml HEAD)는 안 쓴다.
           SENTRY_RELEASE: ${{ (needs.resolve.outputs.environment == 'prod' && inputs.version != '') && inputs.version || needs.resolve.outputs.ref }}
           # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
-          # base-url 은 환경별 고정 — dev=동거 컨테이너(앱 컨테이너는 --add-host host.docker.internal 로 호스트에 닿는다),
-          # staging·prod=extractor 전용 박스(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
+          # 전 환경이 extractor 전용 박스 하나를 공유한다(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
+          # dev 도 동거 컨테이너(host.docker.internal:8090)가 아니라 전용 박스를 본다(#862) — 동거는 어떤 워크플로도
+          # 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다(AWS 계정 이전 인시던트).
+          # 워크플로 밖 수동 관리 포인트를 없애 재발을 막는다.
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
-          EXTRACT_REMOTE_BASE_URL: ${{ needs.resolve.outputs.environment == 'dev' && 'http://host.docker.internal:8090' || format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
+          EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
