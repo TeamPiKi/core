@@ -50,7 +50,7 @@ jobs:
           fi
           # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod(#596)와 dev(#680 동거 대비 리사이즈)는
           # t4g.small(1.8G), staging 만 906M 박스라 현행을 유지한다. blue-green overlap(전환 중 잠깐 2개 동시) 기준:
-          #   prod 2×768=1536 < 1.8G, dev 2×512 + (mysql·alloy·redis 약 160) ≈ 1.18G < 1.8G (동거 extractor 는 #862 로 폐지),
+          #   prod 2×768=1536 < 1.8G, dev 2×576 + (mysql·alloy·redis 약 160) ≈ 1.31G < 1.8G (동거 extractor 는 #862 로 폐지),
           #   staging 2×400=800 < 906M 안에 들어가 swap thrash 를 막는다.
           # dev 576m/288m 산정(2026-07-07 실측 2회): 캡 400m(Xmx256)·512m(Xmx320) 모두 anon 이 캡을 초과해 상시
           #   swap-out 이었다. prod 실측(768m 캡에 실사용 720m, 힙 최대 512 제외 비힙 약 250m)으로 이 앱의 비힙을
@@ -456,6 +456,13 @@ jobs:
             # 배포는 성공하나 모든 파싱이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
             if [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; then
               echo "::error::EXTRACT_REMOTE_BASE_URL 의 host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
+              exit 1
+            fi
+            # host 가 채워져 있어도 값이 낡았거나(SG·주소 변경) extractor 가 죽어 있으면 배포는 성공하고 모든 파싱만
+            # 런타임에 실패한다 — 계정 이전 때 dev 가 정확히 이 모양으로 전멸했다(#862). 앱 박스에서 extractor 헬스를
+            # 배포 전에 실측해, 배선이 끊긴 채 배포가 성공으로 남는 것을 막는다(실패 시 기존 컨테이너 유지 = 안전).
+            if ! curl -sf -m 5 "$EXTRACT_REMOTE_BASE_URL/actuator/health" > /dev/null; then
+              echo "::error::extractor 헬스 프로브 실패 ($EXTRACT_REMOTE_BASE_URL) — 주소·SG·extractor 기동 상태 확인"
               exit 1
             fi
 
