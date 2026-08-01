@@ -79,6 +79,10 @@ class Notification(
                         checkNotNull(tournamentId) { "TOURNAMENT 알림에 tournamentId 가 없다" },
                         checkNotNull(tournamentItemId) { "TOURNAMENT 알림에 tournamentItemId 가 없다" },
                     )
+                // 이 kind 컬럼은 routing?.kind 에서만 채워지고 NotificationRouting 은 Wish/Tournament 두 변형뿐이라
+                // SYSTEM 은 여기 도달할 수 없다(#473 고도화로 NotificationKind 에 SYSTEM 이 추가되며 when 이 비전수가 돼
+                // 강제로 다뤄야 하는 분기). 도달하면 불변식 위반이라 500.
+                NotificationKind.SYSTEM -> error("Notification.kind 는 routing 파생값이라 SYSTEM 이 될 수 없다")
             }
         }
 

@@ -1,0 +1,57 @@
+package com.depromeet.piki.notification.domain
+
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class NotificationKindTest {
+    @ParameterizedTest(name = "{0} + routingKind={1} -> {2}")
+    @MethodSource("파생_케이스")
+    fun `type 과 라우팅 출처로 알림 종류를 파생한다`(
+        type: NotificationType,
+        routingKind: NotificationKind?,
+        expected: NotificationKind,
+    ) {
+        assertEquals(expected, NotificationKind.of(type, routingKind))
+    }
+
+    @Test
+    fun `토너먼트 소셜 알림은 라우팅 출처가 없어도 TOURNAMENT 다`() {
+        assertEquals(NotificationKind.TOURNAMENT, NotificationKind.of(NotificationType.TOURNAMENT_JOINED, null))
+    }
+
+    @Test
+    fun `공지는 SYSTEM 이다`() {
+        assertEquals(NotificationKind.SYSTEM, NotificationKind.of(NotificationType.ANNOUNCEMENT, null))
+    }
+
+    @Test
+    fun `같은 파싱 타입이라도 라우팅 출처에 따라 갈린다`() {
+        assertEquals(NotificationKind.WISH, NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH))
+        assertEquals(
+            NotificationKind.TOURNAMENT,
+            NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
+        )
+    }
+
+    companion object {
+        @JvmStatic
+        fun 파생_케이스(): List<Arguments> =
+            listOf(
+                Arguments.of(NotificationType.TOURNAMENT_JOINED, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_ITEM_ADDED, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_ITEM_DELETED, NotificationKind.TOURNAMENT, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_STARTED, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_PLAYED_FROM_LINK, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_COMPLETED, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.TOURNAMENT_RESULT_READY, null, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH, NotificationKind.WISH),
+                Arguments.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.ITEM_PARSING_FAILED, NotificationKind.WISH, NotificationKind.WISH),
+                Arguments.of(NotificationType.ITEM_PARSING_FAILED, NotificationKind.TOURNAMENT, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.ANNOUNCEMENT, null, NotificationKind.SYSTEM),
+            )
+    }
+}
