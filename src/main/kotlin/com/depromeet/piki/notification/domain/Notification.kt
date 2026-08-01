@@ -49,7 +49,7 @@ class Notification(
     // (noarg JPA 생성자는 이 초기화를 우회하고 DB 값을 필드에 직접 주입한다.)
     @Enumerated(EnumType.STRING)
     @Column(name = "kind", length = 20)
-    val kind: NotificationKind? = routing?.kind
+    val routingKind: NotificationKind? = routing?.routingKind
 
     @Column(name = "tournament_id")
     val tournamentId: Long? = (routing as? NotificationRouting.Tournament)?.tournamentId
@@ -69,7 +69,7 @@ class Notification(
     // 평면 저장된 라우팅 컬럼을 도메인 sealed 로 복원한다. 채널(SSE payload·FCM data)이 이걸로 셰입을 가른다 —
     // 평면 nullable 컬럼을 직접 들추는 대신 sealed 한 곳에서 "WISH 엔 식별자 없음, TOURNAMENT 만 둘 다" 를 보장한다.
     fun routing(): NotificationRouting? =
-        kind?.let { k ->
+        routingKind?.let { k ->
             when (k) {
                 NotificationKind.WISH -> NotificationRouting.Wish
                 // kind=TOURNAMENT 면 두 식별자가 반드시 있다(엔티티 생성 시 sealed 에서 원자적으로 채워짐). 없으면 데이터 정합성
@@ -79,10 +79,9 @@ class Notification(
                         checkNotNull(tournamentId) { "TOURNAMENT 알림에 tournamentId 가 없다" },
                         checkNotNull(tournamentItemId) { "TOURNAMENT 알림에 tournamentItemId 가 없다" },
                     )
-                // 이 kind 컬럼은 routing?.kind 에서만 채워지고 NotificationRouting 은 Wish/Tournament 두 변형뿐이라
-                // SYSTEM 은 여기 도달할 수 없다(#473 고도화로 NotificationKind 에 SYSTEM 이 추가되며 when 이 비전수가 돼
-                // 강제로 다뤄야 하는 분기). 도달하면 불변식 위반이라 500.
-                NotificationKind.SYSTEM -> error("Notification.kind 는 routing 파생값이라 SYSTEM 이 될 수 없다")
+                // 라우팅 컬럼에 SYSTEM 이 저장될 수 없다(NotificationRouting 이 Wish/Tournament 만 표현).
+                // DB 에 들어올 수 없는 값이므로 불변식 위반이다.
+                NotificationKind.SYSTEM -> error("라우팅 컬럼에 SYSTEM 이 저장될 수 없다")
             }
         }
 
