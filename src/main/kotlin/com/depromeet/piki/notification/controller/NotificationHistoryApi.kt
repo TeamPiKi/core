@@ -29,10 +29,9 @@ interface NotificationHistoryApi {
                 "- `size` 는 미지정 시 20, 1~50 범위를 벗어나면 양 끝으로 보정된다.\n\n" +
                 "**카테고리 필터**\n\n" +
                 "- `category` 미지정 시 전체. `ACTIVITY`(활동: 토너먼트 소셜 알림) / `SYSTEM`(시스템: 파싱·공지)로 탭 필터.\n" +
-                "- `unreadCount` 는 category 와 무관하게 항상 전체 안읽음 수(앱 badge)다.\n" +
-                "- `unreadCountByCategory` 로 탭별 안읽음 수(탭 badge)를 함께 내려준다 — 모든 카테고리 키 포함, 없으면 0.\n\n" +
+                "- `unreadCount` 는 category 와 무관하게 항상 전체 안읽음 수(앱 badge)다.\n\n" +
                 "**응답 활용**\n\n" +
-                "- 응답 `data` 의 `unreadCount`(앱 badge) · `unreadCountByCategory`(탭 badge)로 안읽음 수를 함께 내려준다 (별도 카운트 API 없음).\n" +
+                "- 응답 `data` 의 `unreadCount`(앱 badge)로 안읽음 수를 함께 내려준다 (별도 카운트 API 없음).\n" +
                 "- 각 항목의 `imageUrl` 은 항상 채워진다 — 사람 알림은 발송 시점 프사, 시스템 알림은 피키 로고. " +
                 "사람/시스템 구분은 `category`. 클라는 `imageUrl` 을 그대로 아바타로 렌더한다.\n" +
                 "- 각 항목 셰입은 SSE `notification` 이벤트 payload 와 동일하다 — `type` 으로 화면을, " +
@@ -112,8 +111,8 @@ interface NotificationHistoryApi {
                 "| `ids=[...]` | 지정한 알림만 읽음 (단건 클릭은 `[id]` 1개, 클릭 후 FE 가 딥링크로 이동) |\n\n" +
                 "- 둘 다 보내거나 둘 다 비우면(빈 `ids` 포함) **400**.\n" +
                 "- `ids` 는 본인 소유만 반영되고 타인·없는 id 는 무시된다. **멱등**(이미 읽음도 성공).\n" +
-                "- 응답 `data` 의 `unreadCount`(앱 badge) · `unreadCountByCategory`(탭 badge)로 처리 후 안읽음 수를 **서버 권위 값**으로 내려준다 — " +
-                "클라는 이 값들을 그대로 badge 로 미러링한다(별도 카운트 조회 불필요).",
+                "- 응답 `data` 의 `unreadCount`(앱 badge)로 처리 후 안읽음 수를 **서버 권위 값**으로 내려준다 — " +
+                "클라는 이 값을 그대로 badge 로 미러링한다(별도 카운트 조회 불필요).",
     )
     @ApiResponses(
         value = [
@@ -165,9 +164,9 @@ interface NotificationHistoryApi {
                 "| `ids=[...]` | 지정한 알림만 삭제 (단건은 `[id]` 1개, 다건은 `[id, ...]`) |\n\n" +
                 "- 둘 다 보내거나 둘 다 비우면(빈 `ids` 포함) **400**.\n" +
                 "- `ids` 는 본인 소유만 삭제되고 타인·없는 id 는 무시된다. **멱등**(이미 없는 것도 성공).\n" +
-                "- 삭제로 안읽음 알림이 사라지면 badge 도 줄어든다. 응답 `data` 의 `unreadCount`(앱 badge) · " +
-                "`unreadCountByCategory`(탭 badge)로 삭제 후 안읽음 수를 **서버 권위 값**으로 내려준다 — " +
-                "클라는 이 값들을 그대로 badge 로 미러링한다(읽음 응답과 동일 셰입).",
+                "- 삭제로 안읽음 알림이 사라지면 badge 도 줄어든다. 응답 `data` 의 `unreadCount`(앱 badge)로 " +
+                "삭제 후 안읽음 수를 **서버 권위 값**으로 내려준다 — " +
+                "클라는 이 값을 그대로 badge 로 미러링한다(읽음 응답과 동일 셰입).",
     )
     @ApiResponses(
         value = [

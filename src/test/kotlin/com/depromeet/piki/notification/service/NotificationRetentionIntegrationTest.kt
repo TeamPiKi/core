@@ -85,7 +85,7 @@ class NotificationRetentionIntegrationTest : IntegrationTestSupport() {
         assertTrue(exists(unreadRecentA))
         // 배지 동기화 대상은 안읽음이 지워진 userA 뿐 — 읽음만 지워진 userB 는 배지 불변이라 제외.
         assertEquals(setOf(userA), result.affectedUnreadByUser.keys)
-        assertEquals(1L, result.affectedUnreadByUser.getValue(userA).values.sum()) // 삭제 후 남은 안읽음(최근 1건)
+        assertEquals(1L, result.affectedUnreadByUser.getValue(userA)) // 삭제 후 남은 안읽음(최근 1건)
     }
 
     @Test

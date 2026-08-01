@@ -35,9 +35,8 @@ class NotificationService(
         val fetched = notificationRepository.findPage(userId, cursor, size + 1, types)
         val hasNext = fetched.size > size
         val page = fetched.take(size)
-        // 전체(badge) + 카테고리별(탭 badge)을 한 번에. total 은 카테고리 합으로 도출해 두 수치가 어긋날 여지를 없앤다.
-        val unreadByCategory = notificationRepository.countUnreadByCategory(userId)
-        val unreadCount = unreadByCategory.values.sum()
+        // 안읽음 수는 category 필터와 무관한 전체(앱 badge) 하나다.
+        val unreadCount = notificationRepository.countUnread(userId)
         val nextCursor =
             page
                 .lastOrNull()
@@ -47,7 +46,6 @@ class NotificationService(
         return NotificationHistoryPage(
             notifications = page,
             unreadCount = unreadCount,
-            unreadCountByCategory = unreadByCategory,
             nextCursor = nextCursor,
             hasNext = hasNext,
             defaultPushImageUrl = defaultPushImage.url,
@@ -55,13 +53,13 @@ class NotificationService(
     }
 
     // 읽음 처리 — 명령(All/Ids)별 벌크 UPDATE. 본인 소유만 반영(소유 검증은 쿼리의 user_id 조건이 겸한다). 멱등.
-    // 처리 후 카테고리별 안읽음 수를 같은 트랜잭션에서 세어 반환한다 — 클라가 앱 badge·탭 badge 를 서버 권위 값으로
-    // 미러링하게 해 +1/-1 산수 drift 를 없앤다(전체는 응답 DTO 가 카테고리 합으로 도출).
+    // 처리 후 전체 안읽음 수를 같은 트랜잭션에서 세어 반환한다 — 클라가 앱 badge 를 서버 권위 값으로
+    // 미러링하게 해 +1/-1 산수 drift 를 없앤다.
     @Transactional
     fun read(
         userId: UUID,
         command: NotificationReadCommand,
-    ): Map<NotificationCategory, Long> {
+    ): Long {
         val method =
             when (command) {
                 NotificationReadCommand.All -> {
@@ -73,26 +71,26 @@ class NotificationService(
                     "ids(${command.ids.size})"
                 }
             }
-        val unread = notificationRepository.countUnreadByCategory(userId)
-        log.info("알림 읽음 처리 userId={} 방식={} 처리후안읽음={}", userId, method, unread.values.sum())
+        val unread = notificationRepository.countUnread(userId)
+        log.info("알림 읽음 처리 userId={} 방식={} 처리후안읽음={}", userId, method, unread)
         return unread
     }
 
     // 삭제 처리 — 명령(All/Ids)별 벌크 하드삭제(읽음 무관). 본인 소유만 반영(소유 검증은 쿼리의 user_id 조건이 겸한다). 멱등.
-    // 삭제로 안읽음 알림이 사라지면 badge 도 줄어야 하므로, 읽음(read)과 대칭으로 처리 후 카테고리별 안읽음 수를 같은
-    // 트랜잭션에서 세어 반환한다 — 클라가 앱 badge·탭 badge 를 서버 권위 값으로 미러링하게 해 산수 drift 를 없앤다.
+    // 삭제로 안읽음 알림이 사라지면 badge 도 줄어야 하므로, 읽음(read)과 대칭으로 처리 후 전체 안읽음 수를 같은
+    // 트랜잭션에서 세어 반환한다 — 클라가 앱 badge 를 서버 권위 값으로 미러링하게 해 산수 drift 를 없앤다.
     @Transactional
     fun delete(
         userId: UUID,
         command: NotificationDeleteCommand,
-    ): Map<NotificationCategory, Long> {
+    ): Long {
         val deleted =
             when (command) {
                 NotificationDeleteCommand.All -> notificationRepository.hardDeleteAllByUserId(userId)
                 is NotificationDeleteCommand.Ids -> notificationRepository.deleteByUserIdAndIds(userId, command.ids)
             }
-        val unread = notificationRepository.countUnreadByCategory(userId)
-        log.info("알림 삭제 userId={} 삭제건수={} 처리후안읽음={}", userId, deleted, unread.values.sum())
+        val unread = notificationRepository.countUnread(userId)
+        log.info("알림 삭제 userId={} 삭제건수={} 처리후안읽음={}", userId, deleted, unread)
         return unread
     }
 }

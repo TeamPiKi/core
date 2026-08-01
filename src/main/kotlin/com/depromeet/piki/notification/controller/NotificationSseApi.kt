@@ -26,7 +26,7 @@ interface NotificationSseApi {
                 "출처별 payload 셰입과 라우팅 필드(`kind`·`tournamentId`·`tournamentItemId`)는 `notification-sse-spec.md` 참조 |\n" +
                 "| `silent-sync` | 화면 갱신 사건마다 | 조용한 화면 갱신 신호(알림 아님). payload 의 `type` 으로 사건을 분기한다: " +
                 "`TOURNAMENT_ITEM_PARSED`(`{type, tournamentId, tournamentItemId, status}`, status=`READY`\\|`FAILED`) · " +
-                "`UNREAD_COUNT_CHANGED`(`{type, unreadCount, unreadCountByCategory}`, 읽음 후 멀티 디바이스 인앱 배지 동기화). 알림센터·푸시 없이 SSE 로만 흐른다. `notification-sse-spec.md` 참조 |\n" +
+                "`UNREAD_COUNT_CHANGED`(`{type, unreadCount}`, 읽음 후 멀티 디바이스 인앱 배지 동기화). 알림센터·푸시 없이 SSE 로만 흐른다. `notification-sse-spec.md` 참조 |\n" +
                 "| `(주석 ping)` | 약 30초 간격 | 하트비트. 연결 유지용이며 data 이벤트가 아니다 |\n\n" +
                 "- 토너먼트 알림은 해당 토너먼트 참여자에게만 fan-out 되므로, **자기 스트림 1개만 구독**하면 토너먼트·개인 알림이 모두 도착한다.\n" +
                 "- 연결은 **30분 후 타임아웃**되며, 클라이언트는 끊기면 재연결한다.",

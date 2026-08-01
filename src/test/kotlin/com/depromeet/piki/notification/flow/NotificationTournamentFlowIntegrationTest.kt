@@ -98,8 +98,6 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items[0].title", containsString("주최자")))
             .andExpect(jsonPath("$.data.items[0].isRead").value(false))
             .andExpect(jsonPath("$.data.unreadCount").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(0))
 
         // 6) 참여자가 읽음 처리 (POST /read all) — 처리 후 안읽음 수 0 을 서버 권위값으로 돌려준다.
         mvc
@@ -110,7 +108,6 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(participant)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.unreadCount").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(0))
     }
 
     @Test

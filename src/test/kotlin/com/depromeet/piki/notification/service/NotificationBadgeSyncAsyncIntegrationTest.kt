@@ -34,7 +34,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 // 읽음 후 silent badge 동기화(#487)는 PushNotificationChannel.syncBadge(@Async notificationExecutor)로 응답 경로에서
 // 분리돼 별도 워커 스레드·새 트랜잭션에서 돈다. 그래서 @Transactional 자동 롤백 패턴으로는 워커가 미커밋 데이터를
@@ -181,11 +180,10 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
                 await().atMost(Duration.ofSeconds(5)).untilAsserted {
                     val payload = emitter.payloads().single()
                     assertEquals(1, payload.unreadCount)
-                    // wire 직렬화 contract — type 판별자 + 카테고리 맵이 실제 JSON 에 실리는지(클라가 type 으로 분기).
+                    // wire 직렬화 contract — type 판별자 + 안읽음 수가 실제 JSON 에 실리는지(클라가 type 으로 분기).
                     val node = objectMapper.readTree(objectMapper.writeValueAsString(payload))
                     assertEquals("UNREAD_COUNT_CHANGED", node.get("type").asString())
                     assertEquals(1L, node.get("unreadCount").asLong())
-                    assertTrue(node.has("unreadCountByCategory"))
                 }
             } finally {
                 registry.unregister(userId, emitter)

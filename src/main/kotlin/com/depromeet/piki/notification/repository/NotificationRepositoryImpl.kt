@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.repository
 
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationCursor
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.data.domain.Limit
@@ -48,26 +47,15 @@ class NotificationRepositoryImpl(
         return notificationJpaRepository.findByUserIdAndIdLessThanAndTypeInOrderByIdDesc(userId, cursor.lastNotificationId, types, limited)
     }
 
-    // type 별 group-by 결과를 카테고리로 접는다. 모든 카테고리를 0 으로 깔고 해당 type 의 수를 카테고리에 누적해,
-    // 안읽음이 없는 카테고리도 키로 0 을 보장한다(FE 가 탭 badge 를 항상 읽을 수 있게).
-    override fun countUnreadByCategory(userId: UUID): Map<NotificationCategory, Long> {
-        val result = NotificationCategory.entries.associateWithTo(mutableMapOf()) { 0L }
-        notificationJpaRepository.countUnreadByType(userId).forEach { row ->
-            result.merge(NotificationCategory.of(row.type), row.count, Long::plus)
-        }
-        return result
-    }
+    override fun countUnread(userId: UUID): Long = notificationJpaRepository.countUnread(userId)
 
-    // 대상 유저 전원을 모든 카테고리 0 으로 깔고(안읽음 0 인 유저도 키 보장), IN + GROUP BY 한 쿼리 결과를 덮어 접는다.
+    // 대상 유저 전원을 0 으로 깔고(안읽음 0 인 유저도 키 보장), IN + GROUP BY 한 쿼리 결과를 덮는다.
     // userIds 가 비면 쿼리를 건너뛴다(빈 IN 회피).
-    override fun countUnreadByCategoryForUsers(userIds: List<UUID>): Map<UUID, Map<NotificationCategory, Long>> {
+    override fun countUnreadForUsers(userIds: List<UUID>): Map<UUID, Long> {
         if (userIds.isEmpty()) return emptyMap()
-        val result =
-            userIds.associateWithTo(mutableMapOf<UUID, MutableMap<NotificationCategory, Long>>()) {
-                NotificationCategory.entries.associateWithTo(mutableMapOf()) { 0L }
-            }
-        notificationJpaRepository.countUnreadByUserAndType(userIds).forEach { row ->
-            result.getValue(row.userId).merge(NotificationCategory.of(row.type), row.count, Long::plus)
+        val result = userIds.associateWithTo(mutableMapOf()) { 0L }
+        notificationJpaRepository.countUnreadByUser(userIds).forEach { row ->
+            result[row.userId] = row.count
         }
         return result
     }

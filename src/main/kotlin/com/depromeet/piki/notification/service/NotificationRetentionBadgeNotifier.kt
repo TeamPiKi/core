@@ -2,7 +2,6 @@ package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.sse.LocalSseDelivery
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
@@ -27,7 +26,7 @@ class NotificationRetentionBadgeNotifier(
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Async(AsyncConfig.NOTIFICATION_EXECUTOR)
-    fun notifyAll(unreadByUser: Map<UUID, Map<NotificationCategory, Long>>) {
+    fun notifyAll(unreadByUser: Map<UUID, Long>) {
         if (unreadByUser.isEmpty()) return
         unreadByUser.forEach { (userId, unread) ->
             // 온라인(열린 SSE) 기기 인앱 배지.

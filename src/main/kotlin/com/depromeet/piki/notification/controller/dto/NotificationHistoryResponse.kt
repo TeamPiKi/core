@@ -1,33 +1,28 @@
 package com.depromeet.piki.notification.controller.dto
 
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationCategory
 import io.swagger.v3.oas.annotations.media.Schema
 
 // 알림 히스토리 목록 응답. items 는 SSE 와 같은 셰입(NotificationSsePayload)을 그대로 재사용해, 클라가
 // SSE 로 받든 히스토리로 받든 동일한 객체로 다루게 한다(셰입 drift 방지 — 단일 소스). 페이징(nextCursor·hasNext)은
-// ApiResponseBody.pageResponse 가 싣고, 여기엔 전체 안읽음 수(unreadCount, 앱 badge)와 탭별(unreadCountByCategory)을 동봉한다.
-@Schema(description = "알림 히스토리 목록 + 안읽음 수(전체·탭별)")
+// ApiResponseBody.pageResponse 가 싣고, 여기엔 전체 안읽음 수(unreadCount, 앱 badge)를 동봉한다.
+@Schema(description = "알림 히스토리 목록 + 안읽음 수")
 data class NotificationHistoryResponse(
     @field:Schema(description = "알림 목록 (최신순). 각 항목 셰입은 SSE notification 이벤트 payload 와 동일")
     val items: List<NotificationSsePayload>,
-    @field:Schema(description = "본인 전체 안읽음 알림 수 (앱 badge). category 필터와 무관하게 항상 전체", example = "3")
+    @field:Schema(description = "본인 전체 안읽음 알림 수 (앱 badge)", example = "3")
     val unreadCount: Long,
-    @field:Schema(description = "카테고리별 안읽음 수 (탭 badge). 모든 카테고리 키 포함, 없으면 0", example = "{\"ACTIVITY\":2,\"SYSTEM\":1}")
-    val unreadCountByCategory: Map<NotificationCategory, Long>,
 ) {
     companion object {
         // defaultPushImageUrl 은 시스템 알림(actor 없음)의 imageUrl 을 채우는 기본 아바타 — 컨트롤러가 DefaultPushImage 에서 넘긴다.
         fun of(
             notifications: List<Notification>,
             unreadCount: Long,
-            unreadCountByCategory: Map<NotificationCategory, Long>,
             defaultPushImageUrl: String,
         ): NotificationHistoryResponse =
             NotificationHistoryResponse(
                 items = notifications.map { NotificationSsePayload.from(it, defaultPushImageUrl) },
                 unreadCount = unreadCount,
-                unreadCountByCategory = unreadCountByCategory,
             )
     }
 }

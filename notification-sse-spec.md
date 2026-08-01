@@ -82,7 +82,7 @@ data: {"type":"TOURNAMENT_ITEM_PARSED","tournamentId":99,"tournamentItemId":555,
 | `type` | 의미 | 클라 동작 |
 |---|---|---|
 | `TOURNAMENT_ITEM_PARSED` | 토너먼트 출전 아이템의 파싱 완료/실패(`READY`/`FAILED`) | `(tournamentId, tournamentItemId)` 로 그 출전 카드를 찾아 `status` 반영 (`READY`=상품 정보, `FAILED`=에러/재시도). 또는 그 토너먼트 아이템 목록 재조회. |
-| `UNREAD_COUNT_CHANGED` | 읽음 처리로 본인 안읽음 수가 바뀜 (멀티 디바이스 동기화) | `unreadCount`(전체)·`unreadCountByCategory`(탭별)를 그대로 인앱 배지에 미러링 |
+| `UNREAD_COUNT_CHANGED` | 읽음 처리로 본인 안읽음 수가 바뀜 (멀티 디바이스 동기화) | `unreadCount`(전체)를 그대로 인앱 배지에 미러링 |
 
 `TOURNAMENT_ITEM_PARSED` 상세:
 - **수신자**: 그 토너먼트 참여자 **전원**(아이템을 올린 주최자 포함). 한 아이템이 여러 토너먼트에 출전 중이면 각 토너먼트 참여자가 **각자 그 토너먼트의 좌표**로 받는다.
@@ -139,18 +139,17 @@ data: {"type":"TOURNAMENT_ITEM_PARSED","tournamentId":99,"tournamentItemId":555,
 
 ### `type = UNREAD_COUNT_CHANGED`
 
-읽음 처리(POST `/api/v1/notifications/read`) 후, 같은 유저의 다른 **열린 기기 인앱 배지**를 맞추는 신호. REST 읽음 응답과 같은 값(`unreadCount`·`unreadCountByCategory`)이라 클라는 +1/-1 산수 없이 그대로 미러링한다.
+읽음 처리(POST `/api/v1/notifications/read`) 후, 같은 유저의 다른 **열린 기기 인앱 배지**를 맞추는 신호. REST 읽음 응답과 같은 값(`unreadCount`)이라 클라는 +1/-1 산수 없이 그대로 미러링한다.
 
 ```text
 event: silent-sync
-data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1,"unreadCountByCategory":{"ACTIVITY":1,"SYSTEM":0}}
+data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1}
 ```
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `type` | string (enum) | 항상 `"UNREAD_COUNT_CHANGED"`. |
 | `unreadCount` | number (long) | 처리 후 전체 안읽음 수(앱 badge). |
-| `unreadCountByCategory` | object<string, number> | 처리 후 카테고리별 안읽음 수(탭 badge). 모든 카테고리 키 포함. |
 
 > 읽은 기기 자신도 받지만(그 유저의 모든 연결로 fan-out), 응답 body 와 같은 값이라 멱등이다. 오프라인 기기의 OS 아이콘 badge 는 FCM silent push 가 따로 맞춘다 — **온라인 인앱 배지=SSE, 오프라인 OS 배지=FCM** 으로 두 경로가 같은 수로 수렴한다.
 
@@ -267,8 +266,8 @@ es.addEventListener("silent-sync", (e) => {
       updateTournamentItemCard(s.tournamentId, s.tournamentItemId, s.status); // status: "READY" | "FAILED"
       break;
     case "UNREAD_COUNT_CHANGED":
-      // 읽음 후 다른 기기의 인앱 배지 동기화: 전체/탭별 안읽음 수를 그대로 미러링(+1/-1 산수 없이).
-      setBadge(s.unreadCount, s.unreadCountByCategory); // unreadCountByCategory = {"ACTIVITY":n, "SYSTEM":n}
+      // 읽음 후 다른 기기의 인앱 배지 동기화: 전체 안읽음 수를 그대로 미러링(+1/-1 산수 없이).
+      setBadge(s.unreadCount);
       break;
   }
 });
@@ -311,8 +310,8 @@ fun openSse() {
                             // (s.tournamentId, s.tournamentItemId)로 그 출전 카드를 s.status 로 갱신
                         }
                         "UNREAD_COUNT_CHANGED" -> {
-                            val s = json.decode<UnreadCountChanged>(data)  // {type, unreadCount, unreadCountByCategory}
-                            // 다른 기기의 인앱 배지를 s.unreadCount / s.unreadCountByCategory 로 미러링
+                            val s = json.decode<UnreadCountChanged>(data)  // {type, unreadCount}
+                            // 다른 기기의 인앱 배지를 s.unreadCount 로 미러링
                         }
                     }
                 }

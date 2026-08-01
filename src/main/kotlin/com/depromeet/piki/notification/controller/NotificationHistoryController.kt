@@ -38,7 +38,7 @@ class NotificationHistoryController(
     ): ApiResponseBody<NotificationHistoryResponse> {
         val page = notificationService.getHistory(userId = userId, rawCursor = cursor, rawSize = size, category = category)
         return ApiResponseBody.ok(
-            data = NotificationHistoryResponse.of(page.notifications, page.unreadCount, page.unreadCountByCategory, page.defaultPushImageUrl),
+            data = NotificationHistoryResponse.of(page.notifications, page.unreadCount, page.defaultPushImageUrl),
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
         )
     }
@@ -48,8 +48,8 @@ class NotificationHistoryController(
         @AuthenticationPrincipal userId: UUID,
         @Valid @RequestBody request: NotificationReadRequest,
     ): ApiResponseBody<NotificationReadResponse> {
-        val unreadByCategory = notificationReadOrchestrator.readAndSyncBadge(userId = userId, command = request.toCommand())
-        return ApiResponseBody.ok(data = NotificationReadResponse.of(unreadByCategory))
+        val unreadCount = notificationReadOrchestrator.readAndSyncBadge(userId = userId, command = request.toCommand())
+        return ApiResponseBody.ok(data = NotificationReadResponse.of(unreadCount))
     }
 
     @DeleteMapping
@@ -57,7 +57,7 @@ class NotificationHistoryController(
         @AuthenticationPrincipal userId: UUID,
         @Valid @RequestBody request: NotificationDeleteRequest,
     ): ApiResponseBody<NotificationDeleteResponse> {
-        val unreadByCategory = notificationDeleteOrchestrator.deleteAndSyncBadge(userId = userId, command = request.toCommand())
-        return ApiResponseBody.ok(data = NotificationDeleteResponse.of(unreadByCategory))
+        val unreadCount = notificationDeleteOrchestrator.deleteAndSyncBadge(userId = userId, command = request.toCommand())
+        return ApiResponseBody.ok(data = NotificationDeleteResponse.of(unreadCount))
     }
 }

@@ -165,20 +165,18 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `category 로 걸러도 unreadCount 는 전체이고 탭별 카운트를 함께 내려준다`() {
+    fun `category 로 걸러도 unreadCount 는 필터와 무관한 전체다`() {
         val userId = UUID.randomUUID()
         seedTyped(userId, NotificationType.TOURNAMENT_STARTED) // 활동 1
         seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED) // 시스템 1
         seedTyped(userId, NotificationType.ITEM_PARSING_FAILED) // 시스템 1
 
-        // category=ACTIVITY 로 목록은 1건만 걸러지지만, unreadCount(앱 badge)는 전체 3, 탭별은 활동1·시스템2.
+        // category=ACTIVITY 로 목록은 1건만 걸러지지만, unreadCount(앱 badge)는 전체 3.
         buildMockMvc()
             .perform(get("/api/v1/notifications").param("category", "ACTIVITY").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items.length()").value(1))
             .andExpect(jsonPath("$.data.unreadCount").value(3))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(2))
     }
 
     @Test
@@ -296,10 +294,8 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
                     .content("""{"all":true}""")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
-            // 처리 후 안읽음 수(전체·탭별)를 응답으로 바로 내려준다(badge 미러링용) — 별도 GET 불필요.
+            // 처리 후 안읽음 수를 응답으로 바로 내려준다(badge 미러링용) — 별도 GET 불필요.
             .andExpect(jsonPath("$.data.unreadCount").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(0))
 
         mockMvc
             .perform(get("/api/v1/notifications").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
@@ -328,10 +324,7 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             // target 만 본인 소유라 읽힘 → 본인 안읽음은 untouched 1건 남는다(others 는 타인이라 무영향).
-            // seed 는 ITEM_PARSING_COMPLETED(시스템)라 남은 1건은 SYSTEM 탭.
             .andExpect(jsonPath("$.data.unreadCount").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(0))
 
         // 지정 + 본인 소유만 read. 미지정 본인 것·타인 것은 그대로(소유 검증은 쿼리 user_id 가 겸한다).
         assertTrue(notificationJpaRepository.findById(target).get().isRead)

@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.service.dto.NotificationReadCommand
 import com.depromeet.piki.notification.sse.SilentSyncDispatcher
 import org.springframework.stereotype.Component
@@ -26,7 +25,7 @@ class NotificationReadOrchestrator(
     fun readAndSyncBadge(
         userId: UUID,
         command: NotificationReadCommand,
-    ): Map<NotificationCategory, Long> {
+    ): Long {
         val unread = notificationService.read(userId, command)
         silentSyncDispatcher.dispatch(listOf(userId), UnreadCountChanged.of(unread))
         pushNotificationChannel.syncBadge(userId, unread.toBadgeCount())

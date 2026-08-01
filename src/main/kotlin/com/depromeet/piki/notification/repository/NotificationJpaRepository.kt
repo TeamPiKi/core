@@ -48,36 +48,25 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
         limit: Limit,
     ): List<Notification>
 
-    // type 별 안읽음 수 — 전체 badge + 탭별(활동/시스템) badge 를 한 쿼리(group by)로 집계한다.
-    // closed projection(type·count alias)으로 받아 RepositoryImpl 이 카테고리로 접는다. (idx (user_id, is_read) 커버)
-    @Query(
-        "SELECT n.type AS type, COUNT(n) AS count FROM Notification n " +
-            "WHERE n.userId = :userId AND n.isRead = false GROUP BY n.type",
-    )
-    fun countUnreadByType(
+    // 전체 안읽음 수 — 앱 badge · 응답 unreadCount 의 단일 소스. (idx (user_id, is_read) 커버)
+    @Query("SELECT COUNT(n) FROM Notification n WHERE n.userId = :userId AND n.isRead = false")
+    fun countUnread(
         @Param("userId") userId: UUID,
-    ): List<TypeUnreadCount>
+    ): Long
 
-    // group by 결과 한 행 — type 과 그 안읽음 수. Spring Data closed projection(SELECT alias 와 게터명 일치).
-    interface TypeUnreadCount {
-        val type: NotificationType
-        val count: Long
-    }
-
-    // 여러 유저의 안읽음 수를 (userId, type) 별로 한 쿼리에 집계 — 자동삭제 배지 재계산의 N+1 을 없앤다(유저마다 쿼리 대신 IN + GROUP BY 한 번).
-    // 안읽음이 0 인 유저는 결과 행에 안 나오므로, 호출부가 affectedUsers 전체를 0 으로 깔고 이 결과를 덮어 계약(모든 대상 유저 키 포함)을 유지한다.
+    // 여러 유저의 안읽음 수를 한 쿼리로 집계 — 자동삭제 배지 재계산의 N+1 을 없앤다(유저마다 쿼리 대신 IN + GROUP BY 한 번).
+    // 안읽음이 0 인 유저는 결과 행에 안 나오므로, 호출부가 대상 유저 전체를 0 으로 깔고 이 결과를 덮어 계약(모든 대상 유저 키 포함)을 유지한다.
     @Query(
-        "SELECT n.userId AS userId, n.type AS type, COUNT(n) AS count FROM Notification n " +
-            "WHERE n.userId IN :userIds AND n.isRead = false GROUP BY n.userId, n.type",
+        "SELECT n.userId AS userId, COUNT(n) AS count FROM Notification n " +
+            "WHERE n.userId IN :userIds AND n.isRead = false GROUP BY n.userId",
     )
-    fun countUnreadByUserAndType(
-        @Param("userIds") userIds: Collection<UUID>,
-    ): List<UserTypeUnreadCount>
+    fun countUnreadByUser(
+        @Param("userIds") userIds: List<UUID>,
+    ): List<UserUnreadCount>
 
-    // group by 결과 한 행 — userId·type 과 그 안읽음 수. Spring Data closed projection(SELECT alias 와 게터명 일치).
-    interface UserTypeUnreadCount {
+    // group by 결과 한 행 — userId 와 그 안읽음 수. Spring Data closed projection(SELECT alias 와 게터명 일치).
+    interface UserUnreadCount {
         val userId: UUID
-        val type: NotificationType
         val count: Long
     }
 

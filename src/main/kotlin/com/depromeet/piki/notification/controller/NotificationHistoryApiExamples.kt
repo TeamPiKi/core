@@ -39,7 +39,6 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = sampleItems,
                                         unreadCount = 2,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 1L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
@@ -53,7 +52,6 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = listOf(tournamentParsingItem),
                                         unreadCount = 1,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 0L, NotificationCategory.SYSTEM to 1L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = "1024", hasNext = true),
                             ),
@@ -67,7 +65,6 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = emptyList(),
                                         unreadCount = 0,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 0L, NotificationCategory.SYSTEM to 0L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
@@ -90,9 +87,7 @@ class NotificationHistoryApiExamples(
                         name = "읽음 처리 성공 (처리 후 unreadCount 동봉)",
                         payload =
                             ApiResponseBody.ok(
-                                data = NotificationReadResponse.of(
-                                    mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 1L),
-                                ),
+                                data = NotificationReadResponse.of(unreadCount = 2),
                             ),
                     )
                     add(
@@ -115,9 +110,7 @@ class NotificationHistoryApiExamples(
                         name = "삭제 성공 (삭제 후 unreadCount 동봉)",
                         payload =
                             ApiResponseBody.ok(
-                                data = NotificationDeleteResponse.of(
-                                    mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 0L),
-                                ),
+                                data = NotificationDeleteResponse.of(unreadCount = 1),
                             ),
                     )
                     add(
