@@ -100,7 +100,7 @@ dependencies {
     // Spring Boot BOM 미관리라 버전 명시(2.2.1, 현재 최신). 2.x 가 Boot 4 대응 라인이나(이슈 #78) 릴리스 노트가 호환을 명시하진 않아 부팅으로 검증한다.
     implementation("net.ttddyy.observation:datasource-micrometer-spring-boot:2.2.1")
 
-    // 에러 트래킹: prod·staging 의 warn+error 로그를 Sentry 이슈로 그룹핑(#608). Spring Boot 4 전용 스타터를 쓴다
+    // 에러 트래킹: prod 의 warn+error 로그를 Sentry 이슈로 그룹핑(#608). Spring Boot 4 전용 스타터를 쓴다
     // (jakarta 스타터는 Boot 3 용). 우리 예외는 GlobalExceptionHandler 가 잡아 log.error/warn(.., e) 로 남기고
     // 컨테이너로 안 올라가므로, Sentry MVC 미처리예외 통합이 아니라 logback appender(sentry-logback)가 그 로그
     // 이벤트(예외 동봉)를 캡처하는 게 주 경로다 — 그래서 sentry-logback 을 명시 의존으로 둔다.

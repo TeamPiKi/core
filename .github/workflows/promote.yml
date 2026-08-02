@@ -1,6 +1,6 @@
 name: Promote
 
-# 환경 승격(promotion): dev → main(prod) 직행. (staging 환경은 #864 로 폐지 — 중간 승격 단계 없음)
+# 환경 승격(promotion): dev → main(prod) 직행. 중간 승격 단계는 없다.
 # 코드는 PR 로 dev 에만 들어오고(squash), 이 워크플로가 "이미 CI 통과·배포된 동일 커밋"을 main 으로
 # 앞으로만(fast-forward) 옮긴다. ff 전용이라 두 브랜치 SHA 가 항상 정렬되고, squash·분기 사고를 구조적으로 막는다.
 #
