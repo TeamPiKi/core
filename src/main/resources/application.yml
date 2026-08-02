@@ -8,8 +8,11 @@ server:
   servlet:
     session:
       # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin form-login 세션에만 적용된다.
-      # 환경별로 다르게: dev 는 길게(개발 편의, 사실상 무제한), prod 는 짧게(24h) — env 변수로 주입한다. 미설정(로컬) 기본은 30d.
-      timeout: ${ADMIN_SESSION_TIMEOUT:7d}
+      # 기본값을 fail-safe(짧은 쪽, 24h)로 둔다 — 아무 데서도 주입하지 않으면 prod 도 이 값을 쓰므로, 기본이 길면
+      # 운영 세션이 의도보다 오래 산다(SPRINGDOC_ENABLED 의 fail-closed 기본과 같은 결). 현재 dev·prod 모두 주입
+      # 없이 이 기본을 쓴다. 특정 환경만 길게 쓰려면 SSM /piki-core/<env>/admin-session-timeout 을 심으면 된다
+      # (deploy 가 SSM 키를 UPPER_SNAKE env 로 컨테이너에 전달하므로 워크플로 변경이 필요 없다).
+      timeout: ${ADMIN_SESSION_TIMEOUT:24h}
 
 # 운영 백오피스(#249) + 슬랙-IP 접근 게이트(#526). 게이트가 보호하므로 enabled 를 전 환경에 둬도 안전하다 —
 # /admin 은 슬랙 세션, dev 도메인은 IP allowlist 로 막힌다. 로컬은 ADMIN_ENABLED=true + ADMIN_LOCAL_BYPASS=true 로 게이트 없이 본다.
