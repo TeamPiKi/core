@@ -62,23 +62,3 @@ output "dev_image_public_base_url" {
   description = "개발(dev) 이미지 버킷 공개 베이스 URL — dev env S3_PUBLIC_BASE_URL 에 넣을 값"
   value       = "https://${aws_s3_bucket.dev_images.bucket_regional_domain_name}"
 }
-
-output "staging_ec2_public_ip" {
-  description = "스테이징(staging) EC2 Elastic IP — 가비아 staging.api.piki.day A 레코드에 등록할 것"
-  value       = aws_eip.staging_app.public_ip
-}
-
-output "staging_ec2_public_dns" {
-  description = "스테이징(staging) EC2 퍼블릭 DNS (EIP 기준)"
-  value       = aws_eip.staging_app.public_dns
-}
-
-output "staging_image_bucket_name" {
-  description = "스테이징 이미지 버킷명 — staging env S3_BUCKET 에 넣을 값"
-  value       = aws_s3_bucket.staging_images.id
-}
-
-output "staging_image_public_base_url" {
-  description = "스테이징 이미지 버킷 공개 베이스 URL — staging env S3_PUBLIC_BASE_URL 에 넣을 값"
-  value       = "https://${aws_s3_bucket.staging_images.bucket_regional_domain_name}"
-}

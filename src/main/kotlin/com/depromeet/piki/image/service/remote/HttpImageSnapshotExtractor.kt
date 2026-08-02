@@ -12,7 +12,7 @@ import org.springframework.web.client.RestClient
 // 이미지 파싱 전체(download→OCR→crop→결과 업로드)를 원격 추출 서비스(extractor)에 위임하는 클라이언트.
 // 호출·계약 번역은 링크와 같은 3갈래(RemoteExtractionContract)를 공유하고 요청만 다르다 — URL 대신 raw 가 적재된
 // S3 위치(bucket·key)를 넘기면 extractor 가 download→OCR→crop→업로드까지 끝내고 업로드된 결과 imageUrl 을 돌려준다.
-// bucket 을 요청에 싣는 이유: 버킷은 환경(dev/staging/prod)마다 다른데 그 구분은 본 서버 설정(S3Properties)이
+// bucket 을 요청에 싣는 이유: 버킷은 환경(dev/prod)마다 다른데 그 구분은 본 서버 설정(S3Properties)이
 // 이미 쥐고 있다 — extractor 는 버킷 무관(무상태)으로 두고 호출자가 자기 버킷을 알려준다.
 //
 // 이미지 파싱의 유일한 ImageSnapshotExtractor 구현이다.

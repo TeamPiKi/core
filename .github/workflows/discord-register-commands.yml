@@ -50,7 +50,7 @@ jobs:
             fi
           }
 
-          PIKI_ADMIN='{"name":"piki-admin","description":"백오피스 접근 링크 발급","options":[{"type":3,"name":"env","description":"접속 환경","required":true,"choices":[{"name":"dev","value":"dev"},{"name":"staging","value":"staging"},{"name":"prod","value":"prod"}]}]}'
+          PIKI_ADMIN='{"name":"piki-admin","description":"백오피스 접근 링크 발급","options":[{"type":3,"name":"env","description":"접속 환경","required":true,"choices":[{"name":"dev","value":"dev"},{"name":"prod","value":"prod"}]}]}'
           STATS='{"name":"stats","description":"운영 지표 조회 (개발진 제외 기본)","options":[{"type":3,"name":"period","description":"조회 기간","required":true,"choices":[{"name":"오늘","value":"today"},{"name":"어제","value":"yesterday"},{"name":"최근 7일","value":"7d"},{"name":"최근 30일","value":"30d"}]},{"type":3,"name":"metric","description":"지표 섹션 (기본: 요약)","required":false,"choices":[{"name":"요약","value":"summary"},{"name":"가입","value":"signup"},{"name":"위시","value":"wish"},{"name":"토너먼트","value":"tournament"},{"name":"푸시","value":"push"}]}]}'
           DOCS='{"name":"docs","description":"dev API 레퍼런스 문서 접근 링크 발급"}'
 

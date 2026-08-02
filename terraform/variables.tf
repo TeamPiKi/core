@@ -54,17 +54,10 @@ variable "azs" {
 
 # ----- EC2 -----
 
-variable "ec2_instance_type" {
-  description = "staging EC2 인스턴스 타입 (ARM / Graviton). dev 는 ec2_instance_type_dev, prod 는 ec2_instance_type_prod 로 분리."
-  type        = string
-  default     = "t4g.micro"
-}
-
 variable "ec2_instance_type_dev" {
   description = <<-EOT
-    개발(dev) EC2 인스턴스 타입 (ARM / Graviton). staging(ec2_instance_type=micro)과 분리해 dev 만 상향한다 —
-    dev 는 extractor 를 동거 컨테이너로 얹어(파싱 분리 이관, staging·prod 는 별도 박스로 분리) micro(1GiB)로는
-    기존 앱·mysql·redis·alloy 에 extractor 까지 얹으면 만석이 된다(2026-06-06 freeze 전력). small(2GiB)로 올린다.
+    개발(dev) EC2 인스턴스 타입 (ARM / Graviton). micro(1GiB)로는 앱·mysql·redis·alloy 를 얹으면
+    만석이 된다(2026-06-06 freeze 전력). small(2GiB)로 올린다.
     instance_type 변경은 in-place(stop → 변경 → start)이며 AMI 고정이라 인스턴스 교체 없이 적용되지만, 짧은 다운타임이 있다.
   EOT
   type        = string
@@ -73,8 +66,8 @@ variable "ec2_instance_type_dev" {
 
 variable "ec2_instance_type_prod" {
   description = <<-EOT
-    운영(prod) EC2 인스턴스 타입 (ARM / Graviton). dev / staging(ec2_instance_type)과
-    분리해 prod 만 독립적으로 사이징한다 — 운영 트래픽/메모리 여유를 위해 small 로 상향.
+    운영(prod) EC2 인스턴스 타입 (ARM / Graviton). dev 와 분리해 prod 만 독립적으로
+    사이징한다 — 운영 트래픽/메모리 여유를 위해 small 로 상향.
     micro(1GiB) → small(2GiB). instance_type 변경은 in-place(stop → 변경 → start)이며
     AMI 가 고정돼 있어 인스턴스 교체 없이 적용되지만, 적용 중 짧은 다운타임이 발생한다.
   EOT
