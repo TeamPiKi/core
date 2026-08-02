@@ -193,7 +193,7 @@ jobs:
           docker push "$IMAGE_SHA"
 
       # 배포에 필요한 설정 5개(nginx conf·provision 스크립트·alloy 공용 블록 2파일·healthcheck 블록)를 SSH 연결
-      # 1회로 함께 올린다. 각각 scp 하면 핸드셰이크·액션 셋업이 반복돼 수십 초라 한 스테이징 디렉토리
+      # 1회로 함께 올린다. 각각 scp 하면 핸드셰이크·액션 셋업이 반복돼 수십 초라 한 임시 집결 디렉토리
       # (/tmp/piki-deploy)에 안착시킨다 — strip_components: 2 로 depth-3 소스는 파일명만 남고, alloy 블록
       # (depth-4)은 alloy/ 하위(/tmp/piki-deploy/alloy/*)로 남아 provision-runtime.sh 가 그 경로로 호출한다(#743).
       # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
