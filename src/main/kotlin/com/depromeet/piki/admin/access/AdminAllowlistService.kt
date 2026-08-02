@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service
 import java.time.Duration
 
 // 슬랙으로 등록한 "접근 허용 IP" 를 Redis 에 둔다. 이 한 allowlist 가 두 게이트를 다 받친다 —
-// (1) prod /admin (AdminAccessFilter), (2) dev/staging 도메인 전체(EnvironmentAccessFilter).
+// (1) prod /admin (AdminAccessFilter), (2) dev 도메인 전체(EnvironmentAccessFilter).
 //
 // sliding TTL: /admin·도메인 접근 때마다 refresh 해 활동 중엔 안 끊기고(allowlistTtl, 기본 24h),
 // 무활동이면 자동 만료(stale IP 자동 정리 — 모바일·집 IP 변동 흡수). 이름(슬랙 표시명)을 값으로 둬 목록·감사에 쓴다.

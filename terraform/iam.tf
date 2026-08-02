@@ -30,7 +30,6 @@ data "aws_iam_policy_document" "image_bucket_rw" {
     resources = [
       "${aws_s3_bucket.images.arn}/*",
       "${aws_s3_bucket.dev_images.arn}/*",
-      "${aws_s3_bucket.staging_images.arn}/*",
     ]
   }
 
@@ -41,7 +40,6 @@ data "aws_iam_policy_document" "image_bucket_rw" {
     resources = [
       aws_s3_bucket.images.arn,
       aws_s3_bucket.dev_images.arn,
-      aws_s3_bucket.staging_images.arn,
     ]
   }
 }
@@ -64,7 +62,7 @@ resource "aws_iam_instance_profile" "app" {
 # 이 경로를 직접 pull 해 -e 로 주입한다(get-parameters-by-path). 마이그레이션 워크플로
 # (migrate-secrets-to-ssm.yml)가 값을 심고, 이 정책이 읽기를 허가한다.
 #
-# dev/staging/prod EC2 가 이 role 하나를 공유하므로(위 app_image_bucket 과 동일 구조), 세 환경
+# dev/prod EC2 가 이 role 하나를 공유하므로(위 app_image_bucket 과 동일 구조), 환경
 # 프리픽스를 /piki-core/* 로 한 번에 부여한다. 각 박스는 자기 환경 경로(/piki-core/<env>/)만 실제로
 # 읽지만, 공유 role 이라 타 환경 경로도 읽을 수 있는 과권한이 생긴다 — 이미지 버킷과 같은 트레이드오프
 # (blast radius 는 작으나, 환경별 엄격 격리가 필요해지면 role 을 환경별로 분리해야 하고 이는 EC2
