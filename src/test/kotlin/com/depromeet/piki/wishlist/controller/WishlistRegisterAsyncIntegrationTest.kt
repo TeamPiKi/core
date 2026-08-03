@@ -88,7 +88,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", currentPrice = 99_000) }
+            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000) }
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
 
             mockMvc
@@ -102,7 +102,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.status").value("PENDING"))
                 // 파싱 전이라 추출 결과는 아직 비어 있고, 입력으로 받은 sourceUrl 만 채워진다.
                 .andExpect(jsonPath("$.data.item.name").value(nullValue()))
-                .andExpect(jsonPath("$.data.item.currentPrice").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.price").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/42"))
                 // 백오피스(source_platforms) 미등록 도메인 — host 에서 유도한 임시 표시명(등록 가능 도메인의 첫 라벨)이 나간다.
                 .andExpect(jsonPath("$.data.item.sourcePlatform").value("example"))
@@ -118,7 +118,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val readyBefore = parseCount("ready", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/42")
@@ -132,7 +132,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 표시값·상태는 활성 snapshot 이 보유한다(4a) — item 은 정체성(link)만 든다.
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.currentPrice)
+            assertEquals(99_000, snapshot.price)
             assertEquals("KRW", snapshot.currency)
         } finally {
             cleanup(userId)
@@ -173,7 +173,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. READY 불변식(name 필수)에 걸려
             // markReady 가 거부하고, 워커가 이를 받아 PROCESSING 방치 대신 FAILED 로 떨어뜨린다.
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, currentPrice = 99_000) }
+            stubProductLinkExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
             val rejectedBefore = parseCount("failed", "ready_rejected")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
 
@@ -241,7 +241,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
+                ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -251,7 +251,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             }
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.currentPrice)
+            assertEquals(99_000, snapshot.price)
             assertEquals("KRW", snapshot.currency)
             // 이미지 등록은 link(원본 URL)가 없다 — link 는 정체성이라 item 에서 읽는다.
             val item = itemRepository.findById(itemId) ?: error("item $itemId 가 없다")
@@ -319,7 +319,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, imageUrl = "https://img.example.com/p.png")
+                ProductSnapshot(link = null, name = "상품", price = 1_000, imageUrl = "https://img.example.com/p.png")
             }
             val request = multipart("/api/v1/wishlists/images")
             (1..5).forEach { i ->
@@ -362,7 +362,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
+                ProductSnapshot(link = null, name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -382,7 +382,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // 디스패처가 집은 직후 워커가 크래시해 **실행 0회**로 PROCESSING 에 갇힌 상황(그래서 attempt 는 0 이다 —
         // 집기는 예산을 소모하지 않는다). recover 가 되살려 완성시킨다 — execution at-least-once 의 핵심(#461).
         stubProductLinkExtractor.build = {
-            ProductSnapshot(link = it, name = "되살아난 상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            ProductSnapshot(link = it, name = "되살아난 상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/revive")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
@@ -439,7 +439,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // 이미지 경로도 원본을 S3 raw 로 durable 적재하므로(link 와 대칭), 크래시로 stale 된 PROCESSING 을 recover 가 재실행해
         // 워커가 그 key 로 원본을 다시 읽어 완성시킨다 — 메모리 ByteArray 시절의 "이미지는 복구 불가" 비대칭이 사라졌다(#461).
         stubImageSnapshotExtractor.build = {
-            ProductSnapshot(link = null, name = "되살아난 이미지", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
+            ProductSnapshot(link = null, name = "되살아난 이미지", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
         }
         val item = itemRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })

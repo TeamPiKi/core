@@ -94,7 +94,7 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
         // 도메인은 테스트 격리용 유니크 값 — 서브도메인(shop.)까지 매칭되는지 함께 본다.
         val domain = "blocked-${UUID.randomUUID()}.example.com"
         val body = """{"url": "https://shop.$domain/p/1"}"""
-        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", currentPrice = 9_900) }
+        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
         try {
             // 정책 추가 + reload — 배포 없이 곧바로 등록이 거부된다(백오피스 저장 → afterCommit reload 와 같은 경로).
             policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.UNSUPPORTED.name, reason = "테스트"))
@@ -136,7 +136,7 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         val domain = "supported-${UUID.randomUUID()}.example.com"
-        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", currentPrice = 9_900) }
+        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
         try {
             policyRepository.save(ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.SUPPORTED.name, reason = "실측 확인"))
             routingPolicy.reload()

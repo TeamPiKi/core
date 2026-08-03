@@ -10,7 +10,7 @@ data class ProductSnapshot(
     val link: ProductLink? = null,
     val name: String? = null,
     val imageUrl: String? = null,
-    val currentPrice: Int? = null,
+    val price: Int? = null,
     val currency: String? = null,
     // 리다이렉트를 따라간 최종 페이지 URL(extractor 계약의 additive 필드). 상품 정체성(canonical, #825) 정규화의
     // 입력이며, 구버전 extractor·이미지 경로에선 null 이다 — null 이면 정체성 확정을 건너뛴다(배포 순서 무관).
@@ -35,7 +35,7 @@ data class ProductSnapshot(
             link: ProductLink?,
             name: String?,
             imageUrl: String?,
-            currentPrice: Int?,
+            price: Int?,
             currency: String?,
             // 출처 메타(finalUrl·extractionMethod)는 값 검증 대상이 아니라 그대로 나른다 — finalUrl 의 정규화·길이
             // 판정은 정체성 확정 지점(CanonicalLink)이 지고, method 는 소비처가 tolerant 하게 번역한다.
@@ -47,7 +47,7 @@ data class ProductSnapshot(
                 imageUrl?.takeIf { it.isNotBlank() && it.startsWith("https://", ignoreCase = true) }
             val normalizedCurrency = CurrencyCode.normalizeOrNull(currency)
 
-            if ((currentPrice ?: 0) < 0) {
+            if ((price ?: 0) < 0) {
                 throw ProductSnapshotException.untrustworthyValue()
             }
             if ((normalizedName?.length ?: 0) > NAME_MAX_LENGTH) {
@@ -61,7 +61,7 @@ data class ProductSnapshot(
                 link = link,
                 name = normalizedName,
                 imageUrl = normalizedImageUrl,
-                currentPrice = currentPrice,
+                price = price,
                 currency = normalizedCurrency,
                 finalUrl = finalUrl,
                 extractionMethod = extractionMethod,

@@ -217,7 +217,7 @@ class TournamentService(
         for (tournamentItem in tournamentItems) {
             val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
             if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()
-            snapshot.currentPrice ?: throw TournamentException.itemPriceRequired()
+            snapshot.price ?: throw TournamentException.itemPriceRequired()
         }
         tournament.start()
         // 시작이 커밋된 뒤에만 참가자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
@@ -230,7 +230,7 @@ class TournamentService(
                     TournamentStartResult(
                         tournamentItemId = item.getId(),
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     )
@@ -283,7 +283,7 @@ class TournamentService(
                     TournamentStartResult(
                         tournamentItemId = item.getId(),
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     )
@@ -488,7 +488,7 @@ class TournamentService(
             sourceUrl = item.link?.toString(),
             name = snapshot.name,
             imageUrl = snapshot.imageUrl,
-            price = snapshot.currentPrice,
+            price = snapshot.price,
             currency = snapshot.currency,
             status = snapshot.status,
         )
@@ -670,7 +670,7 @@ class TournamentService(
                     tournamentItemId = tournamentItemId,
                     itemId = snapshot.itemId,
                     name = snapshot.name,
-                    price = snapshot.currentPrice,
+                    price = snapshot.price,
                     currency = snapshot.currency,
                     imageUrl = snapshot.imageUrl,
                 )
@@ -974,7 +974,7 @@ class TournamentService(
                         tournamentItemId = tournamentItemId,
                         itemId = snapshot.itemId,
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     ),
@@ -1048,7 +1048,7 @@ class TournamentService(
             itemId = snapshot.itemId,
             userId = tournamentItem.userId,
             name = snapshot.name,
-            price = snapshot.currentPrice,
+            price = snapshot.price,
             currency = snapshot.currency,
             imageUrl = snapshot.imageUrl,
             status = snapshot.status,

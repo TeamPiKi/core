@@ -181,7 +181,7 @@ class TournamentItemPersistenceService(
                 ItemSnapshot.manual(
                     base = base,
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     imageUrl = imageUrl,
                     currency = currency,
                     editedBy = userId,

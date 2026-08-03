@@ -257,7 +257,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             """
             UPDATE item_snapshots
             SET status = 'READY', name = '공유 상품', image_url = 'https://img.example.com/s.png',
-                current_price = 10000, currency = 'KRW', source = 'SERVER',
+                price = 10000, currency = 'KRW', source = 'SERVER',
                 extracted_at = DATE_SUB(NOW(6), INTERVAL ? HOUR), updated_at = NOW(6)
             WHERE id = ?
             """,

@@ -9,7 +9,7 @@ enum class ItemStatus {
     // 즉 PENDING 은 "아직 한 번도 안 한 일"뿐 아니라 "다시 해야 할 일"도 담는다.
     PENDING,
 
-    // 디스패처가 claim 해 파싱이 진행 중. name·currentPrice·imageUrl 은 아직 비어 있다.
+    // 디스패처가 claim 해 파싱이 진행 중. name·price·imageUrl 은 아직 비어 있다.
     // 프로세스가 죽어 반납조차 못 한 채 여기 갇힌 행은 recover 가 재실행으로 되살린다(execution at-least-once, #461).
     PROCESSING,
 

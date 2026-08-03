@@ -141,7 +141,7 @@ class WishlistController(
                 userId = userId,
                 wishId = wishId,
                 name = request.name,
-                currentPrice = request.currentPrice,
+                price = request.price,
                 currency = request.currency,
                 image = image,
             )
