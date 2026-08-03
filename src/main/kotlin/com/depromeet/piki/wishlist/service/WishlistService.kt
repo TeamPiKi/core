@@ -214,7 +214,7 @@ class WishlistService(
         userId: UUID,
         wishId: Long,
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         currency: String?,
         image: MultipartFile?,
     ): WishWithItem {
@@ -232,7 +232,7 @@ class WishlistService(
         ItemSnapshot.manual(
             base = activeSnapshot,
             name = name,
-            currentPrice = currentPrice,
+            price = price,
             imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
             currency = currency,
             editedBy = userId,
@@ -246,7 +246,7 @@ class WishlistService(
             userId = userId,
             wishId = wishId,
             name = name,
-            currentPrice = currentPrice,
+            price = price,
             imageUrl = imageUrl,
             currency = currency,
         )

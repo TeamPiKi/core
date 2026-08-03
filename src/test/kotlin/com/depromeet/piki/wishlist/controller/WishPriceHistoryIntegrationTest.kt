@@ -75,15 +75,15 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.entries.length()").value(3))
             // 최신순(snapshotId desc): active → middle → older
             .andExpect(jsonPath("$.data.entries[0].snapshotId").value(active))
-            .andExpect(jsonPath("$.data.entries[0].currentPrice").value(109_000))
+            .andExpect(jsonPath("$.data.entries[0].price").value(109_000))
             .andExpect(jsonPath("$.data.entries[0].name").value("현재 상품"))
             .andExpect(jsonPath("$.data.entries[0].currency").value("KRW"))
             .andExpect(jsonPath("$.data.entries[0].isActive").value(true))
             .andExpect(jsonPath("$.data.entries[1].snapshotId").value(middle))
-            .andExpect(jsonPath("$.data.entries[1].currentPrice").value(99_000))
+            .andExpect(jsonPath("$.data.entries[1].price").value(99_000))
             .andExpect(jsonPath("$.data.entries[1].isActive").value(false))
             .andExpect(jsonPath("$.data.entries[2].snapshotId").value(older))
-            .andExpect(jsonPath("$.data.entries[2].currentPrice").value(119_000))
+            .andExpect(jsonPath("$.data.entries[2].price").value(119_000))
             .andExpect(jsonPath("$.data.entries[2].isActive").value(false))
     }
 
@@ -159,7 +159,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             ItemSnapshot(
                 itemId = itemId,
                 name = "삭제된 버전",
-                currentPrice = 99_000,
+                price = 99_000,
                 currency = "KRW",
                 imageUrl = "https://cdn.example.com/p/deleted.jpg",
                 status = ItemStatus.READY,
@@ -276,7 +276,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = itemId,
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/$price.jpg",
                     status = ItemStatus.READY,
@@ -297,7 +297,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = itemId,
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/$price.jpg",
                     status = ItemStatus.READY,

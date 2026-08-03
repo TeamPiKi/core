@@ -63,7 +63,7 @@ data class WishPriceHistoryResponse(
         @field:Schema(description = "추출 버전(snapshot) ID — 버전 식별·정렬 키", example = "1088")
         val snapshotId: Long,
         @field:Schema(description = "이 버전 시점의 판매가", example = "119000")
-        val currentPrice: Int,
+        val price: Int,
         @field:Schema(description = "통화 코드 (ISO 4217)", example = "KRW", nullable = true)
         val currency: String?,
         @field:Schema(description = "이 버전 시점의 상품명", example = "에어 조던 1 미드")
@@ -91,7 +91,7 @@ data class WishPriceHistoryResponse(
         val editedByMe: Boolean?,
     ) {
         companion object {
-            // READY 버전만 조회하므로 네 필드(currentPrice·name·imageUrl·extractedAt)는 ItemSnapshot 의 READY 불변식
+            // READY 버전만 조회하므로 네 필드(price·name·imageUrl·extractedAt)는 ItemSnapshot 의 READY 불변식
             // (requireReadyInvariant)이 모두 보장한다 — 항상 채워져 있다. 비어 있으면 그 불변식이 깨진 코드 버그이므로
             // requireNotNull(500)으로 드러낸다(정상 흐름의 클라이언트는 닿지 않는다).
             fun from(
@@ -102,7 +102,7 @@ data class WishPriceHistoryResponse(
                 val snapshotId = snapshot.getId()
                 return PriceHistoryEntry(
                     snapshotId = snapshotId,
-                    currentPrice = requireNotNull(snapshot.currentPrice) { "READY snapshot $snapshotId 의 currentPrice 가 없다" },
+                    price = requireNotNull(snapshot.price) { "READY snapshot $snapshotId 의 price 가 없다" },
                     currency = snapshot.currency,
                     name = requireNotNull(snapshot.name) { "READY snapshot $snapshotId 의 name 이 없다" },
                     imageUrl = requireNotNull(snapshot.imageUrl) { "READY snapshot $snapshotId 의 imageUrl 이 없다" },

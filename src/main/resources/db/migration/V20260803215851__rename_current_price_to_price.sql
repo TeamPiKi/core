@@ -1,0 +1,11 @@
+-- 가격 필드는 item_snapshots 에 하나뿐이라 current 가 구분하는 대상이 없다(#870).
+-- 정가·할인 전 가격 같은 대비 컬럼이 없어 접두어가 잉여이며, 가격 이력을 응답에 실으면
+-- 과거 시점 값에 "current" 가 붙어 이름이 명백히 틀려진다.
+--
+-- MySQL 8.4 의 RENAME COLUMN 은 메타데이터만 바꾼다 (In Place, Rebuilds Table = No,
+-- Permits Concurrent DML = Yes). 행 수와 무관하게 즉시 끝나며 DB 는 멈추지 않는다.
+--
+-- 다만 blue-green 배포에서는 이 마이그레이션이 신 버전 기동 시점에 실행된 뒤에도 구 버전이
+-- 트래픽을 받는 구간이 있어, 그동안 구 버전은 없는 컬럼(current_price)을 찾아 실패한다.
+-- 이 배포에 한해 blue 를 내리고 마이그레이션 후 green 을 올리는 계획된 짧은 중단으로 우회한다.
+ALTER TABLE item_snapshots RENAME COLUMN current_price TO price;

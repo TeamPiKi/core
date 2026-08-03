@@ -76,10 +76,10 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
         val item1 = itemJpaRepository.save(Item())
         val item2 = itemJpaRepository.save(Item())
         val snapshot1 = itemSnapshotJpaRepository.save(
-            ItemSnapshot(itemId = item1.getId(), name = "race-item1", currentPrice = 10_000, currency = "KRW", status = ItemStatus.READY, extractedAt = LocalDateTime.now()),
+            ItemSnapshot(itemId = item1.getId(), name = "race-item1", price = 10_000, currency = "KRW", status = ItemStatus.READY, extractedAt = LocalDateTime.now()),
         )
         val snapshot2 = itemSnapshotJpaRepository.save(
-            ItemSnapshot(itemId = item2.getId(), name = "race-item2", currentPrice = 20_000, currency = "KRW", status = ItemStatus.READY, extractedAt = LocalDateTime.now()),
+            ItemSnapshot(itemId = item2.getId(), name = "race-item2", price = 20_000, currency = "KRW", status = ItemStatus.READY, extractedAt = LocalDateTime.now()),
         )
         tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = ownerId, snapshotId = snapshot1.getId()))
         tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = ownerId, snapshotId = snapshot2.getId()))

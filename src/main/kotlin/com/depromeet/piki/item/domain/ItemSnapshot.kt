@@ -25,7 +25,7 @@ class ItemSnapshot(
     val itemId: Long,
     name: String? = null,
     imageUrl: String? = null,
-    currentPrice: Int? = null,
+    price: Int? = null,
     currency: String? = null,
     status: ItemStatus = ItemStatus.PROCESSING,
     extractedAt: LocalDateTime? = null,
@@ -54,8 +54,8 @@ class ItemSnapshot(
     var imageUrl: String? = imageUrl
         protected set
 
-    @Column(name = "current_price")
-    var currentPrice: Int? = currentPrice
+    @Column(name = "price")
+    var price: Int? = price
         protected set
 
     @Column(name = "currency", length = 8)
@@ -89,23 +89,23 @@ class ItemSnapshot(
     // 그 순간 필드는 아직 주입 전이라 전부 null/기본값이다. 그래서 상태-의존·필수값 불변식은 여기 두지 않고
     // (두면 행 하이드레이션이 깨진다), 범위·길이만 본다.
     init {
-        validate(name, currentPrice, imageUrl, currency)
+        validate(name, price, imageUrl, currency)
     }
 
     // 추출 필드를 갈아끼우는 코어. 들어온 필드만 갱신하고 생성 때와 같은 불변식을 재검증한다.
     private fun apply(
         name: String? = null,
-        currentPrice: Int? = null,
+        price: Int? = null,
         imageUrl: String? = null,
         currency: String? = null,
     ) {
         val newName = name ?: this.name
-        val newCurrentPrice = currentPrice ?: this.currentPrice
+        val newPrice = price ?: this.price
         val newImageUrl = imageUrl ?: this.imageUrl
         val newCurrency = currency ?: this.currency
-        validate(newName, newCurrentPrice, newImageUrl, newCurrency)
+        validate(newName, newPrice, newImageUrl, newCurrency)
         this.name = newName
-        this.currentPrice = newCurrentPrice
+        this.price = newPrice
         this.imageUrl = newImageUrl
         this.currency = newCurrency
     }
@@ -147,7 +147,7 @@ class ItemSnapshot(
         check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 READY 로 전이할 수 없다" }
         apply(
             name = snapshot.name,
-            currentPrice = snapshot.currentPrice,
+            price = snapshot.price,
             imageUrl = snapshot.imageUrl,
             currency = snapshot.currency,
         )
@@ -185,18 +185,18 @@ class ItemSnapshot(
     // 메시지에 status 를 넣지 않는다 — 이 검사는 status 를 READY 로 바꾸기 전에 호출돼 전이 직전 상태가 찍히면 오해를 부른다.
     private fun requireReadyInvariant() {
         require(!name.isNullOrBlank()) { "READY snapshot 은 name 이 있어야 한다" }
-        requireNotNull(currentPrice) { "READY snapshot 은 price 가 있어야 한다" }
+        requireNotNull(price) { "READY snapshot 은 price 가 있어야 한다" }
         requireNotNull(imageUrl) { "READY snapshot 은 imageUrl 이 있어야 한다" }
         requireNotNull(extractedAt) { "READY snapshot 은 extractedAt 이 있어야 한다" }
     }
 
     private fun validate(
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         imageUrl: String?,
         currency: String?,
     ) {
-        require((currentPrice ?: 0) >= 0) { "currentPrice 는 음수일 수 없다: $currentPrice" }
+        require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
         require((name?.length ?: 0) <= NAME_MAX_LENGTH) { "name 길이가 ${NAME_MAX_LENGTH}자를 초과했다" }
         require((imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH) { "imageUrl 길이가 ${IMAGE_URL_MAX_LENGTH}자를 초과했다" }
         require((currency?.length ?: 0) <= CURRENCY_MAX_LENGTH) { "currency 길이가 ${CURRENCY_MAX_LENGTH}자를 초과했다" }
@@ -226,13 +226,13 @@ class ItemSnapshot(
         fun manual(
             base: ItemSnapshot,
             name: String?,
-            currentPrice: Int?,
+            price: Int?,
             imageUrl: String?,
             currency: String?,
             editedBy: UUID,
         ): ItemSnapshot {
             val mergedName = name ?: base.name
-            val mergedPrice = currentPrice ?: base.currentPrice
+            val mergedPrice = price ?: base.price
             val mergedImage = imageUrl ?: base.imageUrl
             val mergedCurrency = currency ?: base.currency
             if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
@@ -242,7 +242,7 @@ class ItemSnapshot(
                 itemId = base.itemId,
                 name = mergedName,
                 imageUrl = mergedImage,
-                currentPrice = mergedPrice,
+                price = mergedPrice,
                 currency = mergedCurrency,
                 status = ItemStatus.READY,
                 extractedAt = LocalDateTime.now(),
