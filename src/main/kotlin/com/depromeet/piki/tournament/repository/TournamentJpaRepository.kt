@@ -20,11 +20,21 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     @Query("SELECT t FROM Tournament t WHERE t.id = :id AND t.deletedAt IS NULL")
     fun findByIdForUpdate(id: Long): Tournament?
 
-    // 목록 화면 쿼리 — 내 tournament_user 멤버십과 조인해 가시성 필터(ROOT 는 소유자·PENDING 만)까지 DB 에서 끝낸다.
+    // 목록 화면 쿼리 — 내 tournament_user 멤버십과 조인해 가시성 필터까지 DB 에서 끝낸다.
     // 필터·정렬·limit 이 앱으로 올라오면 홈 카드(limit=3) 한 번에 내 전체 이력의 참가자·프로필을 선로드하게 된다.
     // uk_tournament_users (tournament_id, user_id) 가 (유저, 토너먼트) 당 멤버십 행을 1개로 보장해 조인이 행을 늘리지 않는다.
     // createdAt 동률 시 어느 행이 LIMIT 에 잘릴지 비결정적이므로 생성 순서와 일치하는 id 로 tie-break 한다.
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
+    //
+    // 가시성은 "나에게 이 토너먼트가 어떤 상태냐"(per-user effective status)로 판정한다(#882).
+    //  (owner) 내가 owner 인 것 — 내가 만든 ROOT 와 내가 플레이해 소유한 CLONE(항상 소유자=플레이어). 전역 status 그대로 필터한다.
+    //  (참여) 내가 참여자지만 owner 가 아니고 아직 내 CLONE 이 없는 ROOT: 그 방은 나에겐 '완주 안 함' 이라
+    //      완료로 치지 않는다. 완료된 ROOT 도 나에겐 IN_PROGRESS(진행중)로 캡해 노출한다 — 방장이 완료해도
+    //      진행중 탭에서 사라지지 않고, 완료 탭엔 안 뜬다. 내가 이미 내 CLONE 을 만들었으면(NOT EXISTS 실패)
+    //      이 ROOT 는 숨고 그 CLONE 이 (owner)로 표시된다(카드 중복 방지).
+    // ownedOnly — 홈(내가 생성한 것만·상태 무관)은 TRUE 로 (참여) 갈래를 끈다. 탭은 미지정(FALSE)이라 참여까지 본다.
+    // includeInProgress — 요청 statuses 에 IN_PROGRESS 가 포함되는지(서비스가 계산). (참여)의 완료 ROOT 를
+    //  IN_PROGRESS 로 캡해 노출할지 판단하는 플래그. nullable enum 을 쿼리에 넣지 않는 boolean 패턴(#837 과 동일).
     //
     // playType(솔로/소셜)은 저장된 컬럼이 아니라 참가 결과로 파생되는 상태다(TournamentPlayType 참고).
     // 파생값이라 앱에서 거르면 limit 이 파생 필터보다 먼저 걸려 "SOCIAL 3개" 를 요구했는데 그보다 적게 나오므로,
@@ -39,11 +49,24 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
         WHERE tu.userId = :userId
           AND tu.deletedAt IS NULL
           AND t.deletedAt IS NULL
-          AND t.status IN :statuses
           AND (
-            t.sourceTournamentId IS NOT NULL
-            OR t._ownerTournamentUserId = tu.id
-            OR t.status = com.depromeet.piki.tournament.domain.TournamentStatus.PENDING
+            ((t.sourceTournamentId IS NOT NULL OR t._ownerTournamentUserId = tu.id) AND t.status IN :statuses)
+            OR (
+              :ownedOnly = FALSE
+              AND t.sourceTournamentId IS NULL
+              AND t._ownerTournamentUserId <> tu.id
+              AND NOT EXISTS (
+                SELECT 1 FROM Tournament c
+                JOIN TournamentUser ctu ON ctu.id = c._ownerTournamentUserId
+                WHERE c.sourceTournamentId = t.id
+                  AND ctu.userId = :userId
+                  AND c.deletedAt IS NULL
+              )
+              AND (
+                (t.status <> com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED AND t.status IN :statuses)
+                OR (t.status = com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED AND :includeInProgress = TRUE)
+              )
+            )
           )
           AND (
             (
@@ -71,6 +94,8 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     fun findVisibleByUserId(
         @Param("userId") userId: UUID,
         @Param("statuses") statuses: Collection<TournamentStatus>,
+        @Param("ownedOnly") ownedOnly: Boolean,
+        @Param("includeInProgress") includeInProgress: Boolean,
         @Param("includeSolo") includeSolo: Boolean,
         @Param("includeSocial") includeSocial: Boolean,
         pageable: Pageable,

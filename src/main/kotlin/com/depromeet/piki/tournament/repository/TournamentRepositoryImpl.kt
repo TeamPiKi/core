@@ -44,18 +44,25 @@ class TournamentRepositoryImpl(
         userId: UUID,
         statuses: List<TournamentStatus>?,
         playType: TournamentPlayType?,
+        ownedOnly: Boolean,
         limit: Int?,
-    ): List<Tournament> =
-        tournamentJpaRepository.findVisibleByUserId(
+    ): List<Tournament> {
+        // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
+        val effectiveStatuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries
+        return tournamentJpaRepository.findVisibleByUserId(
             userId = userId,
-            // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
-            statuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries,
+            statuses = effectiveStatuses,
+            // 홈(내가 생성한 것만·상태 무관)은 TRUE 로 참여 갈래를 끈다(#882).
+            ownedOnly = ownedOnly,
+            // 완주 안 한 참여자의 완료 ROOT 를 IN_PROGRESS 로 캡해 노출할지 — 요청 statuses 가 IN_PROGRESS 를 포함할 때만(#882).
+            includeInProgress = TournamentStatus.IN_PROGRESS in effectiveStatuses,
             // playType 미지정(null)이면 두 플래그가 다 TRUE 가 되어 파생 술어가 항상 성립한다(= 필터 없음).
             // statuses 를 전체 바인딩하는 것과 같은 방식으로, nullable 파라미터를 쿼리에 넘기지 않는다.
             includeSolo = playType != TournamentPlayType.SOCIAL,
             includeSocial = playType != TournamentPlayType.SOLO,
             pageable = limit?.let { PageRequest.of(0, it) } ?: Pageable.unpaged(),
         )
+    }
 
     override fun findBySourceTournamentId(sourceTournamentId: Long): List<Tournament> =
         tournamentJpaRepository.findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId)

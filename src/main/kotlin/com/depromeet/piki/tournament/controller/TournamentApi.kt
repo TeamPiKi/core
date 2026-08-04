@@ -40,6 +40,7 @@ interface TournamentApi {
             status 파라미터로 상태 필터링 가능하며 여러 값을 중복 전달할 수 있다(예: ?status=PENDING&status=IN_PROGRESS).
             생략 시 전체 반환. status 값은 대문자(PENDING/IN_PROGRESS/COMPLETED)로 전달해야 한다.
             limit 파라미터로 최근순 상위 N개만 받을 수 있다(예: 홈 카드용 ?limit=3). 생략 시 전체.
+            ownedOnly=true 면 내가 생성한 것(내가 owner 인 ROOT·CLONE)만 상태 무관 반환한다 — 홈 카드용. 생략 시 false 로 참여한 것까지 포함.
             playType 파라미터로 솔로/소셜을 나눠 볼 수 있다(SOLO · SOCIAL). 생략 시 전체이며 status 와 AND 로 걸린다
             (예: ?status=PENDING&status=IN_PROGRESS&playType=SOCIAL).
             playType 은 저장된 속성이 아니라 참가 결과로 파생된다 — 혼자면 SOLO, 참여자가 생기면 SOCIAL 이고
@@ -94,6 +95,11 @@ interface TournamentApi {
             example = "SOCIAL",
         )
         playType: TournamentPlayType?,
+        @Parameter(
+            description = "내가 생성한 것만 볼지 (true 면 내가 owner 인 ROOT·CLONE 만, 상태 무관). 생략 시 false 로 참여한 것까지 포함. 홈 카드용.",
+            example = "true",
+        )
+        ownedOnly: Boolean,
         @Parameter(description = "조회 개수 제한 (최근순 상위 N, 생략 시 전체). 1 이상.", example = "3")
         limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>>

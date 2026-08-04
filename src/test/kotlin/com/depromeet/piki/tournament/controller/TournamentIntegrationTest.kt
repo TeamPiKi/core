@@ -1141,7 +1141,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
+    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 방장이 완료해도 진행중엔 남고 완료 탭에는 안 뜬다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
 
@@ -1170,18 +1170,62 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
 
-        // 시작 후 멤버 목록에선 빠진다 (멤버는 본인 CLONE 으로 플레이·표시)
+        // 소유자가 결승 완료 → ROOT COMPLETED
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootTournamentId)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/matches")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                ),
+        )
+
+        // 방장이 완료해도 멤버(본인 CLONE 미완주)에겐 진행중 탭에 남는다 — 완료 ROOT 를 IN_PROGRESS 로 캡(#882)
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
+                    .param("status", "PENDING", "IN_PROGRESS")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+            .andExpect(jsonPath("$.data[0].status").value("IN_PROGRESS"))
+
+        // 완료 탭엔 안 뜬다 — 멤버는 완주하지 않았으니
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(0))
 
-        // 소유자 목록엔 계속 보인다
+        // ownedOnly=true(홈) 엔 안 뜬다 — 멤버가 생성한 게 아니다
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
+                    .param("ownedOnly", "true")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        // 소유자는 완료 탭에서 COMPLETED 로 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+            .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
+
+        // 소유자 ownedOnly=true(홈) 엔 상태 무관 뜬다 (내가 생성한 ROOT)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("ownedOnly", "true")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(1))
