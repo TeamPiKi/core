@@ -125,7 +125,6 @@ class AuthApiExamples(
                         add(UserException.nicknameTooLong(), name = "닉네임 10자 초과")
                         add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
                         unauthorized()
-                        forbidden("GUEST 권한 없음 (MEMBER 토큰으로 호출 불가)")
                         add(UserException.duplicateNickname(), name = "이미 사용 중인 닉네임")
                     }
 
@@ -156,7 +155,6 @@ class AuthApiExamples(
                         add(UserException.notFound(), name = "존재하지 않는 user")
                         add(UserException.deletedUser(), name = "탈퇴된 user")
                         unauthorized()
-                        forbidden("GUEST 권한 없음 (MEMBER 토큰으로 호출 불가)")
                     }
             }
             operation

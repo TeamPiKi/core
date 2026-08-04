@@ -73,8 +73,13 @@ class OpenApiExampleCoverageIntegrationTest : IntegrationTestSupport() {
                 val responses = operation["responses"] ?: return@flatMap emptyList()
                 responses.properties().mapNotNull { (code, response) ->
                     val jsonContent = response["content"]?.get(APPLICATION_JSON) ?: return@mapNotNull null
-                    // examples 노드가 아예 없거나(부착 안 됨), 있어도 비어 있으면 위반이다.
-                    val missingExample = jsonContent["examples"]?.isEmpty ?: true
+                    // examples 노드가 아예 없거나(부착 안 됨), 있어도 실제 payload(value)를 가진 named example 이
+                    // 하나도 없으면(예: `{ "placeholder": {} }`) 위반이다.
+                    val examples = jsonContent["examples"]
+                    val hasValuedExample =
+                        examples?.properties()?.any { (_, example) -> example["value"]?.let { true } ?: false }
+                            ?: false
+                    val missingExample = hasValuedExample.not()
                     "${method.uppercase()} $path → $code".takeIf { missingExample }
                 }
             }

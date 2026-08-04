@@ -101,7 +101,7 @@ interface UserApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청\n\n" +
-                        "- **닉네임** — 빈 문자열 · 10자 초과 (형식 검증 400, code 없음) · " +
+                        "- **닉네임** — 빈 문자열 · 10자 초과 (형식 검증 400, COMMON-INVALID-INPUT) · " +
                         "공백만 입력 (USER-006 — `@Size(min = 1)` 을 통과해 도메인이 잡는다) · " +
                         "'탈퇴' 예약 prefix 로 시작 (USER-013)\n" +
                         "- **이미지** — 빈 파일 (USER-009) · 타입 미지정 · 지원하지 않는 형식(`png`/`jpeg`/`webp`/`heic`/`heif` 만 허용) (USER-010) · " +
