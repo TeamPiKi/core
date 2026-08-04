@@ -49,6 +49,9 @@ class Notification(
     // routing 을 평탄화한 라우팅 컬럼 — 채널(SSE/FCM)이 엔티티만 받아 클라에 식별자를 내려보내고,
     // 목록/badge 조회(#246)도 과거 알림의 딥링크를 이 컬럼들로 복원한다. WISH 는 식별자가 없어 tournament_* 가 null 이다.
     // (noarg JPA 생성자는 이 초기화를 우회하고 DB 값을 필드에 직접 주입한다.)
+    // 컬럼명 `kind` 는 라우팅 출처이며 응답의 `kind`(도메인 축, domainKind())와 다른 값일 수 있다.
+    // (예: TOURNAMENT_JOINED 은 이 컬럼이 NULL 이지만 응답 kind 는 TOURNAMENT)
+    // 컬럼 rename 은 destructive 단계 배포가 필요해 이름만 갈라 둔다.
     @Enumerated(EnumType.STRING)
     @Column(name = "kind", length = 20)
     val routingKind: NotificationKind? = routing?.routingKind
@@ -86,6 +89,10 @@ class Notification(
                 NotificationKind.SYSTEM -> error("라우팅 컬럼에 SYSTEM 이 저장될 수 없다")
             }
         }
+
+    // 응답에 실리는 도메인 축(#473) — type 과 라우팅 출처에서 파생한다(스키마 컬럼 없음).
+    // 채널(SSE payload·FCM data)과 로그가 같은 규칙을 재적용하지 않고 엔티티에 물어보게 한다.
+    fun domainKind(): NotificationKind = NotificationKind.of(type, routingKind)
 
     companion object {
         // VARCHAR(255) 컬럼과 엔티티 불변식이 같은 상수를 공유한다.

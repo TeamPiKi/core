@@ -3,7 +3,6 @@ package com.depromeet.piki.notification.fcm.service
 import com.depromeet.piki.common.logging.SensitiveData
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationKind
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.AndroidConfig
 import com.google.firebase.messaging.AndroidNotification
@@ -46,7 +45,7 @@ class FirebaseMessageSender(
             "FCM 발송 결과 notificationId={} type={} kind={} refId={} badge={} 토큰={} 성공={} 실패={} 실패사유={} 죽은토큰정리={}",
             notification.getIdOrNull(),
             notification.type,
-            NotificationKind.of(notification.type, notification.routingKind),
+            notification.domainKind(),
             notification.refId,
             badge,
             tokens.size,

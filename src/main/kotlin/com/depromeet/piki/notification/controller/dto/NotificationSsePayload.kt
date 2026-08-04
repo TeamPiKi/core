@@ -65,10 +65,10 @@ sealed interface NotificationSsePayload {
 
     companion object {
         // 채널에 도달한 Notification 은 dispatcher 가 이미 저장한 영속 엔티티라 id 가 보장된다(getId()).
-        // 라우팅 컨텍스트(routing())로 셰입을 가르고, kind 는 type + 라우팅 출처에서 파생한다(NotificationKind.of).
+        // 라우팅 컨텍스트(routing())로 셰입을 가르고, kind 는 엔티티가 파생해 준다(domainKind()).
         fun from(notification: Notification): NotificationSsePayload {
             val id = notification.getId()
-            val kind = NotificationKind.of(notification.type, notification.routingKind)
+            val kind = notification.domainKind()
             return when (val routing = notification.routing()) {
                 null ->
                     Reference(
