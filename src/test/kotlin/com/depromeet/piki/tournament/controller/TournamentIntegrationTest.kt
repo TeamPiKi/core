@@ -943,6 +943,204 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 는 playType=SOLO 로 혼자인 ROOT 만, SOCIAL 로 참여자가 있는 ROOT 와 CLONE 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // 혼자인 ROOT — 참가자가 소유자 1명뿐이라 SOLO
+        val soloId = createTournament(mockMvc, name = "혼자 토너먼트")
+
+        // 참여자가 생긴 ROOT — 참가자 2명이라 SOCIAL
+        val socialId = createTournament(mockMvc, name = "소셜 토너먼트")
+        joinTournament(mockMvc, socialId, otherUserId)
+
+        // 남의 ROOT 를 가리키는 내 CLONE — tournament_users 행이 소유자 1개뿐이라 참가자 수로는 SOLO 로 보이지만,
+        // 참여한 사본이므로 SOCIAL 이어야 한다 (판정이 두 갈래인 이유).
+        val othersRoot =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 1,
+                    name = "남의 ROOT",
+                    inviteCode = "ROOT77",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                ),
+            )
+        val clone =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 2,
+                    name = "내 CLONE",
+                    inviteCode = "CLON77",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                    sourceTournamentId = othersRoot.getId(),
+                ),
+            )
+        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+
+        // 미지정이면 전체 — 기존 호출이 그대로 동작한다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(3))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(soloId))
+
+        // 최근순(createdAt DESC, id DESC)이라 나중에 만든 CLONE 이 먼저 온다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(clone.getId()))
+            .andExpect(jsonPath("$.data[1].tournamentId").value(socialId))
+    }
+
+    @Test
+    fun `GET tournaments 에서 PENDING ROOT 는 참여가 생기는 순간 SOLO 에서 빠지고 SOCIAL 에 뜬다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val tournamentId = createTournament(mockMvc)
+
+        // 생성 직후 — 혼자라 SOLO
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(tournamentId))
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        joinTournament(mockMvc, tournamentId, otherUserId)
+
+        // 같은 PENDING 토너먼트가 SOCIAL 로 옮겨간다 — 값이 변할 수 있는 구간은 PENDING 뿐이다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(tournamentId))
+    }
+
+    @Test
+    fun `GET tournaments 는 playType 을 status 와 AND 로 적용한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // 혼자 시작한 IN_PROGRESS ROOT — 시작 후엔 참여가 불가해 SOLO 로 고정된다
+        val soloInProgress = createTournament(mockMvc, name = "솔로 진행중")
+        addItemsToTournament(mockMvc, soloInProgress, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$soloInProgress/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+
+        // 참여자가 있는 PENDING ROOT
+        val socialPending = createTournament(mockMvc, name = "소셜 대기")
+        joinTournament(mockMvc, socialPending, otherUserId)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "IN_PROGRESS")
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(soloInProgress))
+
+        // status 는 맞지만 playType 이 어긋나 아무것도 안 남는다 (OR 가 아니라 AND)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "IN_PROGRESS")
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "PENDING")
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(socialPending))
+    }
+
+    @Test
+    fun `GET tournaments 는 정의되지 않은 playType 값에 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+
+        // 정의되지 않은 enum 은 컨트롤러 바인딩에서 걸려 공통 400(입력 검증)으로 나간다 — 실측해 고정한 계약.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "TEAM"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
+            .andExpect(jsonPath("$.detail").value("다시 한번 확인해 주세요."))
+    }
+
+    @Test
+    fun `GET tournaments 는 playType 으로 먼저 거른 뒤 그 결과에 limit 을 적용한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // SOCIAL 을 둘 만들고 그보다 최신인 SOLO 를 여러 개 얹는다(목록은 최신순).
+        // 이 배치가 두 회귀를 동시에 잡는다.
+        //   - 필터가 페이징 뒤로 밀리면: 최신 1건(SOLO)만 보고 걸러 빈 목록이 된다.
+        //   - playType 경로에 limit 이 안 실리면: SOCIAL 두 건이 다 나온다.
+        // SOCIAL 이 하나뿐이면 뒤쪽 회귀는 결과가 똑같이 1건이라 드러나지 않는다.
+        val oldSocialId = createTournament(mockMvc, name = "오래된 소셜")
+        joinTournament(mockMvc, oldSocialId, otherUserId)
+        val latestSocialId = createTournament(mockMvc, name = "최신 소셜")
+        joinTournament(mockMvc, latestSocialId, otherUserId)
+        createTournament(mockMvc, name = "최신 솔로 1")
+        createTournament(mockMvc, name = "최신 솔로 2")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL")
+                    .param("limit", "1"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(latestSocialId))
+    }
+
+    @Test
     fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
@@ -2206,6 +2404,20 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 ).andReturn()
         val data = objectMapper.readTree(result.response.contentAsString)["data"]
         return data["tournamentId"].asLong() to data["inviteCode"].asText()
+    }
+
+    // 링크 접근 경로의 소셜 참여 — inviteCode 없이 참여한다 (checkJoinable 의 inviteCode=null 경로).
+    private fun joinTournament(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        joiner: UUID,
+    ) {
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(joiner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
     }
 
     private fun saveUser(

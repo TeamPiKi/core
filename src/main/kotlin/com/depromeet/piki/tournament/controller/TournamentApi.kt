@@ -16,6 +16,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -39,6 +40,11 @@ interface TournamentApi {
             status 파라미터로 상태 필터링 가능하며 여러 값을 중복 전달할 수 있다(예: ?status=PENDING&status=IN_PROGRESS).
             생략 시 전체 반환. status 값은 대문자(PENDING/IN_PROGRESS/COMPLETED)로 전달해야 한다.
             limit 파라미터로 최근순 상위 N개만 받을 수 있다(예: 홈 카드용 ?limit=3). 생략 시 전체.
+            playType 파라미터로 솔로/소셜을 나눠 볼 수 있다(SOLO · SOCIAL). 생략 시 전체이며 status 와 AND 로 걸린다
+            (예: ?status=PENDING&status=IN_PROGRESS&playType=SOCIAL).
+            playType 은 저장된 속성이 아니라 참가 결과로 파생된다 — 혼자면 SOLO, 참여자가 생기면 SOCIAL 이고
+            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 PENDING 에서만 가능하므로 값이 바뀔 수 있는 구간도
+            PENDING 하나이며, 그 사이 같은 토너먼트가 SOLO 목록에서 SOCIAL 목록으로 옮겨갈 수 있다.
             각 항목의 thumbnailUrls 는 카드 대표 썸네일 URL 배열이다 — 최근 등록 아이템 중 이미지가 준비된(READY) 것 최대 2장.
             이미지가 준비된 아이템이 없으면 빈 배열이며, limit 유무와 무관하게 항상 포함된다.
         """,
@@ -57,7 +63,9 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (limit 이 1 미만 · limit 이 정수가 아님)",
+                description =
+                    "잘못된 요청 (limit 이 1 미만 · limit 이 정수가 아님 · " +
+                        "status 가 정의되지 않은 값 · playType 이 SOLO/SOCIAL 이 아닌 값)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -81,6 +89,11 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "상태 필터 (복수 전달 가능, 생략 시 전체)", example = "PENDING")
         status: List<TournamentStatus>?,
+        @Parameter(
+            description = "플레이 유형 필터 (SOLO · SOCIAL, 생략 시 전체). status 와 AND 로 걸린다.",
+            example = "SOCIAL",
+        )
+        playType: TournamentPlayType?,
         @Parameter(description = "조회 개수 제한 (최근순 상위 N, 생략 시 전체). 1 이상.", example = "3")
         limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>>

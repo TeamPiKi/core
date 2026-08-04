@@ -1,6 +1,7 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.tournament.domain.Tournament
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
 import java.time.LocalDateTime
@@ -24,6 +25,13 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // uk_tournament_users (tournament_id, user_id) 가 (유저, 토너먼트) 당 멤버십 행을 1개로 보장해 조인이 행을 늘리지 않는다.
     // createdAt 동률 시 어느 행이 LIMIT 에 잘릴지 비결정적이므로 생성 순서와 일치하는 id 로 tie-break 한다.
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
+    //
+    // playType(솔로/소셜)은 저장된 컬럼이 아니라 참가 결과로 파생되는 상태다(TournamentPlayType 참고).
+    // 파생값이라 앱에서 거르면 limit 이 파생 필터보다 먼저 걸려 "SOCIAL 3개" 를 요구했는데 그보다 적게 나오므로,
+    // status·정렬·limit 과 같은 자리에서 DB 가 함께 판정해야 한다.
+    // SOLO 와 SOCIAL 은 서로 여집합이지만(참가자 수는 조인 때문에 항상 1 이상) 각 갈래를 그대로 적어 의도를 남긴다.
+    // 미지정이면 includeSolo·includeSocial 이 둘 다 TRUE 라 이 술어가 항상 성립한다(= 필터 없음) —
+    // statuses 를 "전체 IN" 으로 바인딩해 쿼리를 2벌로 나누지 않는 것과 같은 방식.
     @Query(
         """
         SELECT t FROM Tournament t
@@ -37,12 +45,34 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
             OR t._ownerTournamentUserId = tu.id
             OR t.status = com.depromeet.piki.tournament.domain.TournamentStatus.PENDING
           )
+          AND (
+            (
+              :includeSocial = TRUE
+              AND (
+                t.sourceTournamentId IS NOT NULL
+                OR (
+                  SELECT COUNT(tu2.id) FROM TournamentUser tu2
+                  WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL
+                ) > 1
+              )
+            )
+            OR (
+              :includeSolo = TRUE
+              AND t.sourceTournamentId IS NULL
+              AND (
+                SELECT COUNT(tu2.id) FROM TournamentUser tu2
+                WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL
+              ) = 1
+            )
+          )
         ORDER BY t.createdAt DESC, t.id DESC
         """,
     )
     fun findVisibleByUserId(
         @Param("userId") userId: UUID,
         @Param("statuses") statuses: Collection<TournamentStatus>,
+        @Param("includeSolo") includeSolo: Boolean,
+        @Param("includeSocial") includeSocial: Boolean,
         pageable: Pageable,
     ): List<Tournament>
 
