@@ -18,6 +18,16 @@ class NotificationKindTest {
     }
 
     @Test
+    fun `모든 NotificationType 이 파생 케이스로 검증된다`() {
+        // of 는 when 전수라 새 타입을 추가하면 컴파일이 깨지지만, 위 파생 케이스 표가 그 타입을 빠뜨려도 컴파일은 통과한다.
+        // 표가 전 타입을 덮는지 런타임으로 확인해 "타입은 늘었는데 검증은 안 는" 구멍을 막는다.
+        assertEquals(
+            NotificationType.entries.toSet(),
+            파생_케이스().map { it.get()[0] as NotificationType }.toSet(),
+        )
+    }
+
+    @Test
     fun `토너먼트 소셜 알림은 라우팅 출처가 없어도 TOURNAMENT 다`() {
         assertEquals(NotificationKind.TOURNAMENT, NotificationKind.of(NotificationType.TOURNAMENT_JOINED, null))
     }

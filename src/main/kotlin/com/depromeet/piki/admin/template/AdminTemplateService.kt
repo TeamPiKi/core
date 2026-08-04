@@ -3,7 +3,7 @@ package com.depromeet.piki.admin.template
 import com.depromeet.piki.admin.audit.AdminAuditAction
 import com.depromeet.piki.admin.audit.AdminAuditService
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
-import com.depromeet.piki.notification.domain.NotificationCategory
+import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationTemplateJpaRepository
 import com.depromeet.piki.notification.service.DbNotificationTemplateProvider
@@ -35,7 +35,7 @@ class AdminTemplateService(
             .map { entity ->
             TemplateView(
                 type = entity.type,
-                category = NotificationCategory.of(entity.type),
+                kind = kindOf(entity.type),
                 title = entity.titleTemplate,
                 body = entity.bodyTemplate,
                 pushEnabled = entity.pushEnabled,
@@ -47,7 +47,7 @@ class AdminTemplateService(
         val entity = templateRepository.findById(type).orElseThrow { IllegalStateException("템플릿 없음: $type") }
         return TemplateView(
             type = entity.type,
-            category = NotificationCategory.of(entity.type),
+            kind = kindOf(entity.type),
             title = entity.titleTemplate,
             body = entity.bodyTemplate,
             pushEnabled = entity.pushEnabled,
@@ -96,10 +96,15 @@ class AdminTemplateService(
         return TemplatePreview(
             title = renderer.render(title, samples),
             body = renderer.render(body, samples),
-            category = NotificationCategory.of(type),
+            kind = kindOf(type),
             unknownVariables = unknown.toList(),
         )
     }
+
+    // 편집기는 알림 "타입" 자체를 다루지 특정 알림 인스턴스를 다루지 않아 라우팅 출처가 없다(routingKind = null).
+    // 파싱 알림 템플릿은 위시·토너먼트 양쪽 발행에 공유되므로 어느 한쪽으로 못 정하고, of 의 기본값(위시)으로 표시된다.
+    // 표시용 분류일 뿐이라 문구 편집·발송에는 영향이 없다(발송 시점 kind 는 실제 라우팅 출처로 파생된다).
+    private fun kindOf(type: NotificationType): NotificationKind = NotificationKind.of(type, routingKind = null)
 
     private fun validateVariables(
         type: NotificationType,
@@ -128,16 +133,27 @@ class AdminTemplateService(
 
 data class TemplateView(
     val type: NotificationType,
-    val category: NotificationCategory,
+    val kind: NotificationKind,
     val title: String,
     val body: String,
     val pushEnabled: Boolean,
     val variables: List<TemplateVariable>,
-)
+) {
+    // 백오피스 배지의 한글 라벨. NotificationKind 는 클라 응답에 실리는 enum 이라 표시 문구를 담지 않는다
+    // (문구는 각 소비자가 소유한다 — 에러 code 와 같은 결). 이 화면의 라벨은 이 화면 모델이 진다.
+    // when 이 전수라 kind 가 늘면 여기서 컴파일이 깨져 라벨 누락을 막는다.
+    val kindLabel: String
+        get() =
+            when (kind) {
+                NotificationKind.WISH -> "위시"
+                NotificationKind.TOURNAMENT -> "토너먼트"
+                NotificationKind.SYSTEM -> "시스템"
+            }
+}
 
 data class TemplatePreview(
     val title: String,
     val body: String,
-    val category: NotificationCategory,
+    val kind: NotificationKind,
     val unknownVariables: List<String>,
 )
