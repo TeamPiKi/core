@@ -1,6 +1,8 @@
 package com.depromeet.piki.notification.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.exception.CommonErrorCode
+import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationRouting
@@ -117,6 +119,26 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items[0].imageUrl").doesNotExist())
             .andExpect(jsonPath("$.data.items[1].id").value(tournament))
             .andExpect(jsonPath("$.data.items[1].kind").value("TOURNAMENT"))
+            // 안읽음 집계도 카테고리 맵(옛 unreadCountByCategory)이 아니라 단일 unreadCount 하나뿐이다.
+            .andExpect(jsonPath("$.data.unreadCountByCategory").doesNotExist())
+            .andExpect(jsonPath("$.data.unreadCount").value(2))
+    }
+
+    // kind 3값 중 SYSTEM 은 위 두 테스트가 안 덮는다(공지만 SYSTEM). 셋을 모두 고정해야
+    // NotificationKind.of 의 type 분기가 응답까지 그대로 실리는지 회귀가 잡힌다.
+    @Test
+    fun `공지 알림의 kind 는 SYSTEM 이다`() {
+        val userId = UUID.randomUUID()
+        val announcement = seedTyped(userId, NotificationType.ANNOUNCEMENT)
+
+        buildMockMvc()
+            .perform(get("/api/v1/notifications").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.items[0].id").value(announcement))
+            .andExpect(jsonPath("$.data.items[0].kind").value("SYSTEM"))
+            // 공지도 좌표 없는 Reference 셰입 — 토너먼트 좌표 키가 새지 않는다.
+            .andExpect(jsonPath("$.data.items[0].tournamentId").doesNotExist())
+            .andExpect(jsonPath("$.data.items[0].tournamentItemId").doesNotExist())
     }
 
     @Test
@@ -166,6 +188,43 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("NOTIFICATION-001"))
+    }
+
+    // size 는 도메인 예외(NOTIFICATION-001)가 아니라 Spring 바인딩(Int?) 단계에서 깨져 표준 MVC 400 으로 나간다.
+    // detail 은 GlobalExceptionHandler 가 detailOf=null 로 두어 category 의 고정 문구로 떨어진다 — 그 출처를 참조해 고정한다.
+    @Test
+    fun `size 가 정수가 아니면 400 COMMON-INVALID-INPUT 이 반환된다`() {
+        val userId = UUID.randomUUID()
+        buildMockMvc()
+            .perform(
+                get("/api/v1/notifications")
+                    .param("size", "abc")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(CommonErrorCode.INVALID_INPUT.code))
+            .andExpect(jsonPath("$.detail").value(ErrorCategory.INVALID_INPUT.description))
+            .andExpect(jsonPath("$.data").value(nullValue()))
+    }
+
+    // 옛 카테고리 탭(#473 고도화로 제거)의 ?category= 를 계속 붙여 보내는 구버전 클라가 400 을 맞지 않는다는 계약.
+    // 선언 안 된 쿼리 파라미터를 Spring 이 무시하므로 200 이며, 이 값이 다시 필터로 살아나지도 않는다.
+    @Test
+    fun `제거된 category 파라미터를 보내도 무시되고 200 이 반환된다`() {
+        val userId = UUID.randomUUID()
+        val tournament = seedTyped(userId, NotificationType.TOURNAMENT_JOINED)
+        val parsing = seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED)
+
+        buildMockMvc()
+            .perform(
+                get("/api/v1/notifications")
+                    .param("category", "ACTIVITY")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            // 필터로 살아났다면 둘 중 한쪽만 남았을 것 — 두 건 모두 내려오는지로 "무시됨"을 확인한다.
+            .andExpect(jsonPath("$.data.items.length()").value(2))
+            .andExpect(jsonPath("$.data.items[0].id").value(parsing))
+            .andExpect(jsonPath("$.data.items[1].id").value(tournament))
+            .andExpect(jsonPath("$.data.unreadCount").value(2))
     }
 
     @Test
