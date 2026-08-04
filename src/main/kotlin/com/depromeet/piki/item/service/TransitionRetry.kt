@@ -64,7 +64,8 @@ class TransitionRetry {
             }
 
     companion object {
-        // 짧은 인라인 재시도 — 단건 ≤60s·절대 3분 초과 금지 제약 안 (3회 × 최대 100ms = 최악 약 200ms 지연).
+        // 짧은 인라인 재시도 — 파싱 마감(ItemParsingScheduler.DEADLINE_MINUTES) 안에 충분히 들어간다
+        // (3회 × 최대 100ms = 최악 약 200ms 지연).
         private const val MAX_ATTEMPTS = 3
         private const val BACKOFF_MS = 50L
         private const val JITTER_MS = 50L

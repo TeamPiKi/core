@@ -13,7 +13,8 @@ class StubImageParsingWorker(
         itemId: Long,
         snapshotId: Long,
         imageKey: String,
+        attempt: Int,
     ) {
-        if (enabled) delegate.parse(itemId, snapshotId, imageKey)
+        if (enabled) delegate.parse(itemId, snapshotId, imageKey, attempt)
     }
 }

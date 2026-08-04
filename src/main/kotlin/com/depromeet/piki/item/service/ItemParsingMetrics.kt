@@ -34,6 +34,10 @@ object ItemParsingMetrics {
     // 도달하면 영속화 경로가 깨진 신호다.
     const val REASON_NO_SOURCE = "no_source"
 
+    // recover — 마감(created_at 기준 상한) 초과로 종결. attempt 예산과 무관한 벽시계 판정이라, 박동이 멀쩡한 느린 실행과
+    // 슬롯이 없어 집히지 못한 PENDING 이 여기로 온다. 이 reason 이 늘면 용량 부족(또는 외부가 느려짐)의 신호다.
+    const val REASON_DEADLINE = "deadline"
+
     fun record(
         registry: MeterRegistry,
         result: String,

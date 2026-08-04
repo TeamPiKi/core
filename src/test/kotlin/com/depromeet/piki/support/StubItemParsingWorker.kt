@@ -15,7 +15,8 @@ class StubItemParsingWorker(private val delegate: ItemParsingWorker) : ItemParsi
         itemId: Long,
         snapshotId: Long,
         link: ProductLink,
+        attempt: Int,
     ) {
-        if (enabled) delegate.parse(itemId, snapshotId, link)
+        if (enabled) delegate.parse(itemId, snapshotId, link, attempt)
     }
 }

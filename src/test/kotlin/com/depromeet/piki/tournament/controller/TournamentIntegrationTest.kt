@@ -3,6 +3,7 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
@@ -26,6 +27,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
@@ -474,6 +476,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `대기실은 최신 기계 버전을 보여주고 start 가 그 표시 버전을 박제해 이후 새 버전이 생겨도 겨룬 값이 유지된다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        // 포인터는 옛 기계 버전(v1)에 박힌 출전 아이템 둘.
+        val itemA = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-a")))
+        val itemB = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-b")))
+        saveTournamentItemFor(tournamentId, itemA, name = "A 옛값", price = 100_000, currency = "KRW", imageUrl = "https://i.example/a1.png")
+        saveTournamentItemFor(tournamentId, itemB, name = "B 옛값", price = 200_000, currency = "KRW", imageUrl = "https://i.example/b1.png")
+        // 다른 참조의 갱신이 만든 새 기계 버전(v2) — 출전 포인터는 여전히 v1 이다.
+        val v2a = saveMachineVersion(itemA.getId(), "A 새값", 110_000)
+        saveMachineVersion(itemB.getId(), "B 새값", 210_000)
+
+        // 대기실(PENDING)은 파생 — 포인터가 v1 이어도 최신 기계 버전(v2) 값을 보여준다(#857).
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'B 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 옛값')]").doesNotExist())
+
+        // start = 겨루는 값 확정 — 파생 표시 버전(v2)으로 겨루고, 포인터도 v2 로 박제(repin)된다.
+        mockMvc
+            .perform(post("/api/v1/tournaments/$tournamentId/start").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.items[0].name").value("A 새값"))
+            .andExpect(jsonPath("$.data.items[0].price").value(110_000))
+            .andExpect(jsonPath("$.data.items[1].name").value("B 새값"))
+        val pinnedSnapshots = tournamentItemJpaRepository
+            .findAllByTournamentIdAndNotDeleted(tournamentId)
+            .map { itemSnapshotJpaRepository.findById(it.snapshotId).get() }
+        assertEquals(setOf("A 새값", "B 새값"), pinnedSnapshots.map { it.name }.toSet())
+        assertTrue(pinnedSnapshots.any { it.getId() == v2a.getId() }, "itemA 포인터가 표시 버전(v2)으로 repin 되어야 한다")
+
+        // 시작 후 또 새 기계 버전(v3)이 생겨도 진행 화면은 박제된 값(v2) 그대로 — 겨룬 값 = 화면 값.
+        saveMachineVersion(itemA.getId(), "A 더새값", 120_000)
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 더새값')]").doesNotExist())
+    }
+
+    @Test
     fun `POST tournaments-id-start 에서 소유자가 아니면 403 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
@@ -515,26 +560,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-matches 에서 이미 COMPLETED 인 토너먼트이면 409 를 반환한다`() {
+    fun `POST tournaments-id-matches 에서 COMPLETED 인 토너먼트에 기록되지 않은 매치를 보내면 409 를 반환한다`() {
+        // 같은 매치 재전송은 멱등 성공이므로(#683) 409 를 보려면 "기록되지 않은 새 매치" 여야 한다.
+        // 그 판정이 진행 중 검사보다 앞에 있어, 완료된 토너먼트에 새 매치를 보내면 여기서 걸린다.
         val mockMvc = buildMockMvc()
-        val (tournamentId, item1Id, item2Id) = startTournamentWith2Items(mockMvc)
-        val matchBody =
-            """{"currentRound":2,"firstTournamentItemId":$item1Id,"secondTournamentItemId":$item2Id,"selectedTournamentItemId":$item1Id}"""
-
+        val item1Id = saveWishItem(name = "아이템1", price = 10_000)
+        val item2Id = saveWishItem(name = "아이템2", price = 20_000)
+        val item3Id = saveWishItem(name = "아이템3", price = 30_000)
+        val item4Id = saveWishItem(name = "아이템4", price = 40_000)
+        val tournamentId = createTournament(mockMvc)
+        addItemsToTournament(mockMvc, tournamentId, userId, item1Id, item2Id, item3Id, item4Id)
         mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(matchBody),
+            post("/api/v1/tournaments/$tournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
+        val ti = items.map { it.getId() }
 
+        // 4강 두 매치 + 결승까지 치러 COMPLETED 로 만든다.
+        listOf(
+            """{"currentRound":4,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[1]},"selectedTournamentItemId":${ti[0]}}""",
+            """{"currentRound":4,"firstTournamentItemId":${ti[2]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[2]}}""",
+            """{"currentRound":2,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[2]},"selectedTournamentItemId":${ti[0]}}""",
+        ).forEach { body ->
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/matches")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body),
+                ).andExpect(status().isOk)
+        }
+
+        // 한 번도 치른 적 없는 조합(4강에서 탈락한 둘) → 멱등에 안 걸리고 진행 중 검사에서 409
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/matches")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(matchBody),
+                    .content(
+                        """{"currentRound":2,"firstTournamentItemId":${ti[1]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[1]}}""",
+                    ),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.NOT_IN_PROGRESS_TOURNAMENT.code))
     }
 
     @Test
@@ -875,6 +943,204 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 는 playType=SOLO 로 혼자인 ROOT 만, SOCIAL 로 참여자가 있는 ROOT 와 CLONE 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // 혼자인 ROOT — 참가자가 소유자 1명뿐이라 SOLO
+        val soloId = createTournament(mockMvc, name = "혼자 토너먼트")
+
+        // 참여자가 생긴 ROOT — 참가자 2명이라 SOCIAL
+        val socialId = createTournament(mockMvc, name = "소셜 토너먼트")
+        joinTournament(mockMvc, socialId, otherUserId)
+
+        // 남의 ROOT 를 가리키는 내 CLONE — tournament_users 행이 소유자 1개뿐이라 참가자 수로는 SOLO 로 보이지만,
+        // 참여한 사본이므로 SOCIAL 이어야 한다 (판정이 두 갈래인 이유).
+        val othersRoot =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 1,
+                    name = "남의 ROOT",
+                    inviteCode = "ROOT77",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                ),
+            )
+        val clone =
+            tournamentJpaRepository.save(
+                Tournament(
+                    ownerTournamentUserId = 2,
+                    name = "내 CLONE",
+                    inviteCode = "CLON77",
+                    inviteExpiresAt = LocalDateTime.now().plusDays(1),
+                    sourceTournamentId = othersRoot.getId(),
+                ),
+            )
+        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+
+        // 미지정이면 전체 — 기존 호출이 그대로 동작한다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(3))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(soloId))
+
+        // 최근순(createdAt DESC, id DESC)이라 나중에 만든 CLONE 이 먼저 온다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(clone.getId()))
+            .andExpect(jsonPath("$.data[1].tournamentId").value(socialId))
+    }
+
+    @Test
+    fun `GET tournaments 에서 PENDING ROOT 는 참여가 생기는 순간 SOLO 에서 빠지고 SOCIAL 에 뜬다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val tournamentId = createTournament(mockMvc)
+
+        // 생성 직후 — 혼자라 SOLO
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(tournamentId))
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        joinTournament(mockMvc, tournamentId, otherUserId)
+
+        // 같은 PENDING 토너먼트가 SOCIAL 로 옮겨간다 — 값이 변할 수 있는 구간은 PENDING 뿐이다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(tournamentId))
+    }
+
+    @Test
+    fun `GET tournaments 는 playType 을 status 와 AND 로 적용한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // 혼자 시작한 IN_PROGRESS ROOT — 시작 후엔 참여가 불가해 SOLO 로 고정된다
+        val soloInProgress = createTournament(mockMvc, name = "솔로 진행중")
+        addItemsToTournament(mockMvc, soloInProgress, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$soloInProgress/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+
+        // 참여자가 있는 PENDING ROOT
+        val socialPending = createTournament(mockMvc, name = "소셜 대기")
+        joinTournament(mockMvc, socialPending, otherUserId)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "IN_PROGRESS")
+                    .param("playType", "SOLO"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(soloInProgress))
+
+        // status 는 맞지만 playType 이 어긋나 아무것도 안 남는다 (OR 가 아니라 AND)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "IN_PROGRESS")
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("status", "PENDING")
+                    .param("playType", "SOCIAL"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(socialPending))
+    }
+
+    @Test
+    fun `GET tournaments 는 정의되지 않은 playType 값에 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+
+        // 정의되지 않은 enum 은 컨트롤러 바인딩에서 걸려 공통 400(입력 검증)으로 나간다 — 실측해 고정한 계약.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "TEAM"),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
+            .andExpect(jsonPath("$.detail").value("다시 한번 확인해 주세요."))
+    }
+
+    @Test
+    fun `GET tournaments 는 playType 으로 먼저 거른 뒤 그 결과에 limit 을 적용한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // SOCIAL 을 둘 만들고 그보다 최신인 SOLO 를 여러 개 얹는다(목록은 최신순).
+        // 이 배치가 두 회귀를 동시에 잡는다.
+        //   - 필터가 페이징 뒤로 밀리면: 최신 1건(SOLO)만 보고 걸러 빈 목록이 된다.
+        //   - playType 경로에 limit 이 안 실리면: SOCIAL 두 건이 다 나온다.
+        // SOCIAL 이 하나뿐이면 뒤쪽 회귀는 결과가 똑같이 1건이라 드러나지 않는다.
+        val oldSocialId = createTournament(mockMvc, name = "오래된 소셜")
+        joinTournament(mockMvc, oldSocialId, otherUserId)
+        val latestSocialId = createTournament(mockMvc, name = "최신 소셜")
+        joinTournament(mockMvc, latestSocialId, otherUserId)
+        createTournament(mockMvc, name = "최신 솔로 1")
+        createTournament(mockMvc, name = "최신 솔로 2")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL")
+                    .param("limit", "1"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(latestSocialId))
+    }
+
+    @Test
     fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
@@ -1070,16 +1336,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             post("/api/v1/tournaments/$tournamentId/start")
                 .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        // 삽입 순서(10k · 40k · 20k · 30k)는 가격 순이 아니다. 서버 브래킷은 가격 오름차순 인접 페어라
+        // (10k,20k) · (30k,40k) 로 묶이므로, 삽입 인접인 (10k,40k) 를 보내면 400 이다 (#683 브래킷 무결성).
         val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
-        val ti1 = items[0].getId()
-        val ti2 = items[1].getId()
+        val ti10k = items[0].getId()
+        val ti40k = items[1].getId()
+        val ti20k = items[2].getId()
 
-        mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"currentRound":4,"firstTournamentItemId":$ti1,"secondTournamentItemId":$ti2,"selectedTournamentItemId":$ti1}"""),
-        )
+        // 삽입 인접이지만 가격 인접이 아닌 조합은 거부된다 - 이 케이스가 이관이 막은 구멍 그 자체다.
+        // (전용 위조 페어 테스트는 삽입 순서와 가격 순서가 같아 이 구분을 못 잡는다)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti40k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.INVALID_MATCH_PAIR.code))
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti20k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isOk)
 
         mockMvc
             .perform(
@@ -1090,13 +1375,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending").doesNotExist())
             .andExpect(jsonPath("$.data.inProgress.currentRound").value(4))
             .andExpect(jsonPath("$.data.inProgress.lastHistory.currentRound").value(4))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti1))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti2))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti1))
-            // round-4 미대결 생존 아이템 2개(item3, item4) 가격 오름차순
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti10k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti20k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti10k))
+            // round-4 미대결 생존 아이템 2개(30k · 40k) — 삽입 순서는 40k 가 먼저지만 응답은 가격 오름차순이다
             .andExpect(jsonPath("$.data.inProgress.remainingItems.length()").value(2))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(20_000))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(40_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].tournamentItemId").value(ti40k))
     }
 
     @Test
@@ -1573,16 +1859,23 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        // 보정 대상은 tournament_item 이 가리키는 고정 snapshot 이다 — 표시값·상태는 그 snapshot 에서 읽는다(4a).
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("수정된 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals("KRW", updated.currency)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 수기 수정(#825 결정 4)은 기존 행을 고치지 않고 MANUAL 새 버전으로 쌓여 pin 이 옮겨진다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        assertNotEquals(snapshot.getId(), repinned.snapshotId)
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정된 이름", manual.name)
+        assertEquals(50000, manual.price)
+        assertEquals("KRW", manual.currency)
+        assertEquals(ItemStatus.READY, manual.status)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertEquals(userId, manual.editedBy)
+        // 기존 FAILED 행은 이력으로 불변.
+        assertEquals(ItemStatus.FAILED, itemSnapshotJpaRepository.findById(snapshot.getId()).get().status)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 수기 수정하면 200 과 MANUAL 새 버전으로 교체된다`() {
+        // 수기 수정 상시 허용(#825 결정 4) — READY 는 더 이상 409 가 아니다.
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val readyItemId = saveWishItem()
@@ -1594,11 +1887,18 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isOk)
+
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정 시도", manual.name)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템은 일부 필드만 보내면 병합 필수값 부재로 400 이다`() {
+        // 상태 충돌(409)이 아니다(#825 결정 4) — PROCESSING base 는 값이 비어 있어 병합 결과 필수값 부재(400)로 떨어질 뿐,
+        // 필수값을 다 채우면 진행 중이어도 수정된다(위 READY 케이스와 동일 규칙).
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val processingItem = itemJpaRepository.save(Item())
@@ -1613,7 +1913,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isBadRequest)
     }
 
     @Test
@@ -1675,10 +1975,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("기존 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 병합은 MANUAL 새 버전에서 일어난다 — base 의 이름·이미지가 유지된 채 가격만 바뀐 새 버전이 pin 된다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("기존 이름", manual.name)
+        assertEquals(50000, manual.price)
+        assertEquals(ItemStatus.READY, manual.status)
     }
 
     @Test
@@ -1723,12 +2025,43 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 assertEquals(1, it.size)
             }.first()
             assertEquals(tournamentItemId, tournamentItem.getId())
-            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(outbox 적재)으로 시작한다.
+            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(작업 큐 적재)으로 시작한다.
             // @Transactional 테스트라 등록이 커밋되지 않아 디스패처(별도 트랜잭션)가 이 PENDING 을 집지 못한다 → PENDING 고정.
             // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
             val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
             val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
             assertEquals(ItemStatus.PENDING, snapshot?.status)
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
+    fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
+        stubItemParsingWorker.enabled = false
+        try {
+            val mockMvc = buildMockMvc()
+            val tournamentId = createTournament(mockMvc)
+
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
+                ).andExpect(status().isOk)
+
+            // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
+            // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
+                .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
         } finally {
             stubItemParsingWorker.enabled = true
         }
@@ -2073,6 +2406,20 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         return data["tournamentId"].asLong() to data["inviteCode"].asText()
     }
 
+    // 링크 접근 경로의 소셜 참여 — inviteCode 없이 참여한다 (checkJoinable 의 inviteCode=null 경로).
+    private fun joinTournament(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        joiner: UUID,
+    ) {
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(joiner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+    }
+
     private fun saveUser(
         id: UUID,
         profileImage: String,
@@ -2109,6 +2456,25 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // snapshot 을 만들고 그 id 를 박아 저장한다. 조회 경로(getTournamentById·getTournamentItem)가 snapshot 을 읽기 때문이다.
     // item 은 정체성(link)만 들고 추출값·상태는 snapshot 이 보유한다(4a).
     // (서비스 경유 시딩 saveWishItem+addItemsToTournament 은 엔드포인트가 이미 snapshotId 를 채운다.)
+    // 파생(#857) 검증용 — 다른 참조의 갱신이 만든 새 기계(SERVER) READY 버전을 시딩한다. 포인터는 안 움직인다.
+    private fun saveMachineVersion(
+        itemId: Long,
+        name: String,
+        price: Int,
+    ): ItemSnapshot =
+        itemSnapshotJpaRepository.save(
+            ItemSnapshot(
+                itemId = itemId,
+                name = name,
+                price = price,
+                currency = "KRW",
+                imageUrl = "https://i.example/$price.png",
+                status = ItemStatus.READY,
+                extractedAt = LocalDateTime.now(),
+                source = ItemSnapshotSource.SERVER,
+            ),
+        )
+
     private fun saveTournamentItemFor(
         tournamentId: Long,
         item: Item,
@@ -2124,7 +2490,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = currency,
                     imageUrl = imageUrl,
                     status = status,
@@ -2154,7 +2520,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ItemSnapshot(
                 itemId = itemId,
                 name = name,
-                currentPrice = price,
+                price = price,
                 currency = currency,
                 imageUrl = imageUrl,
                 status = status,
@@ -2163,14 +2529,17 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
 
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
-    // 이미지 경로도 link 처럼 PENDING 으로 outbox 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
+    // 이미지 경로도 link 처럼 PENDING 으로 작업 큐 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
     // 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
         itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
+        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markReady(
             result.snapshot.getId(),
-            ProductSnapshot(name = name, currentPrice = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            expectedAttempt = 0,
         )
         return result.item.getId()
     }

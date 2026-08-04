@@ -10,7 +10,9 @@ data class RemoteExtractionProperties(
     // 비면 부팅에서 즉시 실패한다(RemoteExtractionHttpClientConfig — env 누락의 침묵 창 차단).
     val baseUrl: String = "",
     val connectTimeoutMs: Int = 2_000,
-    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 recover 의 유령 중복 발주가 없다.
+    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 한다. heartbeat 도입 후 산 워커는
+    // 박동이 stale 을 막아 주지만, 이 제약은 그와 별개로 **read 가 stale 창을 넘겨 무한정 늘어지지 않는다**는 상한을 준다 —
+    // 넘기면 마감(3분) 예산을 한 번의 read 가 통째로 먹고, 반납(release)으로 다음 실행을 앞당길 기회도 사라진다.
     // 이미지 경로(HttpImageSnapshotExtractor)도 같은 클라이언트·같은 값을 쓴다 — extractor 내부 이미지 예산
     // (S3 download + Gemini OCR 30s cap + crop + 결과 upload, 최악 40s대)이 이 값 미만이어야 하며,
     // 예산 합의는 계약 문서(extractor repo docs/api-contract.md §3)가 진다.
@@ -26,7 +28,7 @@ data class RemoteExtractionProperties(
         // 0/음수는 HttpURLConnection 에서 '무한 타임아웃'이라, 상한 검사만 있으면 워커 스레드가 영구 블록될 수 있다.
         require(readTimeoutMs > 0) { "read-timeout($readTimeoutMs ms)은 양수여야 한다 — 0 은 무한 대기다." }
         require(readTimeoutMs < STALE_TIMEOUT_MS) {
-            "read-timeout($readTimeoutMs ms)은 outbox stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
+            "read-timeout($readTimeoutMs ms)은 작업 큐 stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
         }
     }
 

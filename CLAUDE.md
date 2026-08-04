@@ -246,8 +246,9 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 테스트
 
-테스트 분류·가치 판단·네이밍·모킹/stub·컨텍스트 캐싱·셋업·기계 강제 등 모든 테스트 규약은 별도 파일에 둔다.
+테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**(분류·가치 판단·결정 트리·모킹 금지·셋업·네이밍·기계 강제 + JVM/Spring 공통)이고 `install.sh` 가 설치하며, **이 repo 의 Kotlin·MySQL 바인딩**은 체크인된 파일이 갖는다.
 
+@.claude/rules/testing-principles.md
 @.claude/rules/testing-convention.md
 
 ## DTO ↔ 도메인 매핑
@@ -300,6 +301,10 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 **어노테이션과 example 을 함께 박는다 — 한쪽만 있으면 위반이다.**
 - `*Api.kt`: 위 모든 응답을 `@ApiResponse(s)` 로 선언한다. responseCode + 구체적 description.
 - `*ApiExamples.kt`: 각 응답에 대응하는 example payload 를 `ApiResponseBody.ok / created / fail` 로 만들어 등록한다. 어노테이션만 있고 example 이 빠진 응답이 없어야 한다.
+
+**이 절반은 기계가 강제한다 — `OpenApiExampleCoverageIntegrationTest`.** 렌더된 `/v3/api-docs` 를 훑어 "JSON body 를 내리는데 example 이 없는 응답"을 전부 실패로 만든다. 위반 시 example 을 추가하거나, 정말 도달 불가한 응답이면 `@ApiResponse` 선언 자체를 지운다.
+
+반대로 **"도달 가능한 응답이 전부 선언됐는가"는 기계로 못 잡는다** — 호출 그래프를 따라가야 하고 입력 경계가 먼저 거르는 경우(`OAuthException.invalidRequest` 등)를 오탐 없이 가려낼 수 없어 사람 판단이 낀다. 새 예외를 추가하거나 서비스 로직을 바꿀 때 이쪽은 여전히 손으로 챙긴다. 같은 status 안에서 사유 하나가 빠진 것(예: 409 에 example 은 있는데 새 사유만 누락) 역시 이 사각에 들어간다.
 
 description 은 구체적으로 쓴다. "오류 등" 같은 모호한 표현 대신 실제 원인을 나열한다.
 

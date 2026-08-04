@@ -141,7 +141,7 @@ class LinkScreeningDevApiE2ETest {
         return when (node.at("/status").asString()) {
             "READY" ->
                 "READY                 ${tail(url)}  name=${node.at("/name").asString()}  " +
-                    "price=${node.at("/currentPrice").asString()}  currency=${node.at("/currency").asString()}"
+                    "price=${node.at("/price").asString()}  currency=${node.at("/currency").asString()}"
             else -> "FAILED                ${tail(url)}"
         }
     }

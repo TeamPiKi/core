@@ -93,27 +93,30 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     // 조회·수정·삭제 시나리오의 데이터 시딩. 등록 API(비동기)를 거치지 않고 영속화 빈으로 READY item+wish 를
     // 바로 만든다 — 이 테스트들의 관심사는 "완성된 위시가 있을 때"이지 등록 흐름이 아니기 때문.
-    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(outbox 적재)으로 시작하므로
+    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(작업 큐 적재)으로 시작하므로
     // 디스패처 claim(claimDuePending)을 재현해 PROCESSING 으로 전이한 뒤 markReady 로 추출값을 채운다 — 등록 후 파싱 성공과 동형이다.
     private fun seedReadyWish(
         userId: UUID,
         url: String,
         name: String,
-        currentPrice: Int? = 10_000,
+        price: Int? = 10_000,
         currency: String? = "KRW",
         imageUrl: String? = "https://img.example.com/a.png",
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
+        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
+        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markReady(
             result.snapshot.getId(),
             ProductSnapshot(
                 link = ProductLink.parse(url),
                 name = name,
-                currentPrice = currentPrice,
+                price = price,
                 currency = currency,
                 imageUrl = imageUrl,
             ),
+            expectedAttempt = 0,
         )
         return result.wish.getId()
     }
@@ -126,7 +129,9 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
-        itemParsingService.markFailed(result.snapshot.getId())
+        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
+        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
+        itemParsingService.markFailed(result.snapshot.getId(), expectedAttempt = 0)
         return result.wish.getId()
     }
 
@@ -376,7 +381,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 userId,
                 "https://shop.example.com/products/1",
                 name = "에어 조던 1 미드",
-                currentPrice = 119_000,
+                price = 119_000,
                 currency = "KRW",
                 imageUrl = "https://cdn.example.com/p/1.jpg",
             )
@@ -388,7 +393,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.wish.id").value(wishId))
             .andExpect(jsonPath("$.data.item.name").value("에어 조던 1 미드"))
-            .andExpect(jsonPath("$.data.item.currentPrice").value(119_000))
+            .andExpect(jsonPath("$.data.item.price").value(119_000))
             .andExpect(jsonPath("$.data.item.currency").value("KRW"))
             .andExpect(jsonPath("$.data.item.imageUrl").value("https://cdn.example.com/p/1.jpg"))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
@@ -442,8 +447,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미 등록 완료(READY)된 위시 item 을 수정하려 하면 409 CONFLICT 가 반환된다`() {
-        // item 데이터는 링크에서 기계 추출한 사실이라, 완성된(READY) 항목은 클라이언트가 손으로 못 바꾼다.
+    fun `이미 등록 완료(READY)된 위시 item 도 수기 수정하면 200 과 수정된 값으로 표시된다`() {
+        // 수기 수정 상시 허용(#825 결정 4) — 기계 버전은 불변이고 수정은 MANUAL 새 버전으로 쌓여 표시가 바뀐다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -453,36 +458,53 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("name", "바꾸려는 이름")
+                    .param("name", "바꾼 이름")
                     .with {
                         it.method = "PATCH"
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
-            ).andExpect(status().isConflict)
-            .andExpect(jsonPath("$.code").value("ITEM-001"))
-            .andExpect(jsonPath("$.detail").value("이미 등록된 상품은 수정할 수 없어요."))
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.name").value("바꾼 이름"))
+            .andExpect(jsonPath("$.data.item.status").value("READY"))
     }
 
     @Test
-    fun `파싱 중(PROCESSING)인 위시 item 을 수정하려 하면 409 CONFLICT 가 반환된다`() {
-        // 파싱 중 항목의 status 전이는 백그라운드 워커 소관이라 클라이언트가 끼어들 수 없다.
+    fun `파싱 중(PROCESSING)인 위시 item 도 필수값을 채워 수기 수정하면 200 이다 - 병합할 base 가 비면 400`() {
+        // 상태 제한이 없다(#825 결정 4). 단 PROCESSING base 는 값이 비어 있어, 일부 필드만 보내면
+        // 병합 결과에 필수값이 없어 400(ITEM-003 등)이다 — 상태 충돌(409)이 아니라 입력 계약의 문제다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
         val wishId = seedProcessingWish(userId, "https://shop.example.com/products/1")
 
+        // 일부 필드만 — 병합해도 가격·이미지가 없어 400.
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("name", "끼어든 수정")
+                    .param("name", "이름만 수정")
                     .with {
                         it.method = "PATCH"
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
-            ).andExpect(status().isConflict)
-            .andExpect(jsonPath("$.code").value("ITEM-002"))
-            .andExpect(jsonPath("$.detail").value("상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요."))
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("ITEM-004"))
+
+        // 필수값을 다 채우면 진행 중이어도 수정된다.
+        val image = MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3))
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .file(image)
+                    .param("name", "수기 입력")
+                    .param("price", "5000")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.name").value("수기 입력"))
+            .andExpect(jsonPath("$.data.item.status").value("READY"))
     }
 
     @Test
@@ -499,14 +521,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
                     .param("name", "직접 입력한 이름")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("직접 입력한 이름"))
-            .andExpect(jsonPath("$.data.item.currentPrice").value(50_000))
+            .andExpect(jsonPath("$.data.item.price").value(50_000))
             // 추출 실패(FAILED) 항목을 직접 보정하면 정상 항목이 된 것이므로 READY 로 복구된다.
             .andExpect(jsonPath("$.data.item.status").value("READY"))
     }
@@ -523,7 +545,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
@@ -581,7 +603,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("currentPrice", "-1")
+                    .param("price", "-1")
                     .with {
                         it.method = "PATCH"
                         it
@@ -605,7 +627,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
                     .param("name", "직접 입력한 이름")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
@@ -676,6 +698,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     multipart("/api/v1/wishlists/$wishId")
                         .file(image)
                         .param("name", "이름")
+                        // 사전 검증(dry-run)을 통과해야 S3 업로드에 도달한다 — 가격까지 채워 502 경로를 연다.
+                        .param("price", "1000")
                         .with {
                             it.method = "PATCH"
                             it
@@ -900,7 +924,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isCreated)
             .andExpect(jsonPath("$.data.length()").value(2))
-            // 등록 직후라 두 항목 모두 PENDING(link 처럼 outbox 적재) — 추출 결과는 비어 있고 sourceUrl 도 null(이미지 등록).
+            // 등록 직후라 두 항목 모두 PENDING(link 처럼 작업 큐 적재) — 추출 결과는 비어 있고 sourceUrl 도 null(이미지 등록).
             // 실제 파싱 완료(READY/FAILED)·크롭 imageUrl 은 WishlistRegisterAsyncIntegrationTest 가 검증한다.
             .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
             .andExpect(jsonPath("$.data[0].item.name").value(nullValue()))

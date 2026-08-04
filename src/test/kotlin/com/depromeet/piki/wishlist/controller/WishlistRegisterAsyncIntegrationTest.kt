@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
+import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
@@ -87,7 +88,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", currentPrice = 99_000) }
+            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000) }
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
 
             mockMvc
@@ -101,7 +102,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.status").value("PENDING"))
                 // 파싱 전이라 추출 결과는 아직 비어 있고, 입력으로 받은 sourceUrl 만 채워진다.
                 .andExpect(jsonPath("$.data.item.name").value(nullValue()))
-                .andExpect(jsonPath("$.data.item.currentPrice").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.price").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/42"))
                 // 백오피스(source_platforms) 미등록 도메인 — host 에서 유도한 임시 표시명(등록 가능 도메인의 첫 라벨)이 나간다.
                 .andExpect(jsonPath("$.data.item.sourcePlatform").value("example"))
@@ -117,7 +118,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val readyBefore = parseCount("ready", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/42")
@@ -131,7 +132,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 표시값·상태는 활성 snapshot 이 보유한다(4a) — item 은 정체성(link)만 든다.
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.currentPrice)
+            assertEquals(99_000, snapshot.price)
             assertEquals("KRW", snapshot.currency)
         } finally {
             cleanup(userId)
@@ -172,7 +173,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. READY 불변식(name 필수)에 걸려
             // markReady 가 거부하고, 워커가 이를 받아 PROCESSING 방치 대신 FAILED 로 떨어뜨린다.
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, currentPrice = 99_000) }
+            stubProductLinkExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
             val rejectedBefore = parseCount("failed", "ready_rejected")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
 
@@ -191,34 +192,43 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `같은 URL 을 두 번 등록해도 dedup 없이 둘 다 201 PENDING 으로 별개 등록된다`() {
+    fun `같은 URL 재등록은 공유 정체성 기준 409 로 막혀 wish 가 1건만 남는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "기본 상품") }
-            val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
+            // 이 파일의 다른 테스트와 URL 을 공유하지 않는다 — 정체성 매칭(별칭)이 테스트 간 상태가 되므로 전용 URL 로 격리.
+            val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/9942"))
             val auth = "Bearer ${memberToken(userId)}"
 
-            repeat(2) {
-                mockMvc
-                    .perform(
-                        post("/api/v1/wishlists")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .header(HttpHeaders.AUTHORIZATION, auth)
-                            .content(body),
-                    ).andExpect(status().isCreated)
-                    .andExpect(jsonPath("$.data.item.status").value("PENDING"))
-            }
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .content(body),
+                ).andExpect(status().isCreated)
+                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
 
-            // dedup 없는 multi-record 모델 — 같은 URL 이라도 별개 wish 2건이 쌓인다 (persist 는 동기라 즉시 반영).
+            // 공유 정체성(#825 활성화) — 같은 사용자가 같은 상품을 다시 담으면 새 카드 대신 409.
+            // (옛 dedup 없는 multi-record 모델을 뒤집은 새 계약이다.)
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .content(body),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("WISH-009"))
+
             val wishCount =
                 jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM wishes WHERE user_id = ?",
                     Int::class.java,
                     uuidToBytes(userId),
                 )
-            assertEquals(2, wishCount)
+            assertEquals(1, wishCount)
         } finally {
             cleanup(userId)
         }
@@ -231,7 +241,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
+                ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -241,7 +251,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             }
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.currentPrice)
+            assertEquals(99_000, snapshot.price)
             assertEquals("KRW", snapshot.currency)
             // 이미지 등록은 link(원본 URL)가 없다 — link 는 정체성이라 item 에서 읽는다.
             val item = itemRepository.findById(itemId) ?: error("item $itemId 가 없다")
@@ -274,9 +284,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다.
-        // 이미지 입력은 S3 raw 로 durable 하므로 recover 가 그 key 로 원본을 다시 읽어 재실행한다(#461).
+    fun `이미지 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
+        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고,
+        // 소유권을 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 곧바로 다시 집게 한다.
+        // 이미지 입력은 S3 raw 로 durable 하므로 재실행이 그 key 로 원본을 다시 읽는다(#461).
+        //
+        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
+        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
         val calls = AtomicInteger(0)
         stubImageSnapshotExtractor.build = {
             calls.incrementAndGet()
@@ -288,10 +302,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
-            // 디스패처 claim → 워커가 일시 오류로 throw → 워커가 실제로 한 번 실행됐는지 확인.
-            await().atMost(Duration.ofSeconds(5)).until { calls.get() >= 1 }
-            // 확정 실패가 아니므로 FAILED 로 떨어지지 않고 PROCESSING 으로 남아야 한다 (recover 재시도 대상).
-            assertEquals(ItemStatus.PROCESSING, latestSnapshot(itemId)?.status)
+            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
+            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
+            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
         }
@@ -304,7 +319,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, imageUrl = "https://img.example.com/p.png")
+                ProductSnapshot(link = null, name = "상품", price = 1_000, imageUrl = "https://img.example.com/p.png")
             }
             val request = multipart("/api/v1/wishlists/images")
             (1..5).forEach { i ->
@@ -316,7 +331,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                     .perform(request)
                     .andExpect(status().isCreated)
                     .andExpect(jsonPath("$.data.length()").value(5))
-                    // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 outbox 에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
+                    // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 작업 큐에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
                     .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
                     .andExpect(jsonPath("$.data[4].item.status").value("PENDING"))
                     .andReturn()
@@ -347,7 +362,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
+                ProductSnapshot(link = null, name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
             val itemId = registerImageAndGetItemId(mockMvc, userId, image)
@@ -364,10 +379,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `link 있는 stale PROCESSING 을 recover 가 재실행해 READY 로 되살린다`() {
-        // 디스패처가 claim(attempt 1)한 직후 워커가 크래시해 실행 0회로 PROCESSING 에 갇힌 상황.
-        // recover 가 재실행(reclaim)해 완성시킨다 — claim-at-least-once 를 execution at-least-once 로 끌어올리는 핵심(#461).
+        // 디스패처가 집은 직후 워커가 크래시해 **실행 0회**로 PROCESSING 에 갇힌 상황(그래서 attempt 는 0 이다 —
+        // 집기는 예산을 소모하지 않는다). recover 가 되살려 완성시킨다 — execution at-least-once 의 핵심(#461).
         stubProductLinkExtractor.build = {
-            ProductSnapshot(link = it, name = "되살아난 상품", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            ProductSnapshot(link = it, name = "되살아난 상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/revive")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
@@ -381,12 +396,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 snapshot.getId(),
             )
 
-            itemParsingScheduler.recover() // reclaim(attempt 2) + 재실행 디스패치
+            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 상품", recovered.name)
-            assertEquals(2, recovered.attemptCount) // 초회 claim 1 + 재실행 1
+            // 실행은 되살림으로 시작한 이 한 번뿐이다 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았다.
+            assertEquals(1, recovered.attemptCount)
         } finally {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
@@ -395,7 +411,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `재시도 상한에 도달한 stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
-        // 이미 상한(2회)까지 시도된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지, 절대 3분 초과 금지).
+        // 이미 상한(2회)까지 **실행**된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지).
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhausted")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
         val itemId = item.getId()
@@ -423,7 +439,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // 이미지 경로도 원본을 S3 raw 로 durable 적재하므로(link 와 대칭), 크래시로 stale 된 PROCESSING 을 recover 가 재실행해
         // 워커가 그 key 로 원본을 다시 읽어 완성시킨다 — 메모리 ByteArray 시절의 "이미지는 복구 불가" 비대칭이 사라졌다(#461).
         stubImageSnapshotExtractor.build = {
-            ProductSnapshot(link = null, name = "되살아난 이미지", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
+            ProductSnapshot(link = null, name = "되살아난 이미지", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
         }
         val item = itemRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
@@ -435,12 +451,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 snapshot.getId(),
             )
 
-            itemParsingScheduler.recover() // reclaim(attempt 2) + 재실행 디스패치
+            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 이미지", recovered.name)
-            assertEquals(2, recovered.attemptCount) // 초회 claim 1 + 재실행 1
+            // link 경로와 대칭 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았으므로 실행은 한 번뿐이다.
+            assertEquals(1, recovered.attemptCount)
         } finally {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
@@ -473,8 +490,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `URL 파싱이 일시 외부 오류면 FAILED 가 아니라 PROCESSING 으로 남아 recover 재시도 대상이 된다`() {
-        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 워커가 FAILED 로 종결하지 않고 PROCESSING 그대로 둔다 — 재시도 판정은 recover 몫(#461).
+    fun `URL 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
+        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고, 소유권을
+        // 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 다시 집게 한다. 종결 판정은 여전히 서비스 몫이다(#461).
+        //
+        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
+        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
         val calls = AtomicInteger(0)
         stubProductLinkExtractor.build = {
             calls.incrementAndGet()
@@ -485,10 +506,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
-            // 디스패처 claim → 워커가 일시 오류로 throw → 워커가 실제로 한 번 실행됐는지 확인.
-            await().atMost(Duration.ofSeconds(5)).until { calls.get() >= 1 }
-            // 확정 실패가 아니므로 FAILED 로 떨어지지 않고 PROCESSING 으로 남아야 한다 (recover 재시도 대상).
-            assertEquals(ItemStatus.PROCESSING, latestSnapshot(itemId)?.status)
+            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
+            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
+            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
         }
@@ -638,6 +660,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
         itemIds.takeIf { it.isNotEmpty() }?.let {
+            // 별칭(item_links)도 함께 지운다 — 남기면 다음 실행에서 stale 별칭이 삭제된 item 을 가리켜
+            // 공유 정체성 매칭(resolveExistingItem)이 null 로 빠지고 재등록 409 계약 검증이 어긋난다.
+            jdbcTemplate.update("DELETE FROM item_links WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }

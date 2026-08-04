@@ -94,6 +94,10 @@ class TournamentItemApiExamples(
                                 ),
                         )
                         add(TournamentException.invalidImageCount(), name = "이미지 개수 위반 (1~5개)")
+                        // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
+                        add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
+                        add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
+                        add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                         add(TournamentException.tooManyTournamentItems(), name = "아이템 최대 32개 초과")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
@@ -148,17 +152,21 @@ class TournamentItemApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "수정 성공 (FAILED → READY)",
+                            name = "수기 수정 성공 (MANUAL 새 버전으로 교체)",
                             payload = ApiResponseBody.ok<Unit>(),
                         )
-                        add(ItemException.nameRequiredForReady(), name = "상품명 없이 보정 시도")
+                        add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
+                        add(ItemException.priceRequiredForReady(), name = "병합 후에도 가격 없음")
+                        add(ItemException.imageRequiredForReady(), name = "병합 후에도 이미지 없음")
+                        // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
+                        add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
+                        add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
+                        add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notFoundTournamentItem(), name = "토너먼트 아이템을 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
-                        add(ItemException.alreadyReady(), name = "이미 등록 완료(READY) 항목 — 수정 불가")
-                        add(ItemException.stillProcessing(), name = "아직 처리 중(PROCESSING) 항목 — 수정 불가")
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패")
                     }
 

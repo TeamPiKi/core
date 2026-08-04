@@ -18,15 +18,9 @@ class ItemException private constructor(
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
-        // 등록 완료(READY)된 item 은 링크에서 기계 추출한 사실이라 클라이언트가 직접 수정할 수 없다.
-        // 갱신은 서버 재추출 경로로만 들어오고, 클라이언트 보정은 추출 실패(FAILED) 항목에 한정된다.
-        fun alreadyReady(): ItemException = ItemException(ItemErrorCode.ALREADY_READY)
-
-        // 파싱 중(PROCESSING)인 item 은 백그라운드 워커가 결과를 채우는 중이라 클라이언트가 끼어들 수 없다.
-        fun stillProcessing(): ItemException = ItemException(ItemErrorCode.STILL_PROCESSING)
-
-        // FAILED 항목 복구의 입력 경계 계약 — 필수 필드 없이 보정하면 "쓸 수 있는 상품"(READY)이 될 수 없다.
-        // 엔티티 불변식(requireReadyInvariant)이 최후의 보루라면, 이건 그 전에 클라이언트에게 400 으로 돌려주는 경계다.
+        // 수기 수정(MANUAL 새 버전)의 입력 경계 계약 — base 값과 병합해도 필수 필드가 없으면 "쓸 수 있는 상품"
+        // (READY)이 될 수 없다. 엔티티 불변식이 최후의 보루라면, 이건 그 전에 클라이언트에게 400 으로 돌려주는 경계다.
+        // (ALREADY_READY·STILL_PROCESSING 409 는 수기 수정 상시 허용(#825 결정 4)으로 폐기 — ItemErrorCode 결번 참고.)
         fun nameRequiredForReady(): ItemException = ItemException(ItemErrorCode.NAME_REQUIRED_FOR_READY)
 
         fun priceRequiredForReady(): ItemException = ItemException(ItemErrorCode.PRICE_REQUIRED_FOR_READY)

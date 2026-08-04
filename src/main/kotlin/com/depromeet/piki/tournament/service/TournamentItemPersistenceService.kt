@@ -6,6 +6,8 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemIdentityRecorder
+import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -32,6 +34,8 @@ class TournamentItemPersistenceService(
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
+    private val itemSharingService: ItemSharingService,
 ) {
     @Transactional
     fun persistLinkItem(
@@ -40,15 +44,41 @@ class TournamentItemPersistenceService(
         link: ProductLink,
     ): PersistedTournamentItem {
         validateAndCheckCapacity(userId, tournamentId, 1)
+        // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 기존 item 에 붙는다. 중복 검사도 정체성(itemId) 기준으로
+        // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
+        val shared = itemSharingService.resolveExistingItem(link)
         val existingItems = tournamentItemRepository.findAllByTournamentId(tournamentId)
-        if (existingItems.isNotEmpty()) {
-            val existingSnapshots = itemSnapshotRepository.findByIds(existingItems.map { it.snapshotId })
-            val existingLinks = itemRepository.findByIds(existingSnapshots.map { it.itemId }).mapNotNull { it.link }
+        val existingItemIds =
+            existingItems
+                .takeIf { it.isNotEmpty() }
+                ?.let { items -> itemSnapshotRepository.findByIds(items.map { it.snapshotId }).map { it.itemId } }
+                .orEmpty()
+        if (existingItemIds.isNotEmpty()) {
+            // 처음 보는 링크 모양의 중복은 raw link 비교(기존 방식)로 잡는다. 정체성 기준 검사는 attach 뒤에서.
+            val existingLinks = itemRepository.findByIds(existingItemIds).mapNotNull { it.link }
             if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
         }
+        shared?.let { sharedItem ->
+            // attach 메타(reused·refreshNeeded)는 위시 등록 응답부터 노출한다(#853) — 토너먼트 응답 노출은 클라 요구가 생기면.
+            val attachment = itemSharingService.resolveAttachment(sharedItem.getId(), link)
+            // 정체성 중복 검사·반환 itemId 는 실제로 붙은 attachment.item 기준 — 병합 재시도 경합에선 별칭으로
+            // 찾은 shared(loser)와 다르고(승자로 재해석), 이 기준이어야 반환 itemId 와 snapshot 소속이 일치한다.
+            if (attachment.item.getId() in existingItemIds) throw TournamentException.duplicateTournamentItem()
+            val tournamentItem = tournamentItemRepository.saveAll(
+                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = attachment.snapshot.getId())),
+            ).first()
+            eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
+            return PersistedTournamentItem(
+                itemId = attachment.item.getId(),
+                snapshotId = attachment.snapshot.getId(),
+                tournamentItemId = tournamentItem.getId(),
+            )
+        }
         val item = itemRepository.save(Item(link))
+        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다(위시 등록과 같은 결).
+        itemIdentityRecorder.recordRegistrationAlias(item)
         // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
-        // URL 경로는 PENDING 으로 적재(outbox)하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
+        // URL 경로는 PENDING 으로 작업 큐에 적재하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         val tournamentItem = tournamentItemRepository.saveAll(
             listOf(
@@ -115,11 +145,11 @@ class TournamentItemPersistenceService(
         }
     }
 
-    // FAILED 버전의 수동 보정 영속화 — S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고,
-    // 여기선 권한·소유 검증 + snapshot.recover(값 변경 + FAILED→READY 전이)만 짧은 트랜잭션으로 묶는다(dirty checking).
-    // recover 가 READY/PROCESSING 을 409 로 막는다(도메인 자기방어). item 은 정체성이라 건드리지 않는다.
+    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 출전 pin 을 옮긴다(repinSnapshot).
+    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고, 여기선 권한·소유 검증 + 새 버전 적재 + pin 이동만
+    // 짧은 트랜잭션으로 묶는다. 상태 제한이 없다 — 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
     @Transactional
-    fun recoverItem(
+    fun manualEdit(
         userId: UUID,
         tournamentId: Long,
         tournamentItemId: Long,
@@ -134,18 +164,30 @@ class TournamentItemPersistenceService(
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
+        // 행 락 — 동시 수기 수정 두 건이 같은 pin 을 읽고 나중 커밋이 먼저 만든 MANUAL 버전을 덮는(유령 버전) 경합을 직렬화한다.
         val tournamentItem =
-            tournamentItemRepository.findById(tournamentItemId)
+            tournamentItemRepository.findByIdForUpdate(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 토너먼트는 출전 시점 고정 snapshot 을 본다. 최신(findLatestByItemId)이 아니라 tournamentItem.snapshotId 를
-        // 갱신해야, 5단계 갱신으로 같은 item 에 snapshot 이 여러 개 생겨도 토너먼트가 고정한 버전만 보정돼 격리가 유지된다.
+        // 토너먼트는 출전 시점 pin snapshot 을 base 로 쓴다. 최신(findLatestByItemId)이 아니라 tournamentItem.snapshotId
+        // 기준이어야, 같은 item 에 버전이 여러 개 생겨도 이 카드가 보던 버전 위에 수정이 얹혀 격리가 유지된다.
         val snapshotId = tournamentItem.snapshotId
-        val snapshot =
+        val base =
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        snapshot.recover(name = name, currentPrice = price, imageUrl = imageUrl, currency = currency)
+        val manual =
+            itemSnapshotRepository.save(
+                ItemSnapshot.manual(
+                    base = base,
+                    name = name,
+                    price = price,
+                    imageUrl = imageUrl,
+                    currency = currency,
+                    editedBy = userId,
+                ),
+            )
+        tournamentItem.repinSnapshot(manual.getId())
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.

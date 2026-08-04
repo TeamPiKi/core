@@ -9,6 +9,9 @@
   (게이트의 sliding 자동연장을 없앴으므로 배경 요청으로는 세션이 안 늘어난다).
   로컬 우회(adminLocalBypass)에서는 세션이 없는 게 정상이라 "세션 만료됨"·연장 버튼·접속 IP 가 오해만 준다 — 감춘다
   (스크립트는 요소가 없으면 알아서 빠진다).
+  API 문서 링크(adminDocsEnabled, #867)는 문서가 실제 서빙되는 환경(dev·로컬)에만 그린다. 홈 카드 그리드가 아니라
+  여기 두는 이유: 카드는 "배포 없이 바꾸는 운영 설정" 목록이라 성격이 다르고, 환경마다 카드 수가 달라지면 dev/prod
+  간 배치가 어긋난다. 상단바는 이미 환경 배지·세션·IP 로 환경별 가변이 정상인 자리라 그 문제가 없다.
 -->
 <th:block th:fragment="topbar(backHref, backLabel)">
   <style>
@@ -22,7 +25,6 @@
     .pkbar .pkmeta .pksep{color:#cbd5e1;}
     .pkbar .pkenv{font-size:11px;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:6px;}
     .pkbar .pkenv.env-PROD{background:#fee2e2;color:#b91c1c;}
-    .pkbar .pkenv.env-STAGING{background:#fef3c7;color:#b45309;}
     .pkbar .pkenv.env-DEV{background:#dbeafe;color:#1d4ed8;}
     .pkbar .pkenv.env-LOCAL{background:#e2e8f0;color:#475569;}
     .pkbar a.pkhome{font-size:13px;color:#64748b;text-decoration:none;font-weight:600;}
@@ -34,11 +36,17 @@
       border-radius:7px;padding:4px 10px;cursor:pointer;line-height:1;transition:.15s;}
     .pkbar .pkextend:hover{background:#bae6fd;}
     .pkbar .pkextend:disabled{opacity:.5;cursor:default;}
+    .pkbar a.pkdocs{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#475569;
+      background:#f1f5f9;border:1px solid #e2e8f0;border-radius:7px;padding:4px 10px;line-height:1;
+      text-decoration:none;transition:.15s;}
+    .pkbar a.pkdocs:hover{background:#e2e8f0;color:#0f172a;}
   </style>
   <div class="pkbar">
     <span class="pkbrand"><img src="/favicon.ico" alt="PiKi"
         style="width:19px;height:19px;border-radius:5px;vertical-align:-4px;margin-right:6px">PiKi<span class="pkdot">.</span> 백오피스</span>
     <span class="pksp"></span>
+    <a class="pkdocs" th:if="${adminDocsEnabled}" href="/docs/index.html" target="_blank" rel="noopener noreferrer"
+       title="전 엔드포인트·요청/응답 스키마 (Stoplight)">API 문서 ↗</a>
     <th:block th:unless="${adminLocalBypass == true}">
       <span class="pksession" id="pk-session">
         <span>세션 <b id="pk-session-remaining">-</b></span>

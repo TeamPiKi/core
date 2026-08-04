@@ -69,7 +69,7 @@ class HttpProductLinkExtractorTest {
         assertEquals(link, snapshot.link)
         assertEquals("나이키", snapshot.name)
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
-        assertEquals(99_000, snapshot.currentPrice)
+        assertEquals(99_000, snapshot.price)
         assertEquals("KRW", snapshot.currency)
     }
 

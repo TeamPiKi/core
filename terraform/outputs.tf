@@ -63,22 +63,12 @@ output "dev_image_public_base_url" {
   value       = "https://${aws_s3_bucket.dev_images.bucket_regional_domain_name}"
 }
 
-output "staging_ec2_public_ip" {
-  description = "스테이징(staging) EC2 Elastic IP — 가비아 staging.api.piki.day A 레코드에 등록할 것"
-  value       = aws_eip.staging_app.public_ip
+output "ecr_core_repository_url" {
+  description = "core 이미지 저장소 URL (<acct>.dkr.ecr.<region>.amazonaws.com/piki-core)"
+  value       = aws_ecr_repository.core.repository_url
 }
 
-output "staging_ec2_public_dns" {
-  description = "스테이징(staging) EC2 퍼블릭 DNS (EIP 기준)"
-  value       = aws_eip.staging_app.public_dns
-}
-
-output "staging_image_bucket_name" {
-  description = "스테이징 이미지 버킷명 — staging env S3_BUCKET 에 넣을 값"
-  value       = aws_s3_bucket.staging_images.id
-}
-
-output "staging_image_public_base_url" {
-  description = "스테이징 이미지 버킷 공개 베이스 URL — staging env S3_PUBLIC_BASE_URL 에 넣을 값"
-  value       = "https://${aws_s3_bucket.staging_images.bucket_regional_domain_name}"
+output "github_ecr_push_role_arn" {
+  description = "GitHub Actions 가 OIDC 로 assume 할 ECR push 역할 ARN (deploy.yml 에 배선)"
+  value       = aws_iam_role.github_ecr_push.arn
 }

@@ -21,7 +21,7 @@ class ProductExtractorException private constructor(
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
-        // 원격 호출이 일시적으로 실패(5xx·타임아웃·연결 실패·빈 응답). 워커가 PROCESSING 유지 → recover 재시도.
+        // 원격 호출이 일시적으로 실패(5xx·타임아웃·연결 실패·빈 응답). 워커가 소유권을 반납(PROCESSING→PENDING) → 다음 tick 이 다시 집는다.
         fun transientFailure(cause: Throwable?): ProductExtractorException =
             ProductExtractorException(ProductExtractorErrorCode.TRANSIENT_FAILURE, cause)
 

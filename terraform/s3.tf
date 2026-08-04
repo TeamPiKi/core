@@ -98,52 +98,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "dev_images" {
   }
 }
 
-# -----------------------------------------------------------------------------
-# 스테이징(staging) 전용 이미지 버킷 — staging-<기존 버킷명>. dev_images 4개 리소스 미러.
-# 앱은 staging env 의 S3_BUCKET / S3_PUBLIC_BASE_URL 로 이 버킷을 가리킨다.
-# -----------------------------------------------------------------------------
-resource "aws_s3_bucket" "staging_images" {
-  bucket = "staging-${var.image_bucket_name}"
-
-  tags = {
-    Name = "staging-${var.image_bucket_name}"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "staging_images" {
-  bucket = aws_s3_bucket.staging_images.id
-
-  block_public_acls       = true
-  ignore_public_acls      = true
-  block_public_policy     = false
-  restrict_public_buckets = false
-}
-
-resource "aws_s3_bucket_policy" "staging_images_public_read" {
-  bucket     = aws_s3_bucket.staging_images.id
-  depends_on = [aws_s3_bucket_public_access_block.staging_images]
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "PublicReadGetObject"
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = "s3:GetObject"
-      Resource  = "${aws_s3_bucket.staging_images.arn}/*"
-    }]
-  })
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "staging_images" {
-  bucket = aws_s3_bucket.staging_images.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
 
 # -----------------------------------------------------------------------------
 # CORS (#영수증 캡처) — html-to-image 가 이미지를 canvas 에 그린 뒤 export 하려면, 브라우저가
@@ -186,16 +140,6 @@ resource "aws_s3_bucket_cors_configuration" "dev_images" {
   }
 }
 
-resource "aws_s3_bucket_cors_configuration" "staging_images" {
-  bucket = aws_s3_bucket.staging_images.id
-
-  cors_rule {
-    allowed_methods = ["GET", "HEAD"]
-    allowed_origins = local.image_cors_origins
-    allowed_headers = ["*"]
-    max_age_seconds = 3600
-  }
-}
 
 # -----------------------------------------------------------------------------
 # raw 원본(items/raw/) 만료 — 이미지 등록 시 durable 적재한 raw 입력은 파싱이 끝나면 워커가 즉시 삭제하지만,
@@ -236,19 +180,3 @@ resource "aws_s3_bucket_lifecycle_configuration" "dev_images" {
   }
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "staging_images" {
-  bucket = aws_s3_bucket.staging_images.id
-
-  rule {
-    id     = "expire-raw-originals"
-    status = "Enabled"
-
-    filter {
-      prefix = "items/raw/"
-    }
-
-    expiration {
-      days = 1
-    }
-  }
-}

@@ -14,4 +14,19 @@ class ItemRepositoryImpl(
     override fun findByIds(ids: List<Long>): List<Item> = itemJpaRepository.findAllById(ids)
 
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
+
+    override fun claimCanonicalIfAbsent(
+        id: Long,
+        canonicalUrl: String,
+        canonicalHash: String,
+    ): Boolean = itemJpaRepository.claimCanonicalIfAbsent(id, canonicalUrl, canonicalHash) == 1
+
+    override fun findByCanonicalHash(canonicalHash: String): Item? =
+        itemJpaRepository.findByCanonicalHashAndDeletedAtIsNull(canonicalHash)
+
+    override fun findByIdForUpdate(id: Long): Item? = itemJpaRepository.findByIdForUpdate(id)
+
+    override fun softDeleteById(id: Long) {
+        itemJpaRepository.softDeleteById(id)
+    }
 }

@@ -6,8 +6,8 @@ import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
-import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
@@ -50,7 +50,10 @@ class WishlistController(
         @Valid @RequestBody request: WishlistRegisterRequest,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
-        return ApiResponseBody.created(toResponse(result))
+        // 등록 응답만 공유 attach 메타(reused·refreshNeeded, #853)를 싣는다 — 클라의 "기존 값 사용/새로 가져오기" 선택 근거.
+        return ApiResponseBody.created(
+            WishItemResponse.fromRegistration(result, sourcePlatformResolver.resolve(result.item.link)),
+        )
     }
 
     @PostMapping("/images", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
@@ -104,19 +107,10 @@ class WishlistController(
     override fun getWish(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable wishId: Long,
-    ): ApiResponseBody<WishItemResponse> {
+    ): ApiResponseBody<WishDetailResponse> {
         val result = wishlistService.getWish(userId = userId, wishId = wishId)
-        return ApiResponseBody.ok(toResponse(result))
-    }
-
-    @GetMapping("/{wishId}/history")
-    override fun getPriceHistory(
-        @AuthenticationPrincipal userId: UUID,
-        @PathVariable wishId: Long,
-    ): ApiResponseBody<WishPriceHistoryResponse> {
-        val result = wishlistService.getPriceHistory(userId = userId, wishId = wishId)
         return ApiResponseBody.ok(
-            WishPriceHistoryResponse.from(result.wish, result.item, result.history, sourcePlatformResolver.resolve(result.item.link)),
+            WishDetailResponse.from(result, sourcePlatformResolver.resolve(result.item.link), requesterId = userId),
         )
     }
 
@@ -132,7 +126,7 @@ class WishlistController(
                 userId = userId,
                 wishId = wishId,
                 name = request.name,
-                currentPrice = request.currentPrice,
+                price = request.price,
                 currency = request.currency,
                 image = image,
             )

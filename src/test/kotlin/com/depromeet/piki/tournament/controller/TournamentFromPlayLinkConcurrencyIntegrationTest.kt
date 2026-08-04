@@ -83,7 +83,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
                     ItemSnapshot(
                         itemId = item1.getId(),
                         name = "race-item1",
-                        currentPrice = 10_000,
+                        price = 10_000,
                         currency = "KRW",
                         status = ItemStatus.READY,
                         extractedAt = LocalDateTime.now(),
@@ -94,7 +94,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
                     ItemSnapshot(
                         itemId = item2.getId(),
                         name = "race-item2",
-                        currentPrice = 20_000,
+                        price = 20_000,
                         currency = "KRW",
                         status = ItemStatus.READY,
                         extractedAt = LocalDateTime.now(),

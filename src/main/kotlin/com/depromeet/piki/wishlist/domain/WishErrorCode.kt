@@ -24,4 +24,5 @@ enum class WishErrorCode(
         ErrorCategory.CONFLICT,
         "추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요.",
     ),
+    ALREADY_EXISTS("WISH-009", ErrorCategory.CONFLICT, "이미 위시리스트에 등록된 상품이에요."),
 }

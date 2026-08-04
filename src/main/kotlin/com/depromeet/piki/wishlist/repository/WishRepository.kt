@@ -46,5 +46,5 @@ interface WishRepository {
     ): List<Wish>
 
     // 이 아이템을 위시에 담은 유저들 (알림 수신자 역조회). 같은 아이템을 여러 유저가 담을 수 있다.
-    fun findUserIdsByItemId(itemId: Long): List<UUID>
+    fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID>
 }

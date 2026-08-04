@@ -77,17 +77,17 @@ class ProductSnapshotTest {
     }
 
     @Test
-    fun `currentPrice 가 null 이면 예외 없이 null 로 통과한다`() {
-        assertNull(ProductSnapshot.fromExtracted(link, "상품", null, null, "KRW").currentPrice)
+    fun `price 가 null 이면 예외 없이 null 로 통과한다`() {
+        assertNull(ProductSnapshot.fromExtracted(link, "상품", null, null, "KRW").price)
     }
 
     @Test
-    fun `currentPrice 가 0 이면 0 으로 통과한다`() {
-        assertEquals(0, ProductSnapshot.fromExtracted(link, "상품", null, 0, "KRW").currentPrice)
+    fun `price 가 0 이면 0 으로 통과한다`() {
+        assertEquals(0, ProductSnapshot.fromExtracted(link, "상품", null, 0, "KRW").price)
     }
 
     @Test
-    fun `currentPrice 가 양수이면 그대로 통과한다`() {
-        assertEquals(1_000, ProductSnapshot.fromExtracted(link, "상품", null, 1_000, "KRW").currentPrice)
+    fun `price 가 양수이면 그대로 통과한다`() {
+        assertEquals(1_000, ProductSnapshot.fromExtracted(link, "상품", null, 1_000, "KRW").price)
     }
 }
