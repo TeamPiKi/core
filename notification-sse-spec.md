@@ -189,7 +189,7 @@ data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1}
 
 | `kind` | 추가로 실리는 필드 | 이동 대상 |
 |---|---|---|
-| `WISH` | 없음 | `/archive` |
+| `WISH` | 없음 | `/wishlist` |
 | `TOURNAMENT` | `tournamentId` · `tournamentItemId` | `/tournament/{tournamentId}/create` 로 입장 후 `tournamentItemId` 로 그 아이템 지목 |
 
 - **이 `kind` 분기는 `case ITEM_PARSING_*` 안에서만 유효하다.** 다른 `type` 에도 `kind`=TOURNAMENT 가 실리므로(소셜 알림 전부), `type` 분기 없이 `kind` 만 보면 좌표 없는 알림이 이 경로로 새어 들어온다.
@@ -322,7 +322,7 @@ fun openSse() {
                     //   그 외 TOURNAMENT_*      -> refId(= tournamentId) 로 토너먼트 (좌표 없음)
                     //   ITEM_PARSING_*          -> 이 안에서만 kind 로 출처를 가른다:
                     //                              kind == "TOURNAMENT" -> tournamentId 로 입장 후 tournamentItemId 로 그 아이템 지목
-                    //                              kind == "WISH"       -> /archive
+                    //                              kind == "WISH"       -> /wishlist
                 }
                 "silent-sync" -> {
                     // 조용한 화면 갱신(알림 아님). SilentSyncPayload 는 sealed 지만 @JsonTypeInfo 가 없어 인터페이스로 바로
@@ -359,7 +359,7 @@ fun openSse() {
 - [ ] `refId` 의미가 `type` 마다 다름 (tournamentId vs itemId)
 - [ ] `kind`(`WISH`\|`TOURNAMENT`\|`SYSTEM`)는 **전 알림 공통** — 카드 라벨·아이콘에 그대로 쓴다 (옛 `category`·`imageUrl` 은 응답에서 제거됨)
 - [ ] **좌표(`tournamentId`·`tournamentItemId`) 유무는 `kind` 가 아니라 `type` 이 가른다** — `kind === "TOURNAMENT"` 만 보고 좌표를 읽지 말 것 (소셜 알림도 그 `kind` 지만 좌표가 없다)
-- [ ] 파싱 알림(`ITEM_PARSING_*`)은 **그 `type` 분기 안에서만** `kind` 로 출처 분기 (WISH → `/archive`, TOURNAMENT → `tournamentId`·`tournamentItemId`)
+- [ ] 파싱 알림(`ITEM_PARSING_*`)은 **그 `type` 분기 안에서만** `kind` 로 출처 분기 (WISH → `/wishlist`, TOURNAMENT → `tournamentId`·`tournamentItemId`)
 - [ ] `silent-sync` 는 알림이 아닌 **화면 갱신 신호** — payload 의 `type` 으로 분기 (`TOURNAMENT_ITEM_PARSED` 면 `(tournamentId, tournamentItemId)` 로 카드를 찾아 `status`(READY/FAILED) 반영). 토스트·알림센터 아님
 - [ ] 주석 `: ping` 은 무시 (data 이벤트 아님)
 - [ ] 재연결 시 목록 API 로 놓친 알림 동기화

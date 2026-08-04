@@ -24,7 +24,7 @@ class ItemParsingRecipientResolver(
     }
 
     // 파싱 알림의 딥링크 라우팅을 itemId 로 해석한다(#408). 토너먼트 출전 행이 있으면 그 좌표(tournamentId·
-    // tournamentItemId)를, 없으면 위시(/archive)로 본다. dispatch 는 수신자가 있을 때만 호출하므로
+    // tournamentItemId)를, 없으면 위시(/wishlist)로 본다. dispatch 는 수신자가 있을 때만 호출하므로
     // (recipients.isEmpty() early return), 이 itemId 는 위시·토너먼트 중 적어도 한쪽엔 있다 — 토너먼트가 아니면 위시다.
     // dedup 이 없어 파싱 시점 한 아이템은 단일 컨텍스트라, 라우팅은 수신자별이 아니라 아이템당 1회 해석으로 충분하다.
     fun resolveRouting(itemId: Long): NotificationRouting {
