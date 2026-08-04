@@ -1113,15 +1113,19 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments 는 playType 과 limit 을 함께 적용해 오래된 SOCIAL 도 limit 안에서 반환한다`() {
+    fun `GET tournaments 는 playType 으로 먼저 거른 뒤 그 결과에 limit 을 적용한다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
 
-        // 오래된 SOCIAL 을 먼저 만들고(목록에서 아래), 최신 SOLO 를 여러 개 만든다(목록 위).
-        // 필터가 페이징과 같은 자리에 있으면 playType=SOCIAL&limit=1 이 최신 SOLO 들을 건너뛰고
-        // 이 오래된 SOCIAL 을 반환해야 한다. 필터가 페이징 뒤로 밀리면(회귀) 최신 1개(SOLO)만 보고 걸러 빈 목록이 된다.
+        // SOCIAL 을 둘 만들고 그보다 최신인 SOLO 를 여러 개 얹는다(목록은 최신순).
+        // 이 배치가 두 회귀를 동시에 잡는다.
+        //   - 필터가 페이징 뒤로 밀리면: 최신 1건(SOLO)만 보고 걸러 빈 목록이 된다.
+        //   - playType 경로에 limit 이 안 실리면: SOCIAL 두 건이 다 나온다.
+        // SOCIAL 이 하나뿐이면 뒤쪽 회귀는 결과가 똑같이 1건이라 드러나지 않는다.
         val oldSocialId = createTournament(mockMvc, name = "오래된 소셜")
         joinTournament(mockMvc, oldSocialId, otherUserId)
+        val latestSocialId = createTournament(mockMvc, name = "최신 소셜")
+        joinTournament(mockMvc, latestSocialId, otherUserId)
         createTournament(mockMvc, name = "최신 솔로 1")
         createTournament(mockMvc, name = "최신 솔로 2")
 
@@ -1133,7 +1137,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .param("limit", "1"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].tournamentId").value(oldSocialId))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(latestSocialId))
     }
 
     @Test
