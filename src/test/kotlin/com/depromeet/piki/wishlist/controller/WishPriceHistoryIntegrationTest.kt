@@ -32,8 +32,9 @@ import java.util.UUID
 // 상세 조회(GET /wishlists/{wishId})가 함께 내려주는 가격 이력의 계약을 고정한다. 동기 조회라 @Transactional 자동 롤백으로 격리하고,
 // 한 item 에 버전을 직접 쌓아 "갱신·새로고침·수기 수정이 누적된 상태"를 시딩한다.
 //
-// 고정하는 계약: 기계(SERVER/SERVER_LLM) READY 만 최신순으로, 수기(MANUAL)·출처 미상(null)·미완성(PENDING/PROCESSING/FAILED)·
-// soft-delete 제외, 상한 50건. 그리고 **item 과 priceHistory 가 별개의 축**이라는 것 — 표시값이 이력에 없을 수 있고 그것이 정상이다.
+// 고정하는 계약: READY 중 기계(SERVER/SERVER_LLM) 전부와 **본인 수기**를 최신순으로, 타인 수기·출처 미상(null)·
+// 미완성(PENDING/PROCESSING/FAILED)·soft-delete 는 제외, 상한 50건. 그리고 이 집합이 표시값 파생의 입력과 같아
+// **표시 버전이 READY 인 한 첫 항목이 곧 표시값**이라는 것.
 @Transactional
 class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -85,6 +86,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             // 시각은 UTC wall-clock 으로 저장하고 응답에서 KST(+09:00)로 변환한다(JacksonConfig).
             // KST 는 DST 가 없는 고정 오프셋이라 이 단언은 실행 환경 타임존과 무관하게 결정적이다.
             .andExpect(jsonPath("$.data.priceHistory[0].extractedAt").value("2026-06-01T19:00:00+09:00"))
+            .andExpect(jsonPath("$.data.priceHistory[0].source").value("SERVER"))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(99_000))
             .andExpect(jsonPath("$.data.priceHistory[2].price").value(119_000))
             // 이력이 별도 API 로 갈리지 않게 한 결과 — 상세 응답 하나로 끝난다.
@@ -94,9 +96,10 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `수기와 출처 미상 버전은 가격 이력에서 빠진다 - 남의 수기도 내 수기도`() {
-        // 이 필터가 이 작업의 핵심이다. 수기값은 시세 관측치가 아니고, 스냅샷을 지우는 경로가 없어
-        // 한 번 잘못 입력하면 추이에 영구히 남는다. 출처 미상(도입 전 행)은 기계 여부를 소급 판정할 수 없어 함께 뺀다.
+    fun `타인의 수기와 출처 미상 버전은 빠지고 본인 수기는 이력에 남는다`() {
+        // 이 필터가 이 작업의 핵심이다. 타인의 수기는 남의 위시 사정이라 내 이력에 섞이면 안 되고,
+        // 출처 미상(도입 전 행)은 서버 추출인지 사용자 입력인지 소급 판정할 수 없어 뺀다.
+        // 반면 본인 입력값은 사용자가 페이지를 직접 보고 적은 값이자 추출 실패 상품의 유일한 기록이라 남긴다.
         val mockMvc = buildMockMvc()
         val me = UUID.randomUUID()
         val other = UUID.randomUUID()
@@ -106,7 +109,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val machine = saveVersion(itemId, "기계 추출", 95_000, source = ItemSnapshotSource.SERVER, editedBy = null)
         saveVersion(itemId, "타인 수기", 80_000, source = ItemSnapshotSource.MANUAL, editedBy = other)
         saveVersion(itemId, "LLM 추출", 97_000, source = ItemSnapshotSource.SERVER_LLM, editedBy = null)
-        saveVersion(itemId, "내 수기", 1_190_000, source = ItemSnapshotSource.MANUAL, editedBy = me)
+        saveVersion(itemId, "내 수기", 99_000, source = ItemSnapshotSource.MANUAL, editedBy = me)
         val wishId = saveWish(me, machine)
 
         mockMvc
@@ -114,25 +117,32 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 get("/api/v1/wishlists/$wishId")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(me)}"),
             ).andExpect(status().isOk)
-            // 다섯 버전 중 기계 둘(SERVER·SERVER_LLM)만 남는다. 오타로 넣은 119만원짜리 내 수기도 빠진다.
-            .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
-            .andExpect(jsonPath("$.data.priceHistory[0].price").value(97_000))
-            .andExpect(jsonPath("$.data.priceHistory[1].price").value(95_000))
+            // 다섯 버전 중 셋이 남는다 — 기계 둘(SERVER·SERVER_LLM) + 내 수기. 타인 수기와 출처 미상은 빠진다.
+            .andExpect(jsonPath("$.data.priceHistory.length()").value(3))
+            .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
+            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[1].price").value(97_000))
+            .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER_LLM"))
+            .andExpect(jsonPath("$.data.priceHistory[2].price").value(95_000))
+            .andExpect(jsonPath("$.data.priceHistory[2].source").value("SERVER"))
+            // 편집자 식별자는 응답에 싣지 않는다 — 내려온 MANUAL 은 곧 본인 것이므로 판정할 필요가 없다.
+            .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").doesNotExist())
             .andExpect(jsonPath("$.data.item.id").value(itemId))
-            // 표시값은 파생 규칙(#857)대로 마지막 기계 READY 인 LLM 버전이다 — 포인터(machine)보다 뒤에 쌓였으므로.
+            // 표시값은 파생 규칙(#857)대로 마지막 기계 READY 인 LLM 버전이다 — 포인터(machine)가 그보다 앞에 있고 수기가 아니므로.
             .andExpect(jsonPath("$.data.item.price").value(97_000))
             .andExpect(jsonPath("$.data.item.source").value("SERVER_LLM"))
     }
 
     @Test
-    fun `표시값이 수기면 그 값은 가격 이력에 없다 - 상단 카드와 그래프 끝점이 달라도 정상이다`() {
-        // item 과 priceHistory 는 별개의 축이라는 계약. 둘을 조인해 맞춰보려는 클라이언트가 있으면 여기서 깨진다.
+    fun `본인이 고친 값은 이력 맨 앞에 오고 그것이 곧 표시값이다`() {
+        // 이력이 표시값 파생의 입력과 같은 집합(기계 전부 + 본인 수기)이라, 표시 버전이 READY 인 한 첫 항목이 곧 표시값이다.
+        // 이 불변식이 깨지면 상단 카드와 그래프 끝점이 어긋나므로 회귀로 고정한다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/manual-display")
         saveMachineReady(itemId, "기계 값", 109_000, LocalDateTime.of(2026, 6, 1, 10, 0))
-        // 기계 READY 보다 뒤에 쌓인 내 수기 — 표시값은 이 값이 되지만(수기 존중) 이력에는 안 들어간다.
+        // 기계 READY 보다 뒤에 쌓인 내 수기 — 표시값이 되고(수기 존중) 이력에도 맨 앞에 온다.
         val myEdit = saveVersion(itemId, "내가 고친 값", 99_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
         val wishId = saveWish(userId, myEdit)
 
@@ -143,9 +153,36 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.price").value(99_000))
             .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
-            // 이력에는 기계값만 — 표시값 99,000원은 여기 없다.
-            .andExpect(jsonPath("$.data.priceHistory.length()").value(1))
-            .andExpect(jsonPath("$.data.priceHistory[0].price").value(109_000))
+            .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
+            // 첫 항목 = 표시값
+            .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
+            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[1].price").value(109_000))
+            .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER"))
+    }
+
+    @Test
+    fun `추출이 한 번도 성공하지 못한 상품도 본인이 입력했다면 이력이 남는다`() {
+        // 차단·403 몰처럼 파싱이 계속 실패하는 상품에서는 본인 입력이 유일한 가격 기록이다.
+        // 이것까지 빼면 그 상품은 가격 추적 자체가 불가능해진다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val itemId = saveItem("https://shop.example.com/products/never-parsed")
+        itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, status = ItemStatus.FAILED))
+        saveVersion(itemId, "직접 입력 1차", 120_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
+        val second = saveVersion(itemId, "직접 입력 2차", 110_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
+        val wishId = saveWish(userId, second)
+
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists/$wishId")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
+            .andExpect(jsonPath("$.data.priceHistory[0].price").value(110_000))
+            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[1].price").value(120_000))
     }
 
     @Test

@@ -97,7 +97,7 @@ class WishlistApiExamples(
                     )
                     add(
                         status = HttpStatus.OK,
-                        name = "수기로 고친 항목 (표시값이 이력에 없는 정상 케이스)",
+                        name = "본인이 직접 고친 항목 (입력값이 이력 맨 앞)",
                         payload = ApiResponseBody.ok(manualEditedDetailSample),
                     )
                     add(
@@ -239,8 +239,8 @@ class WishlistApiExamples(
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
 
-    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 기계 관측 가격 이력. 119,000원에서 시작해 109,000원까지
-    // 내려온 추이를 보여준다. 이력의 맨 앞(109,000원)이 곧 표시값이라 상단 카드와 그래프 끝점이 일치하는 정상 케이스.
+    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 이력. 119,000원에서 시작해 109,000원까지 내려온 추이를 보여준다.
+    // 이력의 맨 앞이 곧 표시값이다(표시 버전이 READY 인 한 항상 성립).
     private val wishDetailSample =
         WishDetailResponse(
             wish =
@@ -266,20 +266,23 @@ class WishlistApiExamples(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 109_000,
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
+                        source = ItemSnapshotSource.SERVER,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 115_000,
                         extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
+                        source = ItemSnapshotSource.SERVER_LLM,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 119_000,
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
+                        source = ItemSnapshotSource.SERVER,
                     ),
                 ),
         )
 
-    // 수기로 고친 항목 — 지금 보이는 값(source=MANUAL, 99,000원)은 사용자가 직접 넣은 값이라 priceHistory 에 없다.
-    // 상단 카드 가격과 그래프의 마지막 점(109,000원)이 다른 정상 케이스이며, 클라는 source 로 "직접 입력한 값" 배지를 띄운다.
+    // 본인이 직접 고친 항목 — 입력값(99,000원)이 이력의 맨 앞에 오고 그것이 곧 지금 보이는 값이다.
+    // source 로 서버 추출분과 구분되지만 접거나 걸러낼 대상은 아니다(신뢰도 등급이 아니라 맥락 표시).
     private val manualEditedDetailSample =
         wishDetailSample.copy(
             item =
@@ -287,6 +290,14 @@ class WishlistApiExamples(
                     source = ItemSnapshotSource.MANUAL,
                     price = 99_000,
                 ),
+            priceHistory =
+                listOf(
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 99_000,
+                        extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
+                        source = ItemSnapshotSource.MANUAL,
+                    ),
+                ) + wishDetailSample.priceHistory,
         )
 
     // 아직 추출에 한 번도 성공하지 못한 상품 — 추출 진행 중이라 표시값도 비어 있고 이력도 없다.

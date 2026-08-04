@@ -2,6 +2,7 @@ package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
 import java.time.LocalDateTime
+import java.util.UUID
 
 interface ItemSnapshotRepository {
     fun save(snapshot: ItemSnapshot): ItemSnapshot
@@ -27,11 +28,13 @@ interface ItemSnapshotRepository {
         toItemId: Long,
     ): Int
 
-    // 가격 이력 조회 — 한 item 의 기계(SERVER/SERVER_LLM) READY 버전을 최신순(id desc)으로 limit 개까지.
-    // 가격이 없는 PENDING/PROCESSING/FAILED 와, 시계열의 관측치가 아닌 수기(MANUAL)·출처 미상(null)은 빠진다.
-    // limit 을 받는 이유: item 을 여러 사용자가 공유해 새로고침이 누적되므로 상한이 없으면 응답이 계속 자란다.
-    fun findMachineReadyHistoryByItemId(
+    // 가격 이력 조회 — 한 item 의 READY 버전 중 기계(SERVER/SERVER_LLM) 전부와 requesterId 본인의 수기(MANUAL)를
+    // 최신순(id desc)으로 limit 개까지. 가격이 없는 PENDING/PROCESSING/FAILED, 타인의 수기, 출처 미상(null)은 빠진다.
+    // requesterId 를 받는 이유: item 은 공유 자원이라 남이 자기 위시에서 고친 값이 그대로 두면 내 이력에 섞인다.
+    // limit 을 받는 이유: 새로고침이 누적되므로 상한이 없으면 응답이 계속 자란다.
+    fun findPriceHistoryByItemId(
         itemId: Long,
+        requesterId: UUID,
         limit: Int,
     ): List<ItemSnapshot>
 
