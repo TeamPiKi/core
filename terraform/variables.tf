@@ -132,3 +132,9 @@ variable "db_allocated_storage" {
   type        = number
   default     = 20
 }
+
+variable "github_repo" {
+  description = "OIDC 신뢰 조건에 쓸 GitHub 저장소 (org/repo). 이 repo 의 Actions 만 push 역할을 assume 할 수 있다."
+  type        = string
+  default     = "TeamPiKi/core"
+}
