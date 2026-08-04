@@ -175,6 +175,7 @@ jobs:
         run: ./gradlew bootJar --no-daemon
 
       - name: Configure AWS credentials (OIDC)
+        id: aws_credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
@@ -755,8 +756,8 @@ jobs:
             CAUSE="Gradle 빌드 실패 (Build JAR)"
           elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
             CAUSE="CI 아티팩트(JAR) 다운로드 실패 (트리거 CI 의 app-jar 누락/만료 · actions:read 권한)"
-          elif [ "${{ steps.docker_login.outcome }}" = "failure" ]; then
-            CAUSE="Docker Hub 로그인 실패"
+          elif [ "${{ steps.aws_credentials.outcome }}" = "failure" ] || [ "${{ steps.ecr_login.outcome }}" = "failure" ]; then
+            CAUSE="ECR 인증 실패 (OIDC assume-role 또는 ECR 로그인 — 신뢰조건·IAM 권한 확인)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then

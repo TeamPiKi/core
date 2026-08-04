@@ -25,11 +25,15 @@ data "aws_iam_policy_document" "github_push_assume" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # 이 repo 의 어느 브랜치·환경에서 실행되든 push 허용(sub = repo:org/repo:*).
+    # dev·prod Environment 배포에서만 assume 허용 (브랜치·PR·기타 환경 차단).
+    # deploy.yml 의 deploy job 이 environment: dev|prod 를 확정하므로 이 둘로 최소권한화한다.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values = [
+        "repo:${var.github_repo}:environment:dev",
+        "repo:${var.github_repo}:environment:prod",
+      ]
     }
   }
 }
