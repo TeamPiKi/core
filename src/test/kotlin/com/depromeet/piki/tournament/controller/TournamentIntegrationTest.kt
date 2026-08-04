@@ -27,6 +27,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
@@ -559,26 +560,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-matches 에서 이미 COMPLETED 인 토너먼트이면 409 를 반환한다`() {
+    fun `POST tournaments-id-matches 에서 COMPLETED 인 토너먼트에 기록되지 않은 매치를 보내면 409 를 반환한다`() {
+        // 같은 매치 재전송은 멱등 성공이므로(#683) 409 를 보려면 "기록되지 않은 새 매치" 여야 한다.
+        // 그 판정이 진행 중 검사보다 앞에 있어, 완료된 토너먼트에 새 매치를 보내면 여기서 걸린다.
         val mockMvc = buildMockMvc()
-        val (tournamentId, item1Id, item2Id) = startTournamentWith2Items(mockMvc)
-        val matchBody =
-            """{"currentRound":2,"firstTournamentItemId":$item1Id,"secondTournamentItemId":$item2Id,"selectedTournamentItemId":$item1Id}"""
-
+        val item1Id = saveWishItem(name = "아이템1", price = 10_000)
+        val item2Id = saveWishItem(name = "아이템2", price = 20_000)
+        val item3Id = saveWishItem(name = "아이템3", price = 30_000)
+        val item4Id = saveWishItem(name = "아이템4", price = 40_000)
+        val tournamentId = createTournament(mockMvc)
+        addItemsToTournament(mockMvc, tournamentId, userId, item1Id, item2Id, item3Id, item4Id)
         mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(matchBody),
+            post("/api/v1/tournaments/$tournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
+        val ti = items.map { it.getId() }
 
+        // 4강 두 매치 + 결승까지 치러 COMPLETED 로 만든다.
+        listOf(
+            """{"currentRound":4,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[1]},"selectedTournamentItemId":${ti[0]}}""",
+            """{"currentRound":4,"firstTournamentItemId":${ti[2]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[2]}}""",
+            """{"currentRound":2,"firstTournamentItemId":${ti[0]},"secondTournamentItemId":${ti[2]},"selectedTournamentItemId":${ti[0]}}""",
+        ).forEach { body ->
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/matches")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body),
+                ).andExpect(status().isOk)
+        }
+
+        // 한 번도 치른 적 없는 조합(4강에서 탈락한 둘) → 멱등에 안 걸리고 진행 중 검사에서 409
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/matches")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(matchBody),
+                    .content(
+                        """{"currentRound":2,"firstTournamentItemId":${ti[1]},"secondTournamentItemId":${ti[3]},"selectedTournamentItemId":${ti[1]}}""",
+                    ),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.NOT_IN_PROGRESS_TOURNAMENT.code))
     }
 
     @Test
@@ -1114,16 +1138,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             post("/api/v1/tournaments/$tournamentId/start")
                 .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
+        // 삽입 순서(10k · 40k · 20k · 30k)는 가격 순이 아니다. 서버 브래킷은 가격 오름차순 인접 페어라
+        // (10k,20k) · (30k,40k) 로 묶이므로, 삽입 인접인 (10k,40k) 를 보내면 400 이다 (#683 브래킷 무결성).
         val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
-        val ti1 = items[0].getId()
-        val ti2 = items[1].getId()
+        val ti10k = items[0].getId()
+        val ti40k = items[1].getId()
+        val ti20k = items[2].getId()
 
-        mockMvc.perform(
-            post("/api/v1/tournaments/$tournamentId/matches")
-                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"currentRound":4,"firstTournamentItemId":$ti1,"secondTournamentItemId":$ti2,"selectedTournamentItemId":$ti1}"""),
-        )
+        // 삽입 인접이지만 가격 인접이 아닌 조합은 거부된다 - 이 케이스가 이관이 막은 구멍 그 자체다.
+        // (전용 위조 페어 테스트는 삽입 순서와 가격 순서가 같아 이 구분을 못 잡는다)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti40k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.INVALID_MATCH_PAIR.code))
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":4,"firstTournamentItemId":$ti10k,"secondTournamentItemId":$ti20k,"selectedTournamentItemId":$ti10k}""",
+                    ),
+            ).andExpect(status().isOk)
 
         mockMvc
             .perform(
@@ -1134,13 +1177,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending").doesNotExist())
             .andExpect(jsonPath("$.data.inProgress.currentRound").value(4))
             .andExpect(jsonPath("$.data.inProgress.lastHistory.currentRound").value(4))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti1))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti2))
-            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti1))
-            // round-4 미대결 생존 아이템 2개(item3, item4) 가격 오름차순
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.firstTournamentItemId").value(ti10k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.secondTournamentItemId").value(ti20k))
+            .andExpect(jsonPath("$.data.inProgress.lastHistory.selectedTournamentItemId").value(ti10k))
+            // round-4 미대결 생존 아이템 2개(30k · 40k) — 삽입 순서는 40k 가 먼저지만 응답은 가격 오름차순이다
             .andExpect(jsonPath("$.data.inProgress.remainingItems.length()").value(2))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(20_000))
-            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[0].price").value(30_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].price").value(40_000))
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[1].tournamentItemId").value(ti40k))
     }
 
     @Test

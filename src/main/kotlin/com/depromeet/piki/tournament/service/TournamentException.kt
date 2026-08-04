@@ -91,5 +91,12 @@ class TournamentException private constructor(
 
         fun clonedTournamentCannotAddItems(): TournamentException =
             TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_ADD_ITEMS)
+
+        // 서버가 브래킷에서 파생한 페어 집합에 없는 조합을 보낸 경우(#683). 최신 클라는 서버가 내려준
+        // currentMatch·nextMatch 를 그대로 되돌려주므로, 여기 닿는 건 조합을 임의로 구성한 요청 = 계약 위반 → 400.
+        fun invalidMatchPair(): TournamentException = TournamentException(TournamentErrorCode.INVALID_MATCH_PAIR)
+
+        // 이미 기록된 매치에 다른 승자를 보낸 경우(#683). 같은 승자면 멱등 성공이고, 다른 승자는 결과 뒤집기라 → 409.
+        fun matchAlreadyRecorded(): TournamentException = TournamentException(TournamentErrorCode.MATCH_ALREADY_RECORDED)
     }
 }

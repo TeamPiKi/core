@@ -15,6 +15,7 @@ import com.depromeet.piki.tournament.controller.dto.JoinTournamentAsGuestRespons
 import com.depromeet.piki.tournament.controller.dto.UpdateInviteDurationRequest
 import com.depromeet.piki.tournament.controller.dto.PlayLinkInfoResponse
 import com.depromeet.piki.tournament.controller.dto.RankedItemResponse
+import com.depromeet.piki.tournament.controller.dto.RecordMatchResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
@@ -246,61 +247,80 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "기록 성공 (결승 아닌 라운드) — data=null",
-                            payload = ApiResponseBody.ok<TournamentDetailResponse.CompletedData?>(),
+                            name = "기록 성공 (라운드 진행 중) - nextMatch 에 다음 매치",
+                            payload =
+                                ApiResponseBody.ok(
+                                    RecordMatchResponse(
+                                        nextMatch = MATCH_EXAMPLE,
+                                        completed = null,
+                                    ),
+                                ),
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "기록 성공 (결승 라운드) — 순위 결과 포함",
+                            name = "기록 성공 (라운드 종료) - nextMatch 생략으로 data 가 빈 객체, GET 재조회 필요",
                             payload =
                                 ApiResponseBody.ok(
-                                    TournamentDetailResponse.CompletedData(
-                                        result =
-                                            listOf(
-                                                RankedItemResponse(
-                                                    rank = 1,
-                                                    tournamentItemId = 1,
-                                                    itemId = 10,
-                                                    name = "나이키 에어맥스",
-                                                    price = 129_000,
-                                                    currency = "KRW",
-                                                    imageUrl = "https://cdn.example.com/items/1.jpg",
-                                                ),
-                                                RankedItemResponse(
-                                                    rank = 2,
-                                                    tournamentItemId = 2,
-                                                    itemId = 20,
-                                                    name = "아디다스 울트라부스트",
-                                                    price = 189_000,
-                                                    currency = "KRW",
-                                                    imageUrl = "https://cdn.example.com/items/2.jpg",
-                                                ),
-                                                RankedItemResponse(
-                                                    rank = 3,
-                                                    tournamentItemId = 3,
-                                                    itemId = 30,
-                                                    name = "뉴발란스 993",
-                                                    price = 259_000,
-                                                    currency = "KRW",
-                                                    imageUrl = "https://cdn.example.com/items/3.jpg",
-                                                ),
-                                                RankedItemResponse(
-                                                    rank = 4,
-                                                    tournamentItemId = 4,
-                                                    itemId = 40,
-                                                    name = "살로몬 XT-6",
-                                                    price = 279_000,
-                                                    currency = "USD",
-                                                    imageUrl = null,
-                                                ),
+                                    RecordMatchResponse(nextMatch = null, completed = null),
+                                ),
+                        )
+                        add(
+                            status = HttpStatus.OK,
+                            name = "기록 성공 (결승 라운드) - 순위 결과 포함, 재전송 시 같은 응답",
+                            payload =
+                                ApiResponseBody.ok(
+                                    RecordMatchResponse(
+                                        nextMatch = null,
+                                        completed =
+                                            TournamentDetailResponse.CompletedData(
+                                                result =
+                                                    listOf(
+                                                        RankedItemResponse(
+                                                            rank = 1,
+                                                            tournamentItemId = 1,
+                                                            itemId = 10,
+                                                            name = "나이키 에어맥스",
+                                                            price = 129_000,
+                                                            currency = "KRW",
+                                                            imageUrl = "https://cdn.example.com/items/1.jpg",
+                                                        ),
+                                                        RankedItemResponse(
+                                                            rank = 2,
+                                                            tournamentItemId = 2,
+                                                            itemId = 20,
+                                                            name = "아디다스 울트라부스트",
+                                                            price = 189_000,
+                                                            currency = "KRW",
+                                                            imageUrl = "https://cdn.example.com/items/2.jpg",
+                                                        ),
+                                                        RankedItemResponse(
+                                                            rank = 3,
+                                                            tournamentItemId = 3,
+                                                            itemId = 30,
+                                                            name = "뉴발란스 993",
+                                                            price = 259_000,
+                                                            currency = "KRW",
+                                                            imageUrl = "https://cdn.example.com/items/3.jpg",
+                                                        ),
+                                                        RankedItemResponse(
+                                                            rank = 4,
+                                                            tournamentItemId = 4,
+                                                            itemId = 40,
+                                                            name = "살로몬 XT-6",
+                                                            price = 279_000,
+                                                            currency = "USD",
+                                                            imageUrl = null,
+                                                        ),
+                                                    ),
+                                                hasGroupResult = true,
+                                                canAddItem = true,
+                                                playLinkExpiresAt = LocalDateTime.of(2026, 6, 20, 22, 0, 0),
                                             ),
-                                        hasGroupResult = true,
-                                        canAddItem = true,
-                                        playLinkExpiresAt = LocalDateTime.of(2026, 6, 20, 22, 0, 0),
                                     ),
                                 ),
                         )
                         add(TournamentException.invalidWinner(), name = "승자가 대결 아이템이 아님")
+                        add(TournamentException.invalidMatchPair(), name = "서버 브래킷에 없는 페어 조합")
                         add(TournamentException.invalidTournamentItem(), name = "이 토너먼트에 없는 아이템")
                         add(TournamentException.invalidCurrentRound(), name = "현재 진행 라운드와 불일치")
                         unauthorized()
@@ -308,6 +328,7 @@ class TournamentApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notInProgressTournament(), name = "진행 중 토너먼트 아님")
                         add(TournamentException.eliminatedTournamentItem(), name = "이미 탈락한 아이템")
+                        add(TournamentException.matchAlreadyRecorded(), name = "이미 기록된 대결에 다른 승자 전송")
                     }
 
                 handlerMethod.binds(TournamentController::getTournamentById) ->
@@ -479,6 +500,7 @@ class TournamentApiExamples(
                                                             status = ItemStatus.READY,
                                                         ),
                                                     ),
+                                                currentMatch = MATCH_EXAMPLE,
                                             ),
                                         completed = null,
                                     ),
@@ -755,4 +777,34 @@ class TournamentApiExamples(
             }
             operation
         }
+
+    companion object {
+        // 서버가 브래킷에서 파생한 매치 example(#683). inProgress.currentMatch 와 POST 응답 nextMatch 가
+        // 같은 모양이라 한 곳에 두고 양쪽에서 참조한다.
+        private val MATCH_EXAMPLE =
+            TournamentDetailResponse.MatchResponse(
+                first =
+                    TournamentDetailResponse.ItemDetailResponse(
+                        tournamentItemId = 3,
+                        itemId = 30,
+                        userId = UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                        name = "뉴발란스 993",
+                        price = 259_000,
+                        currency = "KRW",
+                        imageUrl = "https://cdn.example.com/items/3.jpg",
+                        status = ItemStatus.READY,
+                    ),
+                second =
+                    TournamentDetailResponse.ItemDetailResponse(
+                        tournamentItemId = 4,
+                        itemId = 40,
+                        userId = UUID.fromString("22222222-3333-4444-5555-666666666666"),
+                        name = "살로몬 XT-6",
+                        price = 279_000,
+                        currency = "KRW",
+                        imageUrl = null,
+                        status = ItemStatus.READY,
+                    ),
+            )
+    }
 }
