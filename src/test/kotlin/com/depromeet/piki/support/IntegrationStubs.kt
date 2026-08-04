@@ -32,6 +32,13 @@ class IntegrationStubs {
     @Primary
     fun imageStorage(): StubImageStorage = StubImageStorage()
 
+    // 모델 프로브 외부 경계(#875). 백오피스 저장 게이트가 extractor 를 거쳐 Gemini 를 실제로 부르므로,
+    // 통합 테스트는 이 stub 으로 성공·거절 시나리오를 만든다. 원격 클라이언트 자체(3갈래 번역)는
+    // 단위(HttpExtractionModelProbeTest)가 검증한다.
+    @Bean
+    @Primary
+    fun extractionModelProbe(): StubExtractionModelProbe = StubExtractionModelProbe()
+
     // FCM 발송 외부 경계(#245). 운영 FirebaseMessageSender 는 FirebaseApp 키가 없는 테스트 환경에선
     // 아예 안 뜨지만, PushNotificationChannel 이 ObjectProvider 로 FcmMessageSender 를 찾으므로
     // stub 을 @Primary 로 등록해 발송 fan-out·죽은 토큰 정리를 실제 FCM 호출 없이 검증한다.

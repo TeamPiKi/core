@@ -36,14 +36,21 @@ class HttpProductLinkExtractorTest {
         override fun routeOf(link: ProductLink): ExtractionRoute? = route
     }
 
+    private class FakeModelSettings(
+        private val model: String? = null,
+    ) : ExtractionModelSettings {
+        override fun modelOf(target: ExtractionTarget): String? = model
+    }
+
     private fun extractorWith(
         route: ExtractionRoute? = null,
+        model: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpProductLinkExtractor {
         val builder = RestClient.builder().baseUrl("http://extractor.test")
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
-        return HttpProductLinkExtractor(builder.build(), FakeRoutingPolicy(route))
+        return HttpProductLinkExtractor(builder.build(), FakeRoutingPolicy(route), FakeModelSettings(model))
     }
 
     @Test
@@ -287,5 +294,25 @@ class HttpProductLinkExtractorTest {
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
         assertTrue(AsyncItemParsingWorker.isRetryable(e))
+    }
+
+    // 모델 지정(백오피스·DB)이 LINK 축에서 요청 힌트로 실린다. 지정이 없으면 싣지 않아 extractor 기본 모델로
+    // 동작하는데, 그건 위 테스트들이 이미 지나는 경로다(요청에 model 을 기대하지 않는다).
+    @Test
+    fun `LINK 축에 지정된 모델을 요청 힌트로 싣는다`() {
+        val extractor =
+            extractorWith(model = "gemini-3-flash") { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.model").value("gemini-3-flash"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
     }
 }

@@ -3,6 +3,8 @@ package com.depromeet.piki.image.service.remote
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.item.service.AsyncImageParsingWorker
+import com.depromeet.piki.product.service.remote.ExtractionModelSettings
+import com.depromeet.piki.product.service.remote.ExtractionTarget
 import com.depromeet.piki.product.service.remote.ProductExtractorException
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
@@ -31,13 +33,23 @@ import kotlin.test.assertTrue
 class HttpImageSnapshotExtractorTest {
     private val imageKey = "items/raw/0f8a1c2e.png"
 
-    private fun extractorWith(server: (MockRestServiceServer) -> Unit): HttpImageSnapshotExtractor {
+    private class FakeModelSettings(
+        private val model: String? = null,
+    ) : ExtractionModelSettings {
+        override fun modelOf(target: ExtractionTarget): String? = model
+    }
+
+    private fun extractorWith(
+        model: String? = null,
+        server: (MockRestServiceServer) -> Unit,
+    ): HttpImageSnapshotExtractor {
         val builder = RestClient.builder().baseUrl("http://extractor.test")
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
         return HttpImageSnapshotExtractor(
             builder.build(),
             S3Properties(bucket = "test-piki-images", publicBaseUrl = "https://img.test"),
+            FakeModelSettings(model),
         )
     }
 
@@ -95,5 +107,25 @@ class HttpImageSnapshotExtractorTest {
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
         assertTrue(AsyncImageParsingWorker.isRetryable(e))
+    }
+
+    // 축 분리의 실증 — 이미지 경로는 IMAGE 지정만 따른다. FakeModelSettings 가 축과 무관하게 같은 값을 주므로
+    // 이 테스트가 고정하는 것은 "요청에 실린다"까지이고, 어느 축을 읽는지는 소비 지점(modelOf 인자)이 진다.
+    @Test
+    fun `IMAGE 축에 지정된 모델을 요청 힌트로 싣는다`() {
+        val extractor =
+            extractorWith(model = "gemini-3-pro-vision") { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/image"))
+                    .andExpect(jsonPath("$.model").value("gemini-3-pro-vision"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://img.test/items/x.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(imageKey).name)
     }
 }
