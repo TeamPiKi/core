@@ -44,6 +44,18 @@ interface AuthApi {
                     ),
                 ],
             ),
+            // 서버 사정(닉네임 풀 소진)이지만 handleUnexpected 의 일반 500 이 아니라 HttpMappable 이 던지는 명시 계약이라,
+            // 정상 요청으로도 닿을 수 있다. 클라이언트는 재시도해도 소진 상태면 계속 실패하므로 안내가 필요하다.
+            ApiResponse(
+                responseCode = "500",
+                description = "게스트 닉네임 자동 생성 실패 (닉네임 풀 소진)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     @Parameter(

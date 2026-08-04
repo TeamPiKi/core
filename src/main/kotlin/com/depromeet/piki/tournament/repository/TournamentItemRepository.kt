@@ -11,10 +11,13 @@ interface TournamentItemRepository {
     fun findIdsByTournamentId(tournamentId: Long): List<Long>
 
     // 이 아이템을 토너먼트에 추가한 사람들(adder). 파싱 알림 수신자 역조회. 같은 아이템이 여러 토너먼트에 공유될 수 있다.
-    fun findUserIdsByItemId(itemId: Long): List<UUID>
+    // 수기 수정(pin 이동) 직렬화용 행 락 조회.
+    fun findByIdForUpdate(id: Long): TournamentItem?
+
+    fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID>
 
     // 이 아이템의 토너먼트 출전 좌표(어느 토너먼트 / 그 안 어느 tournament_item). 파싱 알림 딥링크 라우팅 역조회(#408).
-    fun findRoutingByItemId(itemId: Long): List<TournamentItemRoutingView>
+    fun findRoutingBySnapshotId(snapshotId: Long): List<TournamentItemRoutingView>
 
     fun findAllByTournamentId(tournamentId: Long): List<TournamentItem>
 

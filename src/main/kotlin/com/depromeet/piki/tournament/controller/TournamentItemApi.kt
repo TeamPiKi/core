@@ -256,7 +256,7 @@ interface TournamentItemApi {
         description = """
             PENDING 상태의 토너먼트에 이미지 추출을 통해 아이템을 추가한다.
             플레이 링크로 생성된 복제 토너먼트에는 추가 불가. 토너먼트 참여자만 추가할 수 있다.
-            이미지 1~5장을 전달하면 아이템이 PENDING 상태로 즉시 생성되어(link 처럼 outbox 적재) tournamentItemIds 가 반환된다.
+            이미지 1~5장을 전달하면 아이템이 PENDING 상태로 즉시 생성되어(link 처럼 작업 큐 적재) tournamentItemIds 가 반환된다.
             이미지 파싱은 비동기로 진행되며 완료 시 READY 또는 FAILED 상태로 전환된다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
@@ -439,7 +439,7 @@ interface TournamentItemApi {
         summary = "이미지로 토너먼트 아이템 추가 v2 - 업로드 확정",
         description = """
             이미지 등록 v2 의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PENDING 아이템으로 즉시 추가하고 tournamentItemIds 를 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 outbox 에 적재하며, 이후 파싱(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 작업 큐에 적재하며, 이후 파싱(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )
@@ -595,8 +595,21 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "409",
                 description =
-                    "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록 완료(READY) 아이템 — code: ITEM-001 · " +
-                        "아직 대기·처리 중(PENDING·PROCESSING) 아이템 — code: ITEM-002)",
+                    "상태 충돌 (PENDING이 아닌 토너먼트)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description =
+                    "잘못된 요청 (빈 이미지 파일 — code: PRODUCTIMAGE-001 · " +
+                        "이미지 형식 확인 불가 — PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif 만) — PRODUCTIMAGE-003 · " +
+                        "요청 값 형식 검증 실패 — COMMON-INVALID-INPUT)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

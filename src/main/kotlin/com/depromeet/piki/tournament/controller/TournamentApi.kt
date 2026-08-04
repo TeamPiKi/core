@@ -293,7 +293,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (COMPLETED가 아닌 토너먼트)",
+                description = "상태 충돌 (본인 플레이가 아직 완료되지 않음 · 완료한 참여자가 2명 미만)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],
@@ -325,7 +325,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (name 미입력)",
+                description = "잘못된 요청 (name 미입력 · inviteDurationMinutes 가 1분 미만이거나 24시간 초과)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -408,7 +408,9 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트 · PROCESSING/FAILED 상품 포함 · 가격 정보 없는 상품 포함)",
+                description =
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · PROCESSING/FAILED 상품 포함 · 가격 정보 없는 상품 포함 · " +
+                        "주최자가 아직 시작하지 않음 · 이미 본인 클론이 있음 — 뒤 둘은 멤버 시작 경로)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

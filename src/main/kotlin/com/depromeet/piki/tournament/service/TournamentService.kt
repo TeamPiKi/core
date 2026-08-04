@@ -4,6 +4,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.tournament.domain.RoundBracket
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
@@ -52,6 +53,7 @@ class TournamentService(
     private val userRepository: UserRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val itemDisplayService: ItemDisplayService,
     private val wishRepository: WishRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
@@ -198,16 +200,26 @@ class TournamentService(
             throw TournamentException.invalidItemCount()
         }
         val snapshotById = snapshotsOf(tournamentItems)
+        // start = "겨루는 값 확정" 순간(#857). 대기실까지는 표시값이 파생(최신 기계 READY 우선)으로 움직이므로,
+        // 그 파생 결과를 여기서 포인터에 박제(repin)해 "겨룬 값 = 진행·완료 화면 값 = 히스토리 값" 을 고정한다.
+        // 시작 후 화면·히스토리는 파생 없이 포인터를 그대로 읽는다(당시를 보는 것이 확정).
+        val displayById = itemDisplayService.resolveDisplay(snapshotById.values)
+        val pinnedByTournamentItemId =
+            tournamentItems.associate { tournamentItem ->
+                val display = displayById[tournamentItem.snapshotId] ?: tournamentItem.requireSnapshot(snapshotById)
+                if (display.getId() != tournamentItem.snapshotId) tournamentItem.repinSnapshot(display.getId())
+                tournamentItem.getId() to display
+            }
         // item 정체성은 snapshot.itemId 단일 출처다 — 고정 snapshot 에서 itemId 를 모아 item 존재를 검증한다.
         val itemById =
             itemRepository
-                .findByIds(snapshotById.values.map { it.itemId })
+                .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
                 .associate { it.getId() to it }
-        if (snapshotById.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
+        if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
         for (tournamentItem in tournamentItems) {
-            val snapshot = tournamentItem.requireSnapshot(snapshotById)
+            val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
             if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()
-            snapshot.currentPrice ?: throw TournamentException.itemPriceRequired()
+            snapshot.price ?: throw TournamentException.itemPriceRequired()
         }
         tournament.start()
         // 시작이 커밋된 뒤에만 참가자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
@@ -216,11 +228,11 @@ class TournamentService(
             tournamentId = tournamentId,
             items = tournamentItems
                 .map { item ->
-                    val snapshot = item.requireSnapshot(snapshotById)
+                    val snapshot = pinnedByTournamentItemId.getValue(item.getId())
                     TournamentStartResult(
                         tournamentItemId = item.getId(),
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     )
@@ -273,7 +285,7 @@ class TournamentService(
                     TournamentStartResult(
                         tournamentItemId = item.getId(),
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     )
@@ -299,7 +311,9 @@ class TournamentService(
             TournamentStatus.PENDING -> {
                 // CLONE 은 DB 아이템 행이 없으므로 ROOT 아이템을 해소한다 (ROOT 는 자기 아이템).
                 val tournamentItems = getEffectiveTournamentItems(tournament)
-                val snapshotById = snapshotsOf(tournamentItems)
+                // 대기실은 표시값 파생(#857) — 최신 기계 READY 우선, 수기는 자기 맥락에서만. 시작되면 start 가
+                // 파생 결과를 박제하므로 진행·완료 분기는 포인터 그대로 읽는다.
+                val snapshotById = displayedSnapshotsOf(tournamentItems)
                 val tournamentUsers = tournamentUserRepository.findByTournamentId(tournamentId)
                 val userById = userRepository
                     .findByIds(
@@ -462,15 +476,17 @@ class TournamentService(
         tournamentId: Long,
         tournamentItemId: Long,
     ): TournamentItemDetail {
-        tournamentRepository.findTournamentById(tournamentId)
+        val tournament = tournamentRepository.findTournamentById(tournamentId)
             ?: throw TournamentException.notFoundTournament()
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId)
             ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
-        // 표시값은 고정 snapshot 에서, sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
-        val snapshot = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
+        // 표시값: 대기실(PENDING)은 파생(#857), 시작 후는 start 가 박제한 포인터 그대로(겨룬 값 고정).
+        // sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
+        val pointer = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
+        val snapshot = if (tournament.isPending()) itemDisplayService.resolveDisplay(pointer) else pointer
         val item = itemRepository.findById(snapshot.itemId)
             ?: throw TournamentException.notFoundTournamentItem()
         return TournamentItemDetail(
@@ -479,7 +495,7 @@ class TournamentService(
             sourceUrl = item.link?.toString(),
             name = snapshot.name,
             imageUrl = snapshot.imageUrl,
-            price = snapshot.currentPrice,
+            price = snapshot.price,
             currency = snapshot.currency,
             status = snapshot.status,
         )
@@ -725,7 +741,7 @@ class TournamentService(
                     tournamentItemId = tournamentItemId,
                     itemId = snapshot.itemId,
                     name = snapshot.name,
-                    price = snapshot.currentPrice,
+                    price = snapshot.price,
                     currency = snapshot.currency,
                     imageUrl = snapshot.imageUrl,
                 )
@@ -1029,7 +1045,7 @@ class TournamentService(
                         tournamentItemId = tournamentItemId,
                         itemId = snapshot.itemId,
                         name = snapshot.name,
-                        price = snapshot.currentPrice,
+                        price = snapshot.price,
                         currency = snapshot.currency,
                         imageUrl = snapshot.imageUrl,
                     ),
@@ -1103,7 +1119,7 @@ class TournamentService(
             itemId = snapshot.itemId,
             userId = tournamentItem.userId,
             name = snapshot.name,
-            price = snapshot.currentPrice,
+            price = snapshot.price,
             currency = snapshot.currency,
             imageUrl = snapshot.imageUrl,
             status = snapshot.status,
@@ -1131,7 +1147,7 @@ class TournamentService(
             .toSet()
         val entries = allTournamentItems
             .filterNot { it.getId() in eliminatedBeforeRound }
-            .map { RoundBracket.Entry(it.getId(), it.requireSnapshot(snapshotById).currentPrice) }
+            .map { RoundBracket.Entry(it.getId(), it.requireSnapshot(snapshotById).price) }
         return RoundBracket.of(entries, tournamentUserId, currentRound)
     }
 
@@ -1179,6 +1195,14 @@ class TournamentService(
         itemSnapshotRepository
             .findByIds(tournamentItems.map { it.snapshotId })
             .associateBy { it.getId() }
+
+    // 대기실(PENDING) 표시용(#857) — 키는 포인터 snapshot id 를 유지하되 값을 파생 표시 버전으로 치환한다.
+    // requireSnapshot(포인터 id 조회)을 쓰는 기존 조립 코드가 무수정으로 표시 버전을 읽게 된다.
+    private fun displayedSnapshotsOf(tournamentItems: Collection<TournamentItem>): Map<Long, ItemSnapshot> {
+        val pointers = snapshotsOf(tournamentItems)
+        val displayById = itemDisplayService.resolveDisplay(pointers.values)
+        return pointers.mapValues { (pointerId, pointer) -> displayById[pointerId] ?: pointer }
+    }
 
     // 고정 snapshot 은 출전 시점에 반드시 박힌다. 없으면 영속화 경로가 깨진 코드 버그다(전환 후 신규 출전부터 보장).
     private fun TournamentItem.requireSnapshot(snapshotById: Map<Long, ItemSnapshot>): ItemSnapshot =

@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component
 class AsyncItemParsingWorker(
     private val productLinkExtractor: ProductLinkExtractor,
     private val itemParsingService: ItemParsingService,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
     private val transitionRetry: TransitionRetry,
     private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
@@ -85,6 +86,11 @@ class AsyncItemParsingWorker(
                     link.safeLogString(),
                 )
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
+                // 정체성 기록(#825 관측 단계) — READY 전이가 커밋된 뒤 별도 트랜잭션으로 canonical·별칭을 남긴다.
+                // 전이와 분리하는 이유·병합 시 원자화 계획은 recorder 주석 참고. 기록 실패가 파싱 결과를 해치면
+                // 안 되므로 예외를 흡수한다(관측 부가 기능).
+                runCatching { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
+                    .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.
@@ -185,7 +191,8 @@ class AsyncItemParsingWorker(
 
     companion object {
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.
-        private const val PARSE_OBSERVATION = "item.parse"
+        // 이미지 파싱(AsyncImageParsingWorker)도 같은 이름을 공유한다 — 대시보드 필터가 링크·이미지를 한 탭으로 본다.
+        internal const val PARSE_OBSERVATION = "item.parse"
 
         // 재시도(일시)로 볼지 판정. 치명적 JVM 오류(Error: OutOfMemory·StackOverflow 등)는 재시도해도 소용없고
         // runCatching 이 Throwable 을 다 잡아 여기로 들어오므로 먼저 제외한다(재시도 대상 아님, 즉시 종결). 분류 가능한

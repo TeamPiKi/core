@@ -72,7 +72,7 @@ class TournamentWishAddConcurrencyIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = "race-wish-item-${i + 1}",
-                    currentPrice = 10_000,
+                    price = 10_000,
                     currency = "KRW",
                     status = ItemStatus.READY,
                     extractedAt = LocalDateTime.now(),

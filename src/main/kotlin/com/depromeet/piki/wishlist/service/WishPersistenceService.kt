@@ -6,6 +6,8 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemIdentityRecorder
+import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishException
@@ -21,7 +23,7 @@ import java.util.UUID
 // 거치지 않아 @Transactional 가 무력화되기 때문이다.
 //
 // item 은 정체성(link)만 들고 추출값·상태는 ItemSnapshot 이 보유한다. URL 등록 경로는 link 만 가진 item 과
-// PENDING snapshot(outbox 적재)을 같은 트랜잭션에서 함께 저장하고, wish 가 그 snapshot 을 활성 포인터로 가리킨다.
+// PENDING snapshot(작업 큐 적재)을 같은 트랜잭션에서 함께 저장하고, wish 가 그 snapshot 을 활성 포인터로 가리킨다.
 // 파싱은 디스패처(@Scheduled)가 PENDING 을 집어 시작하므로, 여기선 워커를 트리거하지 않는다.
 @Service
 class WishPersistenceService(
@@ -30,12 +32,14 @@ class WishPersistenceService(
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val pendingUploadClaimer: PendingUploadClaimer,
     private val userService: UserService,
+    private val itemIdentityRecorder: ItemIdentityRecorder,
+    private val itemSharingService: ItemSharingService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
     // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
-    // snapshot 을 PENDING 으로 커밋하는 것이 곧 outbox 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
+    // snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
     @Transactional
     fun persist(
         userId: UUID,
@@ -46,7 +50,32 @@ class WishPersistenceService(
         // absent(users 행 없음)는 여기서 막지 않는다 — 정상 경로는 앞단(WishlistService.requireMember)이 이미 거르고,
         // 이 방어는 "확인 후 탈퇴가 끼어든" tombstone race 전용이다(FCM 과 같은 결). 행이 있으면 잠가 직렬화한다.
         userService.rejectIfWithdrawnForUpdate(userId)
+        // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 새 item 을 만들지 않고 기존 item 에 붙는다.
+        // 락 순서 규약(user → 자식)에 따라 user 락 뒤에 item 락(resolveAttachment)이 온다.
+        item.link?.let { link ->
+            itemSharingService.resolveExistingItem(link)?.let { shared ->
+                val attachment = itemSharingService.resolveAttachment(shared.getId(), link)
+                // 앞문 중복(결정 3c): 같은 사용자가 이미 담은 상품이면 새 카드 대신 409. 판정·응답의 정체성 기준은
+                // 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 — 병합 재시도 경합에선 둘이
+                // 다르고(shared=loser, attachment.item=winner), 행 락 뒤라 검사도 직렬화된다. 409 면 트랜잭션
+                // 롤백으로 attach 가 만든 PENDING 도 함께 사라진다.
+                if (wishRepository.countByItemIdsAndUserId(listOf(attachment.item.getId()), userId) > 0) {
+                    throw WishException.alreadyExists()
+                }
+                val wish = wishRepository.save(Wish(userId = userId, snapshotId = attachment.snapshot.getId()))
+                return WishWithItem(
+                    wish = wish,
+                    item = attachment.item,
+                    snapshot = attachment.snapshot,
+                    reused = attachment.reused,
+                    refreshNeeded = attachment.refreshNeeded,
+                )
+            }
+        }
         val saved = itemRepository.save(item)
+        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다. 같은 트랜잭션이라 등록과 원자적이고,
+        // INSERT IGNORE 라 동시 등록 경합이 등록을 죽이지 않는다.
+        itemIdentityRecorder.recordRegistrationAlias(saved)
         // 저장한 snapshot 의 id 를 wish 의 활성 포인터(snapshotId)로 박는다. 5단계 갱신에서 새 버전으로 스왑된다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
@@ -54,7 +83,7 @@ class WishPersistenceService(
     }
 
     // v1(multipart) 이미지 다건 등록 — 서버가 바이트를 받아 S3 에 올린 뒤 pending 매핑 없이 바로 적재한다.
-    // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 outbox 에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
+    // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 작업 큐에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
     @Transactional
     fun persistPendingImages(
         userId: UUID,
@@ -93,7 +122,7 @@ class WishPersistenceService(
         return persistImagesInternal(userId, claimedKeys)
     }
 
-    // 이미지 key 들을 item(정체성) → PENDING snapshot(outbox 적재) → wish 순서로 배치 적재하는 공통 코어.
+    // 이미지 key 들을 item(정체성) → PENDING snapshot(작업 큐 적재) → wish 순서로 배치 적재하는 공통 코어.
     // 트랜잭션은 호출부(persistPendingImages·registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
     private fun persistImagesInternal(
         userId: UUID,
@@ -110,28 +139,42 @@ class WishPersistenceService(
         }
     }
 
-    // FAILED 버전의 수동 보정 영속화 — S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝내고,
-    // 여기선 snapshot.recover(값 변경 + FAILED→READY 전이)만 짧은 트랜잭션으로 묶는다(dirty checking).
-    // recover 가 READY/PROCESSING 을 409, 이름 없음을 400 으로 막는다(도메인 자기방어). item 은 정체성이라 건드리지 않는다.
-    // 호출부가 검증한 그 snapshot 을 id 로 직접 보정한다 — findLatestByItemId(최신)가 아니다. 갱신(refresh)이 끼어들어
-    // 활성≠최신이 되어도, 검증한 행과 보정 대상 행이 어긋나지 않는다(refresh-vs-recover race 로 엉뚱한 버전 보정·409 방지).
+    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
+    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든
+    // 덮어써질 위험 자체가 없고, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
+    // wish 행 락으로 refresh 와 직렬화한다 — 둘 다 활성 포인터를 스왑하는 경로라, 락 없이는 서로의 스왑을 덮는다
+    // (옛 FAILED-상태 분리 방어를 대체하는 장치). base 는 락 안에서 읽은 현재 활성 버전이다.
     @Transactional
-    fun recoverItem(
-        snapshotId: Long,
+    fun manualEdit(
+        userId: UUID,
+        wishId: Long,
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         imageUrl: String?,
         currency: String?,
-    ): Item {
-        val snapshot =
-            itemSnapshotRepository.findById(snapshotId)
-                ?: error("snapshot $snapshotId 이 없다")
-        val item = itemRepository.findById(snapshot.itemId) ?: error("item ${snapshot.itemId} 가 없다")
-        snapshot.recover(name = name, currentPrice = currentPrice, imageUrl = imageUrl, currency = currency)
-        return item
+    ): WishWithItem {
+        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(userId)
+        val base =
+            itemSnapshotRepository.findById(wish.snapshotId)
+                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
+        val manual =
+            itemSnapshotRepository.save(
+                ItemSnapshot.manual(
+                    base = base,
+                    name = name,
+                    price = price,
+                    imageUrl = imageUrl,
+                    currency = currency,
+                    editedBy = userId,
+                ),
+            )
+        wish.swapSnapshot(manual.getId())
+        return WishWithItem(wish = wish, item = item, snapshot = manual)
     }
 
-    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 outbox 에 적재하고
+    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고
     // wish 활성 포인터를 즉시 그 버전으로 스왑한다 — 디스패처가 PENDING 을 집어 추출해 READY/FAILED 로 전이한다(등록과 동일 흐름).
     // 옛 snapshot 행은 유지돼 토너먼트 출전 격리를 지킨다. 외부 호출(추출)은 디스패처가 트랜잭션 밖에서 하므로 여기선 적재만 한다.
     // 동시 새로고침은 wish 행 락(findByIdForUpdate)으로 직렬화하고, 이미 진행 중이면 멱등(no-op)으로 새 추출을 만들지 않는다.
@@ -153,11 +196,17 @@ class WishPersistenceService(
         item.link ?: throw WishException.notRefreshable()
         // 이미 진행 중(PENDING·PROCESSING)이면 새 추출을 만들지 않고 현재 진행 상태를 그대로 반환(멱등).
         if (activeSnapshot.isInProgress()) return WishWithItem(wish = wish, item = item, snapshot = activeSnapshot)
+        // 공유(#825) — 같은 item 의 다른 참조(다른 위시·출전)가 이미 파싱을 돌리고 있으면 새 작업 대신 그 진행에
+        // 합류한다(#826). 활성 포인터를 그 버전으로 스왑해 완료 시 함께 갱신된다.
+        itemSnapshotRepository.findLatestInProgressByItemId(item.getId())?.let { inProgress ->
+            wish.swapSnapshot(inProgress.getId())
+            return WishWithItem(wish = wish, item = item, snapshot = inProgress)
+        }
         // 추출 실패(FAILED) 항목은 새로고침 대상이 아니다 — 보정(recover)으로 복구한다(409). 새로고침은 성공(READY)
         // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
         // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).
         if (activeSnapshot.isFailed()) throw WishException.failedNotRefreshable()
-        // 새 PENDING 버전을 outbox 에 적재하고 활성 포인터를 즉시 스왑한다.
+        // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다.
         val newSnapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         wish.swapSnapshot(newSnapshot.getId())
         return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)

@@ -345,7 +345,7 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
         itemParsingService.markReady(
             result.snapshot.getId(),
-            ProductSnapshot(name = name, currentPrice = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
         return result.item.getId()

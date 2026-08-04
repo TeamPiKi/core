@@ -8,12 +8,12 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import org.springframework.stereotype.Component
 import java.time.LocalDateTime
 
-// 아이템 파싱 outbox 디스패처 + recover (URL·이미지 공용 — claim 종류로 워커를 라우팅한다).
+// 아이템 파싱 작업 큐 디스패처 + recover (URL·이미지 공용 — claim 종류로 워커를 라우팅한다).
 //
 // 등록은 PENDING snapshot 을 커밋만 하고(작업 적재), 작업의 진실 원천은 인메모리 큐가 아니라 DB 의 PENDING 행이다.
 // 디스패처가 그 행을 집어 실행하므로, @Async 큐 유실(인스턴스 재시작 등)로 PENDING 이 방치되는 일이 없다 —
 // PENDING 은 **마감 안에 슬롯이 나기만 하면** 반드시 claim 돼 실행이 시작된다(끝내 슬롯이 안 나면 실행 0회로 마감 종결).
-// item_snapshots 테이블 자체가 outbox(상태머신을 가진 작업 큐)라 별도 테이블이 없다.
+// item_snapshots 테이블 자체가 작업 큐(상태머신을 겸한다)라 별도 테이블이 없다.
 //
 // 보장은 execution at-least-once(#461): 집힌 직후 크래시(실행 0회)·실행 중 크래시·일시 외부 오류로 단건 실행이
 // 끝나지 않은 작업을 다시 실행한다. 판정을 지탱하는 것은 시간 추정이 아니라 **끝나지 않은 이유마다 다른 회수 경로**다:

@@ -12,7 +12,7 @@ import java.util.concurrent.Executor
 // 제출자는 ItemParsingScheduler 하나뿐이고(dispatch·recover), 디스패처가 **가용 슬롯만큼만 claim** 하므로
 // 대기실을 두지 않는다 — queueCapacity=0 은 SynchronousQueue 라 제출이 곧장 스레드로 넘어가거나 거부된다.
 //
-// 왜 큐를 없앴나: 작업의 대기열은 이미 DB 의 PENDING 행이다(item_snapshots 가 곧 outbox). 인메모리 큐를 두면
+// 왜 큐를 없앴나: 작업의 대기열은 이미 DB 의 PENDING 행이다(item_snapshots 가 곧 작업 큐). 인메모리 큐를 두면
 // 같은 대기열이 둘이 되어 (a) 휘발성 사본에 작업이 쌓여 크래시 시 PROCESSING 좀비로 남고(recover 가 되살릴 비용),
 // (b) 실행도 시작 안 한 작업이 PROCESSING("담는 중")으로 사용자에게 위장되며, (c) 큐가 차서 거부되면 그 행이
 // attempt 를 태워 과부하가 사용자 아이템 FAILED 로 번진다. 대기는 durable 한 PENDING 에서 하는 것이 맞다.
@@ -43,7 +43,7 @@ class AsyncConfig {
             // 외부 호출로 붙잡아 dispatch·recover 주기를 통째로 밀리게 하므로 쓰지 않는다.
             // 정상 흐름에서는 디스패처가 가용 슬롯만큼만 claim 하므로 거부가 발화하지 않는다 — 슬롯 계산과 제출 사이의
             // 미세한 레이스(activeCount 는 근사치)를 위한 안전망이다. 거부되면 그 행은 PROCESSING 으로 남고
-            // recover 가 재실행한다(execution at-least-once, #461). URL·이미지 모두 outbox 경유라 처리가 같다.
+            // recover 가 재실행한다(execution at-least-once, #461). URL·이미지 모두 작업 큐 경유라 처리가 같다.
             initialize()
         }
 

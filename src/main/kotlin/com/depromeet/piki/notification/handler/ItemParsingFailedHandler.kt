@@ -14,7 +14,7 @@ class ItemParsingFailedHandler(
 ) : NotificationEventHandler<ItemParsingFailed>(NotificationType.ITEM_PARSING_FAILED) {
     override fun resolveRefId(event: ItemParsingFailed): Long = event.itemId
 
-    override fun resolveRecipients(event: ItemParsingFailed): Set<UUID> = recipientResolver.resolve(event.itemId)
+    override fun resolveRecipients(event: ItemParsingFailed): Set<UUID> = recipientResolver.resolve(event.snapshotId)
 
-    override fun resolveRouting(event: ItemParsingFailed): NotificationRouting = recipientResolver.resolveRouting(event.itemId)
+    override fun resolveRouting(event: ItemParsingFailed): NotificationRouting = recipientResolver.resolveRouting(event.snapshotId)
 }

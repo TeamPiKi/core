@@ -175,7 +175,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .content(body),
                 ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.length()").value(2))
-                // 등록 직후 응답은 PENDING 이어야 한다(이미지도 link 처럼 outbox 에 적재).
+                // 등록 직후 응답은 PENDING 이어야 한다(이미지도 link 처럼 작업 큐에 적재).
                 .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
                 // 이미지 등록은 원본 URL 이 없어 sourceUrl 도, 거기서 유도하는 sourcePlatform 도 null 이다.
                 .andExpect(jsonPath("$.data[0].item.sourceUrl").value(nullValue()))
@@ -288,7 +288,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "나이키 에어포스", currentPrice = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
+                ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))

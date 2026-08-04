@@ -60,8 +60,9 @@ class ErrorCodeCatalogTest {
         // item 도메인 이관(#798) — 5개. 전부 FAILED 항목 보정(위시·토너먼트 아이템 공용 경로)에서 나온다.
         // 다른 도메인은 개수가 많아 대표만 단언하지만, item 은 5개뿐이라 전량 단언해 결번 없이 고정한다.
         assertTrue(md.contains("### ITEM"), md)
-        assertTrue(md.contains("| ITEM-001 | 409 | 이미 등록된 상품은 수정할 수 없어요. |"), md)
-        assertTrue(md.contains("| ITEM-002 | 409 | 상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요. |"), md)
+        // ITEM-001·002 는 수기 수정 상시 허용(#825 결정 4)으로 결번 — 카탈로그에서 빠졌음을 함께 고정한다.
+        assertTrue(!md.contains("| ITEM-001 "), md)
+        assertTrue(!md.contains("| ITEM-002 "), md)
         assertTrue(md.contains("| ITEM-003 | 400 | 상품 이름을 입력해 주세요. |"), md)
         assertTrue(md.contains("| ITEM-004 | 400 | 상품 가격을 입력해 주세요. |"), md)
         assertTrue(md.contains("| ITEM-005 | 400 | 상품 이미지를 등록해 주세요. |"), md)

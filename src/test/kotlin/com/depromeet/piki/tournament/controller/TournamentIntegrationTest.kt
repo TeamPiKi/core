@@ -3,6 +3,7 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
@@ -472,6 +473,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items[1].name").value("아디다스 울트라부스트"))
             .andExpect(jsonPath("$.data.items[1].price").value(189_000))
             .andExpect(jsonPath("$.data.items[1].currency").value("KRW"))
+    }
+
+    @Test
+    fun `대기실은 최신 기계 버전을 보여주고 start 가 그 표시 버전을 박제해 이후 새 버전이 생겨도 겨룬 값이 유지된다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        // 포인터는 옛 기계 버전(v1)에 박힌 출전 아이템 둘.
+        val itemA = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-a")))
+        val itemB = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-b")))
+        saveTournamentItemFor(tournamentId, itemA, name = "A 옛값", price = 100_000, currency = "KRW", imageUrl = "https://i.example/a1.png")
+        saveTournamentItemFor(tournamentId, itemB, name = "B 옛값", price = 200_000, currency = "KRW", imageUrl = "https://i.example/b1.png")
+        // 다른 참조의 갱신이 만든 새 기계 버전(v2) — 출전 포인터는 여전히 v1 이다.
+        val v2a = saveMachineVersion(itemA.getId(), "A 새값", 110_000)
+        saveMachineVersion(itemB.getId(), "B 새값", 210_000)
+
+        // 대기실(PENDING)은 파생 — 포인터가 v1 이어도 최신 기계 버전(v2) 값을 보여준다(#857).
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'B 새값')]").exists())
+            .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 옛값')]").doesNotExist())
+
+        // start = 겨루는 값 확정 — 파생 표시 버전(v2)으로 겨루고, 포인터도 v2 로 박제(repin)된다.
+        mockMvc
+            .perform(post("/api/v1/tournaments/$tournamentId/start").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.items[0].name").value("A 새값"))
+            .andExpect(jsonPath("$.data.items[0].price").value(110_000))
+            .andExpect(jsonPath("$.data.items[1].name").value("B 새값"))
+        val pinnedSnapshots = tournamentItemJpaRepository
+            .findAllByTournamentIdAndNotDeleted(tournamentId)
+            .map { itemSnapshotJpaRepository.findById(it.snapshotId).get() }
+        assertEquals(setOf("A 새값", "B 새값"), pinnedSnapshots.map { it.name }.toSet())
+        assertTrue(pinnedSnapshots.any { it.getId() == v2a.getId() }, "itemA 포인터가 표시 버전(v2)으로 repin 되어야 한다")
+
+        // 시작 후 또 새 기계 버전(v3)이 생겨도 진행 화면은 박제된 값(v2) 그대로 — 겨룬 값 = 화면 값.
+        saveMachineVersion(itemA.getId(), "A 더새값", 120_000)
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 새값')]").exists())
+            .andExpect(jsonPath("$.data.inProgress.remainingItems[?(@.name == 'A 더새값')]").doesNotExist())
     }
 
     @Test
@@ -1617,16 +1661,23 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        // 보정 대상은 tournament_item 이 가리키는 고정 snapshot 이다 — 표시값·상태는 그 snapshot 에서 읽는다(4a).
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("수정된 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals("KRW", updated.currency)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 수기 수정(#825 결정 4)은 기존 행을 고치지 않고 MANUAL 새 버전으로 쌓여 pin 이 옮겨진다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        assertNotEquals(snapshot.getId(), repinned.snapshotId)
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정된 이름", manual.name)
+        assertEquals(50000, manual.price)
+        assertEquals("KRW", manual.currency)
+        assertEquals(ItemStatus.READY, manual.status)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertEquals(userId, manual.editedBy)
+        // 기존 FAILED 행은 이력으로 불변.
+        assertEquals(ItemStatus.FAILED, itemSnapshotJpaRepository.findById(snapshot.getId()).get().status)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 수기 수정하면 200 과 MANUAL 새 버전으로 교체된다`() {
+        // 수기 수정 상시 허용(#825 결정 4) — READY 는 더 이상 409 가 아니다.
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val readyItemId = saveWishItem()
@@ -1638,11 +1689,18 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isOk)
+
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("수정 시도", manual.name)
+        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템이면 409 를 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템은 일부 필드만 보내면 병합 필수값 부재로 400 이다`() {
+        // 상태 충돌(409)이 아니다(#825 결정 4) — PROCESSING base 는 값이 비어 있어 병합 결과 필수값 부재(400)로 떨어질 뿐,
+        // 필수값을 다 채우면 진행 중이어도 수정된다(위 READY 케이스와 동일 규칙).
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val processingItem = itemJpaRepository.save(Item())
@@ -1657,7 +1715,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .param("name", "수정 시도")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isBadRequest)
     }
 
     @Test
@@ -1719,10 +1777,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        val updated = itemSnapshotJpaRepository.findById(snapshot.getId()).get()
-        assertEquals("기존 이름", updated.name)
-        assertEquals(50000, updated.currentPrice)
-        assertEquals(ItemStatus.READY, updated.status)
+        // 병합은 MANUAL 새 버전에서 일어난다 — base 의 이름·이미지가 유지된 채 가격만 바뀐 새 버전이 pin 된다.
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("기존 이름", manual.name)
+        assertEquals(50000, manual.price)
+        assertEquals(ItemStatus.READY, manual.status)
     }
 
     @Test
@@ -1767,12 +1827,43 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 assertEquals(1, it.size)
             }.first()
             assertEquals(tournamentItemId, tournamentItem.getId())
-            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(outbox 적재)으로 시작한다.
+            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(작업 큐 적재)으로 시작한다.
             // @Transactional 테스트라 등록이 커밋되지 않아 디스패처(별도 트랜잭션)가 이 PENDING 을 집지 못한다 → PENDING 고정.
             // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
             val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
             val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
             assertEquals(ItemStatus.PENDING, snapshot?.status)
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
+    fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
+        stubItemParsingWorker.enabled = false
+        try {
+            val mockMvc = buildMockMvc()
+            val tournamentId = createTournament(mockMvc)
+
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
+                ).andExpect(status().isOk)
+
+            // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
+            // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
+                .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
         } finally {
             stubItemParsingWorker.enabled = true
         }
@@ -2153,6 +2244,25 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // snapshot 을 만들고 그 id 를 박아 저장한다. 조회 경로(getTournamentById·getTournamentItem)가 snapshot 을 읽기 때문이다.
     // item 은 정체성(link)만 들고 추출값·상태는 snapshot 이 보유한다(4a).
     // (서비스 경유 시딩 saveWishItem+addItemsToTournament 은 엔드포인트가 이미 snapshotId 를 채운다.)
+    // 파생(#857) 검증용 — 다른 참조의 갱신이 만든 새 기계(SERVER) READY 버전을 시딩한다. 포인터는 안 움직인다.
+    private fun saveMachineVersion(
+        itemId: Long,
+        name: String,
+        price: Int,
+    ): ItemSnapshot =
+        itemSnapshotJpaRepository.save(
+            ItemSnapshot(
+                itemId = itemId,
+                name = name,
+                price = price,
+                currency = "KRW",
+                imageUrl = "https://i.example/$price.png",
+                status = ItemStatus.READY,
+                extractedAt = LocalDateTime.now(),
+                source = ItemSnapshotSource.SERVER,
+            ),
+        )
+
     private fun saveTournamentItemFor(
         tournamentId: Long,
         item: Item,
@@ -2168,7 +2278,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = currency,
                     imageUrl = imageUrl,
                     status = status,
@@ -2198,7 +2308,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ItemSnapshot(
                 itemId = itemId,
                 name = name,
-                currentPrice = price,
+                price = price,
                 currency = currency,
                 imageUrl = imageUrl,
                 status = status,
@@ -2207,7 +2317,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
 
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
-    // 이미지 경로도 link 처럼 PENDING 으로 outbox 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
+    // 이미지 경로도 link 처럼 PENDING 으로 작업 큐 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
     // 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
@@ -2216,7 +2326,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markReady(
             result.snapshot.getId(),
-            ProductSnapshot(name = name, currentPrice = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
         return result.item.getId()

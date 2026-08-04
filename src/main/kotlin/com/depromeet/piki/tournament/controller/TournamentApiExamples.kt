@@ -7,6 +7,7 @@ import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.auth.service.dto.TokenPair
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.tournament.controller.dto.CreateTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.CreateTournamentResponse
 import com.depromeet.piki.tournament.controller.dto.GroupResultResponse
 import com.depromeet.piki.tournament.controller.dto.JoinTournamentAsGuestRequest
@@ -22,6 +23,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentException
 import com.depromeet.piki.user.domain.User
+import com.depromeet.piki.user.domain.UserException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -82,6 +84,25 @@ class TournamentApiExamples(
                                     ),
                                 ),
                         )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "토너먼트 이름 미입력",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = CreateTournamentRequest.NAME_BLANK_MESSAGE,
+                                ),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "초대 유효 시간이 24시간 초과",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = CreateTournamentRequest.INVITE_DURATION_MAX_MESSAGE,
+                                ),
+                        )
+                        unauthorized()
                     }
 
                 handlerMethod.binds(TournamentController::join) ->
@@ -91,6 +112,22 @@ class TournamentApiExamples(
                             name = "참여 성공",
                             payload = ApiResponseBody.ok<Unit>(),
                         )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "초대 코드 형식 오류",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = JoinTournamentAsGuestRequest.INVITE_CODE_PATTERN_MESSAGE,
+                                ),
+                        )
+                        add(TournamentException.invalidInviteCode(), name = "초대 코드 불일치")
+                        unauthorized()
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(TournamentException.inviteExpired(), name = "초대 링크 만료")
+                        add(TournamentException.alreadyParticipant(), name = "이미 참여 중인 토너먼트")
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과 (최대 8명)")
                     }
 
                 handlerMethod.binds(TournamentController::joinAsGuest) ->
@@ -122,7 +159,32 @@ class TournamentApiExamples(
                                     detail = JoinTournamentAsGuestRequest.NICKNAME_BLANK_MESSAGE,
                                 ),
                         )
-                        unauthorized()
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "닉네임 10자 초과",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = JoinTournamentAsGuestRequest.NICKNAME_MAX_MESSAGE,
+                                ),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "초대 코드 형식 오류",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = JoinTournamentAsGuestRequest.INVITE_CODE_PATTERN_MESSAGE,
+                                ),
+                        )
+                        // Bean Validation(@NotBlank·@Size)을 통과해도 User 생성자의 validateNickname 이 예약 prefix 를 막는다.
+                        add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
+                        add(TournamentException.invalidInviteCode(), name = "초대 코드 불일치")
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(TournamentException.inviteExpired(), name = "초대 링크 만료")
+                        add(UserException.duplicateNickname(), name = "닉네임 중복")
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과 (최대 8명)")
                     }
 
                 handlerMethod.binds(TournamentController::start) ->
@@ -172,7 +234,13 @@ class TournamentApiExamples(
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notFoundItems(), name = "존재하지 않는 아이템 포함")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(TournamentException.itemNotReadyToStart(), name = "아직 준비 중인 상품 포함")
+                        add(TournamentException.itemPriceRequired(), name = "가격 정보 없는 상품 포함")
+                        // 아래 둘은 멤버 시작 경로(startAsMember) — 주최자가 ROOT 를 시작해야 멤버가 본인 클론을 만들 수 있다.
+                        add(TournamentException.notInProgressTournament(), name = "주최자가 아직 시작하지 않음 (멤버 시작)")
+                        add(TournamentException.alreadyCloned(), name = "이미 본인 클론이 있음 (멤버 시작)")
                     }
 
                 handlerMethod.binds(TournamentController::recordMatch) ->
@@ -253,14 +321,14 @@ class TournamentApiExamples(
                         )
                         add(TournamentException.invalidWinner(), name = "승자가 대결 아이템이 아님")
                         add(TournamentException.invalidMatchPair(), name = "서버 브래킷에 없는 페어 조합")
+                        add(TournamentException.invalidTournamentItem(), name = "이 토너먼트에 없는 아이템")
+                        add(TournamentException.invalidCurrentRound(), name = "현재 진행 라운드와 불일치")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notInProgressTournament(), name = "진행 중 토너먼트 아님")
                         add(TournamentException.eliminatedTournamentItem(), name = "이미 탈락한 아이템")
                         add(TournamentException.matchAlreadyRecorded(), name = "이미 기록된 대결에 다른 승자 전송")
-                        add(TournamentException.invalidCurrentRound(), name = "현재 진행할 라운드가 아님")
-                        add(TournamentException.invalidTournamentItem(), name = "이 토너먼트에 없는 아이템")
                     }
 
                 handlerMethod.binds(TournamentController::getTournamentById) ->
@@ -586,10 +654,14 @@ class TournamentApiExamples(
                             name = "플레이 링크 생성 성공",
                             payload = ApiResponseBody.ok(LocalDateTime.of(2026, 6, 9, 22, 0, 0)),
                         )
+                        unauthorized()
+                        add(TournamentException.forbiddenTournament(), name = "권한 없음 (참여자 아님 · 소유자 아님)")
                         add(
                             TournamentException.clonedTournamentCannotSharePlayLink(),
                             name = "플레이 링크로 참여한 토너먼트 (재공유 불가)",
                         )
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트")
                         add(TournamentException.playLinkAlreadyCreated(), name = "플레이 링크 이미 생성됨")
                     }
 
@@ -608,6 +680,9 @@ class TournamentApiExamples(
                                     ),
                                 ),
                         )
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.playLinkNotCreated(), name = "플레이 링크가 생성되지 않은 토너먼트")
+                        add(TournamentException.playLinkExpired(), name = "플레이 링크 만료")
                     }
 
                 handlerMethod.binds(TournamentController::createFromPlayLink) ->
@@ -690,6 +765,13 @@ class TournamentApiExamples(
                                             ),
                                     ),
                                 ),
+                        )
+                        unauthorized()
+                        add(TournamentException.forbiddenTournament(), name = "참여자가 아님")
+                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(
+                            TournamentException.groupResultNotAvailable(),
+                            name = "본인 플레이 미완료 · 완료 인원 2명 미만",
                         )
                     }
             }
