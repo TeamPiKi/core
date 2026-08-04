@@ -2,6 +2,7 @@ package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
 import java.time.LocalDateTime
+import java.util.UUID
 
 interface ItemSnapshotRepository {
     fun save(snapshot: ItemSnapshot): ItemSnapshot
@@ -27,9 +28,14 @@ interface ItemSnapshotRepository {
         toItemId: Long,
     ): Int
 
-    // 한 item 의 추출 완료(READY) 버전 전체를 최신순(id desc)으로. 가격 히스토리 조회용 — 갱신·새로고침마다
-    // 쌓인 READY 버전을 시간순으로 노출한다. 가격이 없는 PENDING/PROCESSING/FAILED 는 제외한다.
-    fun findReadyHistoryByItemId(itemId: Long): List<ItemSnapshot>
+    // 가격 이력 조회 — 한 item 의 출처가 기록된(SERVER/SERVER_LLM/MANUAL) READY 버전을 최신순(id desc)으로 limit 개까지.
+    // 수기는 편집자를 가리지 않고 담고, 본인 것인지는 응답 변환에서 editedByMe 로 구분한다.
+    // 가격이 없는 PENDING/PROCESSING/FAILED 와 출처 미상(null, 소급 판정 불가)은 빠진다.
+    // limit 을 받는 이유: 새로고침이 누적되므로 상한이 없으면 응답이 계속 자란다.
+    fun findPriceHistoryByItemId(
+        itemId: Long,
+        limit: Int,
+    ): List<ItemSnapshot>
 
     // 3단계(참조 이전): wish/tournament_item 이 가리키는 고정 snapshot 을 id 로 끌어온다.
     // 단건 조회(위시 단건·토너먼트 아이템 단건)용. 삭제된 행은 제외, 없으면 null.

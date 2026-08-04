@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query
 import org.springframework.data.jpa.repository.QueryHints
 import org.springframework.data.repository.query.Param
 import java.time.LocalDateTime
+import java.util.UUID
 
 // FOR UPDATE 에 SKIP LOCKED 를 더하는 힌트 값 (Hibernate LockOptions.SKIP_LOCKED = -2).
 // claim 계열 locking read 가 잠긴 레코드를 만나면 "대기" 대신 "건너뛰기" 한다. 교착의 재료는 상호 대기라,
@@ -27,11 +28,26 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     // 한 item 의 살아있는(soft-delete 안 된) 최신 snapshot 1개 — id 역순 첫 행.
     fun findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId: Long): ItemSnapshot?
 
-    // 한 item 의 특정 상태 snapshot 전체를 id 역순(최신 버전 먼저)으로 — 가격 히스토리(READY 버전 이력) 조회용.
+    // 가격 이력 조회 — 한 item 의 출처가 기록된(SERVER/SERVER_LLM/MANUAL) READY 버전을 최신순(id desc)으로
+    // pageable 개수만큼. 수기(MANUAL)는 편집자를 가리지 않고 다 담는다 — 같은 상품을 공유하는 다른 사용자가
+    // 넣은 값도 그 상품의 가격 기록이며, 응답에서 editedByMe 로 본인 것인지만 구분해 준다(편집자 식별자 자체는
+    // 내리지 않는다). 이 상품을 담은 사람들이 실제로 얼마에 봤는지가 시세 판단에 쓰인다.
+    //
+    // 출처 null(도입 전 행)은 서버 추출인지 사용자 입력인지 소급 판정할 수 없어 제외한다 — 표시값 파생
+    // (findLatestMachineReady*)이 쓰는 기준과 같다. 그것만 다르게 두면 "표시값 판정에선 안 세면서 이력엔 넣는"
+    // 모순이 된다.
+    //
     // idx_item_snapshots_item_id 로 커버되고, id 정렬은 PK 라 secondary index 리프에 포함돼 추가 인덱스가 필요 없다.
-    fun findByItemIdAndStatusAndDeletedAtIsNullOrderByIdDesc(
-        itemId: Long,
-        status: ItemStatus,
+    @Query(
+        "select s from ItemSnapshot s where s.itemId = :itemId " +
+            "and s.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
+            "and s.deletedAt is null " +
+            "and s.source is not null " +
+            "order by s.id desc",
+    )
+    fun findPriceHistoryByItemId(
+        @Param("itemId") itemId: Long,
+        pageable: Pageable,
     ): List<ItemSnapshot>
 
     // 살아있는 단건 조회. JpaRepository.findById(Optional) 와 충돌하지 않도록 deletedAt 조건을 붙여 이름을 구분한다.
