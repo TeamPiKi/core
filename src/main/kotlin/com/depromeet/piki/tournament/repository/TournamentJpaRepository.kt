@@ -1,6 +1,5 @@
 package com.depromeet.piki.tournament.repository
 
-import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
@@ -27,6 +26,11 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
     // playType 파생 판정(#836): CLONE 은 SOCIAL, ROOT 는 참여자 2명 이상이면 SOCIAL·나 혼자면 SOLO.
     // 참여자 수는 tournament_user 행 수 — 현재 유저 조인 tu 와 별개인 tu2 서브쿼리로 전체 참여자를 센다.
+    // nullable enum 파라미터를 "IS NULL" 비교와 "= <enum>" 비교로 혼합 재사용하면 Hibernate 7 이
+    // SqmNamedParameter 의 ValueMapping 타입을 못 정해 런타임 500(ConversionException) 이 난다.
+    // enum 을 JPQL 밖으로 빼고 boolean 플래그(wantsSolo/wantsSocial) 두 개로 대체해 회피한다 —
+    // 서비스 계층 호출부(TournamentRepositoryImpl)가 playType 을 이 플래그로 변환한다.
+    // playType 미지정 시 wantsSolo=false, wantsSocial=false 로 필터 없음을 표현한다.
     @Query(
         """
         SELECT t FROM Tournament t
@@ -41,9 +45,9 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
             OR t.status = com.depromeet.piki.tournament.domain.TournamentStatus.PENDING
           )
           AND (
-            :playType IS NULL
+            (:wantsSolo = FALSE AND :wantsSocial = FALSE)
             OR (
-              :playType = com.depromeet.piki.tournament.domain.PlayType.SOCIAL
+              :wantsSocial = TRUE
               AND (
                 t.sourceTournamentId IS NOT NULL
                 OR (SELECT COUNT(tu2) FROM TournamentUser tu2
@@ -51,7 +55,7 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
               )
             )
             OR (
-              :playType = com.depromeet.piki.tournament.domain.PlayType.SOLO
+              :wantsSolo = TRUE
               AND t.sourceTournamentId IS NULL
               AND (SELECT COUNT(tu2) FROM TournamentUser tu2
                    WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL) < 2
@@ -63,7 +67,8 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     fun findVisibleByUserId(
         @Param("userId") userId: UUID,
         @Param("statuses") statuses: Collection<TournamentStatus>,
-        @Param("playType") playType: PlayType?,
+        @Param("wantsSolo") wantsSolo: Boolean,
+        @Param("wantsSocial") wantsSocial: Boolean,
         pageable: Pageable,
     ): List<Tournament>
 

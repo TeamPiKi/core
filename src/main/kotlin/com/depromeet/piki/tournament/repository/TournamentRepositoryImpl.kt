@@ -50,7 +50,10 @@ class TournamentRepositoryImpl(
             userId = userId,
             // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
             statuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries,
-            playType = playType,
+            // nullable enum 파라미터를 JPQL 에서 직접 비교하면 Hibernate 7 타입 추론이 깨지므로(TournamentJpaRepository 주석 참조)
+            // boolean 플래그로 변환해 넘긴다. playType 미지정(null)이면 둘 다 false 로 필터 없음을 표현한다.
+            wantsSolo = playType == PlayType.SOLO,
+            wantsSocial = playType == PlayType.SOCIAL,
             pageable = limit?.let { PageRequest.of(0, it) } ?: Pageable.unpaged(),
         )
 
