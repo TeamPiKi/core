@@ -3,6 +3,8 @@ package com.depromeet.piki.admin.config
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 // ClientIp 신뢰 프록시 판정 단위 테스트.
 // 회귀 가드(2026-07-14): docker userland-proxy 가 source 를 docker0 gateway(172.17.0.1)로 SNAT 해
@@ -56,5 +58,36 @@ class ClientIpTest {
     @Test
     fun `X-Real-IP 가 공백이면 remoteAddr 로 폴백한다`() {
         assertEquals("172.17.0.1", ClientIp.of(request("172.17.0.1", "   ")))
+    }
+
+    @Test
+    fun `X-Real-IP 없이 docker gateway 에서 온 요청은 박스 내부 직결이다`() {
+        // 관측 수집기(Alloy)의 scrape 가 이 모양이다 — nginx 를 안 거쳐 헤더가 없고, SNAT 로 출발지는 gateway.
+        // loopback 여부로 판정하면 여기서 막혀 앱 메트릭이 통째로 실명한다(#872).
+        assertTrue(ClientIp.isInBoxDirect(request("172.17.0.1")))
+    }
+
+    @Test
+    fun `X-Real-IP 없는 loopback·다른 사설대역도 박스 내부 직결이다`() {
+        assertTrue(ClientIp.isInBoxDirect(request("127.0.0.1")))
+        assertTrue(ClientIp.isInBoxDirect(request("10.0.0.1")))
+    }
+
+    @Test
+    fun `X-Real-IP 가 있으면 nginx 경유(외부 요청)라 내부 직결이 아니다`() {
+        // 헤더 유무가 내부·외부를 가르는 축이다 — 이게 뒤집히면 게이트가 외부까지 통과시킨다.
+        assertFalse(ClientIp.isInBoxDirect(request("172.17.0.1", "203.0.113.7")))
+        assertFalse(ClientIp.isInBoxDirect(request("127.0.0.1", "203.0.113.7")))
+    }
+
+    @Test
+    fun `X-Real-IP 가 공백이면 헤더 없음과 같게 내부 직결로 본다`() {
+        // of() 의 공백 폴백과 판정을 일치시킨다 — 한쪽만 공백을 값으로 치면 두 함수가 어긋난다.
+        assertTrue(ClientIp.isInBoxDirect(request("172.17.0.1", "   ")))
+    }
+
+    @Test
+    fun `공인 IP 에서 직접 온 요청은 헤더가 없어도 내부 직결이 아니다`() {
+        assertFalse(ClientIp.isInBoxDirect(request("8.8.8.8")))
     }
 }

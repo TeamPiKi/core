@@ -39,6 +39,21 @@ object ClientIp {
         return remote
     }
 
+    // nginx 를 거치지 않고 같은 박스 안에서 앱에 직접 들어온 요청인가 — 관측 수집기(Alloy)의 scrape 가 이것이다.
+    // 판정은 "X-Real-IP 가 없다 + 출발지가 신뢰 대역이다" 다. nginx 는 외부 요청 전부에 X-Real-IP 를 $remote_addr
+    // 로 덮어쓰므로(배포 nginx conf), 그 헤더 없이 loopback 바인딩된 게시 포트에 닿을 수 있는 건 박스 내부뿐이다.
+    //
+    // remoteAddr 을 loopback 인지로 보지 않는 이유: 앱은 docker bridge 컨테이너라 userland-proxy 가 source 를
+    // gateway(예: 172.17.0.1)로 SNAT 한다 — 박스 내부에서 온 요청도 앱이 보는 remoteAddr 은 loopback 이 아니다
+    // (위 of() 주석의 그 사정). loopback 만 통과시키면 자기 박스의 수집기까지 막혀 앱 메트릭이 통째로 실명한다(#872).
+    //
+    // 신뢰 범위는 of() 와 같아 새 노출을 만들지 않는다 — 같은 브리지의 co-located 컨테이너가 여기 든다는
+    // 잔여 리스크도 위 주석의 판단(진짜 방어선은 인프라 레벨 브리지 격리)을 그대로 승계한다.
+    fun isInBoxDirect(request: HttpServletRequest): Boolean {
+        request.getHeader(REAL_IP)?.trim()?.ifBlank { null }?.let { return false } // nginx 경유 = 외부 요청
+        return isTrustedProxy(request.remoteAddr)
+    }
+
     // 신뢰 프록시 = loopback(127/8·::1) + 사설대역(RFC1918 10/8·172.16–31·192.168)·link-local. nginx·docker
     // gateway 가 전부 여기 든다. InetAddress 로 대역을 판정해 gateway IP 하드코딩(변동에 깨짐)을 피한다.
     private fun isTrustedProxy(ip: String): Boolean =
