@@ -353,7 +353,8 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 ),
             ).getId()
 
-    // 기계 추출 READY — 가격 이력에 실제로 실리는 유일한 종류다.
+    // 기계 추출(SERVER) READY 시딩 — 출처가 기록돼 있어 가격 이력에 실린다.
+    // 수기(MANUAL)도 편집자와 무관하게 이력에 실리므로(그쪽은 saveVersion 을 쓴다) 이 헬퍼는 기계 출처 케이스 전용이다.
     private fun saveMachineReady(
         itemId: Long,
         name: String,
