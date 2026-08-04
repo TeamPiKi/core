@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.repository
 
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.data.domain.Limit
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
@@ -30,21 +29,6 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
     fun findByUserIdAndIdLessThanOrderByIdDesc(
         userId: UUID,
         id: Long,
-        limit: Limit,
-    ): List<Notification>
-
-    // 카테고리 탭 첫 페이지 — 본인 알림 중 그 카테고리 type 집합만 최신순 limit 건. (idx (user_id, id) 가 정렬을 받치고 type 은 필터)
-    fun findByUserIdAndTypeInOrderByIdDesc(
-        userId: UUID,
-        types: List<NotificationType>,
-        limit: Limit,
-    ): List<Notification>
-
-    // 카테고리 탭 다음 페이지 — 커서 미만 + 그 카테고리 type 집합만 최신순 limit 건.
-    fun findByUserIdAndIdLessThanAndTypeInOrderByIdDesc(
-        userId: UUID,
-        id: Long,
-        types: List<NotificationType>,
         limit: Limit,
     ): List<Notification>
 

@@ -2,7 +2,6 @@ package com.depromeet.piki.notification.repository
 
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationCursor
-import com.depromeet.piki.notification.domain.NotificationType
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -13,12 +12,10 @@ interface NotificationRepository {
     fun hardDeleteAllByUserId(userId: UUID): Int
 
     // 본인 알림을 최신순(id desc)으로 최대 limit 건. cursor 가 있으면 그 id 미만만(다음 페이지).
-    // types 가 있으면 그 type 집합만(카테고리 탭 필터), null 이면 전체.
     fun findPage(
         userId: UUID,
         cursor: NotificationCursor?,
         limit: Int,
-        types: List<NotificationType>?,
     ): List<Notification>
 
     // 전체 안읽음 수(앱 badge). 응답 unreadCount · OS 아이콘 badge 가 모두 이 값을 쓴다.

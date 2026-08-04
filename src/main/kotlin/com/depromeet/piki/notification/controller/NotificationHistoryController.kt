@@ -7,7 +7,6 @@ import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.service.NotificationDeleteOrchestrator
 import com.depromeet.piki.notification.service.NotificationReadOrchestrator
 import com.depromeet.piki.notification.service.NotificationService
@@ -34,9 +33,8 @@ class NotificationHistoryController(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) cursor: String?,
         @RequestParam(required = false) size: Int?,
-        @RequestParam(required = false) category: NotificationCategory?,
     ): ApiResponseBody<NotificationHistoryResponse> {
-        val page = notificationService.getHistory(userId = userId, rawCursor = cursor, rawSize = size, category = category)
+        val page = notificationService.getHistory(userId = userId, rawCursor = cursor, rawSize = size)
         return ApiResponseBody.ok(
             data = NotificationHistoryResponse.of(page.notifications, page.unreadCount),
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),

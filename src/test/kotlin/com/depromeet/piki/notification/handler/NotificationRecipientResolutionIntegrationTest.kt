@@ -233,7 +233,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         // 이벤트 발행 → dispatch → 핸들러 resolveActorContext(한 번의 actor 조회) → 변수(actorName) 렌더 + 프사 snapshot 까지 실제 체인을 탄다.
         notificationDispatcher.dispatch(TournamentItemAdded(tournamentId, actor))
 
-        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals("https://x/snap.png", saved.first().actorImageUrl) // 발송 시점 actor 프사가 그대로 박혔다
         // 같은 컨텍스트의 변수(actorName)가 템플릿에 렌더돼 제목에 박힌다 — 변수·프사가 한 조회에서 함께 흐르는지 end-to-end 로 가드한다.
@@ -255,7 +255,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
             TournamentItemDeleted(tournamentId, tournamentItemId = tournamentItemId, snapshotId = snapshotId, actorId = actor),
         )
 
-        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals(NotificationType.TOURNAMENT_ITEM_DELETED, saved.first().type)
         assertEquals(tournamentId, saved.first().refId)

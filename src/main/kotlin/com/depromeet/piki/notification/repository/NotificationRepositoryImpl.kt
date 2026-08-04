@@ -2,7 +2,6 @@ package com.depromeet.piki.notification.repository
 
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.domain.NotificationCursor
-import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
@@ -16,35 +15,15 @@ class NotificationRepositoryImpl(
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = notificationJpaRepository.hardDeleteAllByUserId(userId)
 
-    // cursor(다음 페이지) × types(카테고리 필터) 분기. types 가 없으면 전체, 있으면 type-in 변형. 각 분기는 cursor 유무로 다시 갈린다.
+    // cursor 유무로 첫 페이지 / 다음 페이지가 갈린다.
     override fun findPage(
         userId: UUID,
         cursor: NotificationCursor?,
         limit: Int,
-        types: List<NotificationType>?,
     ): List<Notification> {
         val limited = Limit.of(limit)
-        types ?: return findPageAllTypes(userId, cursor, limited)
-        return findPageInTypes(userId, cursor, types, limited)
-    }
-
-    private fun findPageAllTypes(
-        userId: UUID,
-        cursor: NotificationCursor?,
-        limited: Limit,
-    ): List<Notification> {
         cursor ?: return notificationJpaRepository.findByUserIdOrderByIdDesc(userId, limited)
         return notificationJpaRepository.findByUserIdAndIdLessThanOrderByIdDesc(userId, cursor.lastNotificationId, limited)
-    }
-
-    private fun findPageInTypes(
-        userId: UUID,
-        cursor: NotificationCursor?,
-        types: List<NotificationType>,
-        limited: Limit,
-    ): List<Notification> {
-        cursor ?: return notificationJpaRepository.findByUserIdAndTypeInOrderByIdDesc(userId, types, limited)
-        return notificationJpaRepository.findByUserIdAndIdLessThanAndTypeInOrderByIdDesc(userId, cursor.lastNotificationId, types, limited)
     }
 
     override fun countUnread(userId: UUID): Long = notificationJpaRepository.countUnread(userId)

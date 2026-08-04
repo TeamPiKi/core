@@ -79,7 +79,7 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
         notificationDispatcher.dispatch(TournamentResultReady(rootTournamentId = rootId, actorId = owner))
 
         // 4) 발송 결과 — 참여자에게 RESULT_READY 1건이 actor(주최자) 프사 snapshot 과 함께 저장된다.
-        val saved = notificationRepository.findPage(participant, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(participant, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals("https://img/owner.png", saved.first().actorImageUrl) // 주최자 프사 snapshot
 
@@ -116,10 +116,10 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
         notificationDispatcher.dispatch(TournamentCompleted(rootTournamentId = rootId, actorId = member))
 
         // 주최자는 1건 받고(actor=멤버 프사), 멤버 본인(actor)은 0건.
-        val ownerInbox = notificationRepository.findPage(owner, cursor = null, limit = 10, types = null)
+        val ownerInbox = notificationRepository.findPage(owner, cursor = null, limit = 10)
         assertEquals(1, ownerInbox.size)
         assertEquals("https://img/member.png", ownerInbox.first().actorImageUrl)
-        assertTrue(notificationRepository.findPage(member, cursor = null, limit = 10, types = null).isEmpty())
+        assertTrue(notificationRepository.findPage(member, cursor = null, limit = 10).isEmpty())
     }
 
     private fun saveUser(

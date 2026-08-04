@@ -64,7 +64,7 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
         return saved.getId()
     }
 
-    // 타입을 지정해 저장 — 카테고리 필터·kind 파생 검증용(라우팅 없음 = Reference 셰입).
+    // 타입을 지정해 저장 — kind 파생 검증용(라우팅 없음 = Reference 셰입).
     private fun seedTyped(
         userId: UUID,
         type: NotificationType,
@@ -98,92 +98,6 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.unreadCount").value(2))
             .andExpect(jsonPath("$.pageResponse.hasNext").value(false))
             .andExpect(jsonPath("$.pageResponse.nextCursor").value(nullValue()))
-    }
-
-    @Test
-    fun `category=ACTIVITY 면 토너먼트 알림만, category=SYSTEM 이면 파싱 알림만 조회된다`() {
-        val userId = UUID.randomUUID()
-        val activity = seedTyped(userId, NotificationType.TOURNAMENT_STARTED)
-        val system = seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED)
-        val mockMvc = buildMockMvc()
-
-        mockMvc
-            .perform(get("/api/v1/notifications").param("category", "ACTIVITY").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.items.length()").value(1))
-            .andExpect(jsonPath("$.data.items[0].id").value(activity))
-            .andExpect(jsonPath("$.data.items[0].kind").value("TOURNAMENT"))
-
-        mockMvc
-            .perform(get("/api/v1/notifications").param("category", "SYSTEM").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.items.length()").value(1))
-            .andExpect(jsonPath("$.data.items[0].id").value(system))
-            .andExpect(jsonPath("$.data.items[0].kind").value("WISH"))
-    }
-
-    @Test
-    fun `category 필터도 커서로 페이지를 나누고 다음 페이지를 잇는다`() {
-        val userId = UUID.randomUUID()
-        val a1 = seedTyped(userId, NotificationType.TOURNAMENT_JOINED)
-        val a2 = seedTyped(userId, NotificationType.TOURNAMENT_ITEM_ADDED)
-        val a3 = seedTyped(userId, NotificationType.TOURNAMENT_STARTED)
-        seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED) // 시스템 — ACTIVITY 페이징에 섞이면 안 됨
-        val mockMvc = buildMockMvc()
-
-        // 1페이지: ACTIVITY size=2 → 최신 2건(a3, a2), 다음 페이지 있음, 커서=a2 (type-in 커서 변형 검증)
-        mockMvc
-            .perform(
-                get("/api/v1/notifications")
-                    .param("category", "ACTIVITY")
-                    .param("size", "2")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.items.length()").value(2))
-            .andExpect(jsonPath("$.data.items[0].id").value(a3))
-            .andExpect(jsonPath("$.data.items[1].id").value(a2))
-            .andExpect(jsonPath("$.pageResponse.hasNext").value(true))
-            .andExpect(jsonPath("$.pageResponse.nextCursor").value(a2.toString()))
-
-        // 2페이지: cursor=a2 + ACTIVITY → 남은 활동 1건(a1)만, 시스템 알림은 안 섞임
-        mockMvc
-            .perform(
-                get("/api/v1/notifications")
-                    .param("category", "ACTIVITY")
-                    .param("size", "2")
-                    .param("cursor", a2.toString())
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.items.length()").value(1))
-            .andExpect(jsonPath("$.data.items[0].id").value(a1))
-            .andExpect(jsonPath("$.pageResponse.hasNext").value(false))
-            .andExpect(jsonPath("$.pageResponse.nextCursor").value(nullValue()))
-    }
-
-    @Test
-    fun `category 로 걸러도 unreadCount 는 필터와 무관한 전체다`() {
-        val userId = UUID.randomUUID()
-        seedTyped(userId, NotificationType.TOURNAMENT_STARTED) // 활동 1
-        seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED) // 시스템 1
-        seedTyped(userId, NotificationType.ITEM_PARSING_FAILED) // 시스템 1
-
-        // category=ACTIVITY 로 목록은 1건만 걸러지지만, unreadCount(앱 badge)는 전체 3.
-        buildMockMvc()
-            .perform(get("/api/v1/notifications").param("category", "ACTIVITY").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.items.length()").value(1))
-            .andExpect(jsonPath("$.data.unreadCount").value(3))
-    }
-
-    @Test
-    fun `유효하지 않은 category 는 400 으로 거른다`() {
-        buildMockMvc()
-            .perform(
-                get("/api/v1/notifications")
-                    .param("category", "NOPE")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(UUID.randomUUID())),
-            ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.detail", notNullValue()))
     }
 
     // kind 는 라우팅 좌표가 없는 알림(Reference 셰입)에도 항상 실린다 — 옛 category·imageUrl 자리를 대신한다(#473 고도화).
@@ -250,20 +164,6 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("NOTIFICATION-001"))
-    }
-
-    @Test
-    fun `유효하지 않은 category 값은 400 COMMON-INVALID-INPUT 로 거른다`() {
-        // category 는 NotificationCategory enum 바인딩이라 미지 값은 MethodArgumentTypeMismatchException →
-        // RESEH → 400. 도메인 예외가 아니므로 공통 폴백 code(COMMON-INVALID-INPUT)를 받는다.
-        val userId = UUID.randomUUID()
-        buildMockMvc()
-            .perform(
-                get("/api/v1/notifications")
-                    .param("category", "UNKNOWN")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("COMMON-INVALID-INPUT"))
     }
 
     @Test

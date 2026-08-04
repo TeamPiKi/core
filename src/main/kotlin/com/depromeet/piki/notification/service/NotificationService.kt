@@ -1,6 +1,5 @@
 package com.depromeet.piki.notification.service
 
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationCursor
 import com.depromeet.piki.notification.domain.NotificationHistorySize
 import com.depromeet.piki.notification.repository.NotificationRepository
@@ -20,21 +19,17 @@ class NotificationService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     // 본인 알림을 최신순으로 한 페이지 + 안읽음 수 동봉. hasNext 판단을 위해 한 건 더 조회하고 초과분은 잘라낸다.
-    // category 가 있으면 그 카테고리의 type 집합으로 필터(활동/시스템 탭). unreadCount 는 category 무관 전체(앱 badge).
     @Transactional(readOnly = true)
     fun getHistory(
         userId: UUID,
         rawCursor: String?,
         rawSize: Int?,
-        category: NotificationCategory?,
     ): NotificationHistoryPage {
         val cursor = NotificationCursor.parse(rawCursor)
         val size = NotificationHistorySize.of(rawSize).value
-        val types = category?.let { NotificationCategory.typesOf(it) }
-        val fetched = notificationRepository.findPage(userId, cursor, size + 1, types)
+        val fetched = notificationRepository.findPage(userId, cursor, size + 1)
         val hasNext = fetched.size > size
         val page = fetched.take(size)
-        // 안읽음 수는 category 필터와 무관한 전체(앱 badge) 하나다.
         val unreadCount = notificationRepository.countUnread(userId)
         val nextCursor =
             page

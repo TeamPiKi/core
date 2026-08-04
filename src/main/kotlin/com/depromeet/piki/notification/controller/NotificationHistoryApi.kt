@@ -6,7 +6,6 @@ import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
-import com.depromeet.piki.notification.domain.NotificationCategory
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.media.Content
@@ -97,8 +96,6 @@ interface NotificationHistoryApi {
         cursor: String?,
         @Parameter(description = "페이지 크기 (기본 20, 최대 50)", example = "20")
         size: Int?,
-        @Parameter(description = "카테고리 필터 (미지정 시 전체). ACTIVITY(활동) / SYSTEM(시스템)", example = "ACTIVITY")
-        category: NotificationCategory?,
     ): ApiResponseBody<NotificationHistoryResponse>
 
     @Operation(
