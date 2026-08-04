@@ -1122,8 +1122,11 @@ class TournamentService(
         currentRound: Int,
         tournamentUserId: Long,
     ): RoundBracket {
+        // 라운드 값은 남은 인원 수(16 -> 8 -> 4 -> 2)라 진행될수록 작아진다. 따라서 "이전 라운드" 는
+        // currentRound 보다 "큰" 기록이다. != 로 두면 나중 라운드(더 작은 값)의 패자까지 빼서, 과거 라운드를
+        // 재파생할 때(멱등 재시도가 recorded.currentRound 로 부른다) 인원이 줄어든 브래킷이 나온다.
         val eliminatedBeforeRound = histories
-            .filter { it.currentRound != currentRound }
+            .filter { it.currentRound > currentRound }
             .map { it.loser() }
             .toSet()
         val entries = allTournamentItems

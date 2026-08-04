@@ -258,6 +258,38 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data").doesNotExist())
     }
 
+    @Test
+    fun `다음 라운드가 기록된 뒤 지난 라운드를 재전송해도 없는 매치를 다음 매치로 주지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = startTournament(mockMvc, itemCount = 8)
+
+        // 8강 4매치를 서버가 지정한 대로 모두 치른다.
+        val quarterFinals = mutableListOf<Match>()
+        repeat(4) {
+            val match = currentMatchOf(mockMvc, tournamentId)
+            quarterFinals += match
+            mockMvc
+                .perform(recordMatch(tournamentId, match.first, match.second, winner = match.first, round = 8))
+                .andExpect(status().isOk)
+        }
+
+        // 4강 한 매치만 기록한다. 이 패자가 8강 재파생에서 빠지면 7명짜리 브래킷이 되어
+        // 8강엔 없던 페어가 만들어지고, 그게 "아직 안 치른 매치" 로 보여 가짜 nextMatch 가 나간다.
+        val semiFinal = currentMatchOf(mockMvc, tournamentId)
+        mockMvc
+            .perform(recordMatch(tournamentId, semiFinal.first, semiFinal.second, winner = semiFinal.first, round = 4))
+            .andExpect(status().isOk)
+
+        // 이미 끝난 8강 매치를 재전송한다. 8강은 4매치를 다 치렀으므로 다음 매치가 있을 수 없다.
+        val retried = quarterFinals.first()
+        mockMvc
+            .perform(recordMatch(tournamentId, retried.first, retried.second, winner = retried.first, round = 8))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.nextMatch").doesNotExist())
+
+        assertEquals(5, historyCountOf(tournamentId), "지난 라운드 재전송이 기록을 중복 적재했다")
+    }
+
     private data class Match(
         val first: Long,
         val second: Long,
