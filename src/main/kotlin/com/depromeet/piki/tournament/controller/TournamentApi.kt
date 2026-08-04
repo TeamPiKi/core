@@ -15,6 +15,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -80,6 +81,11 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "상태 필터 (복수 전달 가능, 생략 시 전체)", example = "PENDING")
         status: List<TournamentStatus>?,
+        @Parameter(
+            description = "플레이 타입 필터 (생략 시 전체). SOLO=나 혼자, SOCIAL=참여자 2명 이상 또는 초대받은 토너먼트. status 와 AND 로 조합된다.",
+            example = "SOCIAL",
+        )
+        playType: PlayType?,
         @Parameter(description = "조회 개수 제한 (최근순 상위 N, 생략 시 전체). 1 이상.", example = "3")
         limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>>
