@@ -4,8 +4,8 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
-import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
@@ -34,7 +34,13 @@ interface WishlistApi {
         value = [
             ApiResponse(
                 responseCode = "201",
-                description = "위시리스트 등록 접수 (item.status=PENDING, 파싱은 백그라운드)",
+                description = "위시리스트 등록 완료 — 세 모양이 있다. " +
+                    "(1) 새 파싱 접수: item.status=PENDING, reused=false. 파싱은 백그라운드. " +
+                    "(2) 진행 중 파싱 합류: 같은 상품의 파싱이 이미 돌고 있어 그 결과를 함께 기다린다. " +
+                    "item.status=PENDING 또는 PROCESSING, reused=false. " +
+                    "(3) 기존 값 재사용: 다른 등록이 만든 완성 값(캐시)에 파싱 없이 붙어 즉시 item.status=READY, reused=true. " +
+                    "그 값이 낡았으면(서버 기준 24시간) refreshNeeded=true — 클라가 \"새로운 정보로 가져올까요?\" 를 물어 " +
+                    "사용자가 원할 때 새로고침 API 로 재추출한다",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -77,7 +83,9 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                description =
+                    "이미 위시리스트에 등록된 상품 (같은 상품을 다시 담음 — code: WISH-009) · " +
+                        "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -168,9 +176,15 @@ interface WishlistApi {
     @Operation(
         summary = "위시리스트 조회 (단건)",
         description = """
-            wishId 로 위시 항목 하나를 조회한다. 응답 모양은 목록 조회 항목과 같은 WishItemResponse(wish + item).
-            본인 위시만 조회 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
-            item.status 로 파싱 상태(PENDING/PROCESSING/READY/FAILED)를 구분한다. 상세 화면 진입 시 현재 status 확인에 쓰고, 전이 통보는 SSE(`/api/v1/notifications/subscribe`)로 받는다.
+            wishId 로 위시 항목 하나를 상세 조회한다. 화면에 표시할 값(item)과 가격 이력(priceHistory)을 함께 내려주므로
+            상세 화면은 이 API 하나로 그린다. 본인 위시만 조회할 수 있다.
+
+            - item: 화면에 그대로 표시하는 값. 목록 조회의 item 과 같은 규칙으로 파생돼 두 화면에서 같게 보인다.
+              값이 비어 있으면 status 로 갈린다 (PENDING·PROCESSING 은 대기, FAILED 는 수기 입력 유도이며 새로고침이 거부된다).
+              상태 전이 통보는 SSE(`/api/v1/notifications/subscribe`)로 받는다.
+            - priceHistory: 이 상품의 가격 기록을 최신순 최대 50건. 서버 추출값과 사용자 입력값이 함께 들어가고
+              source·editedByMe 로 구분한다.
+            - **지금 보이는 값은 항상 item 에서 읽는다.** priceHistory 는 표시값 선택 규칙을 타지 않아 첫 항목이 item 과 다를 수 있다.
         """,
     )
     @ApiResponses(
@@ -230,94 +244,25 @@ interface WishlistApi {
     fun getWish(
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "위시 항목 ID", example = "1024") wishId: Long,
-    ): ApiResponseBody<WishItemResponse>
+    ): ApiResponseBody<WishDetailResponse>
 
     @Operation(
-        summary = "위시 상품 가격 히스토리 조회",
+        summary = "위시 항목 수기 수정",
         description = """
-            wishId 로 그 위시가 가리키는 상품의 가격 히스토리를 조회한다. 갱신·새로고침마다 새 추출 버전이 쌓여
-            가격·이름·이미지 이력이 보존되며, 이 API 는 그중 추출 완료(READY)된 버전을 최신순(snapshotId desc)으로 내려준다.
-            가격이 없는 PENDING·PROCESSING·FAILED 버전은 entries 에서 제외된다 — 비어 있으면 아직 한 번도 추출에 성공하지 않은 상품이다.
-            entries 각 항목은 그 버전 시점의 가격·이름·이미지·추출시각을 담고, isActive 로 현재 활성(위시가 가리키는) 버전을 표시한다.
-            응답의 activeSnapshotId 는 현재 활성 버전 식별자다 — 활성 버전이 추출 중이거나 실패면 entries 에 없을 수 있다.
-            본인 위시만 조회 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
-        """,
-    )
-    @ApiResponses(
-        value = [
-            ApiResponse(
-                responseCode = "200",
-                description = "가격 히스토리 조회 성공 (READY 버전 최신순, 없으면 빈 entries)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "401",
-                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "403",
-                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요, 또는 본인 위시가 아님)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "404",
-                description = "존재하지 않는 위시 항목 (삭제된 항목 포함)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "409",
-                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-        ],
-    )
-    fun getPriceHistory(
-        @Parameter(hidden = true) userId: UUID,
-        @Parameter(description = "위시 항목 ID", example = "1024") wishId: Long,
-    ): ApiResponseBody<WishPriceHistoryResponse>
-
-    @Operation(
-        summary = "위시 항목 복구 (추출 실패 보정)",
-        description = """
-            추출에 실패(item.status=FAILED)한 위시 항목의 상품 정보를 사용자가 직접 채워 복구한다(multipart/form-data).
+            위시 항목의 상품 정보를 사용자가 직접 수정한다(multipart/form-data). 상태 제한이 없다 —
+            추출 실패(FAILED) 복구뿐 아니라 완료(READY)·진행 중(PENDING·PROCESSING) 항목도 언제든 수정할 수 있다.
             텍스트(이름·현재가·통화)는 form 필드로, 이미지는 image 파트로 받는다 — 이미지는 URL 이 아니라 파일로만 받아
-            서버가 그대로 S3 에 올려 대표 이미지로 채운다(추출·크롭 없음). 들어온 값만 갱신하고, 보정에 성공하면 READY 로 복구된다.
-            item 데이터는 링크에서 기계 추출한 사실이라, 이미 완성(READY)된 항목은 수정할 수 없고(409 CONFLICT),
-            대기·파싱 중(PENDING·PROCESSING)인 항목은 백그라운드 워커 소관이라 끼어들 수 없다(409 CONFLICT).
-            본인 위시만 보정 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
+            서버가 그대로 S3 에 올려 대표 이미지로 쓴다(추출·크롭 없음).
+            수정은 기존 버전을 고치지 않고 **수기(MANUAL) 새 버전**으로 쌓인다 — 들어온 값은 현재 버전 값 위에 병합되고,
+            이 위시의 표시가 그 버전으로 바뀐다. 진행 중이던 파싱은 계속돼 완료 시 이력으로 남는다.
+            본인 위시만 수정 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "추출 실패(FAILED) 항목 보정 성공 — status 가 READY 로 복구됨",
+                description = "수기 수정 성공 — 수기(MANUAL) 새 버전이 이 위시의 표시 버전이 됨",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -329,7 +274,7 @@ interface WishlistApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청 (보정 후에도 상품명 없음 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
-                        "이미지 없이 READY 전환 — code: ITEM-005 · currentPrice 음수 · name/currency 길이 초과 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · price 음수 · name/currency 길이 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
@@ -371,9 +316,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description =
-                    "수정할 수 없는 상태 (이미 등록 완료(READY) — code: ITEM-001 · " +
-                        "아직 대기·처리 중(PENDING·PROCESSING) — code: ITEM-002) · 탈퇴한 계정(code: USER-003)",
+                description = "탈퇴한 계정 (code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -611,7 +554,7 @@ interface WishlistApi {
     @Operation(
         summary = "위시리스트 등록 (이미지)",
         description = """
-            상품 페이지를 캡처한 이미지 1~5장을 받아, 각 이미지를 PENDING 상태의 위시 항목으로 즉시 등록하고(link 처럼 outbox 적재) 목록을 반환한다.
+            상품 페이지를 캡처한 이미지 1~5장을 받아, 각 이미지를 PENDING 상태의 위시 항목으로 즉시 등록하고(link 처럼 작업 큐 적재) 목록을 반환한다.
             실제 상품 정보 추출(Gemini Vision)은 백그라운드에서 비동기로 진행되어 각 항목을 READY 또는 FAILED 로 전이시킨다.
             URL 등록과 결과 모양(WishItemResponse)이 같다. 이미지 등록 항목은 URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 완료·실패를 통보받아 재조회하며, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 직접 채워 복구한다.
@@ -773,7 +716,7 @@ interface WishlistApi {
         summary = "위시리스트 이미지 등록 v2 - 업로드 확정",
         description = """
             이미지 등록 v2 의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PENDING 위시로 즉시 등록하고 목록을 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 outbox 에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 v1 과 같은 작업 큐에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름은 v1 과 완전히 같다.
             결과 모양(WishItemResponse)은 v1 이미지 등록과 동일하다 — URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 복구한다.
         """,

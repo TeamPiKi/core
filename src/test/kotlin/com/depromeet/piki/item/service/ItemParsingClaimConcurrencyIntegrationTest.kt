@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 import kotlin.test.assertTrue
 
-// outbox claim(FOR UPDATE)과 "PENDING snapshot 을 insert 중인 트랜잭션"의 공존을 검증한다.
+// 작업 큐 claim(FOR UPDATE)과 "PENDING snapshot 을 insert 중인 트랜잭션"의 공존을 검증한다.
 //
 // 배경: claim 의 FOR UPDATE 범위 스캔(status index)은 SKIP LOCKED 가 없으면 다른 트랜잭션의 미커밋 PENDING
 // insert 에 **대기**하고, 그 트랜잭션의 다음 insert 는 claim 이 쥔 next-key/gap 락에 다시 대기해 교착 사이클이

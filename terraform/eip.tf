@@ -42,18 +42,3 @@ resource "aws_eip_association" "dev_app" {
   allocation_id = aws_eip.dev_app.id
 }
 
-# -----------------------------------------------------------------------------
-# 스테이징(staging) EC2 용 EIP — apply 후 staging_ec2_public_ip 를 가비아 staging.api 에 등록.
-# -----------------------------------------------------------------------------
-resource "aws_eip" "staging_app" {
-  domain     = "vpc"
-  depends_on = [aws_internet_gateway.main]
-  tags = {
-    Name = "team3-staging-app-eip"
-  }
-}
-
-resource "aws_eip_association" "staging_app" {
-  instance_id   = aws_instance.staging_app.id
-  allocation_id = aws_eip.staging_app.id
-}

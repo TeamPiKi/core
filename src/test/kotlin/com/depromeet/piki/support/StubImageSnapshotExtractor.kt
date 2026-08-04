@@ -20,8 +20,8 @@ class StubImageSnapshotExtractor : ImageSnapshotExtractor {
         // 스냅샷 필드가 바뀌면 여기 한 곳만 고치면 된다 (같은 모양 람다가 테스트마다 복붙되는 것을 막는다).
         fun defaultSnapshot(
             name: String = "상품",
-            currentPrice: Int = 1_000,
+            price: Int = 1_000,
             imageUrl: String = "https://img.example.com/p.png",
-        ): ProductSnapshot = ProductSnapshot(link = null, name = name, currentPrice = currentPrice, currency = "KRW", imageUrl = imageUrl)
+        ): ProductSnapshot = ProductSnapshot(link = null, name = name, price = price, currency = "KRW", imageUrl = imageUrl)
     }
 }

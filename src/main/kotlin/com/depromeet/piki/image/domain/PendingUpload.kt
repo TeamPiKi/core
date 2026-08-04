@@ -9,7 +9,7 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 import java.util.UUID
 
-// 이미지 등록 v2(presigned) 발급~등록 대기 매핑(outbox). 발급 시 raw key 와 맥락(요청자·경로)을 커밋하고,
+// 이미지 등록 v2(presigned) 발급~등록 대기 매핑(작업 큐). 발급 시 raw key 와 맥락(요청자·경로)을 커밋하고,
 // S3 에 실제 업로드가 확인되면(confirm 의 HEAD 또는 폴링 백스톱) 이 행을 claim(삭제)하며 PENDING 아이템으로 등록한다.
 // context 별 필드 정합(WISH↔tournamentId 없음, TOURNAMENT↔tournamentId 필수)은 팩토리가 시그니처로 강제한다 —
 // 생성자를 private 으로 막아 잘못된 조합 자체를 만들 수 없게 한다.

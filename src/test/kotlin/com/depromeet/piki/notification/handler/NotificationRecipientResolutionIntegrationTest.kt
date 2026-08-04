@@ -218,8 +218,8 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     @Test
     fun `시스템 알림(파싱)은 actor 가 없어 actorImageUrl 이 null 이다 - negative control`() {
         // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트 imageUrl null → 직렬화 때 피키 로고로 채워진다.
-        assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(2099L)).imageUrl)
-        assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(2099L)).imageUrl)
+        assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(2099L, 20990L)).imageUrl)
+        assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(2099L, 20990L)).imageUrl)
     }
 
     @Test
@@ -267,14 +267,20 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `파싱 완료 수신자 - 위시로만 담긴 아이템은 그 위시 주인들이다`() {
+    fun `파싱 완료 수신자 - 그 버전을 활성으로 가리키는 위시 주인들이다 (다른 버전을 보는 위시는 제외)`() {
+        // 라우팅 키는 버전(#576) — 공유(#825)로 한 버전을 여러 위시가 가리키면 전원이 받고,
+        // 같은 item 이라도 다른 버전(갱신 전 등)을 보는 위시는 이 파싱을 기다린 적이 없어 받지 않는다.
         val itemId = 2001L
+        val sharedVersion = snapshotIdFor(itemId)
+        val otherVersion = snapshotIdFor(itemId)
         val owner1 = UUID.randomUUID()
         val owner2 = UUID.randomUUID()
-        wishRepository.save(Wish(owner1, snapshotIdFor(itemId)))
-        wishRepository.save(Wish(owner2, snapshotIdFor(itemId)))
+        val otherVersionOwner = UUID.randomUUID()
+        wishRepository.save(Wish(owner1, sharedVersion))
+        wishRepository.save(Wish(owner2, sharedVersion))
+        wishRepository.save(Wish(otherVersionOwner, otherVersion))
 
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId))
+        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, sharedVersion))
 
         assertEquals(setOf(owner1, owner2), recipients)
     }
@@ -287,9 +293,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val otherParticipant = UUID.randomUUID()
         // otherParticipant 는 추가 시점에 TOURNAMENT_ITEM_ADDED 로 갱신하므로 파싱완료는 안 받는다 — 참가자로 깔아두고 제외를 확인.
         listOf(adder, otherParticipant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotIdFor(itemId))))
+        val snapshotId = snapshotIdFor(itemId)
+        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId)))
 
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId))
+        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, snapshotId))
 
         assertEquals(setOf(adder), recipients)
     }
@@ -301,18 +308,20 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val wishOwner = UUID.randomUUID()
         val adder = UUID.randomUUID()
         val otherParticipant = UUID.randomUUID()
-        wishRepository.save(Wish(wishOwner, snapshotIdFor(itemId)))
+        // 공유(#825)의 세계 — 위시와 토너먼트 출전이 같은 버전을 가리킨다.
+        val snapshotId = snapshotIdFor(itemId)
+        wishRepository.save(Wish(wishOwner, snapshotId))
         listOf(adder, otherParticipant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotIdFor(itemId))))
+        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId)))
 
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId))
+        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, snapshotId))
 
         assertEquals(setOf(wishOwner, adder), recipients)
     }
 
     @Test
     fun `파싱 완료 수신자 - 어디에도 안 담긴 아이템은 빈 집합이다`() {
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(999_999L))
+        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(999_999L, 999_999L))
 
         assertTrue(recipients.isEmpty())
     }
@@ -321,9 +330,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     fun `파싱 실패 핸들러도 완료와 동일한 역조회 규칙을 쓴다`() {
         val itemId = 2004L
         val owner = UUID.randomUUID()
-        wishRepository.save(Wish(owner, snapshotIdFor(itemId)))
+        val snapshotId = snapshotIdFor(itemId)
+        wishRepository.save(Wish(owner, snapshotId))
 
-        val recipients = parsingFailedHandler.resolveRecipients(ItemParsingFailed(itemId))
+        val recipients = parsingFailedHandler.resolveRecipients(ItemParsingFailed(itemId, snapshotId))
 
         assertEquals(setOf(owner), recipients)
     }
@@ -331,9 +341,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     @Test
     fun `파싱 완료 라우팅 - 위시로 담긴 아이템은 WISH 다 (토너먼트 식별자 없음)`() {
         val itemId = 3001L
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotIdFor(itemId)))
+        val snapshotId = snapshotIdFor(itemId)
+        wishRepository.save(Wish(UUID.randomUUID(), snapshotId))
 
-        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId))
+        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId, snapshotId))
 
         assertEquals(NotificationRouting.Wish, routing)
     }
@@ -342,10 +353,11 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     fun `파싱 완료 라우팅 - 토너먼트로 담긴 아이템은 TOURNAMENT 와 그 출전 좌표(tournamentId·tournamentItemId)다`() {
         val itemId = 3002L
         val tournamentId = 1100L
+        val snapshotId = snapshotIdFor(itemId)
         val tournamentItem =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotIdFor(itemId)))).first()
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotId))).first()
 
-        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId))
+        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId, snapshotId))
 
         assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItem.getId()), routing)
     }
@@ -354,10 +366,11 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     fun `파싱 실패 라우팅도 완료와 동일 규칙으로 토너먼트 출전 좌표를 싣는다`() {
         val itemId = 3003L
         val tournamentId = 1101L
+        val snapshotId = snapshotIdFor(itemId)
         val tournamentItem =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotIdFor(itemId)))).first()
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotId))).first()
 
-        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId))
+        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId, snapshotId))
 
         assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItem.getId()), routing)
     }
@@ -365,9 +378,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     @Test
     fun `파싱 실패 라우팅 - 위시로 담긴 아이템은 WISH 다`() {
         val itemId = 3004L
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotIdFor(itemId)))
+        val snapshotId = snapshotIdFor(itemId)
+        wishRepository.save(Wish(UUID.randomUUID(), snapshotId))
 
-        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId))
+        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId, snapshotId))
 
         assertEquals(NotificationRouting.Wish, routing)
     }

@@ -46,7 +46,7 @@ class ItemParsingService(
         if (isZombieResult(target, expectedAttempt)) return false
         target.markReady(snapshot)
         // 트랜잭션 안에서 발행 → AFTER_COMMIT 리스너가 커밋 성공 후에만 알림을 보낸다 (롤백 시 발송 안 됨). itemId 는 snapshot 단일 출처.
-        eventPublisher.publishEvent(ItemParsingCompleted(target.itemId))
+        eventPublisher.publishEvent(ItemParsingCompleted(target.itemId, target.getId()))
         return true
     }
 
@@ -62,7 +62,7 @@ class ItemParsingService(
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
         if (isZombieResult(target, expectedAttempt)) return false
         target.markFailed()
-        eventPublisher.publishEvent(ItemParsingFailed(target.itemId))
+        eventPublisher.publishEvent(ItemParsingFailed(target.itemId, target.getId()))
         return true
     }
 
@@ -87,7 +87,7 @@ class ItemParsingService(
         // 예산을 다 쓴 실행을 반납하면 무한 재큐잉이 된다 — 되살림 경로와 같은 판정·같은 reason 으로 여기서 종결한다.
         if (target.attemptCount >= MAX_ATTEMPTS) {
             target.markFailed()
-            eventPublisher.publishEvent(ItemParsingFailed(target.itemId))
+            eventPublisher.publishEvent(ItemParsingFailed(target.itemId, target.getId()))
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
             return true
         }
@@ -168,7 +168,7 @@ class ItemParsingService(
             val claim =
                 toClaim(snapshot, itemById[snapshot.itemId], snapshot.attemptCount) ?: run {
                     snapshot.markFailed()
-                    eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
+                    eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_NO_SOURCE)
                     failedCount++
                     return@forEach
@@ -176,7 +176,7 @@ class ItemParsingService(
             // 실행 상한 도달: 더 되살리지 않고 종결.
             if (snapshot.attemptCount >= MAX_ATTEMPTS) {
                 snapshot.markFailed()
-                eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
+                eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
                 failedCount++
                 return@forEach
@@ -202,7 +202,7 @@ class ItemParsingService(
         val overdue = itemSnapshotRepository.findOverdue(threshold, batchSize)
         overdue.forEach { snapshot ->
             snapshot.expire()
-            eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId))
+            eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_DEADLINE)
         }
         return overdue.size

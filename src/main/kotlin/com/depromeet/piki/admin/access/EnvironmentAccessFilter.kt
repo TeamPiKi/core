@@ -12,11 +12,10 @@ import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 import org.springframework.web.util.UrlPathHelper
 
-// dev/staging 에서 API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만 allowlist IP 게이트로 막는다(#733). prod 는 off.
+// dev 에서 API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만 allowlist IP 게이트로 막는다(#733). prod 는 off.
 // 과거엔 도메인 전체를 막았으나, 백엔드 API 는 열어두고(현상유지) "문서 노출 차단"으로 범위를 좁혔다 — dev 문서는
-// /docs Discord 커맨드로 grant 받은 IP 만 접근하고, staging 문서는 springdoc off 로 어차피 404 다(문서 자체 없음).
-// staging 이 prod 프로파일을 공유하므로(deploy.yml) 프로파일이 아니라 env 플래그(admin.environment-gate)로 켠다 —
-// 배포가 dev/staging 에만 ENV_ACCESS_GATE=true 를 준다. AdminAccessFilter 와 같은 allowlist·grant 등록 흐름을 공유한다.
+// /docs Discord 커맨드로 grant 받은 IP 만 접근한다. 프로파일이 아니라 env 플래그(admin.environment-gate)로 켠다 —
+// 배포가 dev 에만 ENV_ACCESS_GATE=true 를 준다. AdminAccessFilter 와 같은 allowlist·grant 등록 흐름을 공유한다.
 //
 // 게이트 밖(통과): 백엔드 API·grant 진입(/admin-access/**)·health·localhost. grant 받은 IP·localhost 는 게이트를 통과한다.
 @Component
@@ -50,7 +49,7 @@ class EnvironmentAccessFilter(
 
     companion object {
         // 게이트 대상 경로 — API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만. 나머지(백엔드 API·grant 진입·health)는 통과한다(#733).
-        //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만, staging 은 springdoc off 로 404.
+        //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만 접근한다.
         //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 isLocalhost 로 내부 Alloy scrape 만 허용).
         private val GATED_ROOTS = listOf("/docs", "/v3/api-docs", "/actuator")
 

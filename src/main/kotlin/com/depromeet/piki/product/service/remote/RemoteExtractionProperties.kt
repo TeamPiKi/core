@@ -28,7 +28,7 @@ data class RemoteExtractionProperties(
         // 0/음수는 HttpURLConnection 에서 '무한 타임아웃'이라, 상한 검사만 있으면 워커 스레드가 영구 블록될 수 있다.
         require(readTimeoutMs > 0) { "read-timeout($readTimeoutMs ms)은 양수여야 한다 — 0 은 무한 대기다." }
         require(readTimeoutMs < STALE_TIMEOUT_MS) {
-            "read-timeout($readTimeoutMs ms)은 outbox stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
+            "read-timeout($readTimeoutMs ms)은 작업 큐 stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
         }
     }
 

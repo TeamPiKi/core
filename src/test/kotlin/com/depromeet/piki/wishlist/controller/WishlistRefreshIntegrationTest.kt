@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -41,7 +42,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
-// 위시 새로고침(#358)은 등록과 같은 비동기 outbox 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
+// 위시 새로고침(#358)은 등록과 같은 비동기 작업 큐 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
 // 디스패처(@Scheduled)가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
 // 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 Awaitility 로 전이를 기다린다. 자기가 만든 행은 격리 userId 로 정리한다.
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
@@ -88,7 +89,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
 
@@ -105,7 +106,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val active = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("새 상품", active.name)
-            assertEquals(20_000, active.currentPrice)
+            assertEquals(20_000, active.price)
             assertNotEquals(oldSnapshotId, active.getId()) // 새 버전 행
 
             // 옛 snapshot 행은 보존된다(토너먼트 출전 격리의 근거) — 여전히 READY, 옛 값.
@@ -161,7 +162,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     ItemSnapshot(
                         itemId = item.getId(),
                         name = "이미지 상품",
-                        currentPrice = 5_000,
+                        price = 5_000,
                         currency = "KRW",
                         status = ItemStatus.READY,
                         extractedAt = LocalDateTime.now(),
@@ -260,7 +261,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/inplay", "옛 상품", 10_000)
             // 출전 시점 고정 — tournament_item 이 옛 snapshot 을 가리킨다(FK 없으니 tournament 행 없이도 격리만 검증).
@@ -305,7 +306,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, _) = seedReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
 
@@ -343,7 +344,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
             itemParsingService.markReady(
                 v1.getId(),
-                ProductSnapshot(link = null, name = "버전1", currentPrice = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+                ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
                 expectedAttempt = attempt,
             )
 
@@ -360,9 +361,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `recoverItem 은 넘겨받은 snapshot 을 보정하고 같은 item 의 최신 버전을 건드리지 않는다`() {
-        // F1 회귀 — recoverWishItem 이 검증한 활성 snapshot(id)을 recoverItem 에 넘겨 그 행만 보정한다.
-        // findLatestByItemId 였다면 refresh 가 끼워 넣은 더 최신 버전을 보정 시도해 엉뚱한 409·오보정이 났을 것.
+    fun `manualEdit 은 위시 활성 버전을 base 로 MANUAL 새 버전을 쌓아 스왑하고 기존 행들은 건드리지 않는다`() {
+        // 수기 수정(#825 결정 4) 회귀 — 활성(FAILED) 버전이 최신이 아니어도 base 는 wish 활성 포인터가 결정하고,
+        // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PROCESSING) 행도 그대로 남는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/recover-version")))
@@ -375,15 +376,32 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     },
                 )
             val newer = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
+            val wish = wishRepository.save(Wish(userId, failed.getId()))
 
-            // FAILED 인 failed(최신 아님)를 지정해 보정 — findLatest 였다면 newer(최신, PROCESSING)를 잡아 stillProcessing 409 였을 것.
-            wishPersistenceService.recoverItem(failed.getId(), name = "보정", currentPrice = 200, imageUrl = "https://img.example.com/a.png", currency = "KRW")
+            val result =
+                wishPersistenceService.manualEdit(
+                    userId = userId,
+                    wishId = wish.getId(),
+                    name = "보정",
+                    price = 200,
+                    imageUrl = "https://img.example.com/a.png",
+                    currency = "KRW",
+                )
 
-            assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(failed.getId())?.status)
-            assertEquals("보정", itemSnapshotRepository.findById(failed.getId())?.name)
-            // 최신(newer)은 그대로 PROCESSING — 보정은 지정한 행에만 적용됐다.
+            // 새 MANUAL 버전이 활성으로 스왑됐다 — 편집자·출처가 박힌다.
+            val active =
+                itemSnapshotRepository.findById(wishRepository.findById(wish.getId())!!.snapshotId)
+                    ?: error("활성 snapshot 이 없다")
+            assertEquals(result.snapshot.getId(), active.getId())
+            assertEquals(ItemStatus.READY, active.status)
+            assertEquals("보정", active.name)
+            assertEquals(ItemSnapshotSource.MANUAL, active.source)
+            assertEquals(userId, active.editedBy)
+            // 기존 행들은 불변 — FAILED 는 FAILED 로(이력), 최신 PROCESSING 은 파싱 계속.
+            assertEquals(ItemStatus.FAILED, itemSnapshotRepository.findById(failed.getId())?.status)
             assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(newer.getId())?.status)
         } finally {
+            jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
@@ -403,7 +421,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = "KRW",
                     status = ItemStatus.READY,
                     extractedAt = LocalDateTime.now(),

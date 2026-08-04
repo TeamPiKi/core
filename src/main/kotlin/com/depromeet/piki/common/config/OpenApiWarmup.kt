@@ -14,7 +14,7 @@ import org.springframework.web.client.RestClient
 // OperationCustomizer 실행) 이 콜드 비용이 수백 ms~초 단위다. dev 는 배포마다 앱이 재기동돼 그 비용이 매번
 // "배포 후 문서를 처음 여는 개발자" 에게 떨어진다. 기동 시 self-GET 으로 미리 캐시해 첫 로딩 콜드를 부팅으로 옮긴다.
 //
-// docs.enabled 게이트(WebConfig 와 동일)로 문서 비노출 환경(staging/prod)에선 빈 자체가 안 떠 self-GET 이 없다.
+// docs.enabled 게이트(WebConfig 와 동일)로 문서 비노출 환경(prod)에선 빈 자체가 안 떠 self-GET 이 없다.
 // ApplicationReadyEvent 시점이라 DispatcherServlet 이 준비돼 있고, 실패는 비치명(warm-up 은 best-effort — 문서
 // 자체는 첫 요청에서 여전히 lazy 로 뜬다)이라 runCatching 으로 삼켜 기동을 막지 않는다.
 @Component

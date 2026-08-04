@@ -88,3 +88,8 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+    distribution:
+      slo:
+        # main 과 동일한 OTel 표준 14경계 미러 (#839). ActuatorIntegrationTest 가 바인딩(버킷 적용)과
+        # main·test 두 파일의 값 일치를 함께 가드한다 — 한쪽만 바뀌면 빨간불.
+        "[http.server.requests]": 5ms,10ms,25ms,50ms,75ms,100ms,250ms,500ms,750ms,1s,2500ms,5s,7500ms,10s

@@ -10,6 +10,7 @@ import com.depromeet.piki.tournament.controller.dto.UpdateInviteDurationRequest
 import com.depromeet.piki.tournament.controller.dto.JoinTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.PlayLinkInfoResponse
 import com.depromeet.piki.tournament.controller.dto.RecordMatchRequest
+import com.depromeet.piki.tournament.controller.dto.RecordMatchResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
@@ -141,9 +142,9 @@ class TournamentController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable tournamentId: Long,
         @Valid @RequestBody request: RecordMatchRequest,
-    ): ApiResponseBody<TournamentDetailResponse.CompletedData?> {
+    ): ApiResponseBody<RecordMatchResponse> {
         val result = tournamentService.recordMatch(userId, request.toRecordMatch(tournamentId))
-        return ApiResponseBody.ok(result?.let { TournamentDetailResponse.CompletedData.from(it) })
+        return ApiResponseBody.ok(RecordMatchResponse.from(result))
     }
 
     @PostMapping("/{tournamentId}/play-link")

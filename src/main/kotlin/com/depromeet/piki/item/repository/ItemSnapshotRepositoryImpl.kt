@@ -5,6 +5,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
+import java.util.UUID
 
 @Repository
 class ItemSnapshotRepositoryImpl(
@@ -15,11 +16,25 @@ class ItemSnapshotRepositoryImpl(
     override fun saveAll(snapshots: List<ItemSnapshot>): List<ItemSnapshot> =
         itemSnapshotJpaRepository.saveAll(snapshots)
 
+    override fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestInProgressByItemId(itemId)
+
+    override fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestMachineReadyByItemId(itemId)
+
+    override fun findLatestMachineReadyByItemIds(itemIds: Collection<Long>): List<ItemSnapshot> =
+        itemIds.takeIf { it.isNotEmpty() }?.let { itemSnapshotJpaRepository.findLatestMachineReadyByItemIds(it) }.orEmpty()
+
+    override fun reparentAll(
+        fromItemId: Long,
+        toItemId: Long,
+    ): Int = itemSnapshotJpaRepository.reparentAll(fromItemId, toItemId)
+
     override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
         itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
 
-    override fun findReadyHistoryByItemId(itemId: Long): List<ItemSnapshot> =
-        itemSnapshotJpaRepository.findByItemIdAndStatusAndDeletedAtIsNullOrderByIdDesc(itemId, ItemStatus.READY)
+    override fun findPriceHistoryByItemId(
+        itemId: Long,
+        limit: Int,
+    ): List<ItemSnapshot> = itemSnapshotJpaRepository.findPriceHistoryByItemId(itemId, PageRequest.of(0, limit))
 
     override fun findById(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdAndDeletedAtIsNull(id)
 

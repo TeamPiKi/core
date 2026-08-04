@@ -4,7 +4,7 @@ import com.depromeet.piki.admin.config.AdminProperties
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import org.springframework.stereotype.Component
 
-// `/piki-admin env:<dev|staging|prod>` — 선택한 환경의 원타임 grant 링크를 발급한다(#654).
+// `/piki-admin env:<dev|prod>` — 선택한 환경의 원타임 grant 링크를 발급한다(#654).
 // host 는 grantHosts 맵에서(요청 host 가 아니라) — 인터랙션 엔드포인트와 대상 env 가 다를 수 있어서다.
 // 토큰은 그 env 에 바인딩 서명돼(GrantTokenCodec), 대상 env 만 소비할 수 있다(cross-env).
 @Component

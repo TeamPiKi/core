@@ -7,19 +7,19 @@ import com.depromeet.piki.common.exception.ErrorCode
 // code·category·message 를 한 엔트리에 모아 single source 로 둔다: status 는 category.httpStatus 로,
 // 응답 detail·로그·OpenAPI 카탈로그는 message 로 파생된다.
 //
-// 5개 전부 공개 JSON API 도달이라 ErrorCodeRegistry 에 등록한다(어드민 SSR 전용이라 미등록인
-// AnnouncementImageErrorCode 와 갈리는 지점). 던지는 곳은 ItemSnapshot.recover 하나지만, 그 경로가
+// 공개 JSON API 도달이라 ErrorCodeRegistry 에 등록한다(어드민 SSR 전용이라 미등록인
+// AnnouncementImageErrorCode 와 갈리는 지점). 던지는 곳은 ItemSnapshot.manual(수기 수정 병합 검증)이며,
 // 위시 보정(PATCH /wishlists/{id})·토너먼트 아이템 보정(PATCH /tournaments/{id}/items/{itemId}) 두
 // 엔드포인트에서 GlobalExceptionHandler 를 거쳐 wire code 로 나간다.
+//
+// **결번**: ITEM-001(ALREADY_READY)·ITEM-002(STILL_PROCESSING)는 수기 수정 상시 허용(#825 결정 4,
+// 2026-07-31)으로 폐기됐다. 번호는 재사용하지 않는다.
 enum class ItemErrorCode(
     override val code: String,
     override val category: ErrorCategory,
     override val message: String,
 ) : ErrorCode {
-    ALREADY_READY("ITEM-001", ErrorCategory.CONFLICT, "이미 등록된 상품은 수정할 수 없어요."),
-    STILL_PROCESSING("ITEM-002", ErrorCategory.CONFLICT, "상품 정보를 가져오는 중이에요. 잠시만 기다려 주세요."),
-
-    // 필수값 누락 셋은 합치지 않는다 — recover 의 순차 guard 가 각각 다른 필드를 가리키므로,
+    // 필수값 누락 셋은 합치지 않는다 — manual 의 순차 guard 가 각각 다른 필드를 가리키므로,
     // code 를 나눠 둬야 클라가 "어느 필드가 비었는지" 를 안내할 수 있다.
     NAME_REQUIRED_FOR_READY("ITEM-003", ErrorCategory.INVALID_INPUT, "상품 이름을 입력해 주세요."),
     PRICE_REQUIRED_FOR_READY("ITEM-004", ErrorCategory.INVALID_INPUT, "상품 가격을 입력해 주세요."),

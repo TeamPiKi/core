@@ -6,8 +6,10 @@ import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.user.domain.IdentityType
@@ -17,7 +19,7 @@ import com.depromeet.piki.wishlist.domain.WishDeleteIds
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.repository.WishRepository
-import com.depromeet.piki.wishlist.service.dto.WishPriceHistory
+import com.depromeet.piki.wishlist.service.dto.WishDetail
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import com.depromeet.piki.wishlist.service.dto.WishlistPage
 import org.springframework.stereotype.Service
@@ -34,6 +36,7 @@ class WishlistService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val itemDisplayService: ItemDisplayService,
     private val userService: UserService,
 ) {
     // 위시리스트는 회원 전용. 게스트(인증은 됐으나 회원 아님)는 Security 가 아니라 여기서 도메인 계약으로 막아
@@ -63,7 +66,7 @@ class WishlistService(
         return wishPersistenceService.persist(userId, Item(link))
     }
 
-    // 이미지 등록은 registerFromUrl(link)와 같은 비동기 outbox 흐름 — 입력이 이미지(다건)일 뿐이다.
+    // 이미지 등록은 registerFromUrl(link)와 같은 비동기 작업 큐 흐름 — 입력이 이미지(다건)일 뿐이다.
     // 개수·형식을 동기로 검증(400)한 뒤, 원본을 S3 에 durable 적재(raw key 확보)하고 link 경로처럼 PENDING item·wish 를
     // 배치 저장해 즉시 반환한다. 실제 추출(Gemini·크롭·결과 업로드)은 디스패처(@Scheduled)가 PENDING 을 집어 워커에 넘긴다.
     // raw 를 먼저 올려 입력이 durable 하므로, @Async 유실·일시 오류로 재실행돼도 워커가 그 key 로 원본을 다시 읽는다.
@@ -112,7 +115,7 @@ class WishlistService(
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
     }
 
-    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다. upload 는 공개 URL 을 반환하지만 outbox 입력엔
+    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다. upload 는 공개 URL 을 반환하지만 작업 큐 입력엔
     // 우리가 만든 key 가 필요하다(워커가 download(key)로 다시 읽는다). 파싱이 끝나면 워커가 이 raw 를 회수한다.
     private fun uploadRaw(image: ProductImage): String {
         val key = "items/raw/${UUID.randomUUID()}.${image.extension}"
@@ -134,19 +137,21 @@ class WishlistService(
         val hasNext = fetched.size > size
         val pageWishes = fetched.take(size)
 
-        // 표시값은 wish 의 활성 snapshot 에서 읽는다. snapshot 은 등록 시 함께 생기고 wish.snapshotId 로 고정된다.
+        // 포인터 버전을 끌어온 뒤 표시값은 파생한다(#857) — 카드는 항상 그 상품의 마지막 기계 READY 를 향하고,
+        // 수기 존중·진행 중 유지 등 규칙은 ItemDisplayService 가 진다. 포인터는 정체성 도달·수기 존중 판정의 표식이다.
         val snapshotsById =
             itemSnapshotRepository.findByIds(pageWishes.map { it.snapshotId }).associateBy { it.getId() }
+        val displayById = itemDisplayService.resolveDisplay(snapshotsById.values)
         // item 정체성은 snapshot.itemId 단일 출처다. snapshot 에서 itemId 를 모아 item 을 한 번에 끌어온다.
         val itemsById = itemRepository.findByIds(snapshotsById.values.map { it.itemId }).associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
                 // snapshot·item 은 wish 와 함께 영속화되며 별도 삭제 경로가 없다. 없으면 영속화 경로가 깨진 코드 버그다.
-                val snapshot =
+                val pointer =
                     snapshotsById[wish.snapshotId]
                         ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-                val item = itemsById[snapshot.itemId] ?: error("wish ${wish.getId()} 의 item ${snapshot.itemId} 가 없다")
-                WishWithItem(wish = wish, item = item, snapshot = snapshot)
+                val item = itemsById[pointer.itemId] ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
+                WishWithItem(wish = wish, item = item, snapshot = displayById[pointer.getId()] ?: pointer)
             }
 
         val nextCursor =
@@ -158,57 +163,46 @@ class WishlistService(
         return WishlistPage(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
     }
 
-    // wishId 로 단건 조회. 본인 위시만 볼 수 있고, 권한 검증은 도메인(verifyOwnedBy)에 맡긴다.
-    // findById 가 deletedAt IS NULL 만 보므로 삭제된 위시는 notFound(404)로 떨어진다.
+    // wishId 로 상세 조회 — 표시값과 그 상품의 가격 이력을 함께 내려준다. 본인 위시만 볼 수 있고,
+    // 권한 검증은 도메인(verifyOwnedBy)에 맡긴다. findById 가 deletedAt IS NULL 만 보므로 삭제된 위시는 notFound(404).
+    //
+    // 이력을 별도 API 로 두지 않는 이유: 옛 히스토리 API 는 wish.snapshotId(포인터)를 그대로 "활성" 이라 불러
+    // 표시값 파생(#857)을 타지 않았다. item 을 여러 사용자가 공유하므로 남이 새로고침하면 포인터는 옛 버전에 남고,
+    // 그러면 같은 위시에 대해 두 API 의 답이 어긋난다. 한 응답에서 표시값을 단일 출처로 두어 그 어긋남을 없앤다.
     @Transactional(readOnly = true)
     fun getWish(
         userId: UUID,
         wishId: Long,
-    ): WishWithItem {
+    ): WishDetail {
         requireMember(userId)
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
         // wish 가 가리키는 snapshot·item 은 반드시 존재한다. 없으면 영속화 경로가 깨진 코드 버그다.
         // item 정체성은 snapshot.itemId 단일 출처다 — snapshot 을 먼저 끌어오고 그 itemId 로 item 을 조회한다.
-        val snapshot =
+        val pointer =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
         val item =
-            itemRepository.findById(snapshot.itemId) ?: error("wish ${wish.getId()} 의 item ${snapshot.itemId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+            itemRepository.findById(pointer.itemId) ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
+        // 표시값 파생(#857) — 목록(getWishlist)과 같은 규칙.
+        val history = itemSnapshotRepository.findPriceHistoryByItemId(pointer.itemId, PRICE_HISTORY_LIMIT)
+        return WishDetail(
+            wish = wish,
+            item = item,
+            snapshot = itemDisplayService.resolveDisplay(pointer),
+            history = history,
+        )
     }
 
-    // 위시 상품의 가격 히스토리 조회. wish 가 가리키는 활성 snapshot 에서 item 정체성(itemId)에 도달한 뒤,
-    // 그 item 의 추출 완료(READY) 버전 전체를 최신순으로 끌어온다 — 갱신·새로고침마다 쌓인 버전이 가격 이력이다.
-    // 단건 조회(getWish)와 같은 소유권 검증·트랜잭션 경계. wish 는 itemId 를 직접 들지 않으므로 snapshot 을 거쳐 도달한다.
-    @Transactional(readOnly = true)
-    fun getPriceHistory(
-        userId: UUID,
-        wishId: Long,
-    ): WishPriceHistory {
-        requireMember(userId)
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        // 활성 snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그). item 정체성은 snapshot.itemId 단일 출처다.
-        val activeSnapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item =
-            itemRepository.findById(activeSnapshot.itemId)
-                ?: error("wish ${wish.getId()} 의 item ${activeSnapshot.itemId} 가 없다")
-        val history = itemSnapshotRepository.findReadyHistoryByItemId(activeSnapshot.itemId)
-        return WishPriceHistory(wish = wish, item = item, history = history)
-    }
-
-    // 추출 실패(FAILED) item 을 사용자가 직접 보정해 READY 로 복구한다. 이미지를 함께 주면 그대로 S3 에 올려
-    // imageUrl 을 채운다(추출·크롭 없음 — 사용자가 고른 이미지를 그대로 대표 이미지로). READY·PROCESSING 은
-    // recover 가 409 로 막는다. 외부 호출(S3)을 트랜잭션에 넣지 않기 위해 검증·소유권·상태 사전확인·업로드를
-    // 트랜잭션 밖에서 끝내고, 영속화만 wishPersistenceService.recoverItem(@Transactional)에 위임한다.
+    // 위시 item 의 수기 수정(#825 결정 4) — 상태 무관 언제든 허용하며, 기존 버전을 고치지 않고 MANUAL 새 버전을
+    // 쌓아 활성 포인터를 스왑한다(편집자 기록·이력 보존). 이미지를 함께 주면 그대로 S3 에 올려 imageUrl 로 쓴다
+    // (추출·크롭 없음 — 사용자가 고른 이미지를 그대로 대표 이미지로). 외부 호출(S3)을 트랜잭션에 넣지 않기 위해
+    // 검증·소유권 사전확인·업로드를 트랜잭션 밖에서 끝내고, 영속화만 manualEdit(@Transactional, wish 행 락)에 위임한다.
     fun recoverWishItem(
         userId: UUID,
         wishId: Long,
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         currency: String?,
         image: MultipartFile?,
     ): WishWithItem {
@@ -217,27 +211,33 @@ class WishlistService(
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // 활성 snapshot 으로 사전 상태 검증 — FAILED 가 아니면 S3 에 올리기 전에 막는다(orphan 업로드 방지).
-        // recover 가 READY/PROCESSING 에 사유별 409 를 던진다(트랜잭션 밖 조회라 던지기 전용, 실제 보정은 recoverItem).
-        // item 정체성은 snapshot.itemId 단일 출처다. snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그).
+        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 에 올리기 전에 같은 규칙으로 거른다.
+        // 이미지가 오면 업로드가 imageUrl 을 채울 것이므로 자리표시 URL 로 그 자리만 메워 이름·가격 병합을 검증한다
+        // (이 값은 저장되지 않는다 — 던지기 전용 dry-run). 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
         val activeSnapshot =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item =
-            itemRepository.findById(activeSnapshot.itemId)
-                ?: error("wish ${wish.getId()} 의 item ${activeSnapshot.itemId} 가 없다")
-        if (!activeSnapshot.isFailed()) activeSnapshot.recover()
+        ItemSnapshot.manual(
+            base = activeSnapshot,
+            name = name,
+            price = price,
+            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
+            currency = currency,
+            editedBy = userId,
+        )
         // 이미지가 있으면 S3 업로드(트랜잭션 밖). 실패 시 ImageStorageException(502).
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        wishPersistenceService.recoverItem(activeSnapshot.getId(), name, currentPrice, imageUrl, currency)
-        // recoverItem 이 같은 트랜잭션에서 활성 snapshot 을 보정했다. 응답 표시값은 그 snapshot 을 재조회해 읽는다.
-        val snapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+        return wishPersistenceService.manualEdit(
+            userId = userId,
+            wishId = wishId,
+            name = name,
+            price = price,
+            imageUrl = imageUrl,
+            currency = currency,
+        )
     }
 
     // 위시 item 의 상품 정보를 원본 링크로 재추출해 최신화한다(수동 새로고침). 추출(Gemini)은 디스패처가 비동기로
@@ -281,5 +281,14 @@ class WishlistService(
     companion object {
         private const val MIN_IMAGE_COUNT = 1
         private const val MAX_IMAGE_COUNT = 5
+
+        // 상세 응답에 싣는 가격 이력의 상한. item 을 여러 사용자가 공유해 새로고침이 누적되는데 상세는 진입마다
+        // 호출되므로, 상한이 없으면 응답이 시간에 비례해 계속 자란다. 가격 추이 용도에는 이 정도면 충분하고,
+        // 전체 이력이 실제로 필요해지면 그때 페이징을 갖춘 API 를 따로 만든다 (상세 응답 안에 페이징을 중첩하면
+        // 방금 없앤 별도 히스토리 API 를 다시 만드는 꼴이다).
+        private const val PRICE_HISTORY_LIMIT = 50
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"
