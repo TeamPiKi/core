@@ -32,9 +32,10 @@ import java.util.UUID
 // 상세 조회(GET /wishlists/{wishId})가 함께 내려주는 가격 이력의 계약을 고정한다. 동기 조회라 @Transactional 자동 롤백으로 격리하고,
 // 한 item 에 버전을 직접 쌓아 "갱신·새로고침·수기 수정이 누적된 상태"를 시딩한다.
 //
-// 고정하는 계약: READY 중 기계(SERVER/SERVER_LLM) 전부와 **본인 수기**를 최신순으로, 타인 수기·출처 미상(null)·
-// 미완성(PENDING/PROCESSING/FAILED)·soft-delete 는 제외, 상한 50건. 그리고 이 집합이 표시값 파생의 입력과 같아
-// **표시 버전이 READY 인 한 첫 항목이 곧 표시값**이라는 것.
+// 고정하는 계약: 출처가 남은 READY 버전(서버 추출·수기 모두, 편집자 무관)을 최신순으로, 출처 미상(null)·
+// 미완성(PENDING/PROCESSING/FAILED)·soft-delete 는 제외, 상한 50건. 수기는 editedByMe 로 본인 것인지만 구분하고
+// 편집자 식별자는 내리지 않는다. 그리고 **item 과 priceHistory 가 별개의 축**이라는 것 — item 은 맥락 스코프를 거친
+// 표시값이고 이력은 그 필터를 타지 않아, 이력 첫 항목이 표시값과 다를 수 있다.
 @Transactional
 class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -96,10 +97,13 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `타인의 수기와 출처 미상 버전은 빠지고 본인 수기는 이력에 남는다`() {
-        // 이 필터가 이 작업의 핵심이다. 타인의 수기는 남의 위시 사정이라 내 이력에 섞이면 안 되고,
-        // 출처 미상(도입 전 행)은 서버 추출인지 사용자 입력인지 소급 판정할 수 없어 뺀다.
-        // 반면 본인 입력값은 사용자가 페이지를 직접 보고 적은 값이자 추출 실패 상품의 유일한 기록이라 남긴다.
+    fun `가격 이력에는 타인의 수기도 담기고 editedByMe 로 구분된다 - 출처 미상만 빠진다`() {
+        // 이력은 그 상품의 가격 기록이라 편집자를 가리지 않는다. 다만 타인의 값은 어떤 조건에서 본 것인지 알 수 없어
+        // editedByMe 로 구분해 주고, 편집자 식별자(UUID)는 개인정보라 응답에 싣지 않는다.
+        // 출처 미상(도입 전 행)만 빠진다 — 서버 추출인지 사용자 입력인지 소급 판정할 수 없기 때문이다.
+        //
+        // 동시에 이 케이스는 **item 과 priceHistory 가 별개의 축**임을 고정한다. 이력 맨 앞은 내 수기(99,000원)인데
+        // 표시값은 마지막 기계 READY 인 LLM 버전(97,000원)이다 — 포인터가 기계 버전이라 수기 존중 분기에 닿지 않는다.
         val mockMvc = buildMockMvc()
         val me = UUID.randomUUID()
         val other = UUID.randomUUID()
@@ -117,26 +121,29 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                 get("/api/v1/wishlists/$wishId")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(me)}"),
             ).andExpect(status().isOk)
-            // 다섯 버전 중 셋이 남는다 — 기계 둘(SERVER·SERVER_LLM) + 내 수기. 타인 수기와 출처 미상은 빠진다.
-            .andExpect(jsonPath("$.data.priceHistory.length()").value(3))
+            // 다섯 버전 중 넷이 남는다 — 출처 미상만 빠진다.
+            .andExpect(jsonPath("$.data.priceHistory.length()").value(4))
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
             .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").value(true))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(97_000))
             .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER_LLM"))
-            .andExpect(jsonPath("$.data.priceHistory[2].price").value(95_000))
-            .andExpect(jsonPath("$.data.priceHistory[2].source").value("SERVER"))
-            // 편집자 식별자는 응답에 싣지 않는다 — 내려온 MANUAL 은 곧 본인 것이므로 판정할 필요가 없다.
-            .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").doesNotExist())
+            // 기계 추출값은 "누가 넣었나" 가 의미 없어 editedByMe 를 내리지 않는다.
+            .andExpect(jsonPath("$.data.priceHistory[1].editedByMe").doesNotExist())
+            .andExpect(jsonPath("$.data.priceHistory[2].price").value(80_000))
+            .andExpect(jsonPath("$.data.priceHistory[2].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[2].editedByMe").value(false))
+            .andExpect(jsonPath("$.data.priceHistory[3].price").value(95_000))
+            .andExpect(jsonPath("$.data.priceHistory[3].source").value("SERVER"))
             .andExpect(jsonPath("$.data.item.id").value(itemId))
-            // 표시값은 파생 규칙(#857)대로 마지막 기계 READY 인 LLM 버전이다 — 포인터(machine)가 그보다 앞에 있고 수기가 아니므로.
+            // 표시값은 파생 규칙(#857)대로 마지막 기계 READY 다 — 이력 첫 항목(내 수기)과 다르다.
             .andExpect(jsonPath("$.data.item.price").value(97_000))
             .andExpect(jsonPath("$.data.item.source").value("SERVER_LLM"))
     }
 
     @Test
-    fun `본인이 고친 값은 이력 맨 앞에 오고 그것이 곧 표시값이다`() {
-        // 이력이 표시값 파생의 입력과 같은 집합(기계 전부 + 본인 수기)이라, 표시 버전이 READY 인 한 첫 항목이 곧 표시값이다.
-        // 이 불변식이 깨지면 상단 카드와 그래프 끝점이 어긋나므로 회귀로 고정한다.
+    fun `본인이 고친 값은 표시값이 되고 이력에도 남는다`() {
+        // 포인터가 내 수기를 가리키면 표시값이 그 값이 된다(수기 존중, 맥락 스코프). 이력에도 함께 남는다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -154,9 +161,9 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.item.price").value(99_000))
             .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
             .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
-            // 첫 항목 = 표시값
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
             .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").value(true))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(109_000))
             .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER"))
     }

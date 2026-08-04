@@ -28,32 +28,25 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     // 한 item 의 살아있는(soft-delete 안 된) 최신 snapshot 1개 — id 역순 첫 행.
     fun findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId: Long): ItemSnapshot?
 
-    // 가격 이력 조회 — 한 item 의 READY 버전 중 **기계(SERVER/SERVER_LLM) 전부 + 요청자 본인의 수기(MANUAL)** 를
-    // 최신순(id desc)으로 pageable 개수만큼.
+    // 가격 이력 조회 — 한 item 의 출처가 기록된(SERVER/SERVER_LLM/MANUAL) READY 버전을 최신순(id desc)으로
+    // pageable 개수만큼. 수기(MANUAL)는 편집자를 가리지 않고 다 담는다 — 같은 상품을 공유하는 다른 사용자가
+    // 넣은 값도 그 상품의 가격 기록이며, 응답에서 editedByMe 로 본인 것인지만 구분해 준다(편집자 식별자 자체는
+    // 내리지 않는다). 이 상품을 담은 사람들이 실제로 얼마에 봤는지가 시세 판단에 쓰인다.
     //
-    // 타인의 수기를 빼는 이유: item 은 여러 사용자가 공유하므로 그대로 두면 남이 자기 위시에서 고친 값이 내 가격
-    // 이력에 섞인다. 서버가 여기서 걸러 두면 응답에 편집자 식별자(개인정보)를 실어 "내 것인지" 를 클라가 판정하게
-    // 할 필요도 없다 — 내려간 MANUAL 은 곧 본인 것이다.
-    //
-    // 본인 수기를 남기는 이유: 파싱이 계속 실패하는 상품(차단·403 몰)에서는 수기가 유일한 가격 기록이라, 빼면
-    // 그 상품은 가격 추적 자체가 불가능해진다. 대신 source 를 함께 내려 클라가 추이선(기계값)과 수기 입력을
-    // 구분해 그린다.
-    //
-    // 출처 null(도입 전 행)은 기계 여부를 소급 판정할 수 없어 제외한다 — 표시값 파생(findLatestMachineReady*)이
-    // 쓰는 기준과 같다. 그래서 이 결과 집합은 표시값 파생의 입력과 정확히 일치하고, 첫 행이 곧 표시 버전이 된다.
+    // 출처 null(도입 전 행)은 서버 추출인지 사용자 입력인지 소급 판정할 수 없어 제외한다 — 표시값 파생
+    // (findLatestMachineReady*)이 쓰는 기준과 같다. 그것만 다르게 두면 "표시값 판정에선 안 세면서 이력엔 넣는"
+    // 모순이 된다.
     //
     // idx_item_snapshots_item_id 로 커버되고, id 정렬은 PK 라 secondary index 리프에 포함돼 추가 인덱스가 필요 없다.
     @Query(
         "select s from ItemSnapshot s where s.itemId = :itemId " +
             "and s.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
             "and s.deletedAt is null " +
-            "and (s.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) " +
-            "or (s.source = com.depromeet.piki.item.domain.ItemSnapshotSource.MANUAL and s.editedBy = :requesterId)) " +
+            "and s.source is not null " +
             "order by s.id desc",
     )
     fun findPriceHistoryByItemId(
         @Param("itemId") itemId: Long,
-        @Param("requesterId") requesterId: UUID,
         pageable: Pageable,
     ): List<ItemSnapshot>
 

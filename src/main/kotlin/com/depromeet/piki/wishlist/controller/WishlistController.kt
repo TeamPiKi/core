@@ -110,7 +110,7 @@ class WishlistController(
     ): ApiResponseBody<WishDetailResponse> {
         val result = wishlistService.getWish(userId = userId, wishId = wishId)
         return ApiResponseBody.ok(
-            WishDetailResponse.from(result, sourcePlatformResolver.resolve(result.item.link)),
+            WishDetailResponse.from(result, sourcePlatformResolver.resolve(result.item.link), requesterId = userId),
         )
     }
 

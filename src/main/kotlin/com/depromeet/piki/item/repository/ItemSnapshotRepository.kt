@@ -28,13 +28,12 @@ interface ItemSnapshotRepository {
         toItemId: Long,
     ): Int
 
-    // 가격 이력 조회 — 한 item 의 READY 버전 중 기계(SERVER/SERVER_LLM) 전부와 requesterId 본인의 수기(MANUAL)를
-    // 최신순(id desc)으로 limit 개까지. 가격이 없는 PENDING/PROCESSING/FAILED, 타인의 수기, 출처 미상(null)은 빠진다.
-    // requesterId 를 받는 이유: item 은 공유 자원이라 남이 자기 위시에서 고친 값이 그대로 두면 내 이력에 섞인다.
+    // 가격 이력 조회 — 한 item 의 출처가 기록된(SERVER/SERVER_LLM/MANUAL) READY 버전을 최신순(id desc)으로 limit 개까지.
+    // 수기는 편집자를 가리지 않고 담고, 본인 것인지는 응답 변환에서 editedByMe 로 구분한다.
+    // 가격이 없는 PENDING/PROCESSING/FAILED 와 출처 미상(null, 소급 판정 불가)은 빠진다.
     // limit 을 받는 이유: 새로고침이 누적되므로 상한이 없으면 응답이 계속 자란다.
     fun findPriceHistoryByItemId(
         itemId: Long,
-        requesterId: UUID,
         limit: Int,
     ): List<ItemSnapshot>
 

@@ -239,8 +239,8 @@ class WishlistApiExamples(
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
 
-    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 이력. 119,000원에서 시작해 109,000원까지 내려온 추이를 보여준다.
-    // 이력의 맨 앞이 곧 표시값이다(표시 버전이 READY 인 한 항상 성립).
+    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 수기(89,000원)가 섞여 있어,
+    // source·editedByMe 로 구분해 그리는 예시다.
     private val wishDetailSample =
         WishDetailResponse(
             wish =
@@ -267,22 +267,33 @@ class WishlistApiExamples(
                         price = 109_000,
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
                         source = ItemSnapshotSource.SERVER,
+                        editedByMe = null,
+                    ),
+                    // 같은 상품을 담은 다른 사용자가 넣은 값 — 어떤 조건에서 본 가격인지 알 수 없어 구분해 다룬다.
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 89_000,
+                        extractedAt = LocalDateTime.of(2026, 6, 10, 9, 0, 0),
+                        source = ItemSnapshotSource.MANUAL,
+                        editedByMe = false,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 115_000,
                         extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
                         source = ItemSnapshotSource.SERVER_LLM,
+                        editedByMe = null,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 119_000,
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                         source = ItemSnapshotSource.SERVER,
+                        editedByMe = null,
                     ),
                 ),
         )
 
-    // 본인이 직접 고친 항목 — 입력값(99,000원)이 이력의 맨 앞에 오고 그것이 곧 지금 보이는 값이다.
-    // source 로 서버 추출분과 구분되지만 접거나 걸러낼 대상은 아니다(신뢰도 등급이 아니라 맥락 표시).
+    // 본인이 직접 고친 항목 — 표시값(99,000원)은 본인 입력값이고 이력 맨 앞에도 온다.
+    // 반면 타인 수기(89,000원)는 이력에 남아 있어도 표시값이 되지 않는다(맥락 스코프) — 그래서 이력의 순서만으로
+    // 표시값을 유추할 수 없고, 지금 보이는 값은 item 에서 읽어야 한다.
     private val manualEditedDetailSample =
         wishDetailSample.copy(
             item =
@@ -296,6 +307,7 @@ class WishlistApiExamples(
                         price = 99_000,
                         extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
                         source = ItemSnapshotSource.MANUAL,
+                        editedByMe = true,
                     ),
                 ) + wishDetailSample.priceHistory,
         )

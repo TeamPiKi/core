@@ -33,9 +33,8 @@ class ItemSnapshotRepositoryImpl(
 
     override fun findPriceHistoryByItemId(
         itemId: Long,
-        requesterId: UUID,
         limit: Int,
-    ): List<ItemSnapshot> = itemSnapshotJpaRepository.findPriceHistoryByItemId(itemId, requesterId, PageRequest.of(0, limit))
+    ): List<ItemSnapshot> = itemSnapshotJpaRepository.findPriceHistoryByItemId(itemId, PageRequest.of(0, limit))
 
     override fun findById(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdAndDeletedAtIsNull(id)
 

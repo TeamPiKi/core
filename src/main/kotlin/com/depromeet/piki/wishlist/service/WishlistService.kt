@@ -185,8 +185,7 @@ class WishlistService(
         val item =
             itemRepository.findById(pointer.itemId) ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
         // 표시값 파생(#857) — 목록(getWishlist)과 같은 규칙.
-        // 이력은 요청자 기준이다 — item 은 공유 자원이라 타인이 자기 위시에서 고친 수기값은 걸러야 한다.
-        val history = itemSnapshotRepository.findPriceHistoryByItemId(pointer.itemId, userId, PRICE_HISTORY_LIMIT)
+        val history = itemSnapshotRepository.findPriceHistoryByItemId(pointer.itemId, PRICE_HISTORY_LIMIT)
         return WishDetail(
             wish = wish,
             item = item,
