@@ -4,6 +4,7 @@ import com.depromeet.piki.admin.audit.AdminAuditAction
 import com.depromeet.piki.admin.audit.AdminAuditService
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.notification.domain.NotificationKind
+import com.depromeet.piki.notification.domain.NotificationTemplateEntity
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationTemplateJpaRepository
 import com.depromeet.piki.notification.service.DbNotificationTemplateProvider
@@ -32,28 +33,10 @@ class AdminTemplateService(
             // 편집기 목록에서 제외한다(이벤트 알림 8종만 노출). DB 의 ${title}/${body} 행은 dispatch passthrough 로 남는다.
             .filter { it.type != NotificationType.ANNOUNCEMENT }
             .sortedBy { it.type.ordinal }
-            .map { entity ->
-            TemplateView(
-                type = entity.type,
-                kind = kindOf(entity.type),
-                title = entity.titleTemplate,
-                body = entity.bodyTemplate,
-                pushEnabled = entity.pushEnabled,
-                variables = NotificationTemplateVariables.availableFor(entity.type),
-            )
-        }
+            .map(TemplateView::from)
 
-    fun get(type: NotificationType): TemplateView {
-        val entity = templateRepository.findById(type).orElseThrow { IllegalStateException("템플릿 없음: $type") }
-        return TemplateView(
-            type = entity.type,
-            kind = kindOf(entity.type),
-            title = entity.titleTemplate,
-            body = entity.bodyTemplate,
-            pushEnabled = entity.pushEnabled,
-            variables = NotificationTemplateVariables.availableFor(entity.type),
-        )
-    }
+    fun get(type: NotificationType): TemplateView =
+        TemplateView.from(templateRepository.findById(type).orElseThrow { IllegalStateException("템플릿 없음: $type") })
 
     @Transactional
     fun update(
@@ -96,15 +79,9 @@ class AdminTemplateService(
         return TemplatePreview(
             title = renderer.render(title, samples),
             body = renderer.render(body, samples),
-            kind = kindOf(type),
             unknownVariables = unknown.toList(),
         )
     }
-
-    // 편집기는 알림 "타입" 자체를 다루지 특정 알림 인스턴스를 다루지 않아 라우팅 출처가 없다(routingKind = null).
-    // 파싱 알림 템플릿은 위시·토너먼트 양쪽 발행에 공유되므로 어느 한쪽으로 못 정하고, of 의 기본값(위시)으로 표시된다.
-    // 표시용 분류일 뿐이라 문구 편집·발송에는 영향이 없다(발송 시점 kind 는 실제 라우팅 출처로 파생된다).
-    private fun kindOf(type: NotificationType): NotificationKind = NotificationKind.of(type, routingKind = null)
 
     private fun validateVariables(
         type: NotificationType,
@@ -139,6 +116,23 @@ data class TemplateView(
     val pushEnabled: Boolean,
     val variables: List<TemplateVariable>,
 ) {
+    companion object {
+        fun from(entity: NotificationTemplateEntity): TemplateView =
+            TemplateView(
+                type = entity.type,
+                kind = kindOf(entity.type),
+                title = entity.titleTemplate,
+                body = entity.bodyTemplate,
+                pushEnabled = entity.pushEnabled,
+                variables = NotificationTemplateVariables.availableFor(entity.type),
+            )
+
+        // 편집기는 알림 "타입" 자체를 다루지 특정 알림 인스턴스를 다루지 않아 라우팅 출처가 없다(routingKind = null).
+        // 파싱 알림 템플릿은 위시·토너먼트 양쪽 발행에 공유되므로 어느 한쪽으로 못 정하고, of 의 기본값(위시)으로 표시된다.
+        // 표시용 분류일 뿐이라 문구 편집·발송에는 영향이 없다(발송 시점 kind 는 실제 라우팅 출처로 파생된다).
+        private fun kindOf(type: NotificationType): NotificationKind = NotificationKind.of(type, routingKind = null)
+    }
+
     // 백오피스 배지의 한글 라벨. NotificationKind 는 클라 응답에 실리는 enum 이라 표시 문구를 담지 않는다
     // (문구는 각 소비자가 소유한다 — 에러 code 와 같은 결). 이 화면의 라벨은 이 화면 모델이 진다.
     // when 이 전수라 kind 가 늘면 여기서 컴파일이 깨져 라벨 누락을 막는다.
@@ -151,9 +145,10 @@ data class TemplateView(
             }
 }
 
+// 편집 화면의 AJAX 미리보기 응답. 화면 JS 가 읽는 세 필드만 둔다 — 소비자 없는 필드를 실으면
+// 검증 없이 굳어졌다가 나중에 UI 에 붙을 때 틀린 값을 나른다(kind 는 이 화면에서 라우팅 출처를 알 수 없다).
 data class TemplatePreview(
     val title: String,
     val body: String,
-    val kind: NotificationKind,
     val unknownVariables: List<String>,
 )

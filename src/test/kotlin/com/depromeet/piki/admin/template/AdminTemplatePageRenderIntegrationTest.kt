@@ -35,19 +35,22 @@ class AdminTemplatePageRenderIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(content().string(containsString("<th>종류</th>")))
             // 파싱 알림(위시 기본값) · 토너먼트 알림이 각각 자기 배지 클래스·라벨로 나온다.
+            // "토너먼트" 는 시드 문구("…님이 토너먼트를 시작했어요")에도 들어 있어 단독 containsString 이면
+            // 배지가 깨져도 통과한다 — 라벨을 배지 마크업 문맥에 묶어 단언한다.
             .andExpect(content().string(containsString("class=\"badge WISH\"")))
             .andExpect(content().string(containsString("위시")))
-            .andExpect(content().string(containsString("class=\"badge TOURNAMENT\"")))
-            .andExpect(content().string(containsString("토너먼트")))
+            .andExpect(content().string(containsString("class=\"badge TOURNAMENT\">토너먼트<")))
             // 옛 카테고리 축(활동/시스템)의 잔재가 목록에 남아 있지 않다.
             .andExpect(content().string(not(containsString("badge ACTIVITY"))))
     }
 
+    // 타입 이름(TOURNAMENT_JOINED)은 URL·헤딩에서 나와 폼 채움과 무관하게 통과하므로 단언하지 않는다.
+    // 편집 화면의 본질은 DB 문구를 th:value/th:text 로 폼에 채우는 것이라, 시드 title 원문(치환 전 변수 표기 그대로)을 단언한다.
     @Test
     fun `템플릿 편집 화면은 시드된 문구를 채워 렌더된다`() {
         mockMvc()
             .perform(get("/admin/templates/TOURNAMENT_JOINED"))
             .andExpect(status().isOk)
-            .andExpect(content().string(containsString("TOURNAMENT_JOINED")))
+            .andExpect(content().string(containsString("\${actorName}님이 참가했어요")))
     }
 }
