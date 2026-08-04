@@ -70,6 +70,13 @@ class NotificationHistoryApiExamples(
                             ),
                     )
                     add(NotificationException.invalidCursor(), name = "유효하지 않은 cursor")
+                    // size 가 Int 로 바인딩되지 않는 경우(숫자 아닌 값·Int 범위 초과) — 도메인 예외가 아니라 RESEH 경유 공통 400.
+                    // detail 미지정 시 실제 응답과 동일하게 category.description 이 채워진다(single source, 손 detail 없음).
+                    add(
+                        status = HttpStatus.BAD_REQUEST,
+                        name = "유효하지 않은 size 값",
+                        payload = ApiResponseBody.fail<Unit>(CommonErrorCode.INVALID_INPUT),
+                    )
                     unauthorized()
                 }
             }

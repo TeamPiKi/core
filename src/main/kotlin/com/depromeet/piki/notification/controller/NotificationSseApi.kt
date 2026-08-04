@@ -22,8 +22,8 @@ interface NotificationSseApi {
                 "| 이벤트 | 시점 | 내용 |\n" +
                 "|---|---|---|\n" +
                 "| `connect` | 구독 직후 1회 | `data=\"connected\"`. 연결 성립 신호 |\n" +
-                "| `notification` | 알림 1건마다 | `type` 으로 화면을, 파싱 알림은 `kind` 로 출처(위시/토너먼트)를 분기. " +
-                "출처별 payload 셰입과 라우팅 필드(`kind`·`tournamentId`·`tournamentItemId`)는 `notification-sse-spec.md` 참조 |\n" +
+                "| `notification` | 알림 1건마다 | `type` 으로 화면을, 전 알림 공통 필드 `kind`(`WISH`\\|`TOURNAMENT`\\|`SYSTEM`)로 " +
+                "라벨·아이콘과 딥링크 출처를 분기. payload 셰입과 아이템 좌표(`tournamentId`·`tournamentItemId`)가 실리는 조건은 `notification-sse-spec.md` 참조 |\n" +
                 "| `silent-sync` | 화면 갱신 사건마다 | 조용한 화면 갱신 신호(알림 아님). payload 의 `type` 으로 사건을 분기한다: " +
                 "`TOURNAMENT_ITEM_PARSED`(`{type, tournamentId, tournamentItemId, status}`, status=`READY`\\|`FAILED`) · " +
                 "`UNREAD_COUNT_CHANGED`(`{type, unreadCount}`, 읽음 후 멀티 디바이스 인앱 배지 동기화). 알림센터·푸시 없이 SSE 로만 흐른다. `notification-sse-spec.md` 참조 |\n" +
@@ -36,9 +36,9 @@ interface NotificationSseApi {
             ApiResponse(
                 responseCode = "200",
                 description =
-                    "SSE 스트림 시작 (`text/event-stream`). `notification` 이벤트 data payload 는 알림 종류별로 셰입이 다르고" +
-                        "(파싱 알림은 출처별 `kind`·`tournamentId`·`tournamentItemId`), 스트림·다형 구조라 OpenAPI 로 표현이 어려워" +
-                        " `notification-sse-spec.md` 로 문서화한다.",
+                    "SSE 스트림 시작 (`text/event-stream`). `notification` 이벤트 data payload 는 공통 필드(`id`·`type`·`kind`·`title`·`body`·" +
+                        "`refId`·`isRead`·`createdAt`) 위에 알림 종류별로 아이템 좌표(`tournamentId`·`tournamentItemId`)가 더 붙어 셰입이 갈리고," +
+                        " 스트림·다형 구조라 OpenAPI 로 표현이 어려워 `notification-sse-spec.md` 로 문서화한다.",
             ),
             ApiResponse(
                 responseCode = "401",
