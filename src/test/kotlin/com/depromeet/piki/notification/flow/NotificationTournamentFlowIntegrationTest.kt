@@ -3,7 +3,6 @@ package com.depromeet.piki.notification.flow
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
 import com.depromeet.piki.notification.repository.NotificationRepository
-import com.depromeet.piki.notification.service.DefaultPushImage
 import com.depromeet.piki.notification.service.NotificationDispatcher
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.domain.Tournament
@@ -57,8 +56,6 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var notificationRepository: NotificationRepository
 
-    @Autowired private lateinit var defaultPushImage: DefaultPushImage
-
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
             .webAppContextSetup(webApplicationContext)
@@ -86,15 +83,14 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
         assertEquals(1, saved.size)
         assertEquals("https://img/owner.png", saved.first().actorImageUrl) // 주최자 프사 snapshot
 
-        // 5) 참여자 히스토리 조회 (GET /notifications) — type·category·imageUrl·title 이 셰입대로 내려온다.
+        // 5) 참여자 히스토리 조회 (GET /notifications) — type·kind·title 이 셰입대로 내려온다.
         val mvc = mockMvc()
         mvc
             .perform(get("/api/v1/notifications").header(HttpHeaders.AUTHORIZATION, authHeader(participant)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items.length()").value(1))
             .andExpect(jsonPath("$.data.items[0].type").value("TOURNAMENT_RESULT_READY"))
-            .andExpect(jsonPath("$.data.items[0].category").value("ACTIVITY"))
-            .andExpect(jsonPath("$.data.items[0].imageUrl").value("https://img/owner.png"))
+            .andExpect(jsonPath("$.data.items[0].kind").value("TOURNAMENT"))
             .andExpect(jsonPath("$.data.items[0].title", containsString("주최자")))
             .andExpect(jsonPath("$.data.items[0].isRead").value(false))
             .andExpect(jsonPath("$.data.unreadCount").value(1))

@@ -14,14 +14,12 @@ data class NotificationHistoryResponse(
     val unreadCount: Long,
 ) {
     companion object {
-        // defaultPushImageUrl 은 시스템 알림(actor 없음)의 imageUrl 을 채우는 기본 아바타 — 컨트롤러가 DefaultPushImage 에서 넘긴다.
         fun of(
             notifications: List<Notification>,
             unreadCount: Long,
-            defaultPushImageUrl: String,
         ): NotificationHistoryResponse =
             NotificationHistoryResponse(
-                items = notifications.map { NotificationSsePayload.from(it, defaultPushImageUrl) },
+                items = notifications.map { NotificationSsePayload.from(it) },
                 unreadCount = unreadCount,
             )
     }

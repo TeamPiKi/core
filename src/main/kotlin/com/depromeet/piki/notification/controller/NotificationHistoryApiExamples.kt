@@ -12,8 +12,8 @@ import com.depromeet.piki.notification.controller.dto.NotificationHistoryRespons
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationException
+import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -129,43 +129,40 @@ class NotificationHistoryApiExamples(
             operation
         }
 
-    // 토너먼트 알림 (라우팅 없음, refId 만) — 활동, actor 있어 imageUrl=프사 snapshot, 안읽음.
+    // 토너먼트 알림 (라우팅 없음, refId 만) — kind=TOURNAMENT, 안읽음.
     private val referenceItem =
         NotificationSsePayload.Reference(
             id = 1026,
             type = NotificationType.TOURNAMENT_JOINED,
-            category = NotificationCategory.ACTIVITY,
+            kind = NotificationKind.TOURNAMENT,
             title = "토너먼트에 참가했어요",
             body = "지금 바로 픽을 시작해보세요",
-            imageUrl = "https://images.piki/profiles/abc/3f7c.png",
             refId = 77,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 10, 0),
         )
 
-    // 위시 출처 파싱 완료 알림 (kind=WISH) — 시스템, actor 없어 imageUrl=defaultPushImg(피키 로고), 읽음.
+    // 위시 출처 파싱 완료 알림 (kind=WISH) — 읽음.
     private val wishParsingItem =
         NotificationSsePayload.WishParsing(
             id = 1025,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            category = NotificationCategory.SYSTEM,
+            kind = NotificationKind.WISH,
             title = "상품 정보가 준비됐어요",
             body = "에어 조던 1 미드",
-            imageUrl = "https://images.piki/defaults/push-icon.svg",
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
         )
 
-    // 토너먼트 출처 파싱 완료 알림 (kind=TOURNAMENT + 두 식별자) — 시스템, imageUrl=defaultPushImg, 안읽음.
+    // 토너먼트 출처 파싱 완료 알림 (kind=TOURNAMENT + 두 식별자) — 안읽음.
     private val tournamentParsingItem =
         NotificationSsePayload.TournamentRouted(
             id = 1024,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            category = NotificationCategory.SYSTEM,
+            kind = NotificationKind.TOURNAMENT,
             title = "토너먼트 아이템이 준비됐어요",
             body = "나이키 덩크 로우",
-            imageUrl = "https://images.piki/defaults/push-icon.svg",
             refId = 513,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),

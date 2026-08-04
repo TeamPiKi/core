@@ -3,8 +3,7 @@ package com.depromeet.piki.notification.fcm.service
 import com.depromeet.piki.common.logging.SensitiveData
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationCategory
-import com.depromeet.piki.notification.service.DefaultPushImage
+import com.depromeet.piki.notification.domain.NotificationKind
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.AndroidConfig
 import com.google.firebase.messaging.AndroidNotification
@@ -27,7 +26,6 @@ import com.google.firebase.messaging.Notification as FcmNotification
 @ConditionalOnBean(FirebaseApp::class)
 class FirebaseMessageSender(
     firebaseApp: FirebaseApp,
-    private val defaultPushImage: DefaultPushImage,
 ) : FcmMessageSender {
     private val log = LoggerFactory.getLogger(javaClass)
     private val messaging = FirebaseMessaging.getInstance(firebaseApp)
@@ -41,14 +39,14 @@ class FirebaseMessageSender(
     ): FcmSendResult {
         val result = sendMulticast(tokens) { chunk -> buildDisplayMessage(chunk, notification, badge) }
         // 어떤 페이로드(type·refId)를 몇 토큰에 보내 몇 건 성공/실패했고, 실패 사유(FCM code)별 분포 + 죽은 토큰 정리 수 + badge.
-        // 렌더된 title/body 는 닉네임 등 PII 를 담을 수 있어 싣지 않는다 — 라우팅 식별자(type·refId·category)만.
+        // 렌더된 title/body 는 닉네임 등 PII 를 담을 수 있어 싣지 않는다 — 라우팅 식별자(type·refId·kind)만.
         log.info(
             // getIdOrNull — DevFcmController(/dev/fcm/push)는 영속화 안 한 throwaway Notification 을 넘긴다.
             // getId() 면 "id 없음" 예외로 발송 자체가 500 으로 깨진다. 로그용 식별자라 미영속이면 null 로 둔다.
-            "FCM 발송 결과 notificationId={} type={} category={} refId={} badge={} 토큰={} 성공={} 실패={} 실패사유={} 죽은토큰정리={}",
+            "FCM 발송 결과 notificationId={} type={} kind={} refId={} badge={} 토큰={} 성공={} 실패={} 실패사유={} 죽은토큰정리={}",
             notification.getIdOrNull(),
             notification.type,
-            NotificationCategory.of(notification.type),
+            NotificationKind.of(notification.type, notification.routingKind),
             notification.refId,
             badge,
             tokens.size,
@@ -117,7 +115,7 @@ class FirebaseMessageSender(
     }
 
     // 표시용 title/body + 클라 라우팅용 data 를 실은 멀티캐스트 메시지. 백그라운드 수신 시 클라가 data 로 딥링크를 복원한다.
-    // 셰입의 단일 소스는 NotificationSsePayload.from() — SSE·히스토리와 같은 곳에서 title/body·category·imageUrl·라우팅 값을 만들어
+    // 셰입의 단일 소스는 NotificationSsePayload.from() — SSE·히스토리와 같은 곳에서 title/body·kind·라우팅 값을 만들어
     // 채널이 달라도 내용이 어긋나지 않는다. FCM 은 그 payload 를 표시 블록(title/body)과 data(문자열 맵)로 인코딩만 한다(toFcmData).
     // badge 는 표시 메시지에 함께 실어(iOS aps.badge / Android notificationCount) OS 아이콘 badge 를 갱신한다(#487).
     private fun buildDisplayMessage(
@@ -125,7 +123,7 @@ class FirebaseMessageSender(
         notification: Notification,
         badge: Int,
     ): MulticastMessage {
-        val payload = NotificationSsePayload.from(notification, defaultPushImage.url)
+        val payload = NotificationSsePayload.from(notification)
         return MulticastMessage
             .builder()
             .addAllTokens(tokens)
@@ -239,8 +237,6 @@ class FirebaseMessageSender(
         // id 는 채널 무관 dedup(SSE·FCM 중복 수신 시 같은 알림으로 합침)과 푸시 탭 → 읽음 처리(POST /read {ids:[id]})의 키다(#246).
         private const val DATA_KEY_ID = "id"
         private const val DATA_KEY_TYPE = "type"
-        private const val DATA_KEY_CATEGORY = "category"
-        private const val DATA_KEY_IMAGE_URL = "imageUrl"
         private const val DATA_KEY_REF_ID = "refId"
         private const val DATA_KEY_KIND = "kind"
         private const val DATA_KEY_TOURNAMENT_ID = "tournamentId"
@@ -253,25 +249,19 @@ class FirebaseMessageSender(
         private const val DATA_KEY_UNREAD_COUNT = "unreadCount"
 
         // NotificationSsePayload 를 FCM data(키→값 문자열 맵)로 인코딩한다. 값은 payload(=from())가 이미 만든 것을 읽기만 하고
-        // (category·imageUrl·refId·라우팅 재계산 없음 — SSE 와 단일 소스), 여기선 문자열 평탄화만 한다. FCM data 는 값이 null 일 수 없어
-        // 라우팅 없는 알림(Reference)은 kind 계열 키를 아예 넣지 않는다(#408). title/body 는 표시 블록(setNotification)이 담당해 data 에
-        // 중복하지 않고, isRead(항상 false)·createdAt(수신시점)도 딥링크 복원에 불필요해 싣지 않는다(lean contract).
+        // (kind·refId·라우팅 재계산 없음 — SSE 와 단일 소스), 여기선 문자열 평탄화만 한다. kind 는 전 알림 공통이라 항상 싣고,
+        // 토너먼트 좌표는 그 셰입에만 싣는다. title/body 는 표시 블록(setNotification)이 담당해 data 에 중복하지 않고,
+        // isRead(항상 false)·createdAt(수신시점)도 딥링크 복원에 불필요해 싣지 않는다(lean contract).
         // FirebaseMessaging 호출과 무관한 순수 매핑이라 companion 으로 분리해 단위 테스트로 분기를 망라한다(FirebaseApp 없이 검증).
         internal fun toFcmData(payload: NotificationSsePayload): Map<String, String> =
             buildMap {
                 put(DATA_KEY_ID, payload.id.toString())
                 put(DATA_KEY_TYPE, payload.type.name)
-                put(DATA_KEY_CATEGORY, payload.category.name)
-                put(DATA_KEY_IMAGE_URL, payload.imageUrl)
+                put(DATA_KEY_KIND, payload.kind.name)
                 put(DATA_KEY_REF_ID, payload.refId.toString())
-                when (payload) {
-                    is NotificationSsePayload.Reference -> Unit
-                    is NotificationSsePayload.WishParsing -> put(DATA_KEY_KIND, payload.kind.name)
-                    is NotificationSsePayload.TournamentRouted -> {
-                        put(DATA_KEY_KIND, payload.kind.name)
-                        put(DATA_KEY_TOURNAMENT_ID, payload.tournamentId.toString())
-                        put(DATA_KEY_TOURNAMENT_ITEM_ID, payload.tournamentItemId.toString())
-                    }
+                if (payload is NotificationSsePayload.TournamentRouted) {
+                    put(DATA_KEY_TOURNAMENT_ID, payload.tournamentId.toString())
+                    put(DATA_KEY_TOURNAMENT_ITEM_ID, payload.tournamentItemId.toString())
                 }
             }
 

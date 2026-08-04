@@ -16,7 +16,6 @@ import java.util.UUID
 @Service
 class NotificationService(
     private val notificationRepository: NotificationRepository,
-    private val defaultPushImage: DefaultPushImage,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -48,7 +47,6 @@ class NotificationService(
             unreadCount = unreadCount,
             nextCursor = nextCursor,
             hasNext = hasNext,
-            defaultPushImageUrl = defaultPushImage.url,
         )
     }
 

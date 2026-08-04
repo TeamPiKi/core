@@ -38,7 +38,7 @@ class NotificationHistoryController(
     ): ApiResponseBody<NotificationHistoryResponse> {
         val page = notificationService.getHistory(userId = userId, rawCursor = cursor, rawSize = size, category = category)
         return ApiResponseBody.ok(
-            data = NotificationHistoryResponse.of(page.notifications, page.unreadCount, page.defaultPushImageUrl),
+            data = NotificationHistoryResponse.of(page.notifications, page.unreadCount),
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
         )
     }

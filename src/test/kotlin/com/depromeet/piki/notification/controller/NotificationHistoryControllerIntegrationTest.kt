@@ -7,7 +7,6 @@ import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationJpaRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
-import com.depromeet.piki.notification.service.DefaultPushImage
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.user.domain.IdentityType
 import org.hamcrest.Matchers.notNullValue
@@ -41,8 +40,6 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var notificationJpaRepository: NotificationJpaRepository
 
-    @Autowired private lateinit var defaultPushImage: DefaultPushImage
-
     private fun authHeader(userId: UUID): String = "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
 
     private fun buildMockMvc(): MockMvc =
@@ -67,14 +64,13 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
         return saved.getId()
     }
 
-    // 타입·actor 프사 snapshot 을 지정해 저장 — 카테고리 필터·imageUrl 검증용.
+    // 타입을 지정해 저장 — 카테고리 필터·kind 파생 검증용(라우팅 없음 = Reference 셰입).
     private fun seedTyped(
         userId: UUID,
         type: NotificationType,
-        actorImageUrl: String? = null,
     ): Long =
         notificationRepository
-            .save(Notification(userId, type, "제목", "본문", 11L, routing = null, actorImageUrl = actorImageUrl))
+            .save(Notification(userId, type, "제목", "본문", 11L, routing = null))
             .getId()
 
     @Test
@@ -116,14 +112,14 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items.length()").value(1))
             .andExpect(jsonPath("$.data.items[0].id").value(activity))
-            .andExpect(jsonPath("$.data.items[0].category").value("ACTIVITY"))
+            .andExpect(jsonPath("$.data.items[0].kind").value("TOURNAMENT"))
 
         mockMvc
             .perform(get("/api/v1/notifications").param("category", "SYSTEM").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items.length()").value(1))
             .andExpect(jsonPath("$.data.items[0].id").value(system))
-            .andExpect(jsonPath("$.data.items[0].category").value("SYSTEM"))
+            .andExpect(jsonPath("$.data.items[0].kind").value("WISH"))
     }
 
     @Test
@@ -190,23 +186,23 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail", notNullValue()))
     }
 
+    // kind 는 라우팅 좌표가 없는 알림(Reference 셰입)에도 항상 실린다 — 옛 category·imageUrl 자리를 대신한다(#473 고도화).
     @Test
-    fun `actor 알림은 imageUrl 이 프사 snapshot, 시스템 알림은 defaultPushImg 로 채워진다`() {
+    fun `라우팅 없는 알림에도 kind 가 실리고 category·imageUrl 은 더 이상 내려가지 않는다`() {
         val userId = UUID.randomUUID()
-        val actorImage = "https://img.test/profiles/actor.png"
-        val activity = seedTyped(userId, NotificationType.TOURNAMENT_JOINED, actorImageUrl = actorImage)
-        val system = seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED, actorImageUrl = null)
+        val tournament = seedTyped(userId, NotificationType.TOURNAMENT_JOINED)
+        val parsing = seedTyped(userId, NotificationType.ITEM_PARSING_COMPLETED)
 
         buildMockMvc()
             .perform(get("/api/v1/notifications").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
-            // 최신순(id desc): system → activity
-            .andExpect(jsonPath("$.data.items[0].id").value(system))
-            .andExpect(jsonPath("$.data.items[0].imageUrl").value(defaultPushImage.url)) // actor 없음 → 서버가 채운 기본 아바타
-            .andExpect(jsonPath("$.data.items[0].category").value("SYSTEM"))
-            .andExpect(jsonPath("$.data.items[1].id").value(activity))
-            .andExpect(jsonPath("$.data.items[1].imageUrl").value(actorImage)) // 발송 시점 프사 snapshot 그대로
-            .andExpect(jsonPath("$.data.items[1].category").value("ACTIVITY"))
+            // 최신순(id desc): parsing → tournament
+            .andExpect(jsonPath("$.data.items[0].id").value(parsing))
+            .andExpect(jsonPath("$.data.items[0].kind").value("WISH")) // 라우팅 출처 없는 파싱 알림 → 위시 기본값
+            .andExpect(jsonPath("$.data.items[0].category").doesNotExist())
+            .andExpect(jsonPath("$.data.items[0].imageUrl").doesNotExist())
+            .andExpect(jsonPath("$.data.items[1].id").value(tournament))
+            .andExpect(jsonPath("$.data.items[1].kind").value("TOURNAMENT"))
     }
 
     @Test
