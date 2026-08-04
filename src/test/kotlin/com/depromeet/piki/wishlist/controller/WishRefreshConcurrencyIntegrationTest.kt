@@ -68,7 +68,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
             User(id = userId, nickname = "refresh", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
         stubProductLinkExtractor.build = {
-            ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW")
+            ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW")
         }
 
         // 기존 READY 위시 시딩 — 활성 snapshot 1개(옛 READY).
@@ -78,7 +78,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = "옛 상품",
-                    currentPrice = 10_000,
+                    price = 10_000,
                     currency = "KRW",
                     status = ItemStatus.READY,
                     extractedAt = LocalDateTime.now(),

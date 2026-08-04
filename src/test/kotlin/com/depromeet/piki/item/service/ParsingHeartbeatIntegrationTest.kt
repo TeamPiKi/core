@@ -67,7 +67,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             val applied =
                 itemParsingService.markReady(
                     snapshotId,
-                    ProductSnapshot(link = item.link, name = "좀비결과", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
+                    ProductSnapshot(link = item.link, name = "좀비결과", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
                     expectedAttempt = 1,
                 )
 
@@ -94,7 +94,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             val applied =
                 itemParsingService.markReady(
                     snapshotId,
-                    ProductSnapshot(link = item.link, name = "정상결과", currentPrice = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
+                    ProductSnapshot(link = item.link, name = "정상결과", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
                     expectedAttempt = attempt,
                 )
 
@@ -112,7 +112,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val extCalls = AtomicInteger(0)
         stubProductLinkExtractor.build = {
             extCalls.incrementAndGet()
-            ProductSnapshot(link = it, name = "호출됨", currentPrice = 1_000, currency = "KRW", imageUrl = "https://img.example.com/c.png")
+            ProductSnapshot(link = it, name = "호출됨", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/c.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/guard-${UUID.randomUUID()}")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)

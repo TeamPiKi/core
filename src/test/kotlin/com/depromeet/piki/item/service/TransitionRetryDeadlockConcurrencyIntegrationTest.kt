@@ -108,7 +108,7 @@ class TransitionRetryDeadlockConcurrencyIntegrationTest : IntegrationTestSupport
         ItemSnapshot(
             itemId = itemId,
             name = "deadlock-probe",
-            currentPrice = 1_000,
+            price = 1_000,
             currency = "KRW",
             status = ItemStatus.PROCESSING,
             extractedAt = LocalDateTime.now(),

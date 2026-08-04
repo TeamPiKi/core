@@ -16,8 +16,7 @@ class CorsConfigTest {
     }
 
     @Test
-    fun `prod 프로파일에서는 LAN 사설망 패턴을 열지 않는다 (staging 도 prod 프로파일이라 함께 닫힘)`() {
-        // deploy 가 prod·staging 둘 다 'prod' 프로파일로 띄운다(#498). 그래서 이 단언이 staging 의 LAN 차단까지 보증한다.
+    fun `prod 프로파일에서는 LAN 사설망 패턴을 열지 않는다`() {
         assertEquals(null, patternsFor("prod"))
     }
 

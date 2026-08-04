@@ -1639,7 +1639,7 @@
       "id": 203,
       "type": "timeseries",
       "title": "추출 방법 (via별, extractor 로그)",
-      "description": "extractor 의 extract via= 로그를 세어 직접 파싱(structured) 대 LLM 비율을 본다. via=llm 이 비싼 호출이라, structured 비중이 곧 비용 절감 지표. 파싱 분리 이관 후 이 로그는 core 가 아니라 extractor 가 찍는다(#855: core 스트림을 보던 옛 쿼리는 항상 No data). staging 요청은 prod extractor 박스를 공유해 prod 로 섞여 보인다.",
+      "description": "extractor 의 extract via= 로그를 세어 직접 파싱(structured) 대 LLM 비율을 본다. via=llm 이 비싼 호출이라, structured 비중이 곧 비용 절감 지표. 파싱 분리 이관 후 이 로그는 core 가 아니라 extractor 가 찍는다(#855: core 스트림을 보던 옛 쿼리는 항상 No data). dev·prod 요청이 extractor 박스 1대를 공유하므로 이 패널은 두 환경이 섞여 보인다.",
       "gridPos": {
         "h": 8,
         "w": 8,

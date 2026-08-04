@@ -61,12 +61,12 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data[0].item.name").value("새 기계값"))
-            .andExpect(jsonPath("$.data[0].item.currentPrice").value(90_000))
+            .andExpect(jsonPath("$.data[0].item.price").value(90_000))
         mockMvc
             .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("새 기계값"))
-            .andExpect(jsonPath("$.data.item.currentPrice").value(90_000))
+            .andExpect(jsonPath("$.data.item.price").value(90_000))
     }
 
     @Test
@@ -87,13 +87,13 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data[0].item.name").value("A의 수기값"))
-            .andExpect(jsonPath("$.data[0].item.currentPrice").value(80_000))
+            .andExpect(jsonPath("$.data[0].item.price").value(80_000))
         // 관련 없는 맥락(B 의 위시)은 타인의 수기와 무관하게 마지막 기계값.
         mockMvc
             .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userB)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data[0].item.name").value("기계값"))
-            .andExpect(jsonPath("$.data[0].item.currentPrice").value(100_000))
+            .andExpect(jsonPath("$.data[0].item.price").value(100_000))
     }
 
     @Test
@@ -112,7 +112,7 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data[0].item.name").value("더 새 기계값"))
-            .andExpect(jsonPath("$.data[0].item.currentPrice").value(95_000))
+            .andExpect(jsonPath("$.data[0].item.price").value(95_000))
     }
 
     @Test
@@ -148,7 +148,7 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userA)}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data[0].item.name").value("수기 복구값"))
-            .andExpect(jsonPath("$.data[0].item.currentPrice").value(70_000))
+            .andExpect(jsonPath("$.data[0].item.price").value(70_000))
     }
 
     private fun saveItem(url: String): Long = itemRepository.save(Item(link = ProductLink.parse(url))).getId()
@@ -165,7 +165,7 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = itemId,
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/$price.jpg",
                     status = ItemStatus.READY,

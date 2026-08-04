@@ -5,6 +5,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
+import java.util.UUID
 
 @Repository
 class ItemSnapshotRepositoryImpl(
@@ -30,8 +31,10 @@ class ItemSnapshotRepositoryImpl(
     override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
         itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
 
-    override fun findReadyHistoryByItemId(itemId: Long): List<ItemSnapshot> =
-        itemSnapshotJpaRepository.findByItemIdAndStatusAndDeletedAtIsNullOrderByIdDesc(itemId, ItemStatus.READY)
+    override fun findPriceHistoryByItemId(
+        itemId: Long,
+        limit: Int,
+    ): List<ItemSnapshot> = itemSnapshotJpaRepository.findPriceHistoryByItemId(itemId, PageRequest.of(0, limit))
 
     override fun findById(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdAndDeletedAtIsNull(id)
 

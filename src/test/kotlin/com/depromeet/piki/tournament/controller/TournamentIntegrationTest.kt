@@ -1622,7 +1622,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         assertNotEquals(snapshot.getId(), repinned.snapshotId)
         val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
         assertEquals("수정된 이름", manual.name)
-        assertEquals(50000, manual.currentPrice)
+        assertEquals(50000, manual.price)
         assertEquals("KRW", manual.currency)
         assertEquals(ItemStatus.READY, manual.status)
         assertEquals(ItemSnapshotSource.MANUAL, manual.source)
@@ -1737,7 +1737,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
         val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
         assertEquals("기존 이름", manual.name)
-        assertEquals(50000, manual.currentPrice)
+        assertEquals(50000, manual.price)
         assertEquals(ItemStatus.READY, manual.status)
     }
 
@@ -2210,7 +2210,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ItemSnapshot(
                 itemId = itemId,
                 name = name,
-                currentPrice = price,
+                price = price,
                 currency = "KRW",
                 imageUrl = "https://i.example/$price.png",
                 status = ItemStatus.READY,
@@ -2234,7 +2234,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = currency,
                     imageUrl = imageUrl,
                     status = status,
@@ -2264,7 +2264,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ItemSnapshot(
                 itemId = itemId,
                 name = name,
-                currentPrice = price,
+                price = price,
                 currency = currency,
                 imageUrl = imageUrl,
                 status = status,
@@ -2282,7 +2282,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markReady(
             result.snapshot.getId(),
-            ProductSnapshot(name = name, currentPrice = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
         return result.item.getId()

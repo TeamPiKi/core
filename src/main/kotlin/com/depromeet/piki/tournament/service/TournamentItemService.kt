@@ -134,7 +134,7 @@ class TournamentItemService(
         ItemSnapshot.manual(
             base = snapshot,
             name = name,
-            currentPrice = price,
+            price = price,
             imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
             currency = currency,
             editedBy = userId,

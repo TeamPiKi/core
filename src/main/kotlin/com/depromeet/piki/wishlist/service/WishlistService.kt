@@ -19,7 +19,7 @@ import com.depromeet.piki.wishlist.domain.WishDeleteIds
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.repository.WishRepository
-import com.depromeet.piki.wishlist.service.dto.WishPriceHistory
+import com.depromeet.piki.wishlist.service.dto.WishDetail
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import com.depromeet.piki.wishlist.service.dto.WishlistPage
 import org.springframework.stereotype.Service
@@ -163,13 +163,17 @@ class WishlistService(
         return WishlistPage(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
     }
 
-    // wishId 로 단건 조회. 본인 위시만 볼 수 있고, 권한 검증은 도메인(verifyOwnedBy)에 맡긴다.
-    // findById 가 deletedAt IS NULL 만 보므로 삭제된 위시는 notFound(404)로 떨어진다.
+    // wishId 로 상세 조회 — 표시값과 그 상품의 가격 이력을 함께 내려준다. 본인 위시만 볼 수 있고,
+    // 권한 검증은 도메인(verifyOwnedBy)에 맡긴다. findById 가 deletedAt IS NULL 만 보므로 삭제된 위시는 notFound(404).
+    //
+    // 이력을 별도 API 로 두지 않는 이유: 옛 히스토리 API 는 wish.snapshotId(포인터)를 그대로 "활성" 이라 불러
+    // 표시값 파생(#857)을 타지 않았다. item 을 여러 사용자가 공유하므로 남이 새로고침하면 포인터는 옛 버전에 남고,
+    // 그러면 같은 위시에 대해 두 API 의 답이 어긋난다. 한 응답에서 표시값을 단일 출처로 두어 그 어긋남을 없앤다.
     @Transactional(readOnly = true)
     fun getWish(
         userId: UUID,
         wishId: Long,
-    ): WishWithItem {
+    ): WishDetail {
         requireMember(userId)
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
@@ -181,29 +185,13 @@ class WishlistService(
         val item =
             itemRepository.findById(pointer.itemId) ?: error("wish ${wish.getId()} 의 item ${pointer.itemId} 가 없다")
         // 표시값 파생(#857) — 목록(getWishlist)과 같은 규칙.
-        return WishWithItem(wish = wish, item = item, snapshot = itemDisplayService.resolveDisplay(pointer))
-    }
-
-    // 위시 상품의 가격 히스토리 조회. wish 가 가리키는 활성 snapshot 에서 item 정체성(itemId)에 도달한 뒤,
-    // 그 item 의 추출 완료(READY) 버전 전체를 최신순으로 끌어온다 — 갱신·새로고침마다 쌓인 버전이 가격 이력이다.
-    // 단건 조회(getWish)와 같은 소유권 검증·트랜잭션 경계. wish 는 itemId 를 직접 들지 않으므로 snapshot 을 거쳐 도달한다.
-    @Transactional(readOnly = true)
-    fun getPriceHistory(
-        userId: UUID,
-        wishId: Long,
-    ): WishPriceHistory {
-        requireMember(userId)
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        // 활성 snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그). item 정체성은 snapshot.itemId 단일 출처다.
-        val activeSnapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item =
-            itemRepository.findById(activeSnapshot.itemId)
-                ?: error("wish ${wish.getId()} 의 item ${activeSnapshot.itemId} 가 없다")
-        val history = itemSnapshotRepository.findReadyHistoryByItemId(activeSnapshot.itemId)
-        return WishPriceHistory(wish = wish, item = item, history = history)
+        val history = itemSnapshotRepository.findPriceHistoryByItemId(pointer.itemId, PRICE_HISTORY_LIMIT)
+        return WishDetail(
+            wish = wish,
+            item = item,
+            snapshot = itemDisplayService.resolveDisplay(pointer),
+            history = history,
+        )
     }
 
     // 위시 item 의 수기 수정(#825 결정 4) — 상태 무관 언제든 허용하며, 기존 버전을 고치지 않고 MANUAL 새 버전을
@@ -214,7 +202,7 @@ class WishlistService(
         userId: UUID,
         wishId: Long,
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         currency: String?,
         image: MultipartFile?,
     ): WishWithItem {
@@ -232,7 +220,7 @@ class WishlistService(
         ItemSnapshot.manual(
             base = activeSnapshot,
             name = name,
-            currentPrice = currentPrice,
+            price = price,
             imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
             currency = currency,
             editedBy = userId,
@@ -246,7 +234,7 @@ class WishlistService(
             userId = userId,
             wishId = wishId,
             name = name,
-            currentPrice = currentPrice,
+            price = price,
             imageUrl = imageUrl,
             currency = currency,
         )
@@ -293,6 +281,12 @@ class WishlistService(
     companion object {
         private const val MIN_IMAGE_COUNT = 1
         private const val MAX_IMAGE_COUNT = 5
+
+        // 상세 응답에 싣는 가격 이력의 상한. item 을 여러 사용자가 공유해 새로고침이 누적되는데 상세는 진입마다
+        // 호출되므로, 상한이 없으면 응답이 시간에 비례해 계속 자란다. 가격 추이 용도에는 이 정도면 충분하고,
+        // 전체 이력이 실제로 필요해지면 그때 페이징을 갖춘 API 를 따로 만든다 (상세 응답 안에 페이징을 중첩하면
+        // 방금 없앤 별도 히스토리 API 를 다시 만드는 꼴이다).
+        private const val PRICE_HISTORY_LIMIT = 50
     }
 }
 

@@ -99,7 +99,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         userId: UUID,
         url: String,
         name: String,
-        currentPrice: Int? = 10_000,
+        price: Int? = 10_000,
         currency: String? = "KRW",
         imageUrl: String? = "https://img.example.com/a.png",
     ): Long {
@@ -112,7 +112,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ProductSnapshot(
                 link = ProductLink.parse(url),
                 name = name,
-                currentPrice = currentPrice,
+                price = price,
                 currency = currency,
                 imageUrl = imageUrl,
             ),
@@ -381,7 +381,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 userId,
                 "https://shop.example.com/products/1",
                 name = "에어 조던 1 미드",
-                currentPrice = 119_000,
+                price = 119_000,
                 currency = "KRW",
                 imageUrl = "https://cdn.example.com/p/1.jpg",
             )
@@ -393,7 +393,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.wish.id").value(wishId))
             .andExpect(jsonPath("$.data.item.name").value("에어 조던 1 미드"))
-            .andExpect(jsonPath("$.data.item.currentPrice").value(119_000))
+            .andExpect(jsonPath("$.data.item.price").value(119_000))
             .andExpect(jsonPath("$.data.item.currency").value("KRW"))
             .andExpect(jsonPath("$.data.item.imageUrl").value("https://cdn.example.com/p/1.jpg"))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
@@ -497,7 +497,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
                     .param("name", "수기 입력")
-                    .param("currentPrice", "5000")
+                    .param("price", "5000")
                     .with {
                         it.method = "PATCH"
                         it
@@ -521,14 +521,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
                     .param("name", "직접 입력한 이름")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("직접 입력한 이름"))
-            .andExpect(jsonPath("$.data.item.currentPrice").value(50_000))
+            .andExpect(jsonPath("$.data.item.price").value(50_000))
             // 추출 실패(FAILED) 항목을 직접 보정하면 정상 항목이 된 것이므로 READY 로 복구된다.
             .andExpect(jsonPath("$.data.item.status").value("READY"))
     }
@@ -545,7 +545,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
@@ -603,7 +603,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
-                    .param("currentPrice", "-1")
+                    .param("price", "-1")
                     .with {
                         it.method = "PATCH"
                         it
@@ -627,7 +627,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
                     .param("name", "직접 입력한 이름")
-                    .param("currentPrice", "50000")
+                    .param("price", "50000")
                     .with {
                         it.method = "PATCH"
                         it
@@ -699,7 +699,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         .file(image)
                         .param("name", "이름")
                         // 사전 검증(dry-run)을 통과해야 S3 업로드에 도달한다 — 가격까지 채워 502 경로를 연다.
-                        .param("currentPrice", "1000")
+                        .param("price", "1000")
                         .with {
                             it.method = "PATCH"
                             it

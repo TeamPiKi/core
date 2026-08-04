@@ -8,7 +8,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 
 // API 레퍼런스 문서(Stoplight UI + 루트 리다이렉트) 노출을 docs.enabled 로 게이팅한다.
 // docs.enabled = ${SPRINGDOC_ENABLED:false} (deploy.yml 이 dev 만 true) — dev 만 문서를 노출하고,
-// staging/prod 는 이 config 빈 자체가 안 떠 resource handler·리다이렉트가 없으므로 /docs·/ 가 404 다.
+// prod 는 이 config 빈 자체가 안 떠 resource handler·리다이렉트가 없으므로 /docs·/ 가 404 다.
 // spec(/v3/api-docs)은 springdoc.api-docs.enabled(같은 플래그)로 별도 게이팅된다. 로컬·test 는 test application.yml 이 명시 true.
 //
 // matchIfMissing = false — 설정 누락 시 fail-closed(문서 비활성). 켜려면 docs.enabled=true 를 명시해야 한다.

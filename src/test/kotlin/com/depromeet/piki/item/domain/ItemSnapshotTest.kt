@@ -18,14 +18,14 @@ class ItemSnapshotTest {
             itemId = 1L,
             name = "나이키 에어포스",
             imageUrl = "https://img.example.com/a.png",
-            currentPrice = 99_000,
+            price = 99_000,
             currency = "KRW",
             status = ItemStatus.READY,
             extractedAt = LocalDateTime.of(2026, 6, 3, 12, 0),
         )
         assertEquals(1L, snapshot.itemId)
         assertEquals("나이키 에어포스", snapshot.name)
-        assertEquals(99_000, snapshot.currentPrice)
+        assertEquals(99_000, snapshot.price)
         assertEquals(ItemStatus.READY, snapshot.status)
     }
 
@@ -34,16 +34,16 @@ class ItemSnapshotTest {
         val snapshot = ItemSnapshot(itemId = 1L)
         assertEquals(ItemStatus.PROCESSING, snapshot.status)
         assertNull(snapshot.name)
-        assertNull(snapshot.currentPrice)
+        assertNull(snapshot.price)
         assertNull(snapshot.imageUrl)
         assertNull(snapshot.currency)
         assertNull(snapshot.extractedAt)
     }
 
     @Test
-    fun `currentPrice 가 음수면 생성에 실패한다`() {
+    fun `price 가 음수면 생성에 실패한다`() {
         assertFailsWith<IllegalArgumentException> {
-            ItemSnapshot(itemId = 1L, currentPrice = -1)
+            ItemSnapshot(itemId = 1L, price = -1)
         }
     }
 
@@ -69,16 +69,16 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `경계값 — name 512자·currency 8자·currentPrice 0 은 허용된다`() {
+    fun `경계값 — name 512자·currency 8자·price 0 은 허용된다`() {
         val snapshot = ItemSnapshot(
             itemId = 1L,
             name = "가".repeat(512),
             currency = "12345678",
-            currentPrice = 0,
+            price = 0,
         )
         assertEquals(512, snapshot.name?.length)
         assertEquals(8, snapshot.currency?.length)
-        assertEquals(0, snapshot.currentPrice)
+        assertEquals(0, snapshot.price)
     }
 
     // --- 전이 (2단계: item 평행 추적) ---
@@ -87,11 +87,11 @@ class ItemSnapshotTest {
     fun `PROCESSING 스냅샷을 markReady 하면 추출 결과로 채워지고 READY 와 extractedAt 이 설정된다`() {
         val snapshot = ItemSnapshot(itemId = 1L)
         snapshot.markReady(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000, currency = "KRW"),
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, currency = "KRW"),
         )
         assertEquals(ItemStatus.READY, snapshot.status)
         assertEquals("나이키", snapshot.name)
-        assertEquals(99_000, snapshot.currentPrice)
+        assertEquals(99_000, snapshot.price)
         assertNotNull(snapshot.extractedAt)
     }
 
@@ -99,19 +99,19 @@ class ItemSnapshotTest {
     fun `markReady 는 추출 경로를 출처로 번역해 기록한다 - 구버전 응답은 미기록`() {
         val fromParser = ItemSnapshot(itemId = 1L)
         fromParser.markReady(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000, extractionMethod = "STRUCTURED"),
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = "STRUCTURED"),
         )
         assertEquals(ItemSnapshotSource.SERVER, fromParser.source)
 
         val fromLlm = ItemSnapshot(itemId = 1L)
         fromLlm.markReady(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000, extractionMethod = "LLM"),
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = "LLM"),
         )
         assertEquals(ItemSnapshotSource.SERVER_LLM, fromLlm.source)
 
         val legacy = ItemSnapshot(itemId = 1L)
         legacy.markReady(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", currentPrice = 99_000),
+            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000),
         )
         assertNull(legacy.source)
     }
@@ -120,7 +120,7 @@ class ItemSnapshotTest {
     fun `markReady 시 name 이 없으면 READY 불변식 위반으로 실패한다`() {
         val snapshot = ItemSnapshot(itemId = 1L)
         assertFailsWith<IllegalArgumentException> {
-            snapshot.markReady(ProductSnapshot(currentPrice = 1_000, imageUrl = "https://img.example.com/a.png"))
+            snapshot.markReady(ProductSnapshot(price = 1_000, imageUrl = "https://img.example.com/a.png"))
         }
     }
 
@@ -136,7 +136,7 @@ class ItemSnapshotTest {
     fun `markReady 시 imageUrl 이 없으면 READY 불변식 위반으로 실패한다`() {
         val snapshot = ItemSnapshot(itemId = 1L)
         assertFailsWith<IllegalArgumentException> {
-            snapshot.markReady(ProductSnapshot(name = "나이키", currentPrice = 99_000))
+            snapshot.markReady(ProductSnapshot(name = "나이키", price = 99_000))
         }
     }
 
@@ -153,7 +153,7 @@ class ItemSnapshotTest {
         val snapshot = ItemSnapshot(itemId = 1L)
         snapshot.markFailed()
         assertFailsWith<IllegalStateException> {
-            snapshot.markReady(ProductSnapshot(name = "x", currentPrice = 1_000, imageUrl = "https://img.example.com/a.png"))
+            snapshot.markReady(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png"))
         }
     }
 
@@ -162,20 +162,20 @@ class ItemSnapshotTest {
     @Test
     fun `manual 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
         val base = ItemSnapshot(itemId = 1L)
-        base.markReady(ProductSnapshot(name = "나이키", currentPrice = 99_000, imageUrl = "https://img.example.com/a.png", currency = "KRW"))
+        base.markReady(ProductSnapshot(name = "나이키", price = 99_000, imageUrl = "https://img.example.com/a.png", currency = "KRW"))
         val editor = java.util.UUID.randomUUID()
 
-        val manual = ItemSnapshot.manual(base = base, name = null, currentPrice = 79_000, imageUrl = null, currency = null, editedBy = editor)
+        val manual = ItemSnapshot.manual(base = base, name = null, price = 79_000, imageUrl = null, currency = null, editedBy = editor)
 
         assertEquals(ItemStatus.READY, manual.status)
         assertEquals("나이키", manual.name)
-        assertEquals(79_000, manual.currentPrice)
+        assertEquals(79_000, manual.price)
         assertEquals("https://img.example.com/a.png", manual.imageUrl)
         assertEquals(ItemSnapshotSource.MANUAL, manual.source)
         assertEquals(editor, manual.editedBy)
         assertNotNull(manual.extractedAt)
         // 기계 버전 불변 — 이력 보존의 핵심.
-        assertEquals(99_000, base.currentPrice)
+        assertEquals(99_000, base.price)
         assertEquals(ItemStatus.READY, base.status)
     }
 
@@ -190,7 +190,7 @@ class ItemSnapshotTest {
             val manual = ItemSnapshot.manual(
                 base = base,
                 name = "수기 입력",
-                currentPrice = 5_000,
+                price = 5_000,
                 imageUrl = "https://img.example.com/m.png",
                 currency = "KRW",
                 editedBy = editor,
@@ -204,7 +204,7 @@ class ItemSnapshotTest {
     fun `manual 병합 후에도 name 이 비면 ItemException(400)`() {
         val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = null, currentPrice = 1_000, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
+            ItemSnapshot.manual(base = base, name = null, price = 1_000, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
@@ -212,7 +212,7 @@ class ItemSnapshotTest {
     fun `manual 병합 후에도 price 가 없으면 ItemException(400)`() {
         val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = "수기", currentPrice = null, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
+            ItemSnapshot.manual(base = base, name = "수기", price = null, imageUrl = "https://img.example.com/a.png", currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
@@ -220,7 +220,7 @@ class ItemSnapshotTest {
     fun `manual 병합 후에도 imageUrl 이 없으면 ItemException(400)`() {
         val base = ItemSnapshot(itemId = 1L).apply { markFailed() }
         assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = "수기", currentPrice = 5_000, imageUrl = null, currency = "KRW", editedBy = java.util.UUID.randomUUID())
+            ItemSnapshot.manual(base = base, name = "수기", price = 5_000, imageUrl = null, currency = "KRW", editedBy = java.util.UUID.randomUUID())
         }
     }
 
@@ -240,7 +240,7 @@ class ItemSnapshotTest {
         assertTrue(ItemSnapshot.pending(itemId = 1L).apply { markProcessing() }.isInProgress())
         assertFalse(
             ItemSnapshot(itemId = 1L)
-                .apply { markReady(ProductSnapshot(name = "x", currentPrice = 1_000, imageUrl = "https://img.example.com/a.png")) }
+                .apply { markReady(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png")) }
                 .isInProgress(),
         )
         assertFalse(ItemSnapshot(itemId = 1L).apply { markFailed() }.isInProgress())
@@ -259,7 +259,7 @@ class ItemSnapshotTest {
         assertFailsWith<IllegalStateException> { ItemSnapshot.pending(1L).apply { markProcessing() }.markProcessing() }
         assertFailsWith<IllegalStateException> {
             ItemSnapshot(itemId = 1L)
-                .apply { markReady(ProductSnapshot(name = "x", currentPrice = 1_000, imageUrl = "https://img.example.com/a.png")) }
+                .apply { markReady(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png")) }
                 .markProcessing()
         }
         assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.markProcessing() }
@@ -296,7 +296,7 @@ class ItemSnapshotTest {
         // READY(완료)·FAILED(실패)는 마감 대상이 아니다 — recover 가 잘못된 행을 집은 코드 버그 방어.
         assertFailsWith<IllegalStateException> {
             ItemSnapshot(itemId = 1L)
-                .apply { markReady(ProductSnapshot(name = "x", currentPrice = 1_000, imageUrl = "https://img.example.com/a.png")) }
+                .apply { markReady(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png")) }
                 .expire()
         }
         assertFailsWith<IllegalStateException> { ItemSnapshot(itemId = 1L).apply { markFailed() }.expire() }

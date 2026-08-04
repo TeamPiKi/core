@@ -8,15 +8,17 @@ server:
   servlet:
     session:
       # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin form-login 세션에만 적용된다.
-      # 환경별로 다르게: dev·staging 은 길게(개발 편의, 사실상 무제한), prod 는 짧게(24h). staging 이 prod 프로파일을
-      # 공유하므로(deploy.yml) 프로파일로는 못 가른다 → env 변수로 주입한다. 미설정(로컬) 기본은 30d.
-      timeout: ${ADMIN_SESSION_TIMEOUT:7d}
+      # 기본값을 fail-safe(짧은 쪽, 24h)로 둔다 — 아무 데서도 주입하지 않으면 prod 도 이 값을 쓰므로, 기본이 길면
+      # 운영 세션이 의도보다 오래 산다(SPRINGDOC_ENABLED 의 fail-closed 기본과 같은 결). 현재 dev·prod 모두 주입
+      # 없이 이 기본을 쓴다. 특정 환경만 길게 쓰려면 SSM /piki-core/<env>/admin-session-timeout 을 심으면 된다
+      # (deploy 가 SSM 키를 UPPER_SNAKE env 로 컨테이너에 전달하므로 워크플로 변경이 필요 없다).
+      timeout: ${ADMIN_SESSION_TIMEOUT:24h}
 
 # 운영 백오피스(#249) + 슬랙-IP 접근 게이트(#526). 게이트가 보호하므로 enabled 를 전 환경에 둬도 안전하다 —
-# /admin 은 슬랙 세션, dev/staging 도메인은 IP allowlist 로 막힌다. 로컬은 ADMIN_ENABLED=true + ADMIN_LOCAL_BYPASS=true 로 게이트 없이 본다.
+# /admin 은 슬랙 세션, dev 도메인은 IP allowlist 로 막힌다. 로컬은 ADMIN_ENABLED=true + ADMIN_LOCAL_BYPASS=true 로 게이트 없이 본다.
 admin:
   enabled: ${ADMIN_ENABLED:false}
-  # dev/staging 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
+  # dev 도메인 전체를 allowlist IP 로만 연다(공개 차단). prod 는 false(실유저 공개, /admin 만 세션 게이트).
   environment-gate: ${ENV_ACCESS_GATE:false}
   # Discord 슬래시커맨드 Ed25519 검증 공개키(hex — GitHub secret). 비면 Discord 진입이 거부돼 게이트를 못 열고 /admin 은 404 유지.
   discord-public-key: ${DISCORD_PUBLIC_KEY:}
@@ -28,14 +30,13 @@ admin:
   discord-metrics-channel-id: ${DISCORD_METRICS_CHANNEL_ID:}
   # Discord Bot API 인증 토큰(민감 — GitHub secret). 주간 리포트 채널 게시에 사용. 비면 게시 skip.
   discord-bot-token: ${DISCORD_BOT_TOKEN:}
-  # 이 앱이 도는 환경(dev/staging/prod). grant 토큰 env 바인딩 검증용.
+  # 이 앱이 도는 환경(dev/prod). grant 토큰 env 바인딩 검증용.
   environment: ${ADMIN_ENVIRONMENT:}
   # grant 토큰 HMAC 서명 공유키(전 환경 동일 secret). 발급 env(인터랙션 엔드포인트)와 소비 env(링크 클릭)가 달라도 검증되게 한다.
   grant-signing-key: ${ADMIN_GRANT_SIGNING_KEY:}
   # env → admin 접속 호스트. 선택한 env 의 grant 링크 host 로 쓴다 (공개 도메인이라 secret 아님).
   grant-hosts:
     dev: https://dev.api.piki.day
-    staging: https://staging.api.piki.day
     prod: https://api.piki.day
   # 허용 IP sliding TTL(무활동 만료, IP 변동 흡수). grant-token 은 원타임 링크 수명.
   allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:1h}
@@ -160,7 +161,7 @@ notification:
   # 자동삭제 스케줄(cron, KST/Asia/Seoul). 기본 매일 04:00 KST. NotificationCleanupScheduler 의 @Scheduled(zone=Asia/Seoul) placeholder 가 참조한다.
   cleanup-cron: ${NOTIFICATION_CLEANUP_CRON:0 0 4 * * *}
 
-# API 레퍼런스 문서 노출 게이트 — dev 만 노출, staging/prod 는 404 (deploy.yml 이 dev 만 SPRINGDOC_ENABLED=true).
+# API 레퍼런스 문서 노출 게이트 — dev 만 노출, prod 는 404 (deploy.yml 이 dev 만 SPRINGDOC_ENABLED=true).
 # spec(springdoc.api-docs.enabled)·static Stoplight UI·루트 리다이렉트(docs.enabled → WebConfig)가 이 플래그를 공유한다.
 # 기본값을 fail-closed(false)로 둔다 — deploy.yml 의 변수 전달이 빠지거나 새 배포 경로가 생겨도 문서가 조용히
 # 노출되지 않는다. 노출은 dev 배포(SPRINGDOC_ENABLED=true)·로컬(test application.yml 이 명시 true)에서만 켠다.
@@ -239,17 +240,17 @@ logging:
     # 색상(%clr)은 쓰지 않는다 — non-TTY(컨테이너 stdout)에선 어차피 plain 이고, 로컬 콘솔 색상보다 패턴 단순함을 택한다.
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS, Asia/Seoul} %-5level [%thread] [%X{traceId:-},%X{spanId:-}] [user=%X{userId:-}] %logger{36} : %msg%n%wEx"
 
-# 에러 트래킹(#608). prod·staging 에만 DSN 을 주입해 켠다 — 빈 DSN 이면 SDK 가 no-op 이라 dev/로컬은 자동 off 다(코드 분기 0).
+# 에러 트래킹(#608). prod 에만 DSN 을 주입해 켠다 — 빈 DSN 이면 SDK 가 no-op 이라 dev/로컬은 자동 off 다(코드 분기 0).
 # error 로그를 sentry-logback appender 가 Sentry 이슈로 그룹핑한다(우리 예외는 GlobalExceptionHandler 가 잡아
 # log.error(.., e) 로 남기므로 MVC 미처리예외 통합이 아니라 로그 캡처가 주 경로). 트레이싱은 Sentry 가 아니라
 # 기존 OTel→Tempo 가 담당하므로 traces-sample-rate=0. PII(헤더·쿠키·바디)는 자동 수집하지 않고, 안전 컨텍스트만
 # SentryContextEventProcessor 가 명시 부착한다(traceId·userId·adminActor·endpoint·provider 태그 + URL 쿼리스트링 마스킹).
 sentry:
   dsn: ${SENTRY_DSN:}
-  # staging·prod 가 같은 prod 프로파일을 공유하므로(deploy.yml) environment 는 별도 env 로 가른다(ENV_ACCESS_GATE 와 동일 패턴).
+  # environment 는 별도 env 로 가른다(deploy.yml 이 resolve 환경명을 주입, ENV_ACCESS_GATE 와 동일 패턴).
   environment: ${SENTRY_ENVIRONMENT:local}
   # 릴리즈 식별자 — prod promote 는 semver(v1.0.1), 그 외는 배포 커밋 sha (deploy.yml 이 주입). suspect commit·
-  # regression 탐지에 쓰인다(GitHub 연동 승인 후 활성). Sentry UI 에 prod 는 v1.0.1 로, dev/staging 은 sha 로 보인다.
+  # regression 탐지에 쓰인다(GitHub 연동 승인 후 활성). Sentry UI 에 prod 는 v1.0.1 로, dev 는 sha 로 보인다.
   release: ${SENTRY_RELEASE:}
   # Sentry 트레이싱 미사용(Tempo 와 중복·비용 방지). 에러 캡처만 한다.
   traces-sample-rate: 0

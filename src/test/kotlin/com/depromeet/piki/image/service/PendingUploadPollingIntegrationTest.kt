@@ -323,7 +323,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
                     ItemSnapshot(
                         itemId = it.getId(),
                         name = "fill",
-                        currentPrice = 1_000,
+                        price = 1_000,
                         currency = "KRW",
                         status = ItemStatus.READY,
                         extractedAt = LocalDateTime.now(),

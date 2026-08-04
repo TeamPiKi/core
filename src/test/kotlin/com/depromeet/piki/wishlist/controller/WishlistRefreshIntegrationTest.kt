@@ -89,7 +89,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
 
@@ -106,7 +106,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val active = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("새 상품", active.name)
-            assertEquals(20_000, active.currentPrice)
+            assertEquals(20_000, active.price)
             assertNotEquals(oldSnapshotId, active.getId()) // 새 버전 행
 
             // 옛 snapshot 행은 보존된다(토너먼트 출전 격리의 근거) — 여전히 READY, 옛 값.
@@ -162,7 +162,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     ItemSnapshot(
                         itemId = item.getId(),
                         name = "이미지 상품",
-                        currentPrice = 5_000,
+                        price = 5_000,
                         currency = "KRW",
                         status = ItemStatus.READY,
                         extractedAt = LocalDateTime.now(),
@@ -261,7 +261,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/inplay", "옛 상품", 10_000)
             // 출전 시점 고정 — tournament_item 이 옛 snapshot 을 가리킨다(FK 없으니 tournament 행 없이도 격리만 검증).
@@ -306,7 +306,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", currentPrice = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, _) = seedReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
 
@@ -344,7 +344,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
             itemParsingService.markReady(
                 v1.getId(),
-                ProductSnapshot(link = null, name = "버전1", currentPrice = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+                ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
                 expectedAttempt = attempt,
             )
 
@@ -383,7 +383,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     userId = userId,
                     wishId = wish.getId(),
                     name = "보정",
-                    currentPrice = 200,
+                    price = 200,
                     imageUrl = "https://img.example.com/a.png",
                     currency = "KRW",
                 )
@@ -421,7 +421,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ItemSnapshot(
                     itemId = item.getId(),
                     name = name,
-                    currentPrice = price,
+                    price = price,
                     currency = "KRW",
                     status = ItemStatus.READY,
                     extractedAt = LocalDateTime.now(),

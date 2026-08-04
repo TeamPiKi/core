@@ -11,7 +11,7 @@ data class WishlistUpdateRequest(
     val name: String? = null,
     @field:Schema(description = "수정할 현재 판매가", example = "119000", nullable = true)
     @field:Min(value = 0, message = PRICE_MIN_MESSAGE)
-    val currentPrice: Int? = null,
+    val price: Int? = null,
     @field:Schema(description = "수정할 통화 코드 (ISO 4217)", example = "KRW", nullable = true)
     @field:Size(max = 8, message = CURRENCY_MAX_MESSAGE)
     val currency: String? = null,

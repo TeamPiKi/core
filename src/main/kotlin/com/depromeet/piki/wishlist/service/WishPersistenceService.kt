@@ -149,7 +149,7 @@ class WishPersistenceService(
         userId: UUID,
         wishId: Long,
         name: String?,
-        currentPrice: Int?,
+        price: Int?,
         imageUrl: String?,
         currency: String?,
     ): WishWithItem {
@@ -164,7 +164,7 @@ class WishPersistenceService(
                 ItemSnapshot.manual(
                     base = base,
                     name = name,
-                    currentPrice = currentPrice,
+                    price = price,
                     imageUrl = imageUrl,
                     currency = currency,
                     editedBy = userId,

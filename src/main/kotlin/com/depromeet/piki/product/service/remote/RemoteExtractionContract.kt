@@ -110,6 +110,9 @@ internal object RemoteExtractionContract {
 internal data class RemoteExtractionResponse(
     val name: String? = null,
     val imageUrl: String? = null,
+    // extractor 가 내려주는 wire 필드명이라 우리 쪽 개명(currentPrice → price, #870)에서 홀로 제외됐다.
+    // 여기만 바꾸면 Jackson 매핑이 끊겨 2xx 의 가격이 조용히 null 이 되고, toSnapshot 의 계약 위반 가드에
+    // 걸려 모든 추출이 일시 실패로 떨어진다. 개명하려면 extractor 와 동시 배포가 필요하다.
     val currentPrice: Int? = null,
     val currency: String? = null,
     // additive 확장(계약 §2, extractor#17): 리다이렉트 귀결점. 구버전 extractor 는 안 내려주며(null),
@@ -129,7 +132,7 @@ internal data class RemoteExtractionResponse(
             link = link,
             name = name,
             imageUrl = imageUrl,
-            currentPrice = currentPrice,
+            price = currentPrice,
             currency = currency,
             finalUrl = finalUrl,
             extractionMethod = method,
