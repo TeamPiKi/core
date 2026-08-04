@@ -129,12 +129,13 @@ class NotificationHistoryApiExamples(
             operation
         }
 
-    // 토너먼트 알림 (라우팅 없음, refId 만) — kind=TOURNAMENT, 안읽음.
+    // 토너먼트 알림 (라우팅 없음, refId 만) — 안읽음.
+    // kind 는 리터럴로 박지 않고 payload 와 같은 파생(NotificationKind.of)을 거친다 — 분류가 바뀌면 example 이 따라온다.
     private val referenceItem =
         NotificationSsePayload.Reference(
             id = 1026,
             type = NotificationType.TOURNAMENT_JOINED,
-            kind = NotificationKind.TOURNAMENT,
+            kind = NotificationKind.of(NotificationType.TOURNAMENT_JOINED, null),
             title = "토너먼트에 참가했어요",
             body = "지금 바로 픽을 시작해보세요",
             refId = 77,
@@ -142,12 +143,12 @@ class NotificationHistoryApiExamples(
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 10, 0),
         )
 
-    // 위시 출처 파싱 완료 알림 (kind=WISH) — 읽음.
+    // 위시 출처 파싱 완료 알림 (라우팅 출처 WISH) — 읽음.
     private val wishParsingItem =
         NotificationSsePayload.WishParsing(
             id = 1025,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            kind = NotificationKind.WISH,
+            kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH),
             title = "상품 정보가 준비됐어요",
             body = "에어 조던 1 미드",
             refId = 512,
@@ -155,12 +156,12 @@ class NotificationHistoryApiExamples(
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
         )
 
-    // 토너먼트 출처 파싱 완료 알림 (kind=TOURNAMENT + 두 식별자) — 안읽음.
+    // 토너먼트 출처 파싱 완료 알림 (라우팅 출처 TOURNAMENT + 두 식별자) — 안읽음.
     private val tournamentParsingItem =
         NotificationSsePayload.TournamentRouted(
             id = 1024,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            kind = NotificationKind.TOURNAMENT,
+            kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
             title = "토너먼트 아이템이 준비됐어요",
             body = "나이키 덩크 로우",
             refId = 513,

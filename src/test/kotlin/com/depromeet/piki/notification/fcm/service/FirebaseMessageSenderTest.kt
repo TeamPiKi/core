@@ -44,8 +44,10 @@ class FirebaseMessageSenderTest {
 
     // toFcmData 는 NotificationSsePayload(=from(), SSE 와 단일 소스)를 FCM data 로 인코딩 — 셰입별 키 셋 분기를 단위로 망라한다(#408).
     // kind 는 전 알림 공통이라 라우팅 유무와 무관하게 항상 실리고, 토너먼트 좌표만 셰입에 따라 갈린다(#473 고도화).
+    // data 키는 FE 와 공유하는 contract 라 부분 단언이 아니라 exact-map 으로 고정한다 — 폐기 키(category·imageUrl) 부재와
+    // 예상 못한 새 키 유입을 한 단언이 함께 잡는다.
     @Test
-    fun `FCM data 에 category 와 imageUrl 키를 싣지 않는다`() {
+    fun `라우팅 없는 알림의 FCM data 는 id·type·kind·refId 네 키뿐이다`() {
         val payload =
             NotificationSsePayload.Reference(
                 id = 1,
@@ -60,32 +62,14 @@ class FirebaseMessageSenderTest {
 
         val data = FirebaseMessageSender.toFcmData(payload)
 
-        assertFalse(data.containsKey("category"))
-        assertFalse(data.containsKey("imageUrl"))
+        assertEquals(
+            mapOf("id" to "1", "type" to "TOURNAMENT_JOINED", "kind" to "TOURNAMENT", "refId" to "77"),
+            data,
+        )
     }
 
     @Test
-    fun `라우팅 없는 알림에도 kind 가 실린다`() {
-        val payload =
-            NotificationSsePayload.Reference(
-                id = 1,
-                type = NotificationType.TOURNAMENT_JOINED,
-                kind = NotificationKind.TOURNAMENT,
-                title = "참가했어요",
-                body = "",
-                refId = 77,
-                isRead = false,
-                createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),
-            )
-
-        val data = FirebaseMessageSender.toFcmData(payload)
-
-        assertEquals("TOURNAMENT", data["kind"])
-        assertFalse(data.containsKey("tournamentId"))
-    }
-
-    @Test
-    fun `토너먼트 라우팅 알림은 kind 와 좌표 두 개를 함께 싣는다`() {
+    fun `토너먼트 라우팅 알림의 FCM data 는 공통 네 키에 좌표 두 개가 더해진 여섯 키다`() {
         val payload =
             NotificationSsePayload.TournamentRouted(
                 id = 2,
@@ -102,9 +86,17 @@ class FirebaseMessageSenderTest {
 
         val data = FirebaseMessageSender.toFcmData(payload)
 
-        assertEquals("TOURNAMENT", data["kind"])
-        assertEquals("99", data["tournamentId"])
-        assertEquals("555", data["tournamentItemId"])
+        assertEquals(
+            mapOf(
+                "id" to "2",
+                "type" to "ITEM_PARSING_COMPLETED",
+                "kind" to "TOURNAMENT",
+                "refId" to "513",
+                "tournamentId" to "99",
+                "tournamentItemId" to "555",
+            ),
+            data,
+        )
     }
 
     // 엔티티 → payload → data 왕복 하나 — kind 가 from() 의 파생(type + routingKind)에서 오고 toFcmData 가 그걸 그대로

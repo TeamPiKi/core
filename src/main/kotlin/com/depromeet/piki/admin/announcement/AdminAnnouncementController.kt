@@ -76,7 +76,8 @@ class AdminAnnouncementController(
         val announcement = adminAnnouncementService.get(id)
         if (!announcement.isDraft) return "redirect:/admin/announcements" // 발송·예약된 건 내용 수정 불가
         model.addAttribute("announcement", announcement)
-        model.addAttribute("pushIconUrl", defaultPushImage.url) // 푸시 미리보기 아이콘 — 실제 FCM 이 쓰는 S3 기본 아이콘
+        // 푸시 미리보기의 앱 아이콘 목업 — 실제 OS 트레이 아이콘은 앱 번들에서 오고 서버는 아이콘을 보내지 않는다(발송 페이지와 같은 설명).
+        model.addAttribute("pushIconUrl", defaultPushImage.url)
         return "admin/announcement-edit"
     }
 
@@ -151,7 +152,8 @@ class AdminAnnouncementController(
         if (!announcement.isDraft) return "redirect:/admin/announcements" // 발송됐거나 예약된 건 재설정 불가
         model.addAttribute("announcement", announcement)
         model.addAttribute("recipientCount", adminAnnouncementService.recipientCount())
-        // 푸시 미리보기 아이콘 — 실제 FCM 푸시(시스템 알림)가 쓰는 S3 기본 아이콘(defaults/push-icon.svg)을 그대로 보여준다.
+        // 푸시 미리보기의 앱 아이콘 목업 — 미리보기가 실제 푸시처럼 보이도록 S3 기본 아이콘(defaults/push-icon.svg)을 빌려 쓴다.
+        // 서버가 FCM 으로 아이콘을 보내는 건 아니다 — 표시 블록에 아이콘 설정이 없고, 실제 트레이 아이콘은 앱 번들에서 온다.
         model.addAttribute("pushIconUrl", defaultPushImage.url)
         return "admin/announcement-send"
     }

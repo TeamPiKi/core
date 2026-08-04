@@ -29,8 +29,10 @@ class Notification(
     // 라우팅이 없는 알림(토너먼트 알림 등)은 null 을 넘겨 세 컬럼이 모두 비워진다. 생성자 끝의 default 라 기존 호출은 안 깨진다.
     routing: NotificationRouting? = null,
     // 행위자(actor) 프로필 사진 snapshot(#473) — 발송 시점 actor 의 프사 URL 을 박아 고정한다. 이후 actor 가 프사를
-    // 바꿔도 과거 알림은 그 시점 사진 유지(title 의 닉네임 snapshot 과 같은 결). actor 없는 시스템 알림은 null —
-    // 직렬화 시 서버가 defaultPushImg 로 채운다(컬럼엔 저장 안 함). routing 뒤에 둬 기존 positional 호출(…,refId,routing)을 안 깬다.
+    // 바꿔도 과거 알림은 그 시점 사진 유지(title 의 닉네임 snapshot 과 같은 결). actor 없는 시스템 알림은 null.
+    // 현재 이 값을 읽는 코드는 없다 — 알림 카드가 아바타 대신 kind 라벨을 쓰게 되며 응답 imageUrl 이 사라졌다(#473 고도화).
+    // 그래도 컬럼은 유지한다: drop 하면 발송 시점 스냅샷이 영구 소실돼, 아바타가 돌아와도 과거 알림은 복원할 수 없다.
+    // routing 뒤에 둬 기존 positional 호출(…,refId,routing)을 안 깬다.
     @Column(name = "actor_image_url", length = MAX_IMAGE_URL_LENGTH)
     val actorImageUrl: String? = null,
 ) : LongBaseEntity() {
