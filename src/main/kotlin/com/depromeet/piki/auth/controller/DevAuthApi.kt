@@ -35,7 +35,7 @@ interface DevAuthApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "닉네임 미입력 또는 형식 오류",
+                description = "닉네임 미입력 · 10자 초과 · '탈퇴' 예약 prefix 로 시작",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

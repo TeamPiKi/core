@@ -604,6 +604,20 @@ interface TournamentItemApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "400",
+                description =
+                    "잘못된 요청 (빈 이미지 파일 — code: PRODUCTIMAGE-001 · " +
+                        "이미지 형식 확인 불가 — PRODUCTIMAGE-002 · " +
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif 만) — PRODUCTIMAGE-003 · " +
+                        "요청 값 형식 검증 실패 — COMMON-INVALID-INPUT)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "502",
                 description = "외부 의존성 실패 (이미지 저장소(S3) 업로드 실패 — 재시도 가능) — code: STORAGE-001",
                 content = [

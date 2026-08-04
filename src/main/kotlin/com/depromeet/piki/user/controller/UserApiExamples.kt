@@ -80,6 +80,10 @@ class UserApiExamples(
                         add(UserException.unsupportedProfileImageType(), name = "지원하지 않는 이미지 형식")
                         // 선언한 Content-Type 과 실제 파일 시그니처가 어긋남 (헤더 위조·손상)
                         add(UserException.malformedProfileImage(), name = "형식과 내용 불일치")
+                        // @Size(min = 1) 은 공백 1자를 통과시키고, 예약 prefix 도 못 거른다 —
+                        // 둘 다 User.validateNickname 이 잡아 400 으로 나간다.
+                        add(UserException.nicknameBlank(), name = "공백만 있는 닉네임")
+                        add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
                         add(UserException.duplicateNickname(), name = "닉네임 중복")
                         add(UserException.deletedUser(), name = "탈퇴한 유저")
                         unauthorized()
