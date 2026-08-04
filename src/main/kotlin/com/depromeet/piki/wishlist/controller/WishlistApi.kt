@@ -4,8 +4,8 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
-import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
@@ -176,9 +176,16 @@ interface WishlistApi {
     @Operation(
         summary = "위시리스트 조회 (단건)",
         description = """
-            wishId 로 위시 항목 하나를 조회한다. 응답 모양은 목록 조회 항목과 같은 WishItemResponse(wish + item).
+            wishId 로 위시 항목 하나를 상세 조회한다. **지금 보이는 값(item)과 그 상품의 가격 이력(priceHistory)을 함께 내려주므로 상세 화면은 이 API 하나면 된다.**
             본인 위시만 조회 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
+            item 은 목록 조회와 같은 규칙으로 파생된 표시값이다 — 같은 카드가 목록과 상세에서 같게 보인다.
             item.status 로 파싱 상태(PENDING/PROCESSING/READY/FAILED)를 구분한다. 상세 화면 진입 시 현재 status 확인에 쓰고, 전이 통보는 SSE(`/api/v1/notifications/subscribe`)로 받는다.
+            item.source 는 지금 보이는 값의 출처다 — MANUAL 이면 본인이 직접 입력한 값이므로 "직접 입력한 값" 배지를 띄울 수 있다.
+
+            priceHistory 는 **서버가 추출해 관측한 가격**을 최신순으로 최대 50건 담는다. 수기 입력(MANUAL)과 출처 미상 버전은 빠진다 —
+            사용자가 직접 넣은 값은 시세 관측치가 아니고, 스냅샷을 지우는 경로가 없어 한 번 잘못 입력하면 추이에 영구히 남기 때문이다.
+            item 과 priceHistory 는 **별개의 축**이라 서로 맞춰볼 대상이 아니다. 지금 보이는 값이 수기이거나 추출 진행 중이면 priceHistory 에 그 값이 없는 것이 정상이고,
+            한 번도 추출에 성공하지 못한 상품은 빈 배열이다. 그래서 상단 카드 가격과 그래프의 마지막 점이 다를 수 있다(수기로 고친 경우).
         """,
     )
     @ApiResponses(
@@ -238,77 +245,7 @@ interface WishlistApi {
     fun getWish(
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "위시 항목 ID", example = "1024") wishId: Long,
-    ): ApiResponseBody<WishItemResponse>
-
-    @Operation(
-        summary = "위시 상품 가격 히스토리 조회",
-        description = """
-            wishId 로 그 위시가 가리키는 상품의 가격 히스토리를 조회한다. 갱신·새로고침마다 새 추출 버전이 쌓여
-            가격·이름·이미지 이력이 보존되며, 이 API 는 그중 추출 완료(READY)된 버전을 최신순(snapshotId desc)으로 내려준다.
-            가격이 없는 PENDING·PROCESSING·FAILED 버전은 entries 에서 제외된다 — 비어 있으면 아직 한 번도 추출에 성공하지 않은 상품이다.
-            entries 각 항목은 그 버전 시점의 가격·이름·이미지·추출시각을 담고, isActive 로 현재 활성(위시가 가리키는) 버전을 표시한다.
-            응답의 activeSnapshotId 는 현재 활성 버전 식별자다 — 활성 버전이 추출 중이거나 실패면 entries 에 없을 수 있다.
-            본인 위시만 조회 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
-        """,
-    )
-    @ApiResponses(
-        value = [
-            ApiResponse(
-                responseCode = "200",
-                description = "가격 히스토리 조회 성공 (READY 버전 최신순, 없으면 빈 entries)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "401",
-                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "403",
-                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요, 또는 본인 위시가 아님)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "404",
-                description = "존재하지 않는 위시 항목 (삭제된 항목 포함)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "409",
-                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-        ],
-    )
-    fun getPriceHistory(
-        @Parameter(hidden = true) userId: UUID,
-        @Parameter(description = "위시 항목 ID", example = "1024") wishId: Long,
-    ): ApiResponseBody<WishPriceHistoryResponse>
+    ): ApiResponseBody<WishDetailResponse>
 
     @Operation(
         summary = "위시 항목 수기 수정",

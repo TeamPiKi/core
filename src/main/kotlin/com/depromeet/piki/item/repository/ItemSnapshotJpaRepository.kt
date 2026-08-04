@@ -27,11 +27,20 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     // 한 item 의 살아있는(soft-delete 안 된) 최신 snapshot 1개 — id 역순 첫 행.
     fun findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId: Long): ItemSnapshot?
 
-    // 한 item 의 특정 상태 snapshot 전체를 id 역순(최신 버전 먼저)으로 — 가격 히스토리(READY 버전 이력) 조회용.
+    // 가격 이력 조회 — 한 item 의 기계(SERVER/SERVER_LLM) READY 버전을 최신순(id desc)으로 pageable 개수만큼.
+    // 수기(MANUAL)를 빼는 이유: 수기 입력은 파싱 실패 복구용(recoverWishItem)이라 가격 시계열의 관측치가 아니고,
+    // 스냅샷 삭제 경로가 없어 한 번 오타로 넣은 값이 그래프에 영구히 남는다. 출처 null(도입 전 행)도 기계 여부를
+    // 소급 판정할 수 없으므로 제외한다 — 표시값 파생(findLatestMachineReady*)이 쓰는 기준과 같다.
     // idx_item_snapshots_item_id 로 커버되고, id 정렬은 PK 라 secondary index 리프에 포함돼 추가 인덱스가 필요 없다.
-    fun findByItemIdAndStatusAndDeletedAtIsNullOrderByIdDesc(
-        itemId: Long,
-        status: ItemStatus,
+    @Query(
+        "select s from ItemSnapshot s where s.itemId = :itemId " +
+            "and s.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
+            "and s.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) " +
+            "and s.deletedAt is null order by s.id desc",
+    )
+    fun findMachineReadyHistoryByItemId(
+        @Param("itemId") itemId: Long,
+        pageable: Pageable,
     ): List<ItemSnapshot>
 
     // 살아있는 단건 조회. JpaRepository.findById(Optional) 와 충돌하지 않도록 deletedAt 조건을 붙여 이름을 구분한다.

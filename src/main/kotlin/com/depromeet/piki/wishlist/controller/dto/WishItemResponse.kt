@@ -2,6 +2,7 @@ package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
@@ -83,6 +84,14 @@ data class WishItemResponse(
             example = "READY",
         )
         val status: ItemStatus,
+        @field:Schema(
+            description = "지금 보이는 값의 출처 — SERVER(구조화 파서)·SERVER_LLM(LLM 추출)·MANUAL(사용자 수기 입력). " +
+                "MANUAL 이면 본인이 직접 입력한 값이다(타인의 수기는 내 카드의 표시값이 되지 않는다) — " +
+                "\"직접 입력한 값\" 배지의 근거로 쓴다. 출처 기록 도입 전에 쌓인 버전은 null(모름).",
+            example = "SERVER",
+            nullable = true,
+        )
+        val source: ItemSnapshotSource?,
         @field:Schema(description = "상품명 (PENDING·PROCESSING·실패 시 null)", example = "에어 조던 1 미드", nullable = true)
         val name: String?,
         @field:Schema(description = "스냅샷 시점의 현재 판매가 (PENDING·PROCESSING·실패 시 null)", example = "119000", nullable = true)
@@ -121,6 +130,7 @@ data class WishItemResponse(
                 ItemView(
                     id = item.getId(),
                     status = snapshot.status,
+                    source = snapshot.source,
                     name = snapshot.name,
                     price = snapshot.price,
                     currency = snapshot.currency,

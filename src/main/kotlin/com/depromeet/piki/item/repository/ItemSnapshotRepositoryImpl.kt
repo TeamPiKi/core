@@ -30,8 +30,10 @@ class ItemSnapshotRepositoryImpl(
     override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
         itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
 
-    override fun findReadyHistoryByItemId(itemId: Long): List<ItemSnapshot> =
-        itemSnapshotJpaRepository.findByItemIdAndStatusAndDeletedAtIsNullOrderByIdDesc(itemId, ItemStatus.READY)
+    override fun findMachineReadyHistoryByItemId(
+        itemId: Long,
+        limit: Int,
+    ): List<ItemSnapshot> = itemSnapshotJpaRepository.findMachineReadyHistoryByItemId(itemId, PageRequest.of(0, limit))
 
     override fun findById(id: Long): ItemSnapshot? = itemSnapshotJpaRepository.findByIdAndDeletedAtIsNull(id)
 
