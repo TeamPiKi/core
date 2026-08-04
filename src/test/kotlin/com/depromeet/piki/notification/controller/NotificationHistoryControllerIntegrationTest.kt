@@ -137,6 +137,8 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items.length()").value(2))
             .andExpect(jsonPath("$.data.items[0].id").value(third))
             .andExpect(jsonPath("$.data.items[1].id").value(second))
+            // unreadCount 는 페이지 범위가 아니라 전체다 (size 로 잘려도 안 줄어든다) — seed 3건 전부 안읽음.
+            .andExpect(jsonPath("$.data.unreadCount").value(3))
             .andExpect(jsonPath("$.pageResponse.hasNext").value(true))
             .andExpect(jsonPath("$.pageResponse.nextCursor").value(second.toString()))
 
