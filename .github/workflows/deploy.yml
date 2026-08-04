@@ -80,6 +80,8 @@ jobs:
       contents: read
       # 자동 배포 시 트리거한 CI 실행의 JAR 아티팩트를 크로스런 다운로드하려면 actions:read 가 필요하다.
       actions: read
+      # OIDC 로 ECR push 역할을 assume 하려면 id-token:write 가 필요하다(#860).
+      id-token: write
     # dev/prod 가 서로 배포를 막지 않도록 환경별 동시성 그룹. 같은 환경 내 재배포는 직렬화(취소 안 함).
     # 그룹은 브랜치명이 아니라 "환경"으로 묶어야 한다 — feature 브랜치 수동배포(dispatch)도 dev EC2 로
     # 가므로 dev 자동배포와 같은 그룹이어야 같은 박스에서 동시 blue-green 조작 레이스를 막는다.
@@ -172,12 +174,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: ./gradlew bootJar --no-daemon
 
-      - name: Login to Docker Hub
-        id: docker_login
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr_login
+        uses: aws-actions/amazon-ecr-login@v2
 
       # 러너가 arm64 네이티브(EC2 Graviton 과 동일 arch)라 크로스빌드가 불필요하다. buildx 없이 기본 docker
       # 데몬으로 arm64 이미지를 네이티브 빌드해 setup-buildx(약 10초)를 없앤다. 태그·image ref 는 셸 보간
@@ -185,8 +190,9 @@ jobs:
       - name: Build and push Docker image
         id: docker_push
         env:
-          IMAGE_LATEST: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:latest
-          IMAGE_SHA: ${{ secrets.DOCKERHUB_USERNAME }}/piki-core:${{ needs.resolve.outputs.ref }}
+          # amazon-ecr-login 이 <acct>.dkr.ecr.<region>.amazonaws.com 을 출력한다 — 계정번호를 repo 에 안 박는다.
+          IMAGE_LATEST: ${{ steps.ecr_login.outputs.registry }}/piki-core:latest
+          IMAGE_SHA: ${{ steps.ecr_login.outputs.registry }}/piki-core:${{ needs.resolve.outputs.ref }}
         run: |
           docker build -f Dockerfile.ci -t "$IMAGE_LATEST" -t "$IMAGE_SHA" .
           docker push "$IMAGE_LATEST"
@@ -328,8 +334,8 @@ jobs:
         env:
           # 앱 컨테이너 런타임 시크릿(DB·JWT·OAuth·Apple·S3·Firebase·Discord admin 등)은 더 이상 러너가
           # SSH 로 밀어넣지 않는다 — 박스가 아래 script 에서 SSM(/piki-core/<env>/*)을 직접 pull 한다
-          # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값과, 컨테이너에 주입하지 않고
-          # 배포 기계가 쓰는 자격증명(DOCKERHUB_USERNAME)뿐이다.
+          # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값뿐이다 (ECR pull 자격증명은
+          # 박스가 스크립트 안에서 instance profile(IMDS) 로 직접 얻는다 — 러너가 넘기지 않는다, #860).
           # 박스가 어느 SSM 경로(/piki-core/<env>/)를 pull 할지 알려주는 환경명.
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           # Spring 프로파일 — prod 에서 'prod' 활성. @Profile("!prod") 의 dev 전용 빈(DevAuth 등)이
@@ -347,8 +353,6 @@ jobs:
           # API 레퍼런스 문서(springdoc spec·Stoplight UI·루트 리다이렉트) 노출 — dev 만 노출, prod 는 404.
           # 전 엔드포인트·스키마가 외부에 드러나지 않게 dev 외엔 문서 자체를 끈다. 비민감 플래그라 secret 아님(inline).
           SPRINGDOC_ENABLED: ${{ needs.resolve.outputs.environment == 'dev' && 'true' || 'false' }}
-          # 이미지명($DOCKERHUB_USERNAME/piki-core) 구성용 — 컨테이너에 -e 로 주입하지 않는 배포 기계 자격증명이라 잔류.
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 에러 트래킹(#608) — prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
           # 배포는 안 깨지고 Sentry 만 꺼진다(non-breaking). dev 는 조건상 항상 빈값이라 off.
@@ -373,7 +377,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,DOCKERHUB_USERNAME,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
@@ -457,7 +461,13 @@ jobs:
               exit 1
             fi
 
-            IMAGE="$DOCKERHUB_USERNAME/piki-core:$IMAGE_TAG"
+            # ECR 레지스트리·이미지명을 온박스에서 도출한다 — 계정번호를 워크플로에 안 박는다(#860).
+            # aws-cli 컨테이너가 --network host 로 IMDS 를 타 인스턴스 프로파일 자격을 쓴다(SSM 읽기와 동일 경로).
+            ACCOUNT="$(docker run --rm --network host "$AWSCLI_IMAGE" sts get-caller-identity --query Account --output text)"
+            REGISTRY="$ACCOUNT.dkr.ecr.ap-northeast-2.amazonaws.com"
+            IMAGE="$REGISTRY/piki-core:$IMAGE_TAG"
+            docker run --rm --network host "$AWSCLI_IMAGE" ecr get-login-password --region ap-northeast-2 \
+              | docker login --username AWS --password-stdin "$REGISTRY"
 
             # 옛 배포 이미지가 쌓여 EC2 디스크가 차면 containerd 가 새 이미지를 못 받아 배포가 실패한다(#336).
             # pull 전에 컨테이너 미참조 이미지를 정리해 누적을 막고, 이미 디스크가 찬 상태의 deadlock 도 깬다.
