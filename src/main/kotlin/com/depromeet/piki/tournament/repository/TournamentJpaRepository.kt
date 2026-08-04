@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
@@ -24,6 +25,8 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // uk_tournament_users (tournament_id, user_id) 가 (유저, 토너먼트) 당 멤버십 행을 1개로 보장해 조인이 행을 늘리지 않는다.
     // createdAt 동률 시 어느 행이 LIMIT 에 잘릴지 비결정적이므로 생성 순서와 일치하는 id 로 tie-break 한다.
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
+    // playType 파생 판정(#836): CLONE 은 SOCIAL, ROOT 는 참여자 2명 이상이면 SOCIAL·나 혼자면 SOLO.
+    // 참여자 수는 tournament_user 행 수 — 현재 유저 조인 tu 와 별개인 tu2 서브쿼리로 전체 참여자를 센다.
     @Query(
         """
         SELECT t FROM Tournament t
@@ -37,12 +40,30 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
             OR t._ownerTournamentUserId = tu.id
             OR t.status = com.depromeet.piki.tournament.domain.TournamentStatus.PENDING
           )
+          AND (
+            :playType IS NULL
+            OR (
+              :playType = com.depromeet.piki.tournament.domain.PlayType.SOCIAL
+              AND (
+                t.sourceTournamentId IS NOT NULL
+                OR (SELECT COUNT(tu2) FROM TournamentUser tu2
+                    WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL) >= 2
+              )
+            )
+            OR (
+              :playType = com.depromeet.piki.tournament.domain.PlayType.SOLO
+              AND t.sourceTournamentId IS NULL
+              AND (SELECT COUNT(tu2) FROM TournamentUser tu2
+                   WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL) < 2
+            )
+          )
         ORDER BY t.createdAt DESC, t.id DESC
         """,
     )
     fun findVisibleByUserId(
         @Param("userId") userId: UUID,
         @Param("statuses") statuses: Collection<TournamentStatus>,
+        @Param("playType") playType: PlayType?,
         pageable: Pageable,
     ): List<Tournament>
 
