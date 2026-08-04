@@ -1045,6 +1045,30 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 는 playType 과 limit 을 함께 적용해 오래된 SOCIAL 도 limit 안에서 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // 오래된 SOCIAL 을 먼저 만들고(목록에서 아래), 최신 SOLO 를 여러 개 만든다(목록 위).
+        // 필터가 페이징과 같은 자리에 있으면 playType=SOCIAL&limit=1 이 최신 SOLO 들을 건너뛰고
+        // 이 오래된 SOCIAL 을 반환해야 한다. 필터가 페이징 뒤로 밀리면(회귀) 최신 1개(SOLO)만 보고 걸러 빈 목록이 된다.
+        val oldSocialId = createTournament(mockMvc, name = "오래된 소셜")
+        joinTournament(mockMvc, oldSocialId, otherUserId)
+        createTournament(mockMvc, name = "최신 솔로 1")
+        createTournament(mockMvc, name = "최신 솔로 2")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .param("playType", "SOCIAL")
+                    .param("limit", "1"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(oldSocialId))
+    }
+
+    @Test
     fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
