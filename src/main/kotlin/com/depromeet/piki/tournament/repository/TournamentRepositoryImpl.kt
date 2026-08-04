@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentStatus
@@ -42,12 +43,14 @@ class TournamentRepositoryImpl(
     override fun findVisibleByUserId(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        playType: PlayType?,
         limit: Int?,
     ): List<Tournament> =
         tournamentJpaRepository.findVisibleByUserId(
             userId = userId,
             // status 컬럼이 NOT NULL 이라 "전체 상태 IN" 과 "필터 없음" 이 동치다. 쿼리를 2벌로 나누지 않기 위해 전체를 바인딩한다.
             statuses = statuses?.takeIf { it.isNotEmpty() } ?: TournamentStatus.entries,
+            playType = playType,
             pageable = limit?.let { PageRequest.of(0, it) } ?: Pageable.unpaged(),
         )
 

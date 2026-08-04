@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentStatus
@@ -26,6 +27,7 @@ interface TournamentRepository {
     fun findVisibleByUserId(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        playType: PlayType?,
         limit: Int?,
     ): List<Tournament>
 

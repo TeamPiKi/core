@@ -5,6 +5,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
+import com.depromeet.piki.tournament.domain.PlayType
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -498,13 +499,14 @@ class TournamentService(
     fun getTournaments(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        playType: PlayType?,
         limit: Int?,
     ): List<TournamentSummary> {
         limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
 
         // 가시성 필터(ROOT 는 소유자·PENDING 만 — 멤버는 본인 CLONE 으로 플레이·표시)·최근순·limit 을 쿼리가 끝낸다.
         // 참가자·프로필은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
-        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, limit)
+        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, playType, limit)
         if (limited.isEmpty()) return emptyList()
 
         val tournamentUsers = tournamentUserRepository.findByTournamentIds(limited.map { it.getId() })
