@@ -25,7 +25,7 @@ class NotificationDeleteOrchestrator(
     ): Long {
         val unread = notificationService.delete(userId, command)
         silentSyncDispatcher.dispatch(listOf(userId), UnreadCountChanged.of(unread))
-        pushNotificationChannel.syncBadge(userId, unread.toBadgeCount())
+        pushNotificationChannel.syncBadge(userId, badgeCountOf(unread))
         return unread
     }
 }

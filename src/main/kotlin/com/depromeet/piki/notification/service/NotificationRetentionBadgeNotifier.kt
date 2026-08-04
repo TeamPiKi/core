@@ -33,7 +33,7 @@ class NotificationRetentionBadgeNotifier(
             runCatching { localDelivery.deliverSilentSync(listOf(userId), UnreadCountChanged.of(unread)) }
                 .onFailure { log.warn("자동삭제 SSE 배지 동기화 실패 userId={}", userId, it) }
             // 오프라인 기기 OS 아이콘 배지 (syncBadgeBlocking 이 예외를 자체 흡수).
-            pushNotificationChannel.syncBadgeBlocking(userId, unread.toBadgeCount())
+            pushNotificationChannel.syncBadgeBlocking(userId, badgeCountOf(unread))
         }
         log.info("자동삭제 배지 동기화 완료 — 대상 {}명 순차 전파", unreadByUser.size)
     }

@@ -10,7 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema
 data class NotificationHistoryResponse(
     @field:Schema(description = "알림 목록 (최신순). 각 항목 셰입은 SSE notification 이벤트 payload 와 동일")
     val items: List<NotificationSsePayload>,
-    @field:Schema(description = "본인 전체 안읽음 알림 수 (앱 badge)", example = "3")
+    @field:Schema(description = "본인 전체 안읽음 알림 수 (앱 badge). category 필터와 무관하게 항상 전체", example = "3")
     val unreadCount: Long,
 ) {
     companion object {

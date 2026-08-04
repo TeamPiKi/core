@@ -60,8 +60,8 @@ interface NotificationJpaRepository : JpaRepository<Notification, Long> {
         "SELECT n.userId AS userId, COUNT(n) AS count FROM Notification n " +
             "WHERE n.userId IN :userIds AND n.isRead = false GROUP BY n.userId",
     )
-    fun countUnreadByUser(
-        @Param("userIds") userIds: List<UUID>,
+    fun countUnreadForUsers(
+        @Param("userIds") userIds: Collection<UUID>,
     ): List<UserUnreadCount>
 
     // group by 결과 한 행 — userId 와 그 안읽음 수. Spring Data closed projection(SELECT alias 와 게터명 일치).

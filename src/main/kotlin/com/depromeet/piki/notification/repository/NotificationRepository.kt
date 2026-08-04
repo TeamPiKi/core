@@ -25,7 +25,7 @@ interface NotificationRepository {
     fun countUnread(userId: UUID): Long
 
     // 여러 유저의 안읽음 수를 한 쿼리로(자동삭제 배지 재계산의 N+1 제거). 대상 유저 전원을 키로 포함한다(안읽음 0 인 유저는 0).
-    fun countUnreadForUsers(userIds: List<UUID>): Map<UUID, Long>
+    fun countUnreadForUsers(userIds: Collection<UUID>): Map<UUID, Long>
 
     // 지정 id 중 본인 소유 + 안읽음만 read 로 (타인/없는 id 무영향). 영향 건수 반환. 멱등.
     fun markRead(

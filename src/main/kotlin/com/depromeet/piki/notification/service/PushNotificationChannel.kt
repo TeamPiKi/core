@@ -48,7 +48,7 @@ class PushNotificationChannel(
         if (tokens.isEmpty()) return
         // 안읽음 수(OS 아이콘 badge)는 persistence.save 커밋 이후·트랜잭션 밖(dispatcher 호출 시점)에 세어 방금 도착한 알림을 포함한다.
         // REST unreadCount 와 동일 소스라 앱 내부 badge 와 OS 아이콘 badge 가 같은 수를 가리킨다(#487).
-        val badge = notificationRepository.countUnread(userId).toBadgeCount()
+        val badge = badgeCountOf(notificationRepository.countUnread(userId))
         val result = sender.send(tokens, notification, badge)
         userDeviceService.removeStaleTokens(result.staleTokens)
     }

@@ -51,10 +51,10 @@ class NotificationRepositoryImpl(
 
     // 대상 유저 전원을 0 으로 깔고(안읽음 0 인 유저도 키 보장), IN + GROUP BY 한 쿼리 결과를 덮는다.
     // userIds 가 비면 쿼리를 건너뛴다(빈 IN 회피).
-    override fun countUnreadForUsers(userIds: List<UUID>): Map<UUID, Long> {
+    override fun countUnreadForUsers(userIds: Collection<UUID>): Map<UUID, Long> {
         if (userIds.isEmpty()) return emptyMap()
         val result = userIds.associateWithTo(mutableMapOf()) { 0L }
-        notificationJpaRepository.countUnreadByUser(userIds).forEach { row ->
+        notificationJpaRepository.countUnreadForUsers(userIds).forEach { row ->
             result[row.userId] = row.count
         }
         return result
