@@ -15,8 +15,8 @@ import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
-import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishException
 import org.springdoc.core.customizers.OperationCustomizer
@@ -92,27 +92,18 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.OK,
-                        name = "조회 성공",
-                        payload = ApiResponseBody.ok(sampleEntry),
-                    )
-                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
-                    add(UserException.deletedUser(), name = "탈퇴한 유저")
-                    add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
-                    add(WishException.notFound(), name = "존재하지 않는 위시 항목")
-                    unauthorized()
-                }
-            }
-            if (handlerMethod.binds(WishlistController::getPriceHistory)) {
-                operation.examples(openApiObjectMapper.delegate) {
-                    add(
-                        status = HttpStatus.OK,
-                        name = "가격 히스토리 조회 성공 (READY 버전 최신순)",
-                        payload = ApiResponseBody.ok(priceHistorySample),
+                        name = "상세 조회 성공 (표시값 + 가격 이력)",
+                        payload = ApiResponseBody.ok(wishDetailSample),
                     )
                     add(
                         status = HttpStatus.OK,
-                        name = "아직 추출 성공 이력 없음 (빈 히스토리)",
-                        payload = ApiResponseBody.ok(emptyPriceHistorySample),
+                        name = "본인이 직접 고친 항목 (입력값이 이력 맨 앞)",
+                        payload = ApiResponseBody.ok(manualEditedDetailSample),
+                    )
+                    add(
+                        status = HttpStatus.OK,
+                        name = "아직 추출 성공 이력 없음 (빈 가격 이력)",
+                        payload = ApiResponseBody.ok(emptyHistoryDetailSample),
                     )
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -248,64 +239,101 @@ class WishlistApiExamples(
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
 
-    // 가격 히스토리 — 같은 상품(itemId=512)의 READY 버전 셋을 최신순으로. 활성(최신) 버전이 109,000원,
-    // 직전 버전이 119,000원으로 가격이 내려간 이력을 보여준다. isActive 가 활성(위시가 가리키는) 버전을 표시하고,
-    // source·editedByMe 가 출처(기계 vs 수기, 수기면 본인 여부)를 표시한다 — 타인 수기값(editedByMe=false)은
-    // 클라 가격 추적 뷰의 기본 필터 대상이다.
-    private val priceHistorySample =
-        WishPriceHistoryResponse(
-            itemId = 512,
-            sourceUrl = "https://www.example-shop.com/products/12345",
-            // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
-            sourcePlatform = "example-shop",
-            activeSnapshotId = 1088,
-            entries =
+    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 수기(89,000원)가 섞여 있어,
+    // source·editedByMe 로 구분해 그리는 예시다.
+    private val wishDetailSample =
+        WishDetailResponse(
+            wish =
+                WishItemResponse.WishView(
+                    id = 1024,
+                    createdAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
+                ),
+            item =
+                WishItemResponse.ItemView(
+                    id = 512,
+                    status = ItemStatus.READY,
+                    source = ItemSnapshotSource.SERVER,
+                    name = "에어 조던 1 미드",
+                    price = 109_000,
+                    currency = "KRW",
+                    imageUrl = "https://cdn.example.com/p/512.jpg",
+                    sourceUrl = "https://www.example-shop.com/products/12345",
+                    // 백오피스 미등록 도메인이라 host 에서 유도한 임시 표시명(fallback)이 나가는 예시.
+                    sourcePlatform = "example-shop",
+                ),
+            priceHistory =
                 listOf(
-                    WishPriceHistoryResponse.PriceHistoryEntry(
-                        snapshotId = 1088,
+                    WishDetailResponse.PriceHistoryEntry(
                         price = 109_000,
-                        currency = "KRW",
-                        name = "에어 조던 1 미드",
-                        imageUrl = "https://cdn.example.com/p/512.jpg",
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
-                        isActive = true,
                         source = ItemSnapshotSource.SERVER,
                         editedByMe = null,
                     ),
-                    WishPriceHistoryResponse.PriceHistoryEntry(
-                        snapshotId = 1064,
-                        price = 115_000,
-                        currency = "KRW",
-                        name = "에어 조던 1 미드",
-                        imageUrl = "https://cdn.example.com/p/512.jpg",
-                        extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
-                        isActive = false,
-                        // 같은 상품을 공유하는 타인이 수기로 고친 버전 — 이력에는 남지만 가격 추적에선 걸러 그린다.
+                    // 같은 상품을 담은 다른 사용자가 넣은 값 — 어떤 조건에서 본 가격인지 알 수 없어 구분해 다룬다.
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 89_000,
+                        extractedAt = LocalDateTime.of(2026, 6, 10, 9, 0, 0),
                         source = ItemSnapshotSource.MANUAL,
                         editedByMe = false,
                     ),
-                    WishPriceHistoryResponse.PriceHistoryEntry(
-                        snapshotId = 1040,
-                        price = 119_000,
-                        currency = "KRW",
-                        name = "에어 조던 1 미드",
-                        imageUrl = "https://cdn.example.com/p/512.jpg",
-                        extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
-                        isActive = false,
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 115_000,
+                        extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
                         source = ItemSnapshotSource.SERVER_LLM,
+                        editedByMe = null,
+                    ),
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 119_000,
+                        extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
+                        source = ItemSnapshotSource.SERVER,
                         editedByMe = null,
                     ),
                 ),
         )
 
-    // 아직 추출에 한 번도 성공하지 못한 상품 — 활성 버전이 PENDING·PROCESSING·FAILED 라 READY 이력이 비어 있다.
-    private val emptyPriceHistorySample =
-        WishPriceHistoryResponse(
-            itemId = 515,
-            sourceUrl = "https://www.example-shop.com/products/67891",
-            sourcePlatform = "example-shop",
-            activeSnapshotId = 1090,
-            entries = emptyList(),
+    // 본인이 직접 고친 항목 — 표시값(99,000원)은 본인 입력값이고 이력 맨 앞에도 온다.
+    // 반면 타인 수기(89,000원)는 이력에 남아 있어도 표시값이 되지 않는다(맥락 스코프) — 그래서 이력의 순서만으로
+    // 표시값을 유추할 수 없고, 지금 보이는 값은 item 에서 읽어야 한다.
+    private val manualEditedDetailSample =
+        wishDetailSample.copy(
+            item =
+                wishDetailSample.item.copy(
+                    source = ItemSnapshotSource.MANUAL,
+                    price = 99_000,
+                ),
+            priceHistory =
+                listOf(
+                    WishDetailResponse.PriceHistoryEntry(
+                        price = 99_000,
+                        extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
+                        source = ItemSnapshotSource.MANUAL,
+                        editedByMe = true,
+                    ),
+                ) + wishDetailSample.priceHistory,
+        )
+
+    // 아직 추출에 한 번도 성공하지 못한 상품 — 추출 진행 중이라 표시값도 비어 있고 이력도 없다.
+    // 클라는 status 로 "기다린다(PENDING·PROCESSING)" 와 "그만 기다린다(FAILED)" 를 가른다.
+    private val emptyHistoryDetailSample =
+        WishDetailResponse(
+            wish =
+                WishItemResponse.WishView(
+                    id = 1027,
+                    createdAt = LocalDateTime.of(2026, 5, 21, 10, 11, 0),
+                ),
+            item =
+                WishItemResponse.ItemView(
+                    id = 515,
+                    status = ItemStatus.PROCESSING,
+                    source = null,
+                    name = null,
+                    price = null,
+                    currency = null,
+                    imageUrl = null,
+                    sourceUrl = "https://www.example-shop.com/products/67891",
+                    sourcePlatform = "example-shop",
+                ),
+            priceHistory = emptyList(),
         )
 
     // 파싱이 끝난 완성 항목 (READY).
@@ -320,6 +348,7 @@ class WishlistApiExamples(
                 WishItemResponse.ItemView(
                     id = 512,
                     status = ItemStatus.READY,
+                    source = ItemSnapshotSource.SERVER,
                     name = "에어 조던 1 미드",
                     price = 119_000,
                     currency = "KRW",
@@ -342,6 +371,7 @@ class WishlistApiExamples(
                 WishItemResponse.ItemView(
                     id = 515,
                     status = ItemStatus.PENDING,
+                    source = null,
                     name = null,
                     price = null,
                     currency = null,
@@ -371,6 +401,7 @@ class WishlistApiExamples(
                 WishItemResponse.ItemView(
                     id = 514,
                     status = ItemStatus.PROCESSING,
+                    source = null,
                     name = null,
                     price = null,
                     currency = null,
@@ -416,6 +447,7 @@ class WishlistApiExamples(
                     WishItemResponse.ItemView(
                         id = 513,
                         status = ItemStatus.PENDING,
+                        source = null,
                         name = null,
                         price = null,
                         currency = null,
@@ -434,6 +466,7 @@ class WishlistApiExamples(
                     WishItemResponse.ItemView(
                         id = 515,
                         status = ItemStatus.PENDING,
+                        source = null,
                         name = null,
                         price = null,
                         currency = null,
