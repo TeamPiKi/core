@@ -211,13 +211,13 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `행위자 유저를 못 찾으면 actorImageUrl 은 null 이다 (직렬화 때 defaultPushImg 로 채워짐)`() {
+    fun `행위자 유저를 못 찾으면 actorImageUrl 은 null 이다`() {
         assertEquals(null, joinedHandler.resolveActorContext(TournamentJoined(1010L, UUID.randomUUID())).imageUrl)
     }
 
     @Test
     fun `시스템 알림(파싱)은 actor 가 없어 actorImageUrl 이 null 이다 - negative control`() {
-        // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트 imageUrl null → 직렬화 때 피키 로고로 채워진다.
+        // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트라 imageUrl 이 null 이다.
         assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(2099L)).imageUrl)
         assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(2099L)).imageUrl)
     }

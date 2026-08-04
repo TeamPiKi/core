@@ -272,7 +272,7 @@ es.addEventListener("notification", (e) => {
     case "ITEM_PARSING_FAILED":
       // 파싱 알림에 한해 출처(kind)로 분기 — refId(itemId)는 이동에 직접 쓰지 않는다.
       if (n.kind === "TOURNAMENT") goToTournamentItem(n.tournamentId, n.tournamentItemId); // 입장 후 그 아이템 지목
-      else goToArchive();      // kind === "WISH"
+      else goToArchiveWish();  // kind === "WISH" → /archive/wish
       break;
   }
   showToast(n.title);

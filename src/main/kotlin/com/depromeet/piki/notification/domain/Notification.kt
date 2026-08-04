@@ -25,8 +25,9 @@ class Notification(
     val body: String,
     @Column(name = "ref_id", nullable = false)
     val refId: Long,
-    // 파싱 알림 딥링크 라우팅 컨텍스트(#408) — 아래 kind·tournamentId·tournamentItemId 컬럼으로 평탄화해 저장한다.
-    // 라우팅이 없는 알림(토너먼트 알림 등)은 null 을 넘겨 세 컬럼이 모두 비워진다. 생성자 끝의 default 라 기존 호출은 안 깨진다.
+    // 딥링크 라우팅 컨텍스트(#408) — 아래 routingKind·tournamentId·tournamentItemId 컬럼으로 평탄화해 저장한다.
+    // 파싱 알림(ITEM_PARSING_*)과 아이템 삭제(TOURNAMENT_ITEM_DELETED)가 넘긴다. 라우팅이 없는 알림(토너먼트 소셜
+    // 알림 등)은 null 을 넘겨 세 컬럼이 모두 비워진다. 생성자 끝의 default 라 기존 호출은 안 깨진다.
     routing: NotificationRouting? = null,
     // 행위자(actor) 프로필 사진 snapshot(#473) — 발송 시점 actor 의 프사 URL 을 박아 고정한다. 이후 actor 가 프사를
     // 바꿔도 과거 알림은 그 시점 사진 유지(title 의 닉네임 snapshot 과 같은 결). actor 없는 시스템 알림은 null.
