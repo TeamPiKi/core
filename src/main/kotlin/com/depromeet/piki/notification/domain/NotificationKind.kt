@@ -1,7 +1,7 @@
 package com.depromeet.piki.notification.domain
 
 // 알림의 도메인 축(#473 고도화). 알림 히스토리 카드의 라벨·아이콘(위시/토너먼트)이자 클라이언트의 딥링크 분기 키다.
-// - WISH: 위시로 올린 링크의 파싱 결과 — 클라는 /wishlist 로 보낸다.
+// - WISH: 위시로 올린 링크의 파싱 결과 — 클라는 /archive/wish 로 보낸다.
 // - TOURNAMENT: 토너먼트에서 일어난 모든 일(소셜 알림 + 토너먼트에 올린 링크의 파싱 결과).
 // - SYSTEM: 공지·마케팅 등 특정 도메인에 속하지 않는 전체 알림.
 // 전 알림에 항상 실린다(옛 category 를 대체). 라우팅 좌표(tournamentId·tournamentItemId)가 함께 실리는지는

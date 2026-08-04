@@ -35,7 +35,7 @@ sealed interface NotificationSsePayload {
         override val createdAt: LocalDateTime,
     ) : NotificationSsePayload
 
-    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH. 토너먼트 식별자는 셰입에 아예 없다(클라는 /wishlist 로).
+    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH. 토너먼트 식별자는 셰입에 아예 없다(클라는 /archive/wish 로).
     data class WishParsing(
         override val id: Long,
         override val type: NotificationType,
