@@ -67,12 +67,15 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     // 타입을 지정해 저장 — kind 파생 검증용(라우팅 없음 = Reference 셰입).
+    // actorImageUrl 은 기본을 값 있음으로 둔다. null 로 두면 응답의 imageUrl 부재 단언이 "필드가 사라져서" 가 아니라
+    // "값이 null 이라 NON_NULL 로 빠져서" 통과해 공허해진다 — 컬럼에 값이 박힌 상태로 응답에서 빠지는지를 봐야 한다.
     private fun seedTyped(
         userId: UUID,
         type: NotificationType,
+        actorImageUrl: String? = "https://cdn.example.com/profiles/actor.jpg",
     ): Long =
         notificationRepository
-            .save(Notification(userId, type, "제목", "본문", 11L, routing = null))
+            .save(Notification(userId, type, "제목", "본문", 11L, routing = null, actorImageUrl = actorImageUrl))
             .getId()
 
     @Test
@@ -116,7 +119,9 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items[0].id").value(parsing))
             .andExpect(jsonPath("$.data.items[0].kind").value("WISH")) // 라우팅 출처 없는 파싱 알림 → 위시 기본값
             .andExpect(jsonPath("$.data.items[0].category").doesNotExist())
+            // 두 알림 다 actor_image_url 에 값이 박혀 있는데도 응답엔 안 실린다 — 컬럼은 남기고 응답면에서만 뺀 게 맞는지 확인한다.
             .andExpect(jsonPath("$.data.items[0].imageUrl").doesNotExist())
+            .andExpect(jsonPath("$.data.items[1].imageUrl").doesNotExist())
             .andExpect(jsonPath("$.data.items[1].id").value(tournament))
             .andExpect(jsonPath("$.data.items[1].kind").value("TOURNAMENT"))
             // 안읽음 집계도 카테고리 맵(옛 unreadCountByCategory)이 아니라 단일 unreadCount 하나뿐이다.

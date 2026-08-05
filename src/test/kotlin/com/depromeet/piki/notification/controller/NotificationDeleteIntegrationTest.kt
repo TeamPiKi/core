@@ -71,6 +71,8 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             // system 삭제 후 남은 안읽음은 1건 — 앱 badge 1.
             .andExpect(jsonPath("$.data.unreadCount").value(1))
+            // 삭제 응답은 히스토리와 별개 DTO 라 카테고리 맵 부재를 여기서 따로 잠근다.
+            .andExpect(jsonPath("$.data.unreadCountByCategory").doesNotExist())
 
         assertFalse(exists(system))
         assertTrue(exists(activity))
@@ -113,6 +115,7 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.unreadCount").value(0))
+            .andExpect(jsonPath("$.data.unreadCountByCategory").doesNotExist())
 
         assertFalse(exists(mine1))
         assertFalse(exists(mine2))

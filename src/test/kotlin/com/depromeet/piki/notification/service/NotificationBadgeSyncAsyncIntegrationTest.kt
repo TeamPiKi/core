@@ -34,6 +34,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 // 읽음 후 silent badge 동기화(#487)는 PushNotificationChannel.syncBadge(@Async notificationExecutor)로 응답 경로에서
 // 분리돼 별도 워커 스레드·새 트랜잭션에서 돈다. 그래서 @Transactional 자동 롤백 패턴으로는 워커가 미커밋 데이터를
@@ -184,6 +185,8 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
                     val node = objectMapper.readTree(objectMapper.writeValueAsString(payload))
                     assertEquals("UNREAD_COUNT_CHANGED", node.get("type").asString())
                     assertEquals(1L, node.get("unreadCount").asLong())
+                    // 옛 카테고리 맵은 SSE 페이로드에서도 사라졌다 — 응답 DTO 쪽만 잠그면 이 경로로 되살아나도 안 걸린다.
+                    assertNull(node.get("unreadCountByCategory"))
                 }
             } finally {
                 registry.unregister(userId, emitter)
