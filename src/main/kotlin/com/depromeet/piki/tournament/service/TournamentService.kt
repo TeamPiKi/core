@@ -507,14 +507,17 @@ class TournamentService(
         userId: UUID,
         statuses: List<TournamentStatus>?,
         playType: TournamentPlayType?,
+        ownedOnly: Boolean,
         limit: Int?,
     ): List<TournamentSummary> {
         limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
 
-        // 가시성 필터(ROOT 는 소유자·PENDING 만 — 멤버는 본인 CLONE 으로 플레이·표시)·playType·최근순·limit 을 쿼리가 끝낸다.
+        // 가시성 필터·playType·최근순·limit 을 쿼리가 끝낸다. 가시성은 per-user effective status 로 판정한다(#882):
+        // owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로, 참여자(클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다.
+        // ownedOnly=true(홈)는 참여 갈래를 꺼 "내가 owner 인 것" 만 노출한다. status 와는 AND 로 걸린다.
         // playType 은 파생 상태라 앱에서 거르면 limit 이 먼저 걸려 요구한 개수보다 적게 나온다 (쿼리에서 함께 판정).
         // 참가자·프로필은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
-        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, playType, limit)
+        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, playType, ownedOnly, limit)
         if (limited.isEmpty()) return emptyList()
 
         val tournamentUsers = tournamentUserRepository.findByTournamentIds(limited.map { it.getId() })
@@ -536,12 +539,28 @@ class TournamentService(
         val rootIdByTournamentId = limited.associate { it.getId() to (it.sourceTournamentId ?: it.getId()) }
         val thumbnailsByRootId = thumbnailUrlsByTournamentId(rootIdByTournamentId.values.distinct())
 
+        // 내 tournament_user id 를 토너먼트별로 — effectiveStatus 계산에서 "내가 이 방의 owner 냐" 판정에 쓴다.
+        val myTournamentUserIdByTournamentId =
+            tournamentUsers
+                .filter { it.userId == userId }
+                .associate { it.tournamentId to it.getId() }
+
         return limited.map { tournament ->
+            // 쿼리 가시성과 동일한 per-user effective status(#882): owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로,
+            // 참여자(owner 아니고 내 클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다(쿼리가 그런 ROOT 만 참여 갈래로 반환).
+            // 소유 판정은 쿼리와 같이 ownerTournamentUserId 로만 한다 — "CLONE 이면 내 것" 은 성립하지 않는다
+            // (초대코드 join 이 ROOT 를 강제하지 않아 남의 CLONE 에 참여자로 들어갈 수 있다).
+            val effectiveStatus =
+                when {
+                    tournament.ownerTournamentUserId == myTournamentUserIdByTournamentId[tournament.getId()] -> tournament.status
+                    tournament.status == TournamentStatus.COMPLETED -> TournamentStatus.IN_PROGRESS
+                    else -> tournament.status
+                }
             TournamentSummary.of(
                 tournament = tournament,
                 participantProfileImages = profileImagesByTournamentId[tournament.getId()] ?: emptyList(),
                 thumbnailUrls = thumbnailsByRootId[rootIdByTournamentId.getValue(tournament.getId())] ?: emptyList(),
-                effectiveStatus = tournament.status,
+                effectiveStatus = effectiveStatus,
             )
         }
     }
