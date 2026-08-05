@@ -81,9 +81,11 @@ class ClientIpTest {
     }
 
     @Test
-    fun `X-Real-IP 가 공백이면 헤더 없음과 같게 내부 직결로 본다`() {
-        // of() 의 공백 폴백과 판정을 일치시킨다 — 한쪽만 공백을 값으로 치면 두 함수가 어긋난다.
-        assertTrue(ClientIp.isInBoxDirect(request("172.17.0.1", "   ")))
+    fun `X-Real-IP 가 공백이어도 헤더가 있으면 내부 직결이 아니다`() {
+        // fail-closed. of() 는 공백을 "쓸 수 없는 값" 으로 보고 remoteAddr 로 폴백하지만, 여기 질문은
+        // "앞단이 손댔는가" 라 존재 자체가 신호다. nginx 는 빈 X-Real-IP 를 만들지 않으므로 공백 헤더는
+        // 우리 배포 경로 밖에서 실린 것이고, 게이트는 그 모호함을 차단으로 해석한다.
+        assertFalse(ClientIp.isInBoxDirect(request("172.17.0.1", "   ")))
     }
 
     @Test
