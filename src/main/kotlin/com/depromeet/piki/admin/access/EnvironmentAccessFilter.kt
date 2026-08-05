@@ -17,7 +17,8 @@ import org.springframework.web.util.UrlPathHelper
 // /docs Discord 커맨드로 grant 받은 IP 만 접근한다. 프로파일이 아니라 env 플래그(admin.environment-gate)로 켠다 —
 // 배포가 dev 에만 ENV_ACCESS_GATE=true 를 준다. AdminAccessFilter 와 같은 allowlist·grant 등록 흐름을 공유한다.
 //
-// 게이트 밖(통과): 백엔드 API·grant 진입(/admin-access/**)·health·localhost. grant 받은 IP·localhost 는 게이트를 통과한다.
+// 게이트 밖(통과): 백엔드 API·grant 진입(/admin-access/**)·health. grant 받은 IP 와 박스 내부 직결(관측 수집기)은
+// 게이트를 통과한다 — "내부 직결" 판정은 ClientIp.isInBoxDirect 가 소유한다(#872).
 @Component
 @ConditionalOnAdminEnabled
 @Order(Ordered.HIGHEST_PRECEDENCE + 3)
@@ -31,8 +32,8 @@ class EnvironmentAccessFilter(
         filterChain: FilterChain,
     ) {
         val ip = ClientIp.of(request)
-        if (isLocalhost(ip) || allowlistService.isAllowed(ip)) {
-            allowlistService.refresh(ip) // sliding (localhost 는 키가 없어 no-op)
+        if (ClientIp.isInBoxDirect(request) || allowlistService.isAllowed(ip)) {
+            allowlistService.refresh(ip) // sliding (내부 직결은 키가 없어 no-op)
             filterChain.doFilter(request, response)
             return
         }
@@ -45,12 +46,10 @@ class EnvironmentAccessFilter(
         return !isGatedRequest(request)
     }
 
-    private fun isLocalhost(ip: String): Boolean = ip == "127.0.0.1" || ip == "::1" || ip == "0:0:0:0:0:0:0:1"
-
     companion object {
         // 게이트 대상 경로 — API 레퍼런스 문서(/docs·/v3/api-docs)와 actuator 만. 나머지(백엔드 API·grant 진입·health)는 통과한다(#733).
         //  - 문서: 전 엔드포인트·스키마의 외부 노출 차단. dev 는 grant 받은 IP 만 접근한다.
-        //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 isLocalhost 로 내부 Alloy scrape 만 허용).
+        //  - actuator: nginx 403 + 127.0.0.1 바인딩에 더한 앱 레벨 2중 방어(doFilterInternal 의 내부 직결 판정으로 박스 안 Alloy scrape 만 허용).
         private val GATED_ROOTS = listOf("/docs", "/v3/api-docs", "/actuator")
 
         // 게이트 판정 경로를 Spring 라우팅과 동일하게 정규화한 뒤 매칭한다 — raw requestURI 로 판정하면
