@@ -47,9 +47,10 @@ class TournamentController(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) status: List<TournamentStatus>?,
         @RequestParam(required = false) playType: TournamentPlayType?,
+        @RequestParam(required = false, defaultValue = "false") ownedOnly: Boolean,
         @RequestParam(required = false) limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>> {
-        val summaries = tournamentService.getTournaments(userId, status, playType, limit)
+        val summaries = tournamentService.getTournaments(userId, status, playType, ownedOnly, limit)
         return ApiResponseBody.ok(summaries.map(TournamentSummaryResponse::from))
     }
 

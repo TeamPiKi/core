@@ -917,18 +917,21 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root1.jpg")
         saveTournamentItemFor(root.getId(), itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/root2.jpg")
 
-        // CLONE 은 자기 아이템 없이 sourceTournamentId 로 ROOT 를 가리킨다. 내가 멤버라 목록에 뜬다.
+        // CLONE 은 자기 아이템 없이 sourceTournamentId 로 ROOT 를 가리킨다. 내가 소유자라 목록에 뜬다.
+        // 소유는 owner_tournament_user_id 가 내 멤버십 행을 가리켜야 성립하므로, 실제 생성 경로와 같이 배선한다.
         val clone =
             tournamentJpaRepository.save(
                 Tournament(
-                    ownerTournamentUserId = 2,
+                    ownerTournamentUserId = 0L,
                     name = "내 CLONE",
                     inviteCode = "CLON01",
                     inviteExpiresAt = LocalDateTime.now().plusDays(1),
                     sourceTournamentId = root.getId(),
                 ),
             )
-        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        val cloneTU = tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        clone.assignOwner(cloneTU.getId())
+        tournamentJpaRepository.save(clone)
 
         mockMvc
             .perform(
@@ -965,17 +968,20 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     inviteExpiresAt = LocalDateTime.now().plusDays(1),
                 ),
             )
+        // 소유는 owner_tournament_user_id 가 내 멤버십 행을 가리켜야 성립하므로, 실제 생성 경로와 같이 배선한다.
         val clone =
             tournamentJpaRepository.save(
                 Tournament(
-                    ownerTournamentUserId = 2,
+                    ownerTournamentUserId = 0L,
                     name = "내 CLONE",
                     inviteCode = "CLON77",
                     inviteExpiresAt = LocalDateTime.now().plusDays(1),
                     sourceTournamentId = othersRoot.getId(),
                 ),
             )
-        tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        val cloneTU = tournamentUserJpaRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        clone.assignOwner(cloneTU.getId())
+        tournamentJpaRepository.save(clone)
 
         // 미지정이면 전체 — 기존 호출이 그대로 동작한다
         mockMvc
@@ -1141,7 +1147,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 PENDING 까지만 보이고 시작 후엔 목록에서 빠진다`() {
+    fun `GET tournaments 에서 멤버로 참여한 ROOT 는 방장이 완료해도 진행중엔 남고 완료 탭에는 안 뜬다`() {
         val mockMvc = buildMockMvc()
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
 
@@ -1170,22 +1176,125 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
         )
 
-        // 시작 후 멤버 목록에선 빠진다 (멤버는 본인 CLONE 으로 플레이·표시)
+        // 소유자가 결승 완료 → ROOT COMPLETED
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootTournamentId)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/matches")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                ),
+        )
+
+        // 방장이 완료해도 멤버(본인 CLONE 미완주)에겐 진행중 탭에 남는다 — 완료 ROOT 를 IN_PROGRESS 로 캡(#882)
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
+                    .param("status", "PENDING", "IN_PROGRESS")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+            .andExpect(jsonPath("$.data[0].status").value("IN_PROGRESS"))
+
+        // 완료 탭엔 안 뜬다 — 멤버는 완주하지 않았으니
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(0))
 
-        // 소유자 목록엔 계속 보인다
+        // ownedOnly=true(홈) 엔 안 뜬다 — 멤버가 생성한 게 아니다
         mockMvc
             .perform(
                 get("/api/v1/tournaments")
+                    .param("ownedOnly", "true")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+
+        // 소유자는 완료 탭에서 COMPLETED 로 보인다
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.length()").value(1))
             .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+            .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
+
+        // 소유자 ownedOnly=true(홈) 엔 상태 무관 뜬다 (내가 생성한 ROOT)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("ownedOnly", "true")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(rootTournamentId))
+    }
+
+    @Test
+    fun `GET tournaments 에서 멤버가 본인 CLONE 을 만들면 미완주여도 ROOT 는 숨고 CLONE 만 진행중에 뜬다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // userId 소유 ROOT 에 otherUserId 가 참여 → 소유자가 시작·완료
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootTournamentId)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/matches")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                ),
+        )
+
+        // 멤버가 본인 브래킷을 시작한다 — 멤버의 start 는 본인 CLONE 을 만들어 IN_PROGRESS 로 띄운다(startAsMember).
+        // 결승을 두지 않아 CLONE 은 미완주 상태로 남는다. 플레이링크(외부인 경로)와 달리 참여자의 기본 경로다.
+        val cloneResult = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$rootTournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+        val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"]["tournamentId"].asLong()
+
+        // 진행중 탭엔 CLONE 하나만. ROOT 는 내 CLONE 이 생긴 순간 숨는다 (카드 중복 방지).
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "PENDING", "IN_PROGRESS")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(cloneId))
+            .andExpect(jsonPath("$.data[0].status").value("IN_PROGRESS"))
+
+        // 완료 탭엔 아무것도 없다. 미완주 CLONE 은 완료가 아니고, 숨은 ROOT 가 COMPLETED 로 새어나오지도 않는다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
     }
 
     @Test
@@ -3224,6 +3333,49 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andReturn()
         val thirdCloneId = objectMapper.readTree(result.response.contentAsString)["data"].asLong()
         assertNotEquals(otherCloneId, thirdCloneId)
+    }
+
+    @Test
+    fun `GET tournaments ownedOnly=true 는 타인 CLONE 에 참여만 한 것을 내 것으로 세지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val thirdUserId = UUID.randomUUID()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        saveUser(thirdUserId, "https://cdn.example.com/third.jpg", "제3유저")
+        val (tournamentId, _, _) = completeTournamentWith2Items(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/play-link")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"),
+        )
+
+        // otherUser 가 클론을 만들어 소유한다.
+        val cloneResult = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/from-play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+        val otherCloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
+
+        // thirdUser 는 그 클론에 참여만 한다 (소유자가 아니다).
+        val otherClone = tournamentJpaRepository.findByIdAndDeletedAtIsNull(otherCloneId)!!
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$otherCloneId/join")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(thirdUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"${otherClone.inviteCode}"}"""),
+            ).andExpect(status().isOk)
+
+        // ownedOnly=true 는 "내가 생성한 것" 이므로 타인 소유 CLONE 은 빠져야 한다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("ownedOnly", "true")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(thirdUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
     }
 
     // ── 그룹 결과 ──────────────────────────────────────────────────

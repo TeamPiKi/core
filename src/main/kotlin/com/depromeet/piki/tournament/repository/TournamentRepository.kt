@@ -28,6 +28,7 @@ interface TournamentRepository {
         userId: UUID,
         statuses: List<TournamentStatus>?,
         playType: TournamentPlayType?,
+        ownedOnly: Boolean,
         limit: Int?,
     ): List<Tournament>
 
