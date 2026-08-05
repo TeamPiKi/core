@@ -93,3 +93,34 @@ resource "aws_iam_role_policy" "app_ssm_read" {
   role   = aws_iam_role.app.id
   policy = data.aws_iam_policy_document.app_ssm_read.json
 }
+
+# -----------------------------------------------------------------------------
+# EC2 가 ECR 에서 core 이미지를 pull 하는 최소 권한 (#860)
+#
+# 배포 시 박스가 aws-cli 컨테이너(--network host, IMDS 로 이 instance role 자격 사용)로
+# ecr get-login-password 를 얻어 docker login 후 pull 한다. dev/prod 가 이 role 을 공유하므로
+# (app_image_bucket·app_ssm_read 와 동일 구조) 한 번 부여로 양쪽이 pull 한다.
+# GetAuthorizationToken 만 리소스 * 를 요구한다(ECR 사양).
+# -----------------------------------------------------------------------------
+data "aws_iam_policy_document" "ecr_pull" {
+  statement {
+    sid       = "AuthToken"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+  statement {
+    sid = "PullCore"
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchCheckLayerAvailability",
+    ]
+    resources = [aws_ecr_repository.core.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "app_ecr_pull" {
+  name   = "${local.name_prefix}-ecr-pull"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.ecr_pull.json
+}

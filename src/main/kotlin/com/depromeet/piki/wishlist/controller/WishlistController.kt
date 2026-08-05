@@ -6,8 +6,8 @@ import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
-import com.depromeet.piki.wishlist.controller.dto.WishPriceHistoryResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
@@ -107,25 +107,10 @@ class WishlistController(
     override fun getWish(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable wishId: Long,
-    ): ApiResponseBody<WishItemResponse> {
+    ): ApiResponseBody<WishDetailResponse> {
         val result = wishlistService.getWish(userId = userId, wishId = wishId)
-        return ApiResponseBody.ok(toResponse(result))
-    }
-
-    @GetMapping("/{wishId}/history")
-    override fun getPriceHistory(
-        @AuthenticationPrincipal userId: UUID,
-        @PathVariable wishId: Long,
-    ): ApiResponseBody<WishPriceHistoryResponse> {
-        val result = wishlistService.getPriceHistory(userId = userId, wishId = wishId)
         return ApiResponseBody.ok(
-            WishPriceHistoryResponse.from(
-                result.wish,
-                result.item,
-                result.history,
-                sourcePlatformResolver.resolve(result.item.link),
-                requesterId = userId,
-            ),
+            WishDetailResponse.from(result, sourcePlatformResolver.resolve(result.item.link), requesterId = userId),
         )
     }
 

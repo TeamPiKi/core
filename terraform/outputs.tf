@@ -62,3 +62,13 @@ output "dev_image_public_base_url" {
   description = "개발(dev) 이미지 버킷 공개 베이스 URL — dev env S3_PUBLIC_BASE_URL 에 넣을 값"
   value       = "https://${aws_s3_bucket.dev_images.bucket_regional_domain_name}"
 }
+
+output "ecr_core_repository_url" {
+  description = "core 이미지 저장소 URL (<acct>.dkr.ecr.<region>.amazonaws.com/piki-core)"
+  value       = aws_ecr_repository.core.repository_url
+}
+
+output "github_ecr_push_role_arn" {
+  description = "GitHub Actions 가 OIDC 로 assume 할 ECR push 역할 ARN (deploy.yml 에 배선)"
+  value       = aws_iam_role.github_ecr_push.arn
+}
