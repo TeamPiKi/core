@@ -47,7 +47,7 @@ class NotificationChannelSelectionIntegrationTest : IntegrationTestSupport() {
         notificationDispatcher.dispatch(TournamentItemAdded(tournamentId, actor))
 
         // 알림은 영속돼 알림센터엔 남지만(채널 무관), FCM 은 타입 정책상 빠진다.
-        assertEquals(1, notificationRepository.findPage(recipient, cursor = null, limit = 10, types = null).size)
+        assertEquals(1, notificationRepository.findPage(recipient, cursor = null, limit = 10).size)
         assertFalse(pushed)
     }
 

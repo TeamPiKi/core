@@ -320,7 +320,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             // 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
             await().atMost(Duration.ofSeconds(5)).until {
                 notificationRepository
-                    .findPage(userId, cursor = null, limit = 10, types = null)
+                    .findPage(userId, cursor = null, limit = 10)
                     .any { it.type == NotificationType.ITEM_PARSING_COMPLETED }
             }
         } finally {

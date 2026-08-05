@@ -70,7 +70,7 @@ class AnnouncementBroadcaster(
         val tokens = userDeviceService.findTokens(userId)
         if (tokens.isEmpty()) return RecipientDelivery(userId, DeliveryStatus.NO_TOKEN, null)
         // 공지도 안읽음 알림이라 수신자의 전체 안읽음 수(방금 저장한 공지 포함)를 OS 아이콘 badge 로 싣는다(#487).
-        val badge = notificationRepository.countUnreadByCategory(userId).toBadgeCount()
+        val badge = badgeCountOf(notificationRepository.countUnread(userId))
         val result = sender.send(tokens, notification, badge)
         userDeviceService.removeStaleTokens(result.staleTokens)
         // 한 기기라도 도달하면 그 유저는 받은 것 → SUCCESS. 전 기기 실패면 대표 코드와 함께 FAILED.

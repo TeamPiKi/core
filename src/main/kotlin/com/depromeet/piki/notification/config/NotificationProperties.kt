@@ -9,7 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
  */
 @ConfigurationProperties(prefix = "notification")
 data class NotificationProperties(
-    val retentionDays: Long = 30,
+    val retentionDays: Long = 14,
 ) {
     init {
         // 불변식 — 잘못 구성한 env(0·음수)면 cutoff(now-retentionDays)가 현재/미래가 되어 자동삭제가 알림을 대량 삭제한다.

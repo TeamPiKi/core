@@ -57,10 +57,10 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
     private fun exists(id: Long): Boolean = notificationJpaRepository.findById(id).isPresent
 
     @Test
-    fun `단건 삭제 - ids 로 지정한 본인 알림만 삭제되고 badge 가 카테고리별로 재계산된다`() {
+    fun `단건 삭제 - ids 로 지정한 본인 알림만 삭제되고 badge 가 재계산된다`() {
         val userId = UUID.randomUUID()
-        val activity = seed(userId, NotificationType.TOURNAMENT_STARTED) // 활동, 안읽음 — 남아야 함
-        val system = seed(userId, NotificationType.ITEM_PARSING_COMPLETED) // 시스템, 안읽음 — 삭제 대상
+        val activity = seed(userId, NotificationType.TOURNAMENT_STARTED) // 안읽음 — 남아야 함
+        val system = seed(userId, NotificationType.ITEM_PARSING_COMPLETED) // 안읽음 — 삭제 대상
 
         buildMockMvc()
             .perform(
@@ -69,10 +69,10 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
                     .content("""{"ids":[$system]}""")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
-            // system 삭제 후 남은 안읽음은 활동 1건 — 앱 badge 1, 탭별 활동1·시스템0.
+            // system 삭제 후 남은 안읽음은 1건 — 앱 badge 1.
             .andExpect(jsonPath("$.data.unreadCount").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(0))
+            // 삭제 응답은 히스토리와 별개 DTO 라 카테고리 맵 부재를 여기서 따로 잠근다.
+            .andExpect(jsonPath("$.data.unreadCountByCategory").doesNotExist())
 
         assertFalse(exists(system))
         assertTrue(exists(activity))
@@ -115,8 +115,7 @@ class NotificationDeleteIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.unreadCount").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(0))
+            .andExpect(jsonPath("$.data.unreadCountByCategory").doesNotExist())
 
         assertFalse(exists(mine1))
         assertFalse(exists(mine2))

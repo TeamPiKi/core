@@ -3,7 +3,6 @@ package com.depromeet.piki.notification.sse
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
@@ -34,11 +33,9 @@ import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-
-// 시스템 알림(actor 없음)의 imageUrl 을 채우는 기본 아바타 — 운영에선 DefaultPushImage 가 publicBaseUrl 로 조립한다.
-private const val DEFAULT_PUSH_IMAGE_URL = "https://img.test/defaults/push-icon.svg"
 
 // 구독 엔드포인트 contract 와 채널 전달을 실제 빈으로 검증한다.
 // 도메인 publish -> AFTER_COMMIT -> dispatcher -> 채널 리스트 순회는 토대(PR #288)의 통합 테스트가 이미 덮으므로,
@@ -244,13 +241,10 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
                 ),
             )
 
-        val payload = NotificationSsePayload.from(notification, DEFAULT_PUSH_IMAGE_URL)
+        val payload = NotificationSsePayload.from(notification)
         val wish = assertIs<NotificationSsePayload.WishParsing>(payload)
         assertEquals(NotificationKind.WISH, wish.kind)
         assertEquals(11L, wish.refId)
-        // 시스템 알림(파싱·actor 없음) → category=SYSTEM, imageUrl 은 defaultPushImg 로 채워진다.
-        assertEquals(NotificationCategory.SYSTEM, wish.category)
-        assertEquals(DEFAULT_PUSH_IMAGE_URL, wish.imageUrl)
     }
 
     @Test
@@ -272,7 +266,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         entityManager.clear()
         val reloaded = notificationJpaRepository.findById(saved.getId()).orElseThrow()
 
-        val payload = NotificationSsePayload.from(reloaded, DEFAULT_PUSH_IMAGE_URL)
+        val payload = NotificationSsePayload.from(reloaded)
         val tournament = assertIs<NotificationSsePayload.TournamentRouted>(payload)
         assertEquals(NotificationKind.TOURNAMENT, tournament.kind)
         assertEquals(99L, tournament.tournamentId)
@@ -284,9 +278,9 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         assertEquals("TOURNAMENT", node.get("kind").asString())
         assertEquals(99L, node.get("tournamentId").asLong())
         assertEquals(555L, node.get("tournamentItemId").asLong())
-        // imageUrl·category 도 와이어에 실린다 — 시스템 알림이라 category=SYSTEM, imageUrl=defaultPushImg.
-        assertEquals("SYSTEM", node.get("category").asString())
-        assertEquals(DEFAULT_PUSH_IMAGE_URL, node.get("imageUrl").asString())
+        // 폐기된 category·imageUrl 은 와이어에서 사라졌다 — kind 가 그 자리를 대신한다(#473 고도화).
+        assertFalse(node.has("category"))
+        assertFalse(node.has("imageUrl"))
         // Jackson3+kotlin module 은 isRead 필드명으로 직렬화한다(모듈 없는 Jackson2 였으면 "read" 라 이 키가 없다).
         assertTrue(node.has("isRead"))
     }

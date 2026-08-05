@@ -1,4 +1,4 @@
-package com.depromeet.piki.notification.service
+package com.depromeet.piki.admin.announcement
 
 import com.depromeet.piki.common.storage.S3Properties
 import org.junit.jupiter.api.Test
@@ -6,7 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.test.assertEquals
 
-// 시스템 알림 기본 아바타 URL 조립 — publicBaseUrl + defaults/push-icon.svg. Spring 없이 순수 조립 로직만 검증.
+// 공지 푸시 미리보기 아이콘 URL 조립 — publicBaseUrl + defaults/push-icon.svg. Spring 없이 순수 조립 로직만 검증.
 class DefaultPushImageTest {
     @Test
     fun `publicBaseUrl 에 defaults push-icon 경로를 붙인다`() {
