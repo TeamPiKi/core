@@ -514,7 +514,7 @@ class TournamentService(
 
         // 가시성 필터·playType·최근순·limit 을 쿼리가 끝낸다. 가시성은 per-user effective status 로 판정한다(#882):
         // owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로, 참여자(클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다.
-        // ownedOnly=true(홈)는 참여 갈래를 꺼 "내가 생성한 것" 만 상태 무관 노출한다.
+        // ownedOnly=true(홈)는 참여 갈래를 꺼 "내가 owner 인 것" 만 노출한다. status 와는 AND 로 걸린다.
         // playType 은 파생 상태라 앱에서 거르면 limit 이 먼저 걸려 요구한 개수보다 적게 나온다 (쿼리에서 함께 판정).
         // 참가자·프로필은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
         val limited = tournamentRepository.findVisibleByUserId(userId, statuses, playType, ownedOnly, limit)
@@ -547,11 +547,11 @@ class TournamentService(
 
         return limited.map { tournament ->
             // 쿼리 가시성과 동일한 per-user effective status(#882): owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로,
-            // 참여자(owner 아니고 클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다(쿼리가 그런 ROOT 만 참여 갈래로 반환).
-            // CLONE 은 내가 tu 를 가진 이상 항상 내 것(클론은 소유자 1명)이라 전역 status 그대로 — ownerTournamentUserId 매칭에 기대지 않는다.
+            // 참여자(owner 아니고 내 클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다(쿼리가 그런 ROOT 만 참여 갈래로 반환).
+            // 소유 판정은 쿼리와 같이 ownerTournamentUserId 로만 한다 — "CLONE 이면 내 것" 은 성립하지 않는다
+            // (초대코드 join 이 ROOT 를 강제하지 않아 남의 CLONE 에 참여자로 들어갈 수 있다).
             val effectiveStatus =
                 when {
-                    !tournament.isRoot() -> tournament.status
                     tournament.ownerTournamentUserId == myTournamentUserIdByTournamentId[tournament.getId()] -> tournament.status
                     tournament.status == TournamentStatus.COMPLETED -> TournamentStatus.IN_PROGRESS
                     else -> tournament.status

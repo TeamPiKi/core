@@ -52,7 +52,7 @@ class TournamentRepositoryImpl(
         return tournamentJpaRepository.findVisibleByUserId(
             userId = userId,
             statuses = effectiveStatuses,
-            // 홈(내가 생성한 것만·상태 무관)은 TRUE 로 참여 갈래를 끈다(#882).
+            // 홈(내가 생성한 것만)은 TRUE 로 참여 갈래를 끈다(#882). 홈이 상태 무관인 것은 statuses 를 안 좁히기 때문이다.
             ownedOnly = ownedOnly,
             // 완주 안 한 참여자의 완료 ROOT 를 IN_PROGRESS 로 캡해 노출할지 — 요청 statuses 가 IN_PROGRESS 를 포함할 때만(#882).
             includeInProgress = TournamentStatus.IN_PROGRESS in effectiveStatuses,

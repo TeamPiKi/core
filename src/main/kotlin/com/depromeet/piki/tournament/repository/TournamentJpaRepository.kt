@@ -27,12 +27,17 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
     //
     // 가시성은 "나에게 이 토너먼트가 어떤 상태냐"(per-user effective status)로 판정한다(#882).
-    //  (owner) 내가 owner 인 것 — 내가 만든 ROOT 와 내가 플레이해 소유한 CLONE(항상 소유자=플레이어). 전역 status 그대로 필터한다.
+    //  (owner) 내가 owner 인 것 — 내가 만든 ROOT 와 내가 플레이해 소유한 CLONE. 전역 status 그대로 필터한다.
+    //      소유 판정은 CLONE 여부가 아니라 _ownerTournamentUserId 로만 한다. 초대코드 join 은 ROOT 를 강제하지
+    //      않아 남의 CLONE 에 참여자로 들어갈 수 있고(POST /tournaments/{id}/join), "CLONE 이면 내 것" 으로 보면
+    //      그 방이 ownedOnly=true(홈, 내가 생성한 것) 결과에 섞인다. 남의 CLONE 은 (참여) 갈래도 ROOT 한정이라
+    //      목록에서 빠진다 — 남의 개인 브래킷이라 내 카드로 보일 자리가 없다.
     //  (참여) 내가 참여자지만 owner 가 아니고 아직 내 CLONE 이 없는 ROOT: 그 방은 나에겐 '완주 안 함' 이라
     //      완료로 치지 않는다. 완료된 ROOT 도 나에겐 IN_PROGRESS(진행중)로 캡해 노출한다 — 방장이 완료해도
     //      진행중 탭에서 사라지지 않고, 완료 탭엔 안 뜬다. 내가 이미 내 CLONE 을 만들었으면(NOT EXISTS 실패)
     //      이 ROOT 는 숨고 그 CLONE 이 (owner)로 표시된다(카드 중복 방지).
-    // ownedOnly — 홈(내가 생성한 것만·상태 무관)은 TRUE 로 (참여) 갈래를 끈다. 탭은 미지정(FALSE)이라 참여까지 본다.
+    // ownedOnly — 홈(내가 생성한 것만)은 TRUE 로 (참여) 갈래를 끈다. 탭은 미지정(FALSE)이라 참여까지 본다.
+    //  status 를 대체하지 않고 AND 로 함께 걸린다 — 홈이 상태 무관인 것은 status 를 안 보내기 때문이다.
     // includeInProgress — 요청 statuses 에 IN_PROGRESS 가 포함되는지(서비스가 계산). (참여)의 완료 ROOT 를
     //  IN_PROGRESS 로 캡해 노출할지 판단하는 플래그. nullable enum 을 쿼리에 넣지 않는 boolean 패턴(#837 과 동일).
     //
@@ -50,7 +55,7 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
           AND tu.deletedAt IS NULL
           AND t.deletedAt IS NULL
           AND (
-            ((t.sourceTournamentId IS NOT NULL OR t._ownerTournamentUserId = tu.id) AND t.status IN :statuses)
+            (t._ownerTournamentUserId = tu.id AND t.status IN :statuses)
             OR (
               :ownedOnly = FALSE
               AND t.sourceTournamentId IS NULL
