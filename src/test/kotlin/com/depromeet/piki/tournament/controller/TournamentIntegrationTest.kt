@@ -1239,6 +1239,65 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET tournaments 에서 멤버가 본인 CLONE 을 만들면 미완주여도 ROOT 는 숨고 CLONE 만 진행중에 뜬다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+
+        // userId 소유 ROOT 에 otherUserId 가 참여 → 소유자가 시작·완료
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":null}"""),
+        )
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(), saveWishItem())
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/start")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        )
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootTournamentId)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/matches")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                ),
+        )
+
+        // 멤버가 본인 브래킷을 시작한다 — 멤버의 start 는 본인 CLONE 을 만들어 IN_PROGRESS 로 띄운다(startAsMember).
+        // 결승을 두지 않아 CLONE 은 미완주 상태로 남는다. 플레이링크(외부인 경로)와 달리 참여자의 기본 경로다.
+        val cloneResult = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$rootTournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+        val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"]["tournamentId"].asLong()
+
+        // 진행중 탭엔 CLONE 하나만. ROOT 는 내 CLONE 이 생긴 순간 숨는다 (카드 중복 방지).
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "PENDING", "IN_PROGRESS")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].tournamentId").value(cloneId))
+            .andExpect(jsonPath("$.data[0].status").value("IN_PROGRESS"))
+
+        // 완료 탭엔 아무것도 없다. 미완주 CLONE 은 완료가 아니고, 숨은 ROOT 가 COMPLETED 로 새어나오지도 않는다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments")
+                    .param("status", "COMPLETED")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.length()").value(0))
+    }
+
+    @Test
     fun `GET tournaments-id 는 COMPLETED 토너먼트에서 1위부터 4위까지 순위 결과를 반환한다`() {
         val mockMvc = buildMockMvc()
         val item1Id = saveWishItem(name = "1위아이템", price = 10_000)
