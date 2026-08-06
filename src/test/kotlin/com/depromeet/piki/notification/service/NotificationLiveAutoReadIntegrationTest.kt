@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.event.ItemParsingCompleted
+import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
@@ -57,6 +58,26 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
             assertTrue(saved.first().isRead)
         } finally {
             // 레지스트리는 인메모리 싱글턴이라 @Transactional 롤백 대상이 아니다 — 다음 테스트로 누수 안 되게 명시 해제.
+            sseEmitterRegistry.unregister(userId, emitter)
+        }
+    }
+
+    @Test
+    fun `인앱(SSE 연결) 유저의 파싱 실패 알림도 자동 읽음으로 저장된다`() {
+        // 파싱 실패는 별도 이벤트(ItemParsingFailed)·별도 핸들러라, 완료와 무관하게 자동읽음 경로를 따로 가드한다.
+        val userId = UUID.randomUUID()
+        val itemId = 8103L
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
+        wishRepository.save(Wish(userId, snapshotId))
+        val emitter = SseEmitter()
+        sseEmitterRegistry.register(userId, emitter)
+        try {
+            notificationDispatcher.dispatch(ItemParsingFailed(itemId, snapshotId))
+
+            val saved = notificationRepository.findPage(userId, cursor = null, limit = 10)
+            assertEquals(1, saved.size)
+            assertTrue(saved.first().isRead)
+        } finally {
             sseEmitterRegistry.unregister(userId, emitter)
         }
     }
