@@ -69,16 +69,6 @@ s3:
   region: ap-northeast-2
   public-base-url: https://test-bucket.s3.ap-northeast-2.amazonaws.com
 
-# ImageProxyProperties 바인딩을 통과시키기 위한 테스트 더미 설정.
-# 실제 fetch 는 통합 테스트에서 도메인 차단(blockedDomain) 케이스만 검증하므로 도메인 목록은 운영과 동일하게 둔다.
-image:
-  proxy:
-    allowed-domains:
-      - msscdn.net
-      - pstatic.net
-      - kakaocdn.net
-      - coupangcdn.com
-
 # API 레퍼런스 문서 — 로컬(bootTestRun)·테스트에서 문서 UI(WebConfig)·spec(/v3/api-docs)을 노출한다.
 # main application.yml 은 fail-closed 기본값(false)이라, test classpath 가 main 을 대체하는 이 파일에 명시 true 를 둔다.
 docs:

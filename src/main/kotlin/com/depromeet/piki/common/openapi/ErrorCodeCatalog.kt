@@ -6,7 +6,6 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthErrorCode
 import com.depromeet.piki.auth.infrastructure.oauth.apple.AppleErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
-import com.depromeet.piki.common.imageproxy.ImageProxyErrorCode
 import com.depromeet.piki.common.storage.ImageStorageErrorCode
 import com.depromeet.piki.image.domain.ImageUploadErrorCode
 import com.depromeet.piki.image.domain.ProductImageErrorCode
@@ -37,7 +36,7 @@ object ErrorCodeRegistry {
             addAll(WishErrorCode.entries)
             addAll(ItemErrorCode.entries)
             addAll(ProductLinkErrorCode.entries)
-            addAll(ImageProxyErrorCode.entries)
+            // PROXY-001~003(이미지 프록시)은 엔드포인트째 제거되어 빠졌다. prefix PROXY 는 재사용하지 않는다.
             // DELETE_FAILED 만 제외한다 — 호출부가 전부 runCatching 으로 삼켜 응답에 실릴 수 없다
             // (해당 enum 주석 참고). enum 단위 addAll 에서 유일하게 벗어나는 자리라 이유를 여기 남긴다.
             addAll(ImageStorageErrorCode.entries.filter { it != ImageStorageErrorCode.DELETE_FAILED })
