@@ -1,99 +1,82 @@
 package com.depromeet.piki.notification.controller.dto
 
 import com.depromeet.piki.notification.domain.Notification
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
 import java.time.LocalDateTime
 
 // SSE 이벤트(name=notification)의 data 로 직렬화되는 payload.
-// 알림 종류별로 셰입이 다르다 — 라우팅 컨텍스트(#408)가 없는 알림은 refId 만, 파싱 알림은 출처(kind)별로 식별자가 갈린다.
+// 알림 종류별로 셰입이 다르다 — 라우팅 컨텍스트(#408)가 없는 알림은 refId 만, 토너먼트 아이템을 지목하는 알림은 좌표 2개를 더 싣는다.
 // nullable 잡탕 + NON_NULL 로 런타임에 가리는 대신, sealed 로 각 셰입을 타입에 고정한다(도메인 NotificationRouting 과 같은 결).
-// 클라이언트는 type 으로 화면을, 파싱 알림은 kind 로 출처를 분기한다. id 는 추후 읽음 처리(#246)의 키다.
+// 클라이언트는 type 으로 화면을, kind 로 라벨·아이콘과 딥링크 출처를 분기한다. id 는 읽음 처리(#246)의 키다.
 //
-// imageUrl·category(#473): imageUrl 은 항상 채워 내려간다 — 사람 알림은 발송 시점 actor 프사 snapshot,
-// 시스템 알림은 서버가 defaultPushImg(피키 로고)로 채운다. 클라는 null-check 없이 imageUrl 을 그대로 아바타로 렌더하고,
-// 사람/시스템 구분(탭·시각 차이)은 category(ACTIVITY/SYSTEM)로 한다. category 는 type 에서 파생한다(스키마 컬럼 없음).
+// kind 는 전 셰입 공통이다 — 모든 알림에 항상 실린다(옛 category 를 대체). type 과 라우팅 출처(routingKind)에서
+// 파생하며(NotificationKind.of) 스키마 컬럼은 없다.
 sealed interface NotificationSsePayload {
     val id: Long
     val type: NotificationType
-    val category: NotificationCategory
+    val kind: NotificationKind
     val title: String
     val body: String
-    val imageUrl: String
     val refId: Long
     val isRead: Boolean
     val createdAt: LocalDateTime
 
-    // 라우팅 컨텍스트가 없는 알림(토너먼트 알림 등). refId 만으로 딥링크가 결정된다(예: refId=tournamentId).
+    // 라우팅 컨텍스트가 없는 알림(토너먼트 소셜 알림·공지 등). refId 만으로 딥링크가 결정된다(예: refId=tournamentId).
     data class Reference(
         override val id: Long,
         override val type: NotificationType,
-        override val category: NotificationCategory,
+        override val kind: NotificationKind,
         override val title: String,
         override val body: String,
-        override val imageUrl: String,
         override val refId: Long,
         override val isRead: Boolean,
         override val createdAt: LocalDateTime,
     ) : NotificationSsePayload
 
-    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH. 토너먼트 식별자는 셰입에 아예 없다(클라는 /archive 로).
+    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH. 토너먼트 식별자는 셰입에 아예 없다(클라는 /archive/wish 로).
     data class WishParsing(
         override val id: Long,
         override val type: NotificationType,
-        override val category: NotificationCategory,
+        override val kind: NotificationKind,
         override val title: String,
         override val body: String,
-        override val imageUrl: String,
         override val refId: Long,
         override val isRead: Boolean,
         override val createdAt: LocalDateTime,
-    ) : NotificationSsePayload {
-        val kind: NotificationKind = NotificationKind.WISH
-    }
+    ) : NotificationSsePayload
 
-    // 토너먼트 아이템을 지목하는 알림. kind=TOURNAMENT + 입장(tournamentId)·아이템 지목(tournamentItemId) 좌표를 싣는다.
+    // 토너먼트 아이템을 지목하는 알림. 입장(tournamentId)·아이템 지목(tournamentItemId) 좌표를 싣는다.
     // 두 용도가 공유한다: 파싱 알림(refId=itemId) · 아이템 삭제 알림(refId=tournamentId). refId 의미는 type 별로 갈리니
     // 클라는 type 으로 먼저 분기한다. (파싱 전용이 아니라 "토너먼트 아이템 라우팅" 셰입이라 이름이 중립적이다.)
     data class TournamentRouted(
         override val id: Long,
         override val type: NotificationType,
-        override val category: NotificationCategory,
+        override val kind: NotificationKind,
         override val title: String,
         override val body: String,
-        override val imageUrl: String,
         override val refId: Long,
         override val isRead: Boolean,
         override val createdAt: LocalDateTime,
         val tournamentId: Long,
         val tournamentItemId: Long,
-    ) : NotificationSsePayload {
-        val kind: NotificationKind = NotificationKind.TOURNAMENT
-    }
+    ) : NotificationSsePayload
 
     companion object {
         // 채널에 도달한 Notification 은 dispatcher 가 이미 저장한 영속 엔티티라 id 가 보장된다(getId()).
-        // 라우팅 컨텍스트(routing())로 셰입을 가른다 — 없으면 Reference, 위시/토너먼트면 각 파싱 payload.
-        // imageUrl = actor 스냅샷(actorImageUrl) 이 있으면 그것, 없으면(시스템) defaultPushImageUrl 로 채운다 — 항상 비지 않는다.
-        // category 는 type 에서 파생한다(NotificationCategory.of). defaultPushImageUrl 은 호출자(채널·응답)가 DefaultPushImage 에서 넘긴다.
-        fun from(
-            notification: Notification,
-            defaultPushImageUrl: String,
-        ): NotificationSsePayload {
+        // 라우팅 컨텍스트(routing())로 셰입을 가르고, kind 는 엔티티가 파생해 준다(domainKind()).
+        fun from(notification: Notification): NotificationSsePayload {
             val id = notification.getId()
-            val category = NotificationCategory.of(notification.type)
-            val imageUrl = notification.actorImageUrl ?: defaultPushImageUrl
+            val kind = notification.domainKind()
             return when (val routing = notification.routing()) {
                 null ->
                     Reference(
                         id = id,
                         type = notification.type,
-                        category = category,
+                        kind = kind,
                         title = notification.title,
                         body = notification.body,
-                        imageUrl = imageUrl,
                         refId = notification.refId,
                         isRead = notification.isRead,
                         createdAt = notification.createdAt,
@@ -103,10 +86,9 @@ sealed interface NotificationSsePayload {
                     WishParsing(
                         id = id,
                         type = notification.type,
-                        category = category,
+                        kind = kind,
                         title = notification.title,
                         body = notification.body,
-                        imageUrl = imageUrl,
                         refId = notification.refId,
                         isRead = notification.isRead,
                         createdAt = notification.createdAt,
@@ -116,10 +98,9 @@ sealed interface NotificationSsePayload {
                     TournamentRouted(
                         id = id,
                         type = notification.type,
-                        category = category,
+                        kind = kind,
                         title = notification.title,
                         body = notification.body,
-                        imageUrl = imageUrl,
                         refId = notification.refId,
                         isRead = notification.isRead,
                         createdAt = notification.createdAt,

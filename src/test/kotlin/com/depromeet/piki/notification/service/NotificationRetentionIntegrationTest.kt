@@ -85,7 +85,21 @@ class NotificationRetentionIntegrationTest : IntegrationTestSupport() {
         assertTrue(exists(unreadRecentA))
         // 배지 동기화 대상은 안읽음이 지워진 userA 뿐 — 읽음만 지워진 userB 는 배지 불변이라 제외.
         assertEquals(setOf(userA), result.affectedUnreadByUser.keys)
-        assertEquals(1L, result.affectedUnreadByUser.getValue(userA).values.sum()) // 삭제 후 남은 안읽음(최근 1건)
+        assertEquals(1L, result.affectedUnreadByUser.getValue(userA)) // 삭제 후 남은 안읽음(최근 1건)
+    }
+
+    @Test
+    fun `안읽음이 전부 삭제된 유저도 0 으로 배지 재계산 대상에 남는다`() {
+        val userId = UUID.randomUUID()
+        val onlyUnread = seed(userId) // 이 유저의 유일한 안읽음 → 삭제되면 안읽음이 0 이 된다
+        setCreatedAt(onlyUnread, LocalDateTime.of(2020, 1, 1, 0, 0, 0))
+
+        val result = notificationRetentionService.purgeOlderThan(LocalDateTime.of(2021, 1, 1, 0, 0, 0))
+
+        assertFalse(exists(onlyUnread))
+        // 안읽음이 0 이면 재집계 GROUP BY 결과엔 이 유저 행이 아예 없다. 0 을 깔아 키를 유지해야
+        // notifier 가 이 유저를 방문해 stale 한 OS badge 를 0 으로 내린다(0-fill 이 없으면 badge 가 영구히 남는다).
+        assertEquals(0L, result.affectedUnreadByUser.getValue(userId))
     }
 
     @Test

@@ -7,7 +7,7 @@
   <title>알림 템플릿 · PiKi 백오피스</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
-    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --system:#475569; --system-soft:#f1f5f9; }
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --system:#475569; --system-soft:#f1f5f9; --tournament:#7C3AED; --tournament-soft:#F3E8FF; }
     *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
     .bar{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--border);}
     .brand{font-weight:800;font-size:17px;letter-spacing:-.03em;} .brand .dot{color:var(--accent);}
@@ -24,7 +24,7 @@
     .type{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;color:#384049;}
     .title{color:var(--ink);}
     .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
-    .badge.ACTIVITY{background:var(--accent-soft);color:var(--accent);} .badge.SYSTEM{background:var(--system-soft);color:var(--system);}
+    .badge.WISH{background:var(--accent-soft);color:var(--accent);} .badge.TOURNAMENT{background:var(--tournament-soft);color:var(--tournament);} .badge.SYSTEM{background:var(--system-soft);color:var(--system);}
     .push{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
     .push.on{background:#dcfce7;color:#15803d;} .push.off{background:#f1f3f5;color:#94a3b8;}
     .edit{color:var(--accent);font-weight:700;text-decoration:none;font-size:13px;}
@@ -39,11 +39,11 @@
     <div class="ok" th:if="${param.updated}">템플릿이 저장됐습니다.</div>
     <div class="card">
       <table>
-        <thead><tr><th>타입</th><th>카테고리</th><th>현재 문구</th><th>푸시</th><th></th></tr></thead>
+        <thead><tr><th>타입</th><th>종류</th><th>현재 문구</th><th>푸시</th><th></th></tr></thead>
         <tbody>
           <tr th:each="t : ${templates}">
             <td><span class="type" th:text="${t.type}">TYPE</span></td>
-            <td><span class="badge" th:classappend="${t.category}" th:text="${t.category == T(com.depromeet.piki.notification.domain.NotificationCategory).ACTIVITY ? '활동' : '시스템'}">활동</span></td>
+            <td><span class="badge" th:classappend="${t.kind}" th:text="${t.kindLabel}">위시</span></td>
             <td><span class="title" th:text="${#strings.isEmpty(t.title)} ? '(빈 제목)' : ${t.title}">제목</span></td>
             <td><span th:if="${t.pushEnabled}" class="push on">ON</span><span th:unless="${t.pushEnabled}" class="push off">OFF</span></td>
             <td><a class="edit" th:href="@{/admin/templates/{type}(type=${t.type})}">편집 →</a></td>

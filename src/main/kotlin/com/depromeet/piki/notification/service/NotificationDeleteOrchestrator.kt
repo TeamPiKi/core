@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.controller.dto.UnreadCountChanged
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.service.dto.NotificationDeleteCommand
 import com.depromeet.piki.notification.sse.SilentSyncDispatcher
 import org.springframework.stereotype.Component
@@ -23,10 +22,10 @@ class NotificationDeleteOrchestrator(
     fun deleteAndSyncBadge(
         userId: UUID,
         command: NotificationDeleteCommand,
-    ): Map<NotificationCategory, Long> {
+    ): Long {
         val unread = notificationService.delete(userId, command)
         silentSyncDispatcher.dispatch(listOf(userId), UnreadCountChanged.of(unread))
-        pushNotificationChannel.syncBadge(userId, unread.toBadgeCount())
+        pushNotificationChannel.syncBadge(userId, badgeCountOf(unread))
         return unread
     }
 }

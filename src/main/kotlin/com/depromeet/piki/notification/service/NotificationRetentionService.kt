@@ -23,8 +23,8 @@ class NotificationRetentionService(
     fun purgeOlderThan(cutoff: LocalDateTime): NotificationPurgeResult {
         val affectedUsers = notificationRepository.findUserIdsWithUnreadCreatedBefore(cutoff)
         val deleted = notificationRepository.deleteByCreatedAtBefore(cutoff)
-        // 유저마다 countUnreadByCategory 를 돌면 N+1 이라, IN + GROUP BY 한 쿼리로 대상 유저 전원의 안읽음을 한 번에 재집계한다.
-        val affectedUnreadByUser = notificationRepository.countUnreadByCategoryForUsers(affectedUsers)
+        // 유저마다 countUnread 를 돌면 N+1 이라, IN + GROUP BY 한 쿼리로 대상 유저 전원의 안읽음을 한 번에 재집계한다.
+        val affectedUnreadByUser = notificationRepository.countUnreadForUsers(affectedUsers)
         log.info("알림 보존기간 정리 — cutoff={} 삭제건수={} 배지영향유저={}", cutoff, deleted, affectedUsers.size)
         return NotificationPurgeResult(deletedCount = deleted, affectedUnreadByUser = affectedUnreadByUser)
     }
