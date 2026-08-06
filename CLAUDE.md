@@ -173,7 +173,7 @@ worktree 누적을 막되 **주기적 검사(타이머·cron)는 두지 않는�
 ### 새 의존성 추가 시
 - **Maven Central 에서 최신 안정 버전을 조회한 뒤 박는다.** LLM 학습 시점의 옛 버전을 그대로 쓰지 않는다. RC / Beta / Milestone / Alpha 등 pre-release 는 제외. 조회는 https://central.sonatype.com 과 https://search.maven.org 양쪽을 확인한다.
 - Spring Boot 의 `dependencyManagement` BOM 이 이미 관리하는 의존성은 **버전을 직접 명시하지 않고 BOM 에 따른다.** BOM 이 안 잡아주는 의존성만 직접 라인 명시.
-- 라인은 현재 프로젝트의 다른 의존성과 호환되는 것으로 고른다 (예: Spring Boot 4 / Jackson 3 / JDK 25 호환).
+- 라인은 현재 프로젝트의 다른 의존성과 호환되는 것으로 고른다.
 
 ### 기존 의존성 버전 변경 시
 - **버전 옆에 주석으로 고정 이유가 적혀 있으면 함부로 만지지 않는다.** 의도된 down-pin 일 가능성이 높다. 사용자에게 변경 이유와 호환성 확인 후 진행.
@@ -190,18 +190,7 @@ worktree 누적을 막되 **주기적 검사(타이머·cron)는 두지 않는�
 
 ## DB 마이그레이션
 
-**도구**: Flyway. **위치**: `src/main/resources/db/migration/`. **네이밍**: `V{YYYYMMDDHHmmss}__{snake_case_description}.sql` (예: `V20260521143015__add_index_on_wishes_user_id.sql`). KST 기준, 파일을 만들 때의 현 시각을 prefix 로 부여한다 (`date +%Y%m%d%H%M%S`, `HH` 는 24시간).
-
-### 규칙
-
-- **이미 적용된 마이그레이션 파일은 수정·삭제하지 않는다.** Flyway 는 적용 시점에 checksum 을 저장하고, 이후 파일 내용이 바뀌면 다음 부팅에서 실패한다. (삭제는 `ignore-migration-patterns: "*:missing"` 덕에 부팅 자체는 되지만, 신규·CI 환경의 스키마가 운영과 달라진다. 레거시 정리는 `create_init_schema` 로 squash 된 것에 한해 예외다.) 컬럼·제약을 바꿔야 하면 **새 timestamp 로 추가 마이그레이션** 을 작성한다.
-- **timestamp 재발급은 불필요하다 — `out-of-order: true`.** 마이그레이션이 전부 additive(순서 무관)이므로 작업 PR 의 timestamp 가 `dev` 최신보다 작아 순서가 어긋나도 Flyway 가 그대로 적용한다. 파일 생성 시각 prefix 를 머지까지 그대로 둔다.
-- **마이그레이션은 commutative(순서 무관)하게 유지한다.** `ADD COLUMN` · `CREATE INDEX` · `CREATE TABLE` 같은 additive 는 어느 순서로 적용해도 결과가 같다. 반대로 **순서 의존 변경**(컬럼 rename, 기존 컬럼 `NOT NULL` 화, 같은 컬럼을 두 PR 이 동시 변경, 데이터 `UPDATE` backfill 등)은 out-of-order 에서 적용 순서가 결과를 바꾸므로, 아래 destructive 항목처럼 단계 배포로 분리해 한 배포 사이클 안에서 순서를 보장한다.
-- **동시 작업 충돌은 머지 게이트가 잡는다.** branch protection 의 "Require branches to be up to date before merging" 으로, `dev` 가 갱신되면 PR 은 최신 `dev` 와 합쳐 CI 를 다시 통과해야 머지된다. 합쳐서 SQL 이 서로 깨지는 충돌(같은 컬럼 중복 추가 등)은 이 재실행에서 걸린다. 단 CI(빈 DB)는 버전순으로만 적용하므로 "둘 다 SQL 은 성공하나 적용 순서가 결과를 바꾸는" 경우는 못 잡는다 — 그 사각은 위 commutative 규율로 메운다.
-- **FK 제약 절대 추가 금지.** (자세한 이유는 `## 테이블 간 외래 키` 섹션) 조회 인덱스(`KEY idx_*`) 는 그대로 둔다.
-- **Forward-only.** Flyway down migration / 롤백 SQL 을 작성하지 않는다. 잘못된 마이그레이션을 되돌리려면 **새 timestamp 로 보정 마이그레이션** 을 추가한다.
-- **DROP / RENAME 류 destructive 작업은 단계적으로.** 단일 마이그레이션에서 끝내면 (a) 데이터 손실 위험, (b) 배포 중 옛 코드와 새 스키마가 잠시 공존하는 동안 깨진다. 가능한 한 **add → backfill → drop** 3단계로 나눠 배포한다.
-- 변경 의도가 한눈에 드러나는 description 을 쓴다.
+**도구**: Flyway. **위치**: `src/main/resources/db/migration/`. 상세 규약(네이밍·out-of-order·commutative·forward-only·destructive 단계 배포)은 그 디렉터리의 `CLAUDE.md` 에 있고, 마이그레이션 파일을 다룰 때 자동으로 로드된다. **FK 제약은 절대 추가하지 않는다** (`## 테이블 간 외래 키` 참조).
 
 ## 트랜잭션 경계
 
@@ -246,10 +235,18 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 테스트
 
-테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**(분류·가치 판단·결정 트리·모킹 금지·셋업·네이밍·기계 강제 + JVM/Spring 공통)이고 `install.sh` 가 설치하며, **이 repo 의 Kotlin·MySQL 바인딩**은 체크인된 파일이 갖는다.
+테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**(분류·가치 판단·결정 트리·모킹 금지·셋업·네이밍·기계 강제 + JVM/Spring 공통)이고 `install.sh` 가 설치하며 아래로 항상 로드된다. **이 repo 의 Kotlin·MySQL 바인딩**(좌표·단언 라이브러리·stub 형태·통합 테스트 세부)은 `.claude/rules/testing-convention.md` 가 갖는다.
+
+**테스트를 작성·수정하기 전에 `.claude/rules/testing-convention.md` 를 읽는다.** 이 파일은 `src/test/**` 의 기존 파일을 열면 자동으로 붙지만, 새 테스트 파일을 곧장 생성하는 경로에서는 안 붙는다(실측). 그 경우 직접 읽어야 규약이 적용된다.
+
+테스트는 항상 단위 + 통합을 함께 돌리고, Testcontainers 가 Docker 를 요구하므로 데몬을 먼저 확인한다 (로컬 macOS 전용 가드):
+
+```bash
+docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null 2>&1; do sleep 2; done)
+./gradlew test
+```
 
 @.claude/rules/testing-principles.md
-@.claude/rules/testing-convention.md
 
 ## DTO ↔ 도메인 매핑
 
