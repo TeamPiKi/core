@@ -7,12 +7,28 @@ server:
     min-response-size: 1024
   servlet:
     session:
-      # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin form-login 세션에만 적용된다.
-      # 기본값을 fail-safe(짧은 쪽, 24h)로 둔다 — 아무 데서도 주입하지 않으면 prod 도 이 값을 쓰므로, 기본이 길면
-      # 운영 세션이 의도보다 오래 산다(SPRINGDOC_ENABLED 의 fail-closed 기본과 같은 결). 현재 dev·prod 모두 주입
-      # 없이 이 기본을 쓴다. 특정 환경만 길게 쓰려면 SSM /piki-core/<env>/admin-session-timeout 을 심으면 된다
+      # admin 백오피스 세션 수명. 메인 API 체인은 STATELESS(세션 미사용)라 이 값은 admin 세션에만 적용된다.
+      # 세션은 Spring Session 을 통해 Redis 에 저장되므로(#885) 이 값이 곧 Redis 키의 TTL 이고, 배포로
+      # 컨테이너가 바뀌어도 남은 수명이 유지된다. 그 전엔 톰캣 인메모리라 배포가 항상 먼저 세션을 끊었다.
+      # admin.allowlist-ttl 과 같은 값으로 맞춘다 — 게이트(AdminAccessFilter)가 세션과 allowlist 를 둘 다 요구해
+      # 실효 수명은 짧은 쪽이 결정한다. 어긋나면 긴 쪽이 무의미해진다(과거 세션 24h / allowlist 1h 가 그랬다).
+      # 특정 환경만 다르게 쓰려면 SSM /piki-core/<env>/admin-session-timeout 을 심으면 된다
       # (deploy 가 SSM 키를 UPPER_SNAKE env 로 컨테이너에 전달하므로 워크플로 변경이 필요 없다).
       timeout: ${ADMIN_SESSION_TIMEOUT:24h}
+      cookie:
+        # 세션 쿠키의 Secure(#885). 이 값을 읽는 건 서블릿 컨테이너가 아니라 SessionCookieConfig 다 — 세션 쿠키는
+        # 이제 Spring Session 의 CookieSerializer 가 발급하고, Boot 의 세션 auto-config 가 만드는 기본 serializer 는
+        # 이 앱에서 Secure·HttpOnly·SameSite 를 전부 잃은 채 앉는다(실측). 그래서 정책을 그 config 가 소유한다.
+        #
+        # 미지정이면 request.isSecure() 를 따르는데, nginx 가 X-Forwarded-Proto 를 보내도(infra/nginx/*.conf)
+        # forward-headers-strategy 가 없어 앱은 요청을 평문 HTTP 로 본다. JWT 쿠키가 같은 이유로 이미 쓰는
+        # COOKIE_SECURE 를 재사용해 "쿠키 Secure 정책은 이 노브 하나" 로 모은다(auth.cookie.secure — TokenCookieWriter).
+        # 로컬(HTTP)은 .env 의 COOKIE_SECURE=false 로 끈다.
+        #
+        # 그동안 Secure 가 빠져도 덜 아팠던 건 세션이 배포마다 죽어 수명이 짧았기 때문인데, 이 PR 이 그 완충재를
+        # 걷어낸다(배포를 견디는 24h 세션). 근본 해결은 forward-headers-strategy 지만 그건 X-Forwarded-* 전반을
+        # 신뢰하는 별도 결정이라(ClientIp 가 X-Forwarded-For 를 안 쓰기로 한 것과 같은 층) 여기서 다루지 않는다.
+        secure: ${COOKIE_SECURE:true}
 
 # 운영 백오피스(#249) + 슬랙-IP 접근 게이트(#526). 게이트가 보호하므로 enabled 를 전 환경에 둬도 안전하다 —
 # /admin 은 슬랙 세션, dev 도메인은 IP allowlist 로 막힌다. 로컬은 ADMIN_ENABLED=true + ADMIN_LOCAL_BYPASS=true 로 게이트 없이 본다.
@@ -38,8 +54,13 @@ admin:
   grant-hosts:
     dev: https://dev.api.piki.day
     prod: https://api.piki.day
-  # 허용 IP sliding TTL(무활동 만료, IP 변동 흡수). grant-token 은 원타임 링크 수명.
-  allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:1h}
+  # 허용 IP TTL(무활동 만료, IP 변동 흡수). /admin 게이트는 sliding 없이 이 시간만 살고 연장은 명시적 버튼으로만
+  # 한다(#669). dev 도메인 게이트(EnvironmentAccessFilter)만 접근마다 갱신한다(개발 편의, 관심사 분리).
+  # server.servlet.session.timeout 과 같은 값으로 맞춘다 — 게이트가 세션과 이 키를 둘 다 요구하므로 어긋나면
+  # 긴 쪽이 무의미해진다. 1h 였던 것을 24h 로 되돌렸다(#885): #669 가 막으려던 "탭 열어두면 무기한 인증" 은
+  # sliding 제거만으로 이미 닫혔고(sliding 이 없으면 24h 는 무기한이 아니라 정확히 24시간), 1h 는 그 뒤 #702 가
+  # CSRF 버그 수정에 곁들여 줄인 값이라 별도 근거가 없었다. grant-token 은 원타임 링크 수명.
+  allowlist-ttl: ${ADMIN_ALLOWLIST_TTL:24h}
   grant-token-ttl: 3m
   # 로컬에서만 /admin 게이트(AdminAccessFilter) 우회. 배포 환경은 항상 false.
   local-bypass: ${ADMIN_LOCAL_BYPASS:false}

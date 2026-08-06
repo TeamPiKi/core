@@ -54,6 +54,17 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
 
+    // admin 백오피스 세션을 톰캣 메모리가 아니라 Redis 에 둔다(#885). 인메모리면 blue-green 배포로 컨테이너가
+    // 교체될 때마다 세션이 통째로 사라져, AdminAccessFilter 가 404 를 내고 배포마다 Discord grant 링크를 다시 받아야 했다.
+    // Redis 컨테이너는 앱 배포와 독립적으로 유지되므로(provision-runtime.sh 가 "있으면 skip") 세션이 배포를 견딘다.
+    // 세션에는 신원뿐 아니라 CSRF 토큰도 실려 있어(AdminCsrfPreloadInterceptor) 함께 영속된다.
+    //
+    // Spring Session 라이브러리(org.springframework.session:spring-session-data-redis)가 아니라 Boot 의 이 모듈을
+    // 선언한다 — Boot 4 는 auto-configuration 을 기술별 모듈로 쪼갰고, 라이브러리만 넣으면 SessionRepository 빈이
+    // 아예 만들어지지 않아 세션이 조용히 인메모리로 남는다. 이 모듈이 spring-boot-session·spring-session-data-redis 를
+    // 함께 끌고 온다. 버전은 Spring Boot BOM 이 관리한다.
+    implementation("org.springframework.boot:spring-boot-session-data-redis")
+
     // Discord 슬래시커맨드(admin 접근 #654) 인터랙션의 Ed25519 서명 검증용. raw 32B 공개키를 BouncyCastle 로 다룬다
     // (JDK EdEC raw-key 디코딩이 까다로움). Spring Boot 4.0.5 BOM 미관리라 버전 명시(Maven Central 최신 안정).
     implementation("org.bouncycastle:bcprov-jdk18on:1.84")

@@ -17,7 +17,8 @@ import java.time.Duration
  * @property environment 이 앱이 도는 환경(dev/prod). grant 토큰의 env 바인딩 검증에 쓴다.
  * @property grantSigningKey grant 토큰 HMAC 서명 공유키(전 환경 동일값). 발급 env 와 소비 env 가 달라도 서명이 검증되게 한다.
  * @property grantHosts env → admin 접속 호스트(base URL) 맵. 선택한 env 의 grant 링크를 만든다.
- * @property allowlistTtl 허용 IP sliding TTL(무활동 만료, IP 변동 흡수).
+ * @property allowlistTtl 허용 IP TTL(무활동 만료, IP 변동 흡수). /admin 게이트는 sliding 없이 이 시간만 살고 연장은 명시적
+ *   버튼으로만 한다(#669) — dev 도메인 게이트만 접근마다 갱신한다. server.servlet.session.timeout 과 같은 값으로 맞춘다(#885).
  * @property grantTokenTtl 원타임 grant 링크 토큰 수명(짧게).
  * @property localBypass 로컬 개발에서 /admin 게이트(AdminAccessFilter)를 건너뛴다. 배포 환경은 false.
  * @property scheduleGraceWindow 예약 발송 유예시간. 예약시각을 이 시간보다 더 넘겨 도래하면(다운타임 등) 발송하지 않고 MISSED 로 정리한다.
@@ -35,7 +36,7 @@ data class AdminProperties(
     val environment: String = "",
     val grantSigningKey: String = "",
     val grantHosts: Map<String, String> = emptyMap(),
-    val allowlistTtl: Duration = Duration.ofHours(1),
+    val allowlistTtl: Duration = Duration.ofHours(24),
     val grantTokenTtl: Duration = Duration.ofMinutes(3),
     val localBypass: Boolean = false,
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
