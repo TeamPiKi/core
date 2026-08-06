@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>추출 모델 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --ok:#15803d; --ok-soft:#dcfce7; }
+    /* keep-all: 한국어가 어절 중간에서 꺾이지 않게 한다. 모델명처럼 공백 없는 긴 토큰이 칸을 밀어내지 않도록
+       anywhere 를 안전판으로 함께 둔다 (source-platforms 와 같은 이유). */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:720px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .ok{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+
+    /* 접이식 가이드 — 늘 펼쳐 두면 정작 조작할 폼이 아래로 밀린다 (extraction-policies · source-platforms 와 같은 패턴). */
+    .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:9px;}
+    .guide>summary::-webkit-details-marker{display:none;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:var(--accent);font-size:15px;line-height:1;transition:transform .15s;}
+    .guide[open]>summary::before{transform:rotate(90deg);}
+    .guide>summary:hover{background:var(--accent-soft);}
+    .guide>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+    .gbody{border-top:1px solid var(--border);}
+    .gtable{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .gtable th{width:104px;text-align:left;vertical-align:top;padding:11px 15px;border-bottom:1px solid #f1f3f5;color:#384049;font-size:12px;font-weight:700;white-space:nowrap;}
+    .gtable td{padding:11px 15px 11px 0;border-bottom:1px solid #f1f3f5;color:var(--muted);line-height:1.65;}
+    .gtable tr:last-child th,.gtable tr:last-child td{border-bottom:none;}
+
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
+    .head{display:flex;align-items:baseline;gap:9px;margin-bottom:3px;}
+    .head .t{font-size:14px;font-weight:800;font-family:ui-monospace,Menlo,monospace;letter-spacing:-.01em;}
+    .head .u{margin-left:auto;font-size:11.5px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;}
+    .desc{font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 12px;}
+    /* 미지정도 상태다 — 빈칸으로 두면 "설정을 못 했다"로 읽히므로 기본값으로 동작 중임을 명시한다. */
+    .base{display:inline-block;font-size:11.5px;font-weight:700;color:var(--muted);background:#f3f4f6;border-radius:999px;padding:2px 9px;}
+
+    /* 저장 폼과 보조 액션(확인 · 해제)을 한 줄에 둔다. HTML 은 폼 중첩이 안 되므로 나란한 형제 폼으로 배치한다. */
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .actions form{display:flex;gap:8px;margin:0;}
+    .actions input{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:ui-monospace,Menlo,monospace;width:260px;}
+    .actions button{border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;}
+    .actions button.save{background:var(--accent);color:#fff;border:none;}
+    .actions button.ghost{background:none;color:var(--muted);border:1px solid var(--border);}
+    .actions button.ghost:hover{color:var(--ink);}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
+  <div class="wrap">
+    <h1>추출 모델</h1>
+    <p class="lede">추출에 쓰는 <b>LLM 모델</b>을 경로별로 배포 없이 지정합니다.</p>
+
+    <details class="guide">
+      <summary>동작 방식</summary>
+      <div class="gbody">
+        <table class="gtable">
+          <tbody>
+            <tr>
+              <th>저장 조건</th>
+              <td>저장할 때 그 모델로 실제 호출을 한 번 해 봅니다.<br>성공한 모델만 등록됩니다.</td>
+            </tr>
+            <tr>
+              <th>미지정</th>
+              <td>지정하지 않은 경로는 extractor 의 기본 모델로 동작합니다.<br>해제하면 그 상태로 돌아갑니다.</td>
+            </tr>
+            <tr>
+              <th>모델이 사라지면</th>
+              <td>등록 후 모델이 없어지면 자동으로 기본 모델로 대체돼 파싱은 계속됩니다.<br>이 경우 화면의 모델과 실제 도는 모델이 갈리므로 확인 버튼으로 점검합니다.</td>
+            </tr>
+            <tr>
+              <th>적용 범위</th>
+              <td>이 설정은 이 환경에만 적용됩니다.<br>dev 에서 바꿔도 prod 는 그대로입니다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="ok" th:if="${param.updated}">모델이 저장됐습니다. 실제 호출로 확인했고 바로 적용됩니다.</div>
+    <div class="ok" th:if="${param.checked}">지금도 정상 응답하는 모델입니다.</div>
+    <div class="ok" th:if="${param.cleared}">지정을 해제했습니다. 이제 기본 모델로 동작합니다.</div>
+    <div class="err" th:if="${error}" th:text="${error}"></div>
+
+    <div class="card" th:each="row : ${rows}">
+      <div class="head">
+        <span class="t" th:text="${row.target}"></span>
+        <span class="u" th:if="${row.updatedAt}" th:text="${#temporals.format(row.updatedAt, 'yyyy-MM-dd')}"></span>
+      </div>
+      <p class="desc" th:if="${row.target.name() == 'LINK'}">상품 페이지 HTML 에서 이름 · 가격 · 이미지를 뽑는 경로입니다. 텍스트와 JSON 스키마를 다룹니다.</p>
+      <p class="desc" th:if="${row.target.name() == 'IMAGE'}">업로드된 이미지에서 정보를 읽어내는 경로입니다. 이미지를 보는 능력이 필요합니다.</p>
+
+      <div class="actions">
+        <form method="post" th:action="@{/admin/extraction-models/{t}(t=${row.target})}">
+          <!-- 저장 실패로 되돌아온 경우 그 행에만 제출값을 되살린다. 다른 행은 저장된 값을 그대로 보여준다. -->
+          <input name="model" placeholder="예: gemini-3.1-flash-lite" maxlength="100" required
+                 th:value="${draftTarget == row.target} ? ${draftModel} : ${row.model}">
+          <button type="submit" class="save">저장</button>
+        </form>
+        <form th:if="${row.model}" method="post" th:action="@{/admin/extraction-models/{t}/check(t=${row.target})}">
+          <button type="submit" class="ghost">지금 확인</button>
+        </form>
+        <form th:if="${row.model}" method="post" th:action="@{/admin/extraction-models/{t}/clear(t=${row.target})}">
+          <button type="submit" class="ghost">해제</button>
+        </form>
+        <span class="base" th:unless="${row.model}">기본 모델로 동작 중</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
