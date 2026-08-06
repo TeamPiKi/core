@@ -1,7 +1,9 @@
 package com.depromeet.piki.notification.handler
 
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
+import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -28,6 +30,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var tournamentStartedHandler: TournamentStartedHandler
 
     @Autowired private lateinit var handlers: List<NotificationEventHandler<*>>
+
+    @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     // eventType 은 제네릭 타입 인자 E 에서 GenericTypeResolver 로 자동 도출된다(::class 명시 제거).
     // reflection 기반이라 클래스 계층이 바뀌면 조용히 틀어질 수 있어, 도출 결과를 직접 못 박아 회귀를 잡는다.
@@ -57,5 +61,23 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     fun `모든 핸들러의 eventType 은 서로 겹치지 않는다`() {
         val eventTypes = handlers.map { it.eventType }
         assertEquals(eventTypes.size, eventTypes.toSet().size)
+    }
+
+    // 파싱 완료 알림 문구에 담을 itemName 변수를 그 버전(snapshot)의 이름에서 채운다(#895).
+    @Test
+    fun `파싱 완료 핸들러는 그 버전의 아이템 이름을 itemName 변수로 담는다`() {
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9101L, name = "나이키 에어맥스")).getId()
+
+        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9101L, snapshotId = snapshotId))
+
+        assertEquals("나이키 에어맥스", context.variables["itemName"])
+    }
+
+    // best-effort — 버전이 없어도(이례) 이름 하나 때문에 알림을 떨구지 않고 기본값을 담는다.
+    @Test
+    fun `파싱 완료 핸들러는 버전을 못 찾으면 itemName 을 기본값으로 담는다`() {
+        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9102L, snapshotId = 9_999_999L))
+
+        assertEquals("상품", context.variables["itemName"])
     }
 }
