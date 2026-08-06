@@ -5,6 +5,7 @@ import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.stereotype.Component
+import java.text.BreakIterator
 import java.util.UUID
 
 // 아이템 파싱 완료 알림. 위시·토너먼트 어느 쪽으로 올린 아이템이든 동일하게 "{이름} 파싱이 완료되었어요" 를 알린다 —
@@ -32,9 +33,20 @@ class ItemParsingCompletedHandler(
         private const val FALLBACK_NAME = "상품"
 
         // 알림·푸시 한 줄을 유지하도록 10자 초과면 앞 10자 + … 로 자른다. 이름이 없거나 공백이면 기본값.
+        // 절단 단위는 grapheme cluster(BreakIterator) 다 — String.length·take 는 UTF-16 코드 단위라, 이모지(surrogate
+        // pair)·조합문자가 10번째 경계에 걸치면 반쪽만 남아 깨진 문자로 노출된다(#896 CodeRabbit). 사용자가 보는 "글자"
+        // 경계로 잘라 깨짐을 막는다.
         fun displayName(rawName: String?): String {
             val name = rawName?.takeIf { it.isNotBlank() } ?: return FALLBACK_NAME
-            return if (name.length > MAX_NAME_LENGTH) name.take(MAX_NAME_LENGTH) + "…" else name
+            val boundary = BreakIterator.getCharacterInstance().apply { setText(name) }
+            var end = boundary.first()
+            repeat(MAX_NAME_LENGTH) {
+                val next = boundary.next()
+                if (next == BreakIterator.DONE) return name // 표시 글자 수가 한도 이하 — 자를 필요 없음
+                end = next
+            }
+            // 한도째 경계까지 왔다. 그 뒤에 글자가 더 있으면(다음 경계가 DONE 이 아니면) 잘라서 말줄임표를 붙인다.
+            return if (boundary.next() == BreakIterator.DONE) name else name.substring(0, end) + "…"
         }
     }
 }
