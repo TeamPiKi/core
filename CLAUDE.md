@@ -173,7 +173,7 @@ worktree 누적을 막되 **주기적 검사(타이머·cron)는 두지 않는�
 ### 새 의존성 추가 시
 - **Maven Central 에서 최신 안정 버전을 조회한 뒤 박는다.** LLM 학습 시점의 옛 버전을 그대로 쓰지 않는다. RC / Beta / Milestone / Alpha 등 pre-release 는 제외. 조회는 https://central.sonatype.com 과 https://search.maven.org 양쪽을 확인한다.
 - Spring Boot 의 `dependencyManagement` BOM 이 이미 관리하는 의존성은 **버전을 직접 명시하지 않고 BOM 에 따른다.** BOM 이 안 잡아주는 의존성만 직접 라인 명시.
-- 라인은 현재 프로젝트의 다른 의존성과 호환되는 것으로 고른다 (예: Spring Boot 4 / Jackson 3 / JDK 25 호환).
+- 라인은 현재 프로젝트의 다른 의존성과 호환되는 것으로 고른다.
 
 ### 기존 의존성 버전 변경 시
 - **버전 옆에 주석으로 고정 이유가 적혀 있으면 함부로 만지지 않는다.** 의도된 down-pin 일 가능성이 높다. 사용자에게 변경 이유와 호환성 확인 후 진행.
