@@ -81,9 +81,9 @@
       </div>
     </details>
 
-    <div class="ok" th:if="${param.updated}">모델이 저장됐습니다. (실호출로 확인됨 · 즉시 적용)</div>
+    <div class="ok" th:if="${param.updated}">모델이 저장됐습니다. 실제 호출로 확인했고 바로 적용됩니다.</div>
     <div class="ok" th:if="${param.checked}">지금도 정상 응답하는 모델입니다.</div>
-    <div class="ok" th:if="${param.cleared}">지정이 해제됐습니다. (extractor 기본 모델로 동작합니다)</div>
+    <div class="ok" th:if="${param.cleared}">지정을 해제했습니다. 이제 기본 모델로 동작합니다.</div>
     <div class="err" th:if="${error}" th:text="${error}"></div>
 
     <div class="card" th:each="row : ${rows}">
