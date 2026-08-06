@@ -91,6 +91,40 @@ class AdminSessionPersistenceIntegrationTest : IntegrationTestSupport() {
         assertEquals(true, cookie.isHttpOnly, "세션 쿠키에 HttpOnly 가 없다 — 스크립트가 세션을 읽을 수 있다")
     }
 
+    @Test
+    fun `grant 로 확립한 세션 쿠키를 들고 오면 게이트가 admin 을 열어 준다`() {
+        val ip = "203.0.113.22"
+        val token =
+            allowlistService.issueGrantToken(
+                userId = "discord-user-891",
+                name = "테스트운영자",
+                env = adminProperties.environment,
+                dest = GrantDest.ADMIN,
+            )
+        val mockMvc = gatedMockMvc()
+
+        val cookie =
+            mockMvc
+                .perform(get("/admin-access/grant").param("token", token).with(from(realIp = ip)))
+                .andExpect(status().is3xxRedirection)
+                .andReturn()
+                .response
+                .getCookie(SESSION_COOKIE)
+        assertNotNull(cookie, "$SESSION_COOKIE 쿠키가 없다")
+
+        // grant 가 리다이렉트한 그 목적지를, 브라우저가 받아 간 쿠키 하나만 들고 다시 두드린다.
+        mockMvc
+            .perform(get("/admin").cookie(cookie).with(from(realIp = ip)))
+            .andExpect(status().isOk)
+    }
+
+    @Test
+    fun `세션 쿠키 없이 admin 에 오면 게이트가 404 로 막는다`() {
+        gatedMockMvc()
+            .perform(get("/admin").with(from(realIp = "203.0.113.23")))
+            .andExpect(status().isNotFound)
+    }
+
     // 세션 저장소 필터를 명시적으로 끼운다 — webAppContextSetup 은 서블릿 컨테이너의 필터 등록을 재현하지 않아,
     // 이게 없으면 요청이 MockHttpSession 을 써 Redis 를 타지 않는다(EnvironmentGateIntegrationTest 와 같은 방식).
     private fun sessionMockMvc(): MockMvc =
@@ -98,6 +132,21 @@ class AdminSessionPersistenceIntegrationTest : IntegrationTestSupport() {
             .webAppContextSetup(webApplicationContext)
             .addFilters<DefaultMockMvcBuilder>(
                 webApplicationContext.getBean(SESSION_FILTER_BEAN, Filter::class.java),
+            ).build()
+
+    // 위 체인에 게이트를 더한 것 — 세션 저장소 필터가 바깥, 게이트가 안쪽이다(배포에서 @Order 가 만드는 순서와 같다).
+    // 게이트는 공유 컨텍스트에서 local-bypass=true 로 꺼져 있으므로, 켠 설정으로 필터를 만들어 끼운다
+    // (클래스별 프로퍼티 분기는 컨텍스트 캐시 규약이 금지 — EnvironmentGateIntegrationTest 와 같은 방식).
+    //
+    // 주의: 이 순서는 여기서 손으로 준 것이라, 실제 등록 순서가 뒤집혀도 이 테스트는 통과한다. 그 사각(#891 의
+    // 원인)은 등록값을 직접 비교하는 AdminAccessFilterTest 가 닫는다. 이쪽이 지키는 건 "게이트가 저장소의
+    // 세션을 읽어 통과시킨다"는 흐름 자체다 — 세션 속성 이름·쿠키 직렬화·IP 바인딩이 어긋나면 여기서 깨진다.
+    private fun gatedMockMvc(): MockMvc =
+        MockMvcBuilders
+            .webAppContextSetup(webApplicationContext)
+            .addFilters<DefaultMockMvcBuilder>(
+                webApplicationContext.getBean(SESSION_FILTER_BEAN, Filter::class.java),
+                AdminAccessFilter(allowlistService, adminProperties.copy(localBypass = false)),
             ).build()
 
     // 세션 저장소를 타입으로만 찾는다 — 구현마다 제네릭 인자가 달라(RedisSessionRepository 는 RedisSession)

@@ -8,8 +8,8 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.MDC
-import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
+import org.springframework.session.web.http.SessionRepositoryFilter
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 
@@ -17,11 +17,17 @@ import org.springframework.web.filter.OncePerRequestFilter
 // password 가 아니라 "슬랙 링크 클릭으로 발급된 세션"이 신원이다. 미허용은 401/302 가 아니라 404(존재 숨김).
 // 공개 진입(/admin-access/**)·정적(/admin-assets/**)은 경로가 달라 이 필터 대상이 아니다(shouldNotFilter).
 //
-// order: 관측·TraceIdHeader(HIGHEST+1,+2) 안쪽(+4)이라 traceId 가 차 있고, Security(-100)보다 바깥이라
-// 메인 JWT 체인에 닿기 전에 끊는다. localBypass(로컬 개발)면 게이트를 건너뛴다.
+// order: SessionRepositoryFilter 바로 안쪽이어야 한다(#891). 세션이 Redis 로 옮겨간 뒤(#885/#888)
+// getSession 은 그 필터가 씌우는 요청 래퍼를 통해서만 저장소에 닿는다 — 바깥에서 부르면 래퍼가 없는 원본 요청이라
+// 톰캣 인메모리(빈) 세션을 조회해 항상 null 이고, 게이트가 grant 직후에도 404 를 낸다. 그 전엔 세션이 톰캣
+// 인메모리라 순서와 무관하게 읽혀 이 의존이 드러나지 않았다. 상수를 직접 참조해 Spring 이 기본값을 바꿔도 따라간다.
+//
+// 이 값(MIN_VALUE+51)은 기존 제약도 그대로 지킨다 — 관측·TraceIdHeader(HIGHEST+1,+2)·AccessLog(+3) 안쪽이라
+// traceId 와 access log 가 이 요청을 감싸고, Security(-100)보다는 한참 바깥이라 메인 JWT 체인에 닿기 전에 끊는다.
+// localBypass(로컬 개발)면 게이트를 건너뛴다.
 @Component
 @ConditionalOnAdminEnabled
-@Order(Ordered.HIGHEST_PRECEDENCE + 4)
+@Order(SessionRepositoryFilter.DEFAULT_ORDER + 1)
 class AdminAccessFilter(
     private val allowlistService: AdminAllowlistService,
     private val adminProperties: AdminProperties,
