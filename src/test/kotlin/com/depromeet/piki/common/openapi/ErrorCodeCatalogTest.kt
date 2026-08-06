@@ -126,6 +126,17 @@ class ErrorCodeCatalogTest {
     }
 
     @Test
+    fun `PROXY prefix 는 재사용되지 않는다 (이미지 프록시 제거로 반납된 자리)`() {
+        // ImageProxyErrorCode(PROXY-001~003)는 이미지 프록시 엔드포인트가 제거되며 enum 째 사라졌다.
+        // code 는 클라 계약이라 append-only — 반납된 prefix 를 새 도메인이 주워 쓰면 옛 클라의 매핑과 충돌한다.
+        // 그 규율을 주석이 아니라 여기서 기계로 잠근다.
+        val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
+
+        assertTrue(ErrorCodeRegistry.all.none { it.code.startsWith("PROXY-") }, "반납된 PROXY prefix 가 registry 에 다시 등록됨")
+        assertTrue(!md.contains("### PROXY"), md)
+    }
+
+    @Test
     fun `AnnouncementImage code 는 공개 카탈로그에 등록되지 않는다 (어드민 SSR 전용)`() {
         // AnnouncementImageException 은 어드민 백오피스(Thymeleaf SSR)에서 자체 catch 돼 리다이렉트로 처리되고
         // GlobalExceptionHandler 를 거치지 않아 wire code 로 나가지 않는다. 따라서 클라 대면 공개 카탈로그에
