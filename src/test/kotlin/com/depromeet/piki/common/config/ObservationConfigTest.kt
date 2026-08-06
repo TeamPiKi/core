@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.config
 
+import io.lettuce.core.tracing.LettuceObservationContext
 import io.micrometer.observation.Observation
 import io.micrometer.observation.ObservationHandler
 import io.micrometer.observation.ObservationRegistry
@@ -64,6 +65,49 @@ class ObservationConfigTest {
         val context = QueryContext()
         context.parentObservation = Observation.createNotStarted("item.parse", observingRegistry())
         assertTrue(predicate.test("jdbc.query", context))
+    }
+
+    @Test
+    fun `부모 없는 Redis 관측(actuator scrape 안의 allowlist 조회 등)은 제외된다`() {
+        // actuator 요청 억제로 그 요청 안의 Redis 명령이 부모 없는 루트가 된다 — 30초마다 쌓이던
+        // "exists"·"pexpire" 낱장 트레이스의 원인(#889).
+        assertFalse(predicate.test("redis.command", LettuceObservationContext("Redis")))
+    }
+
+    @Test
+    fun `작업 안(부모 있음)의 Redis 관측은 유지된다`() {
+        val context = LettuceObservationContext("Redis")
+        context.parentObservation = Observation.createNotStarted("http.server.requests", observingRegistry())
+        assertTrue(predicate.test("redis.command", context))
+    }
+
+    @Test
+    fun `부모 없는 Spring Security 필터체인 관측은 제외된다`() {
+        // 같은 actuator 요청에서 필터체인 before·after 가 각각 루트가 되어 scrape 당 낱장 2건을 더 만들었다(#889).
+        assertFalse(predicate.test("spring.security.http.secured.requests", Observation.Context()))
+    }
+
+    @Test
+    fun `작업 안(부모 있음)의 Spring Security 필터체인 관측은 유지된다`() {
+        // 정상 API 요청에서는 security span 이 그 요청 span 의 자식으로 붙는다(Tempo 실측). 그건 그대로 남겨야 한다.
+        val context = Observation.Context()
+        context.parentObservation = Observation.createNotStarted("http.server.requests", observingRegistry())
+        assertTrue(predicate.test("spring.security.http.secured.requests", context))
+    }
+
+    @Test
+    fun `Spring Security 관측 이름은 우리가 거르는 prefix 를 유지한다`() {
+        // Security 의 context 타입(FilterChainObservationContext)이 package-private final 이라 JDBC·Redis 처럼
+        // 타입으로 식별할 수 없고 observation name 에 의존한다. 라이브러리가 이름을 바꿨을 때 조용히 새는 대신
+        // 여기서 깨지도록, 실제 상수를 읽어 prefix 를 고정한다.
+        val decorator = Class.forName("org.springframework.security.web.ObservationFilterChainDecorator")
+        listOf("SECURED_OBSERVATION_NAME", "UNSECURED_OBSERVATION_NAME").forEach { fieldName ->
+            val value = decorator.getDeclaredField(fieldName).apply { isAccessible = true }.get(null) as String
+            assertTrue(
+                value.startsWith(ObservationConfig.SPRING_SECURITY_PREFIX),
+                "$fieldName = $value 가 ${ObservationConfig.SPRING_SECURITY_PREFIX} 로 시작하지 않는다",
+            )
+        }
     }
 
     @Test
