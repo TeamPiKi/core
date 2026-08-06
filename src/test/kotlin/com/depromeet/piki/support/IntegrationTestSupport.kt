@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Import
 //   발급 매핑이 조용히 등록돼 테스트가 오염되는 걸 막는다(폴링 테스트는 pollOnce() 를 직접 호출해 결정적으로 검증한다).
 // - admin.discord-metrics-channel-id·admin.discord-bot-token: 주간 리포트 엔드포인트가 채널 id·토큰 공백 skip(SKIPPED)을
 //   타지 않고 실제 게시 경로(SENT)를 검증하게 한다. 실제 Discord 호출은 StubDiscordMessageSender(@Primary)가 막는다.
+// - admin.grant-signing-key: 키가 공백이면 GrantTokenCodec.verify 가 항상 null 이라 grant 링크 흐름(토큰 소비 →
+//   allowlist 등록 → 세션 확립)이 통째로 막힌다. 그 흐름을 실제로 태우는 테스트를 위해 더미 키를 채운다.
 @SpringBootTest(
     properties = [
         "admin.enabled=true",
@@ -20,6 +22,7 @@ import org.springframework.context.annotation.Import
         "image.upload-polling-enabled=false",
         "admin.discord-metrics-channel-id=test-metrics-channel",
         "admin.discord-bot-token=test-bot-token",
+        "admin.grant-signing-key=test-grant-signing-key",
     ],
 )
 @Import(TestcontainersConfig::class, IntegrationStubs::class)

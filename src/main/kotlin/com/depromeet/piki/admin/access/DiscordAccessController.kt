@@ -133,7 +133,7 @@ class DiscordAccessController(
         allowlistService.grant(ip, identity.name)
         // ADMIN 은 백오피스라 세션(신원)을 발급한다. DOCS/SPEC(#733)는 문서 노출용이라 IP 등록만 하고 세션은 안 준다.
         if (identity.dest.issueSession) {
-            AdminSession.establish(request.getSession(true), identity.userId, identity.name, ip)
+            AdminSession.establish(request.getSession(true), identity.name, ip)
         }
         auditService.record(
             identity.name,
