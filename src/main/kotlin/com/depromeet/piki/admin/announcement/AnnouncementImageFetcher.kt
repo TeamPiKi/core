@@ -14,8 +14,8 @@ import java.net.URI
 import java.time.Duration
 
 // 운영자가 공지 본문에 붙여넣은 외부 이미지 URL 을 가져온다(rehost #561).
-// ImageProxyFetcher(상품 이미지)는 도메인 화이트리스트라 임의 외부 이미지엔 너무 빡빡하므로, 여기선
-// 화이트리스트 대신 SSRF 방어를 IP 차단으로 한다 — 임의 https 는 허용하되 사설/내부 IP 로의 요청만 막는다.
+// 붙여넣는 이미지의 출처를 미리 알 수 없어 도메인 화이트리스트를 둘 수 없으므로, SSRF 방어를
+// IP 차단으로 한다 — 임의 https 는 허용하되 사설/내부 IP 로의 요청만 막는다.
 data class FetchedImage(
     val bytes: ByteArray,
     val contentType: String,

@@ -76,14 +76,11 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("| LINK-002 | 400 | https 링크만 등록할 수 있어요. |"), md)
         assertTrue(md.contains("| LINK-003 | 400 | 아직 지원하지 않는 쇼핑몰이에요. 상품 이미지를 직접 등록해 주세요. |"), md)
 
-        // image 계열 이관(#800) — 4클래스 12개 중 공개 도달 11개를 전량 단언한다(삭제 실패 1개는 아래 미등록 가드가 잠근다).
+        // image 계열 이관(#800) — 3클래스 9개 중 공개 도달 8개를 전량 단언한다(삭제 실패 1개는 아래 미등록 가드가 잠근다).
         // 대표만 뽑으면 빠진 code 가 registry 에서 누락돼도 통과하므로, 등록 대상은 빠짐없이 행 단위로 고정한다.
-        // prefix 는 클래스별로 갈리며, IMAGE-PROXY 가 아니라 단일 토큰인 이유는 아래 형식 가드가 글자와 숫자를
+        // prefix 가 PRODUCT-IMAGE 가 아니라 단일 토큰인 이유는 아래 형식 가드가 글자와 숫자를
         // 섞은 3세그먼트를 허용하지 않기 때문이다(각 enum 주석 참고). 그 제약도 이 단언들이 함께 고정한다.
-        assertTrue(md.contains("### PROXY"), md)
-        assertTrue(md.contains("| PROXY-001 | 400 | 허용되지 않은 이미지 도메인입니다. |"), md)
-        assertTrue(md.contains("| PROXY-002 | 400 | 이미지 크기가 너무 큽니다. |"), md)
-        assertTrue(md.contains("| PROXY-003 | 502 | 이미지를 불러올 수 없습니다. |"), md)
+        // (PROXY-001~003 은 이미지 프록시 엔드포인트가 제거되며 함께 빠졌다.)
 
         // STORAGE 는 전부 같은 502·RETRYABLE 이라, 실패한 연산별로 code 가 갈리는지를 전량 단언해 고정한다.
         // 삭제 실패(STORAGE-004)는 여기 없다 — 아래 미등록 가드가 따로 잠근다.
