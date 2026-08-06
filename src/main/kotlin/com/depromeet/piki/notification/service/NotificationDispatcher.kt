@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.handler.NotificationEventHandler
+import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import kotlin.reflect.KClass
@@ -15,6 +16,7 @@ class NotificationDispatcher(
     private val renderer: NotificationTemplateRenderer,
     private val persistence: NotificationPersistenceService,
     private val channels: List<NotificationChannel>,
+    private val sseEmitterRegistry: SseEmitterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val byType: Map<KClass<*>, NotificationEventHandler<*>> =
@@ -56,21 +58,27 @@ class NotificationDispatcher(
             // 한 수신자의 저장 실패가 나머지 수신자 fan-out 을 막지 않게 수신자 단위로 격리한다 (외부 전달은 트랜잭션 밖).
             runCatching {
                 val notification =
-                    persistence.save(
-                        Notification(
-                            userId = userId,
-                            type = handler.notificationType,
-                            title = title,
-                            body = body,
-                            refId = refId,
-                            routing = routing,
-                            actorImageUrl = actorImageUrl,
-                        ),
+                    Notification(
+                        userId = userId,
+                        type = handler.notificationType,
+                        title = title,
+                        body = body,
+                        refId = refId,
+                        routing = routing,
+                        actorImageUrl = actorImageUrl,
                     )
+                // 인앱(SSE 연결)이면 어떤 알림이든 사용자가 곧바로 인지하므로(SSE 로 화면·토스트가 실시간 반영),
+                // 저장 시 읽음 처리해 히스토리에 unread 로 쌓이지 않게 한다(#812). 연결 판정은 이 인스턴스의 로컬 레지스트리
+                // 기준이라, 스케일아웃(#439)으로 다른 인스턴스에 붙은 연결은 못 봐 "연결 없음"으로 오판할 수 있으나 그 방향은
+                // 안전하다(알림을 안읽음으로 남겨 사용자가 결국 본다). 연결이 있어도 실제 그 화면을 보는지는 보장 못 하는 레이스는 허용한다.
+                if (sseEmitterRegistry.emittersOf(userId).isNotEmpty()) {
+                    notification.markRead()
+                }
+                val saved = persistence.save(notification)
                 // 한 채널의 실패도 다른 채널 전달을 막지 않게 추가로 격리한다.
                 // 채널 선택(예: FCM 은 push 대상 타입만)은 각 채널이 send 안에서 자기-적용 판단한다.
                 channels.forEach { channel ->
-                    runCatching { channel.send(userId, notification) }
+                    runCatching { channel.send(userId, saved) }
                         .onFailure { e -> log.warn("채널 {} 전송 실패 userId={}", channel::class.simpleName, userId, e) }
                 }
             }.onFailure { e -> log.warn("알림 저장 실패로 수신자 건너뜀 userId={}", userId, e) }
