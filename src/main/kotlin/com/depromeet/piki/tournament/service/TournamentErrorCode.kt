@@ -49,4 +49,8 @@ enum class TournamentErrorCode(
     CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT("TOURNAMENT-031", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트에서는 친구 결과를 볼 수 없어요."),
     CLONED_TOURNAMENT_CANNOT_ADD_ITEMS("TOURNAMENT-032", ErrorCategory.FORBIDDEN, "플레이 링크로 만든 토너먼트에는 아이템을 추가할 수 없어요."),
     INVALID_LIMIT("TOURNAMENT-033", ErrorCategory.INVALID_INPUT, "조회 개수는 1 이상이어야 해요."),
+
+    // 034~035 는 매치 로직 백엔드 이관(#683)에서 추가됐다. 브래킷 무결성 검증이 처음 들어오며 생긴 두 사유다.
+    INVALID_MATCH_PAIR("TOURNAMENT-034", ErrorCategory.INVALID_INPUT, "지금 대결할 수 있는 조합이 아니에요."),
+    MATCH_ALREADY_RECORDED("TOURNAMENT-035", ErrorCategory.CONFLICT, "이미 결과가 기록된 대결이에요."),
 }

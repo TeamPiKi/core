@@ -11,10 +11,12 @@ import com.depromeet.piki.tournament.controller.dto.UpdateInviteDurationRequest
 import com.depromeet.piki.tournament.controller.dto.JoinTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.PlayLinkInfoResponse
 import com.depromeet.piki.tournament.controller.dto.RecordMatchRequest
+import com.depromeet.piki.tournament.controller.dto.RecordMatchResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -38,6 +40,13 @@ interface TournamentApi {
             status 파라미터로 상태 필터링 가능하며 여러 값을 중복 전달할 수 있다(예: ?status=PENDING&status=IN_PROGRESS).
             생략 시 전체 반환. status 값은 대문자(PENDING/IN_PROGRESS/COMPLETED)로 전달해야 한다.
             limit 파라미터로 최근순 상위 N개만 받을 수 있다(예: 홈 카드용 ?limit=3). 생략 시 전체.
+            ownedOnly=true 면 내가 owner 인 ROOT·CLONE 만 반환한다(참여만 한 것은 제외) — 홈 카드용. 생략 시 false 로 참여한 것까지 포함.
+            ownedOnly 는 status 와 독립된 필터라 함께 보내면 AND 로 걸린다. 홈이 상태 무관인 것은 status 를 안 보내기 때문이다.
+            playType 파라미터로 솔로/소셜을 나눠 볼 수 있다(SOLO · SOCIAL). 생략 시 전체이며 status 와 AND 로 걸린다
+            (예: ?status=PENDING&status=IN_PROGRESS&playType=SOCIAL).
+            playType 은 저장된 속성이 아니라 참가 결과로 파생된다 — 혼자면 SOLO, 참여자가 생기면 SOCIAL 이고
+            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 PENDING 에서만 가능하므로 값이 바뀔 수 있는 구간도
+            PENDING 하나이며, 그 사이 같은 토너먼트가 SOLO 목록에서 SOCIAL 목록으로 옮겨갈 수 있다.
             각 항목의 thumbnailUrls 는 카드 대표 썸네일 URL 배열이다 — 최근 등록 아이템 중 이미지가 준비된(READY) 것 최대 2장.
             이미지가 준비된 아이템이 없으면 빈 배열이며, limit 유무와 무관하게 항상 포함된다.
         """,
@@ -56,7 +65,9 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (limit 이 1 미만 · limit 이 정수가 아님)",
+                description =
+                    "잘못된 요청 (limit 이 1 미만 · limit 이 정수가 아님 · " +
+                        "status 가 정의되지 않은 값 · playType 이 SOLO/SOCIAL 이 아닌 값)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -80,6 +91,16 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "상태 필터 (복수 전달 가능, 생략 시 전체)", example = "PENDING")
         status: List<TournamentStatus>?,
+        @Parameter(
+            description = "플레이 유형 필터 (SOLO · SOCIAL, 생략 시 전체). status 와 AND 로 걸린다.",
+            example = "SOCIAL",
+        )
+        playType: TournamentPlayType?,
+        @Parameter(
+            description = "내가 생성한 것만 볼지 (true 면 내가 owner 인 ROOT·CLONE 만). 생략 시 false 로 참여한 것까지 포함. status 와는 AND 로 걸린다. 홈 카드용.",
+            example = "true",
+        )
+        ownedOnly: Boolean,
         @Parameter(description = "조회 개수 제한 (최근순 상위 N, 생략 시 전체). 1 이상.", example = "3")
         limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>>
@@ -102,7 +123,13 @@ interface TournamentApi {
               - 소유자(isOwner=true) 또는 이미 매치를 시작한 멤버: inProgress 필드
                 - currentRound: 다음에 진행할 라운드 번호
                 - lastHistory: 가장 최근에 기록된 매치 결과. 라운드 전환 직후에는 currentRound와 다른 라운드의 매치일 수 있음. 매치 기록이 없으면 null
-                - remainingItems: 현재 라운드에서 아직 대결하지 않은 생존 아이템 목록, 가격 오름차순. 이 순서가 클라이언트의 매치 페어링 순서([0]vs[1], [2]vs[3] …)를 결정함
+                - remainingItems: 현재 라운드에서 아직 대결하지 않은 생존 아이템 목록, 가격 오름차순. 진행률 표시용이며 페어링에는 쓰지 않는다
+                - currentMatch: 서버가 브래킷에서 파생한 "지금 치를 매치"(first · second 아이템). 클라이언트는 이걸 그대로 그리고 페어링·셔플을 하지 않는다.
+                  POST /tournaments/{id}/matches 에 이 조합을 그대로 되돌려주면 된다.
+                  정상 흐름에서는 항상 존재한다. 이 이관 배포 시점에 이미 IN_PROGRESS 였던 토너먼트처럼 기록과 서버 브래킷이 어긋난 경우에만 빠지는데,
+                  그때는 `currentMatch: null` 이 아니라 **키 자체가 응답에서 생략**된다 (이 API 의 모든 nullable 필드가 같은 규약)
+                - 첫 라운드는 인원이 2의 거듭제곱이 되도록 정규화된다 (예: 25명 → 9매치·부전승 7 → 16강 → 8강 → 4강 → 결승).
+                  따라서 currentRound 는 항상 16 · 8 · 4 · 2 처럼 2의 거듭제곱으로 흐르며(첫 라운드만 예외), 부전승은 첫 라운드에서만 발생한다
               - 아직 매치를 시작하지 않은 멤버(isOwner=false): pending 필드 (ROOT 아이템·참여자 목록)
                 - pending.ownerStarted = true. 클라이언트는 이 플래그로 "주최자 대기" vs "주최자 시작 완료·지금 시작하세요" UI 를 분기한다
                 - pending.inviteCode, pending.inviteExpiresAt 은 null (초대 기간 종료)
@@ -563,17 +590,29 @@ interface TournamentApi {
         description = """
             IN_PROGRESS 상태의 토너먼트에서 한 매치의 결과(승자)를 기록한다.
             currentRound 는 해당 시점에 서버가 기대하는 라운드와 일치해야 한다.
-            결승(currentRound=2) 결과 기록 시 본인의 순위 결과(1위~최대 4위)가 즉시 반환된다.
+
+            firstTournamentItemId · secondTournamentItemId 는 서버가 브래킷에서 파생한 조합이어야 한다 —
+            GET /tournaments/{id} 의 inProgress.currentMatch 또는 이 API 의 이전 응답 nextMatch 를 그대로 되돌려주면 된다.
+            클라이언트가 임의로 구성한 조합은 400 (TOURNAMENT-034) 으로 거부된다. 다만 좌/우 순서와 라운드 내 매치 진행 순서는
+            검증하지 않으므로, 뒤집혀 오거나 순서가 달라도 통과한다.
+
+            같은 조합을 같은 승자로 다시 보내면 멱등 성공(중복 기록 없이 200)이고, 다른 승자로 보내면 409 (TOURNAMENT-035) 다.
+            결승 매치도 마찬가지다 - 결승을 기록하면 토너먼트가 COMPLETED 로 바뀌지만, 같은 결승 매치를 재전송하면
+            409 가 아니라 최초 응답과 같은 completed(순위 결과)를 다시 받는다. 응답을 못 받고 재전송하는 경우가 결승에서 가장 흔하다.
+
+            응답의 nullable 필드는 `null` 로 내려가지 않고 **키 자체가 생략**된다 (이 API 공통 규약).
+            nextMatch 는 같은 라운드에 남은 다음 매치이며, 라운드가 끝났으면 생략된다 (두 필드가 다 비면 data 는 빈 객체다).
+            이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
+            결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
             소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
             다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있으며, 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
-            결승이 아닌 라운드는 data=null 을 반환한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "매치 결과 기록 성공 (결승이 아닌 라운드: data=null · 결승 라운드: data.result에 순위 아이템 목록)",
+                description = "매치 결과 기록 성공 (라운드 진행 중: nextMatch 에 다음 매치 · 라운드 종료: 두 필드 생략으로 data 가 빈 객체 · 결승: completed.result 에 순위 아이템 목록)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -583,7 +622,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (승자가 대결 두 아이템 중 하나가 아님 · 해당 토너먼트에 속하지 않는 아이템 · 현재 진행해야 할 라운드가 아님)",
+                description = "잘못된 요청 (승자가 대결 두 아이템 중 하나가 아님 · 해당 토너먼트에 속하지 않는 아이템 · 현재 진행해야 할 라운드가 아님 · 서버 브래킷에 없는 페어 조합)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -623,7 +662,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트 · 이미 탈락한 아이템)",
+                description = "상태 충돌 (IN_PROGRESS가 아닌 토너먼트에 기록되지 않은 새 매치 전송 · 이미 탈락한 아이템 · 이미 결과가 기록된 대결에 다른 승자 전송)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -637,7 +676,7 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "토너먼트 ID", example = "1") tournamentId: Long,
         request: RecordMatchRequest,
-    ): ApiResponseBody<TournamentDetailResponse.CompletedData?>
+    ): ApiResponseBody<RecordMatchResponse>
 
     @Operation(
         summary = "플레이 링크 생성",

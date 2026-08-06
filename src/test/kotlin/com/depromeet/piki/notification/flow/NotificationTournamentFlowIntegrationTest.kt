@@ -3,7 +3,6 @@ package com.depromeet.piki.notification.flow
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
 import com.depromeet.piki.notification.repository.NotificationRepository
-import com.depromeet.piki.notification.service.DefaultPushImage
 import com.depromeet.piki.notification.service.NotificationDispatcher
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.domain.Tournament
@@ -57,8 +56,6 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var notificationRepository: NotificationRepository
 
-    @Autowired private lateinit var defaultPushImage: DefaultPushImage
-
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
             .webAppContextSetup(webApplicationContext)
@@ -82,24 +79,21 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
         notificationDispatcher.dispatch(TournamentResultReady(rootTournamentId = rootId, actorId = owner))
 
         // 4) 발송 결과 — 참여자에게 RESULT_READY 1건이 actor(주최자) 프사 snapshot 과 함께 저장된다.
-        val saved = notificationRepository.findPage(participant, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(participant, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals("https://img/owner.png", saved.first().actorImageUrl) // 주최자 프사 snapshot
 
-        // 5) 참여자 히스토리 조회 (GET /notifications) — type·category·imageUrl·title 이 셰입대로 내려온다.
+        // 5) 참여자 히스토리 조회 (GET /notifications) — type·kind·title 이 셰입대로 내려온다.
         val mvc = mockMvc()
         mvc
             .perform(get("/api/v1/notifications").header(HttpHeaders.AUTHORIZATION, authHeader(participant)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items.length()").value(1))
             .andExpect(jsonPath("$.data.items[0].type").value("TOURNAMENT_RESULT_READY"))
-            .andExpect(jsonPath("$.data.items[0].category").value("ACTIVITY"))
-            .andExpect(jsonPath("$.data.items[0].imageUrl").value("https://img/owner.png"))
+            .andExpect(jsonPath("$.data.items[0].kind").value("TOURNAMENT"))
             .andExpect(jsonPath("$.data.items[0].title", containsString("주최자")))
             .andExpect(jsonPath("$.data.items[0].isRead").value(false))
             .andExpect(jsonPath("$.data.unreadCount").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(1))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.SYSTEM").value(0))
 
         // 6) 참여자가 읽음 처리 (POST /read all) — 처리 후 안읽음 수 0 을 서버 권위값으로 돌려준다.
         mvc
@@ -110,7 +104,6 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(participant)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.unreadCount").value(0))
-            .andExpect(jsonPath("$.data.unreadCountByCategory.ACTIVITY").value(0))
     }
 
     @Test
@@ -123,10 +116,10 @@ class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
         notificationDispatcher.dispatch(TournamentCompleted(rootTournamentId = rootId, actorId = member))
 
         // 주최자는 1건 받고(actor=멤버 프사), 멤버 본인(actor)은 0건.
-        val ownerInbox = notificationRepository.findPage(owner, cursor = null, limit = 10, types = null)
+        val ownerInbox = notificationRepository.findPage(owner, cursor = null, limit = 10)
         assertEquals(1, ownerInbox.size)
         assertEquals("https://img/member.png", ownerInbox.first().actorImageUrl)
-        assertTrue(notificationRepository.findPage(member, cursor = null, limit = 10, types = null).isEmpty())
+        assertTrue(notificationRepository.findPage(member, cursor = null, limit = 10).isEmpty())
     }
 
     private fun saveUser(

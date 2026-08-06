@@ -27,7 +27,7 @@ class ItemParsingRecipientResolver(
     }
 
     // 파싱 알림의 딥링크 라우팅을 snapshotId 로 해석한다(#408·#576). 그 버전을 pin 한 출전이 있으면 그 좌표를,
-    // 없으면 위시(/archive)로 본다. dispatch 는 수신자가 있을 때만 호출하므로(recipients.isEmpty() early return)
+    // 없으면 위시(/archive/wish)로 본다. dispatch 는 수신자가 있을 때만 호출하므로(recipients.isEmpty() early return)
     // 이 버전은 위시·토너먼트 중 적어도 한쪽에 있다 — 출전 pin 이 아니면 위시다.
     // 공유(#825)로 한 버전이 여러 출전에 pin 되면 firstOrNull(id 오름차순)이 좌표를 하나만 고른다 — 알림 라우팅은
     // 딥링크 하나라 결정성만 있으면 되고, 카드 갱신은 SSE(전 좌표 브로드캐스트)가 진다.

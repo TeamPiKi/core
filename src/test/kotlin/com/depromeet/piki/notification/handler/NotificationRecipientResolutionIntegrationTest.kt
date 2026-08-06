@@ -211,13 +211,13 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `행위자 유저를 못 찾으면 actorImageUrl 은 null 이다 (직렬화 때 defaultPushImg 로 채워짐)`() {
+    fun `행위자 유저를 못 찾으면 actorImageUrl 은 null 이다`() {
         assertEquals(null, joinedHandler.resolveActorContext(TournamentJoined(1010L, UUID.randomUUID())).imageUrl)
     }
 
     @Test
     fun `시스템 알림(파싱)은 actor 가 없어 actorImageUrl 이 null 이다 - negative control`() {
-        // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트 imageUrl null → 직렬화 때 피키 로고로 채워진다.
+        // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트라 imageUrl 이 null 이다.
         assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(2099L, 20990L)).imageUrl)
         assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(2099L, 20990L)).imageUrl)
     }
@@ -233,7 +233,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         // 이벤트 발행 → dispatch → 핸들러 resolveActorContext(한 번의 actor 조회) → 변수(actorName) 렌더 + 프사 snapshot 까지 실제 체인을 탄다.
         notificationDispatcher.dispatch(TournamentItemAdded(tournamentId, actor))
 
-        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals("https://x/snap.png", saved.first().actorImageUrl) // 발송 시점 actor 프사가 그대로 박혔다
         // 같은 컨텍스트의 변수(actorName)가 템플릿에 렌더돼 제목에 박힌다 — 변수·프사가 한 조회에서 함께 흐르는지 end-to-end 로 가드한다.
@@ -255,7 +255,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
             TournamentItemDeleted(tournamentId, tournamentItemId = tournamentItemId, snapshotId = snapshotId, actorId = actor),
         )
 
-        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10, types = null)
+        val saved = notificationRepository.findPage(recipient, cursor = null, limit = 10)
         assertEquals(1, saved.size)
         assertEquals(NotificationType.TOURNAMENT_ITEM_DELETED, saved.first().type)
         assertEquals(tournamentId, saved.first().refId)

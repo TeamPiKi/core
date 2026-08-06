@@ -84,12 +84,6 @@ class IntegrationStubs {
     @Bean
     fun appleNotificationVerifier(): StubAppleNotificationVerifier = StubAppleNotificationVerifier()
 
-    // 이미지 프록시 외부 HTTP 호출 경계. DefaultImageProxyFetcher 는 실제 외부 CDN 을 호출하므로
-    // 통합 테스트에서 stub 으로 교체한다.
-    @Bean
-    @Primary
-    fun imageProxyFetcher(): StubImageProxyFetcher = StubImageProxyFetcher()
-
     // 공지 본문 외부 이미지 fetch 외부 경계(#561 rehost). 실제 외부 URL 호출을 막고 시나리오별 응답을 주입한다.
     @Bean
     @Primary

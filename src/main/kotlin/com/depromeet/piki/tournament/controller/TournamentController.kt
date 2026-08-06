@@ -10,10 +10,12 @@ import com.depromeet.piki.tournament.controller.dto.UpdateInviteDurationRequest
 import com.depromeet.piki.tournament.controller.dto.JoinTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.PlayLinkInfoResponse
 import com.depromeet.piki.tournament.controller.dto.RecordMatchRequest
+import com.depromeet.piki.tournament.controller.dto.RecordMatchResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentInviteService
 import com.depromeet.piki.tournament.service.TournamentService
@@ -44,9 +46,11 @@ class TournamentController(
     override fun getTournaments(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) status: List<TournamentStatus>?,
+        @RequestParam(required = false) playType: TournamentPlayType?,
+        @RequestParam(required = false, defaultValue = "false") ownedOnly: Boolean,
         @RequestParam(required = false) limit: Int?,
     ): ApiResponseBody<List<TournamentSummaryResponse>> {
-        val summaries = tournamentService.getTournaments(userId, status, limit)
+        val summaries = tournamentService.getTournaments(userId, status, playType, ownedOnly, limit)
         return ApiResponseBody.ok(summaries.map(TournamentSummaryResponse::from))
     }
 
@@ -139,9 +143,9 @@ class TournamentController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable tournamentId: Long,
         @Valid @RequestBody request: RecordMatchRequest,
-    ): ApiResponseBody<TournamentDetailResponse.CompletedData?> {
+    ): ApiResponseBody<RecordMatchResponse> {
         val result = tournamentService.recordMatch(userId, request.toRecordMatch(tournamentId))
-        return ApiResponseBody.ok(result?.let { TournamentDetailResponse.CompletedData.from(it) })
+        return ApiResponseBody.ok(RecordMatchResponse.from(result))
     }
 
     @PostMapping("/{tournamentId}/play-link")

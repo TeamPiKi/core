@@ -38,7 +38,9 @@ abstract class NotificationEventHandler<E : Any>(
     // 행위자(actor) 표시 컨텍스트 — 템플릿 변수(actorName)와 발송 시점 프사 snapshot 을 한 번에 해석한다(#473).
     // 변수와 프사를 따로 hook 으로 두면 같은 actor 에 findById 가 두 번 나가므로, 한 조회로 합쳐 돌려준다.
     // actor 가 있는 알림(TOURNAMENT_* 등 "OO님이 …")만 override 한다. actor 없는 시스템 알림(파싱·공지)은
-    // 기본값(빈 컨텍스트): 변수 없음 + imageUrl null → 직렬화 때 서버가 defaultPushImg(피키 로고)로 채운다.
+    // 기본값(빈 컨텍스트): 변수 없음 + imageUrl null.
+    // imageUrl 은 actor_image_url 컬럼에 snapshot 될 뿐 응답에는 실리지 않는다 — 알림 카드가 아바타 대신
+    // kind 라벨을 쓰게 되며 payload 의 imageUrl 이 사라졌다(컬럼은 아바타 복귀 대비로 유지).
     open fun resolveActorContext(event: E): ActorContext = ActorContext()
 
     // 타입 인자 E 를 Spring 의 제네릭 추출 헬퍼로 풀어낸다. 서브클래스 생성 시 javaClass 는 실제 구현체라,

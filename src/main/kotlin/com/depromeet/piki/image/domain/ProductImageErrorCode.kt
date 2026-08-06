@@ -7,8 +7,8 @@ import com.depromeet.piki.common.exception.ErrorCode
 // code·category·message 를 한 엔트리에 모아 single source 로 둔다: status 는 category.httpStatus 로,
 // 응답 detail·로그·OpenAPI 카탈로그는 message 로 파생된다.
 //
-// prefix 가 PRODUCT-IMAGE 가 아니라 붙여쓴 PRODUCTIMAGE 인 이유는 ImageProxyErrorCode 주석과 같다
-// (공개 code 형식 가드가 글자와 숫자를 섞은 3세그먼트를 허용하지 않는다).
+// prefix 가 PRODUCT-IMAGE 가 아니라 붙여쓴 PRODUCTIMAGE 인 이유: 공개 code 형식 가드가
+// 글자와 숫자를 섞은 3세그먼트를 허용하지 않는다.
 enum class ProductImageErrorCode(
     override val code: String,
     override val category: ErrorCategory,

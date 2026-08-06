@@ -5,9 +5,11 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
+import com.depromeet.piki.tournament.domain.RoundBracket
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.event.TournamentCompleted
@@ -29,6 +31,7 @@ import com.depromeet.piki.tournament.service.dto.ParticipantSummary
 import com.depromeet.piki.tournament.service.dto.PlayLinkInfo
 import com.depromeet.piki.tournament.service.dto.RankedItem
 import com.depromeet.piki.tournament.service.dto.RecordMatch
+import com.depromeet.piki.tournament.service.dto.RecordMatchResult
 import com.depromeet.piki.tournament.service.dto.TournamentDetail
 import com.depromeet.piki.tournament.service.dto.TournamentInvitePreview
 import com.depromeet.piki.tournament.service.dto.TournamentItemDetail
@@ -370,7 +373,9 @@ class TournamentService(
                     ?.let { TournamentDetail.HistoryEntry.from(it) }
                 // CLONE 토너먼트는 DB 아이템이 없으므로 ROOT 아이템을 해소한다.
                 val allTournamentItems = getEffectiveTournamentItems(tournament)
-                val currentRound = computeExpectedRound(allTournamentItems.size, allTournamentItems.size / 2, histories)
+                val currentRound = computeExpectedRound(allTournamentItems.size, histories)
+                // 브래킷 파생이 라운드 시작 시점 집합(= remainingItems 의 상위집합)을 쓰므로 전체 아이템의 snapshot 을 잡는다.
+                val snapshotById = snapshotsOf(allTournamentItems)
                 // 단일 패스: 탈락 아이템 + 현재 라운드 대결 완료 아이템 동시 수집
                 val eliminatedItemIds = mutableSetOf<Long>()
                 val foughtInCurrentRoundIds = mutableSetOf<Long>()
@@ -385,16 +390,19 @@ class TournamentService(
                 val remainingTournamentItems = allTournamentItems.filter { item ->
                     item.getId() !in eliminatedItemIds && item.getId() !in foughtInCurrentRoundIds
                 }
-                val snapshotById = snapshotsOf(remainingTournamentItems)
                 val remainingItems = remainingTournamentItems
                     .map { toItemDetail(it, snapshotById) }
                     .sortedWith(compareBy({ it.price }, { it.tournamentItemId }))
+                val bracket = deriveBracket(allTournamentItems, snapshotById, histories, currentRound, currentUser.getId())
                 TournamentDetail.InProgress(
                     tournamentId = tournament.getId(),
                     name = tournament.name,
                     currentRound = currentRound,
                     lastHistory = lastHistory,
                     remainingItems = remainingItems,
+                    currentMatch = bracket
+                        .firstUnplayed(playedPairsIn(histories, currentRound))
+                        ?.let { toMatchDetail(it, allTournamentItems, snapshotById) },
                     isOwner = isOwner,
                     isRoot = isRoot,
                     sourceTournamentId = tournament.sourceTournamentId,
@@ -498,13 +506,18 @@ class TournamentService(
     fun getTournaments(
         userId: UUID,
         statuses: List<TournamentStatus>?,
+        playType: TournamentPlayType?,
+        ownedOnly: Boolean,
         limit: Int?,
     ): List<TournamentSummary> {
         limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
 
-        // 가시성 필터(ROOT 는 소유자·PENDING 만 — 멤버는 본인 CLONE 으로 플레이·표시)·최근순·limit 을 쿼리가 끝낸다.
+        // 가시성 필터·playType·최근순·limit 을 쿼리가 끝낸다. 가시성은 per-user effective status 로 판정한다(#882):
+        // owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로, 참여자(클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다.
+        // ownedOnly=true(홈)는 참여 갈래를 꺼 "내가 owner 인 것" 만 노출한다. status 와는 AND 로 걸린다.
+        // playType 은 파생 상태라 앱에서 거르면 limit 이 먼저 걸려 요구한 개수보다 적게 나온다 (쿼리에서 함께 판정).
         // 참가자·프로필은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
-        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, limit)
+        val limited = tournamentRepository.findVisibleByUserId(userId, statuses, playType, ownedOnly, limit)
         if (limited.isEmpty()) return emptyList()
 
         val tournamentUsers = tournamentUserRepository.findByTournamentIds(limited.map { it.getId() })
@@ -526,12 +539,28 @@ class TournamentService(
         val rootIdByTournamentId = limited.associate { it.getId() to (it.sourceTournamentId ?: it.getId()) }
         val thumbnailsByRootId = thumbnailUrlsByTournamentId(rootIdByTournamentId.values.distinct())
 
+        // 내 tournament_user id 를 토너먼트별로 — effectiveStatus 계산에서 "내가 이 방의 owner 냐" 판정에 쓴다.
+        val myTournamentUserIdByTournamentId =
+            tournamentUsers
+                .filter { it.userId == userId }
+                .associate { it.tournamentId to it.getId() }
+
         return limited.map { tournament ->
+            // 쿼리 가시성과 동일한 per-user effective status(#882): owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로,
+            // 참여자(owner 아니고 내 클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다(쿼리가 그런 ROOT 만 참여 갈래로 반환).
+            // 소유 판정은 쿼리와 같이 ownerTournamentUserId 로만 한다 — "CLONE 이면 내 것" 은 성립하지 않는다
+            // (초대코드 join 이 ROOT 를 강제하지 않아 남의 CLONE 에 참여자로 들어갈 수 있다).
+            val effectiveStatus =
+                when {
+                    tournament.ownerTournamentUserId == myTournamentUserIdByTournamentId[tournament.getId()] -> tournament.status
+                    tournament.status == TournamentStatus.COMPLETED -> TournamentStatus.IN_PROGRESS
+                    else -> tournament.status
+                }
             TournamentSummary.of(
                 tournament = tournament,
                 participantProfileImages = profileImagesByTournamentId[tournament.getId()] ?: emptyList(),
                 thumbnailUrls = thumbnailsByRootId[rootIdByTournamentId.getValue(tournament.getId())] ?: emptyList(),
-                effectiveStatus = tournament.status,
+                effectiveStatus = effectiveStatus,
             )
         }
     }
@@ -562,11 +591,13 @@ class TournamentService(
     fun recordMatch(
         userId: UUID,
         command: RecordMatch,
-    ): TournamentDetail.Completed? {
+    ): RecordMatchResult {
         val tournament =
             tournamentRepository.findTournamentByIdForUpdate(command.tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        if (!tournament.isInProgress()) throw TournamentException.notInProgressTournament()
+        // 진행 중 검사는 "새 매치를 기록해도 되나" 를 묻는 것이라 멱등 판정 뒤로 미룬다 —
+        // 결승을 기록하면 토너먼트가 즉시 COMPLETED 로 바뀌므로, 여기서 먼저 막으면
+        // 가장 흔한 재시도(결승 응답을 못 받고 재전송)만 멱등에서 빠진다.
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(command.tournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
@@ -581,7 +612,8 @@ class TournamentService(
         }
 
         // CLONE 토너먼트는 DB 에 아이템 행이 없어 ROOT 의 아이템을 사용한다.
-        val tournamentItemIds = getEffectiveTournamentItems(tournament).map { it.getId() }.toSet()
+        val allTournamentItems = getEffectiveTournamentItems(tournament)
+        val tournamentItemIds = allTournamentItems.map { it.getId() }.toSet()
         if (command.firstTournamentItemId !in tournamentItemIds ||
             command.secondTournamentItemId !in tournamentItemIds
         ) {
@@ -592,13 +624,61 @@ class TournamentService(
         val histories = tournamentRepository.findHistoriesByTournamentIdAndTournamentUserId(
             command.tournamentId, tournamentUser.getId(),
         )
+        val snapshotById = snapshotsOf(allTournamentItems)
+
+        // 멱등(#683): 같은 조합이 이미 기록됐으면 재전송·뒤로가기로 인한 재시도다.
+        // 이미 기록된 매치의 패자는 아래 탈락 집합에 들어 있으므로, 탈락 검사보다 먼저 판정해야
+        // 정상 재시도가 409 ELIMINATED 로 오인되지 않는다.
+        histories
+            .firstOrNull { h ->
+                RoundBracket
+                    .MatchPair(h.firstTournamentItemId, h.secondTournamentItemId)
+                    .isSamePair(command.firstTournamentItemId, command.secondTournamentItemId)
+            }?.let { recorded ->
+                // 결과를 뒤집으려는 시도는 멱등이 아니다.
+                if (recorded.selectedTournamentItemId != command.selectedTournamentItemId) {
+                    throw TournamentException.matchAlreadyRecorded()
+                }
+                // 결승을 재전송한 경우 토너먼트는 이미 COMPLETED 다 — 최초 응답과 같은 순위 결과를 재구성해 돌려준다.
+                // 그러지 않으면 클라이언트가 최종 순위를 못 받고, 방금 선택을 마친 사용자에게
+                // "토너먼트가 진행 중일 때만 할 수 있어요" 가 뜬다.
+                if (tournament.isCompleted()) {
+                    return RecordMatchResult(
+                        nextMatch = null,
+                        completed = buildCompleted(
+                            tournament, histories, computeHasGroupResult(tournament),
+                            tournamentUser.getId() == tournament.ownerTournamentUserId,
+                            canAddItemForTournament(tournament, userId),
+                        ),
+                    )
+                }
+                // 그 매치가 속한 라운드로 다음 매치를 다시 파생한다. 라운드가 이미 끝났으면 null 이 나오고,
+                // 클라이언트는 현행대로 GET 을 다시 불러 다음 라운드를 받는다.
+                return RecordMatchResult(
+                    nextMatch = nextMatchOf(
+                        allTournamentItems, snapshotById, histories, recorded.currentRound, tournamentUser.getId(),
+                    ),
+                    completed = null,
+                )
+            }
+
+        // 재시도가 아닌 새 매치 기록이므로 여기서부터는 진행 중이어야 한다.
+        if (!tournament.isInProgress()) throw TournamentException.notInProgressTournament()
+
         val eliminatedItemIds = histories.map { it.loser() }.toSet()
         if (command.firstTournamentItemId in eliminatedItemIds || command.secondTournamentItemId in eliminatedItemIds) {
             throw TournamentException.eliminatedTournamentItem()
         }
-        val firstRoundMatchCount = tournamentItemIds.size / 2
-        val expectedRound = computeExpectedRound(tournamentItemIds.size, firstRoundMatchCount, histories)
+        val expectedRound = computeExpectedRound(tournamentItemIds.size, histories)
         if (command.currentRound != expectedRound) throw TournamentException.invalidCurrentRound()
+
+        // 브래킷 무결성(#683): 소속·미탈락·라운드만 보던 기존 검증은 클라가 임의 조합([0]vs[3])을 보내도 통과했다.
+        // 서버가 파생한 페어 집합에 없는 조합은 거부한다. 단 진행 순서는 검증하지 않는다 —
+        // 라운드 내 매치는 서로 독립이라 순서가 최종 결과를 바꾸지 않고, 강제하면 열린 탭·재전송에서 오탐 400 만 는다.
+        val bracket = deriveBracket(allTournamentItems, snapshotById, histories, expectedRound, tournamentUser.getId())
+        if (!bracket.contains(command.firstTournamentItemId, command.secondTournamentItemId)) {
+            throw TournamentException.invalidMatchPair()
+        }
 
         val newHistory = TournamentHistory(
             tournamentId = command.tournamentId,
@@ -610,7 +690,14 @@ class TournamentService(
         )
         tournamentRepository.saveHistory(newHistory)
 
-        if (!tournament.isFinalRound(command.currentRound)) return null
+        if (!tournament.isFinalRound(command.currentRound)) {
+            return RecordMatchResult(
+                nextMatch = bracket
+                    .firstUnplayed(playedPairsIn(histories + newHistory, command.currentRound))
+                    ?.let { toMatchDetail(it, allTournamentItems, snapshotById) },
+                completed = null,
+            )
+        }
 
         // Design B: 토너먼트당 플레이어가 한 명이므로 최종 라운드 완료 즉시 COMPLETED 로 전환한다.
         tournamentUser.complete()
@@ -626,7 +713,13 @@ class TournamentService(
         }
 
         val isOwner = tournamentUser.getId() == tournament.ownerTournamentUserId
-        return buildCompleted(tournament, histories + newHistory, computeHasGroupResult(tournament), isOwner, canAddItemForTournament(tournament, userId))
+        return RecordMatchResult(
+            nextMatch = null,
+            completed = buildCompleted(
+                tournament, histories + newHistory, computeHasGroupResult(tournament), isOwner,
+                canAddItemForTournament(tournament, userId),
+            ),
+        )
     }
 
     private fun computeHasGroupResult(tournament: Tournament): Boolean {
@@ -1055,6 +1148,66 @@ class TournamentService(
         )
     }
 
+    // 그 라운드의 브래킷(페어 구성 · 진행 순서 · 부전승)을 파생한다(#683).
+    //
+    // 입력은 반드시 "라운드 시작 시점 집합" 이어야 한다 — 이미 싸운 아이템이 빠진 축소된 집합으로 매번 파생하면
+    // 인원 수가 달라져 부전승 대상과 진행 순서가 흔들린다. 따라서 이전 라운드들에서 탈락한 아이템만 제외하고,
+    // 현재 라운드에서 진 아이템은(라운드 시작 시점엔 살아 있었으므로) 그대로 남긴다.
+    private fun deriveBracket(
+        allTournamentItems: List<TournamentItem>,
+        snapshotById: Map<Long, ItemSnapshot>,
+        histories: List<TournamentHistory>,
+        currentRound: Int,
+        tournamentUserId: Long,
+    ): RoundBracket {
+        // 라운드 값은 남은 인원 수(16 -> 8 -> 4 -> 2)라 진행될수록 작아진다. 따라서 "이전 라운드" 는
+        // currentRound 보다 "큰" 기록이다. != 로 두면 나중 라운드(더 작은 값)의 패자까지 빼서, 과거 라운드를
+        // 재파생할 때(멱등 재시도가 recorded.currentRound 로 부른다) 인원이 줄어든 브래킷이 나온다.
+        val eliminatedBeforeRound = histories
+            .filter { it.currentRound > currentRound }
+            .map { it.loser() }
+            .toSet()
+        val entries = allTournamentItems
+            .filterNot { it.getId() in eliminatedBeforeRound }
+            .map { RoundBracket.Entry(it.getId(), it.requireSnapshot(snapshotById).price) }
+        return RoundBracket.of(entries, tournamentUserId, currentRound)
+    }
+
+    // 그 라운드에서 아직 안 치른 첫 매치. 라운드가 다 끝났으면 null.
+    private fun nextMatchOf(
+        allTournamentItems: List<TournamentItem>,
+        snapshotById: Map<Long, ItemSnapshot>,
+        histories: List<TournamentHistory>,
+        round: Int,
+        tournamentUserId: Long,
+    ): TournamentDetail.MatchDetail? =
+        deriveBracket(allTournamentItems, snapshotById, histories, round, tournamentUserId)
+            .firstUnplayed(playedPairsIn(histories, round))
+            ?.let { toMatchDetail(it, allTournamentItems, snapshotById) }
+
+    // 그 라운드에서 이미 치른 매치들. 진행 순서는 검증하지 않으므로 "치렀는지" 만 본다.
+    private fun playedPairsIn(
+        histories: List<TournamentHistory>,
+        round: Int,
+    ): List<RoundBracket.MatchPair> = histories
+        .filter { it.currentRound == round }
+        .map { RoundBracket.MatchPair(it.firstTournamentItemId, it.secondTournamentItemId) }
+
+    private fun toMatchDetail(
+        pair: RoundBracket.MatchPair,
+        tournamentItems: List<TournamentItem>,
+        snapshotById: Map<Long, ItemSnapshot>,
+    ): TournamentDetail.MatchDetail {
+        val itemById = tournamentItems.associateBy { it.getId() }
+        // 페어는 방금 이 아이템 목록에서 파생됐으므로 조회가 빌 수 없다 — 비면 파생 입력이 어긋난 코드 버그다.
+        fun detailOf(tournamentItemId: Long) =
+            toItemDetail(
+                itemById[tournamentItemId] ?: error("브래킷 페어 아이템 없음 — tournamentItemId=$tournamentItemId"),
+                snapshotById,
+            )
+        return TournamentDetail.MatchDetail(first = detailOf(pair.first), second = detailOf(pair.second))
+    }
+
     // CLONE 토너먼트는 DB 에 아이템 행이 없고, ROOT 의 아이템을 sourceTournamentId 로 공유한다.
     private fun getEffectiveTournamentItems(tournament: Tournament): List<TournamentItem> =
         tournamentItemRepository.findAllByTournamentId(tournament.sourceTournamentId ?: tournament.getId())
@@ -1110,26 +1263,26 @@ class TournamentService(
             )
         }
 
-    // 완료된 라운드 수와 첫 라운드 매치 수를 기반으로 다음 진행해야 할 라운드를 계산한다.
+    // 완료된 라운드 수를 기반으로 다음 진행해야 할 라운드를 계산한다.
     // currentPlayers = 해당 라운드 시작 시 남은 플레이어 수 = currentRound 값과 동일.
-    // nextPlayers = currentPlayers - played: 승자 수 + 부전승(bye) 수로 홀수 아이템의 leftover 를 자연스럽게 흡수한다.
+    // 매치 수는 RoundBracket 이 소유한다(2의 거듭제곱 정규화) — 브래킷 파생과 라운드 수학이 같은 공식을 써야
+    // "서버가 지정한 currentMatch" 와 "서버가 기대하는 라운드" 가 어긋나지 않는다.
+    // 다음 라운드 인원 = currentPlayers - matchesExpected: 승자 수(=매치 수) + 부전승 수와 같다.
     private fun computeExpectedRound(
         startRound: Int,
-        firstRoundMatchCount: Int,
         histories: List<TournamentHistory>,
     ): Int {
         val countByRound = histories
             .groupingBy { it.currentRound }
             .eachCount()
         var currentPlayers = startRound
-        var matchesExpected = firstRoundMatchCount
         while (currentPlayers >= Tournament.FINAL_ROUND_SIZE) {
+            val matchesExpected = RoundBracket.matchCountOf(currentPlayers)
             val played = countByRound[currentPlayers] ?: 0
             if (played < matchesExpected) return currentPlayers
+            // 결승(2명)까지 다 치렀으면 더 내려갈 라운드가 없다.
             if (currentPlayers == Tournament.FINAL_ROUND_SIZE) break
-            val nextPlayers = currentPlayers - played
-            matchesExpected = nextPlayers / 2
-            currentPlayers = nextPlayers
+            currentPlayers -= matchesExpected
         }
         // 모든 라운드가 완료됐는데 isInProgress() 인 상태 — tournament.complete() 누락 버그
         error("모든 라운드가 완료됐는데 IN_PROGRESS 상태임 tournamentId=${histories.firstOrNull()?.tournamentId}")

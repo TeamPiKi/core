@@ -12,8 +12,8 @@ import com.depromeet.piki.notification.controller.dto.NotificationHistoryRespons
 import com.depromeet.piki.notification.controller.dto.NotificationReadRequest
 import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
-import com.depromeet.piki.notification.domain.NotificationCategory
 import com.depromeet.piki.notification.domain.NotificationException
+import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -39,7 +39,6 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = sampleItems,
                                         unreadCount = 2,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 1L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
@@ -53,7 +52,6 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = listOf(tournamentParsingItem),
                                         unreadCount = 1,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 0L, NotificationCategory.SYSTEM to 1L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = "1024", hasNext = true),
                             ),
@@ -67,17 +65,16 @@ class NotificationHistoryApiExamples(
                                     NotificationHistoryResponse(
                                         items = emptyList(),
                                         unreadCount = 0,
-                                        unreadCountByCategory = mapOf(NotificationCategory.ACTIVITY to 0L, NotificationCategory.SYSTEM to 0L),
                                     ),
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
                     )
                     add(NotificationException.invalidCursor(), name = "유효하지 않은 cursor")
-                    // category enum 바인딩 실패(ACTIVITY/SYSTEM 외) — 도메인 예외가 아니라 RESEH 경유 공통 400.
+                    // size 가 Int 로 바인딩되지 않는 경우(숫자 아닌 값·Int 범위 초과) — 도메인 예외가 아니라 RESEH 경유 공통 400.
                     // detail 미지정 시 실제 응답과 동일하게 category.description 이 채워진다(single source, 손 detail 없음).
                     add(
                         status = HttpStatus.BAD_REQUEST,
-                        name = "유효하지 않은 category 값",
+                        name = "유효하지 않은 size 값",
                         payload = ApiResponseBody.fail<Unit>(CommonErrorCode.INVALID_INPUT),
                     )
                     unauthorized()
@@ -90,9 +87,7 @@ class NotificationHistoryApiExamples(
                         name = "읽음 처리 성공 (처리 후 unreadCount 동봉)",
                         payload =
                             ApiResponseBody.ok(
-                                data = NotificationReadResponse.of(
-                                    mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 1L),
-                                ),
+                                data = NotificationReadResponse.of(unreadCount = 2),
                             ),
                     )
                     add(
@@ -115,9 +110,7 @@ class NotificationHistoryApiExamples(
                         name = "삭제 성공 (삭제 후 unreadCount 동봉)",
                         payload =
                             ApiResponseBody.ok(
-                                data = NotificationDeleteResponse.of(
-                                    mapOf(NotificationCategory.ACTIVITY to 1L, NotificationCategory.SYSTEM to 0L),
-                                ),
+                                data = NotificationDeleteResponse.of(unreadCount = 1),
                             ),
                     )
                     add(
@@ -136,43 +129,41 @@ class NotificationHistoryApiExamples(
             operation
         }
 
-    // 토너먼트 알림 (라우팅 없음, refId 만) — 활동, actor 있어 imageUrl=프사 snapshot, 안읽음.
+    // 토너먼트 알림 (라우팅 없음, refId 만) — 안읽음.
+    // kind 는 리터럴로 박지 않고 payload 와 같은 파생(NotificationKind.of)을 거친다 — 분류가 바뀌면 example 이 따라온다.
     private val referenceItem =
         NotificationSsePayload.Reference(
             id = 1026,
             type = NotificationType.TOURNAMENT_JOINED,
-            category = NotificationCategory.ACTIVITY,
+            kind = NotificationKind.of(NotificationType.TOURNAMENT_JOINED, null),
             title = "토너먼트에 참가했어요",
             body = "지금 바로 픽을 시작해보세요",
-            imageUrl = "https://images.piki/profiles/abc/3f7c.png",
             refId = 77,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 10, 0),
         )
 
-    // 위시 출처 파싱 완료 알림 (kind=WISH) — 시스템, actor 없어 imageUrl=defaultPushImg(피키 로고), 읽음.
+    // 위시 출처 파싱 완료 알림 (라우팅 출처 WISH) — 읽음.
     private val wishParsingItem =
         NotificationSsePayload.WishParsing(
             id = 1025,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            category = NotificationCategory.SYSTEM,
+            kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH),
             title = "상품 정보가 준비됐어요",
             body = "에어 조던 1 미드",
-            imageUrl = "https://images.piki/defaults/push-icon.svg",
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
         )
 
-    // 토너먼트 출처 파싱 완료 알림 (kind=TOURNAMENT + 두 식별자) — 시스템, imageUrl=defaultPushImg, 안읽음.
+    // 토너먼트 출처 파싱 완료 알림 (라우팅 출처 TOURNAMENT + 두 식별자) — 안읽음.
     private val tournamentParsingItem =
         NotificationSsePayload.TournamentRouted(
             id = 1024,
             type = NotificationType.ITEM_PARSING_COMPLETED,
-            category = NotificationCategory.SYSTEM,
+            kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
             title = "토너먼트 아이템이 준비됐어요",
             body = "나이키 덩크 로우",
-            imageUrl = "https://images.piki/defaults/push-icon.svg",
             refId = 513,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),
