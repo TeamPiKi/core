@@ -1,6 +1,10 @@
+---
+paths: ["src/test/**"]
+---
+
 # 테스트 컨벤션 (core 바인딩)
 
-**원칙은 여기 없다.** 분류·가치 판단·분기 위치 결정 트리·모킹 금지·셋업 원칙·네이밍 접미사·기계 강제, 그리고 JVM/Spring 공통(컨텍스트 캐싱·E2E 격리·동시성)은 전 repo 공통이라 infra 가 정본을 갖고, `install.sh` 가 `.claude/rules/testing-principles.md` 로 설치한다 (CLAUDE.md 가 이 파일과 함께 import 한다).
+**원칙은 여기 없다.** 분류·가치 판단·분기 위치 결정 트리·모킹 금지·셋업 원칙·네이밍 접미사·기계 강제, 그리고 JVM/Spring 공통(컨텍스트 캐싱·E2E 격리·동시성)은 전 repo 공통이라 infra 가 정본을 갖고, `install.sh` 가 `.claude/rules/testing-principles.md` 로 설치한다 (CLAUDE.md 가 그 파일을 import 해 항상 로드한다). 이 파일은 `src/test/**` 를 다룰 때만 로드된다.
 
 이 파일은 그 원칙을 **이 repo 의 언어·스택에 묶는 부분**만 담는다 — Kotlin · Spring · MySQL. 둘이 어긋나 보이면 원칙이 이긴다.
 
