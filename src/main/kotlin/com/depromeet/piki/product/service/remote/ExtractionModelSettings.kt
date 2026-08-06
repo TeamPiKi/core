@@ -25,7 +25,12 @@ class DbExtractionModelSettings(
     @Volatile
     private var models: Map<ExtractionTarget, String> = emptyMap()
 
+    // @Synchronized 인 이유: 조회와 교체가 갈라져 있으면 늦게 시작한 재적재가 먼저 끝나는 역전이 생긴다.
+    // 주기 재적재가 DB 를 읽는 사이 백오피스 저장의 afterCommit 재적재가 통째로 끝나 버리면, 뒤늦게 완료된
+    // 주기 재적재가 방금 저장한 값을 옛 값으로 덮어쓴다 — 다음 주기(5분)까지 "저장했는데 안 바뀐" 상태가 된다.
+    // load 전체를 직렬화하면 나중에 진입한 쪽이 항상 더 새 DB 를 읽으므로 최신이 남는다.
     @PostConstruct
+    @Synchronized
     fun load() {
         models = findAll().mapValues { it.value.model }
     }

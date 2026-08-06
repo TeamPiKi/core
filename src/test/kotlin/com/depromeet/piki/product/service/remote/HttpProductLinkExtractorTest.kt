@@ -36,10 +36,13 @@ class HttpProductLinkExtractorTest {
         override fun routeOf(link: ProductLink): ExtractionRoute? = route
     }
 
+    // 지정한 축에만 값을 준다 — target 을 무시하고 늘 같은 값을 돌려주면, 링크 추출기가 IMAGE 축을 읽는
+    // 회귀가 그대로 통과한다. 축 분리가 이 기능의 전제라 Fake 가 그 전제를 지켜야 한다.
     private class FakeModelSettings(
-        private val model: String? = null,
+        private val axis: ExtractionTarget,
+        private val model: String?,
     ) : ExtractionModelSettings {
-        override fun modelOf(target: ExtractionTarget): String? = model
+        override fun modelOf(target: ExtractionTarget): String? = model?.takeIf { target == axis }
     }
 
     private fun extractorWith(
@@ -50,7 +53,11 @@ class HttpProductLinkExtractorTest {
         val builder = RestClient.builder().baseUrl("http://extractor.test")
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
-        return HttpProductLinkExtractor(builder.build(), FakeRoutingPolicy(route), FakeModelSettings(model))
+        return HttpProductLinkExtractor(
+            builder.build(),
+            FakeRoutingPolicy(route),
+            FakeModelSettings(ExtractionTarget.LINK, model),
+        )
     }
 
     @Test

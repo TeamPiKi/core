@@ -33,10 +33,13 @@ import kotlin.test.assertTrue
 class HttpImageSnapshotExtractorTest {
     private val imageKey = "items/raw/0f8a1c2e.png"
 
+    // 지정한 축에만 값을 준다 — 이미지 추출기가 LINK 축을 읽는 회귀를 이 Fake 가 잡아야 한다
+    // (HttpProductLinkExtractorTest 의 같은 Fake 와 대칭이다).
     private class FakeModelSettings(
-        private val model: String? = null,
+        private val axis: ExtractionTarget,
+        private val model: String?,
     ) : ExtractionModelSettings {
-        override fun modelOf(target: ExtractionTarget): String? = model
+        override fun modelOf(target: ExtractionTarget): String? = model?.takeIf { target == axis }
     }
 
     private fun extractorWith(
@@ -49,7 +52,7 @@ class HttpImageSnapshotExtractorTest {
         return HttpImageSnapshotExtractor(
             builder.build(),
             S3Properties(bucket = "test-piki-images", publicBaseUrl = "https://img.test"),
-            FakeModelSettings(model),
+            FakeModelSettings(ExtractionTarget.IMAGE, model),
         )
     }
 
