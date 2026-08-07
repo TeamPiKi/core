@@ -33,16 +33,6 @@ output "dev_ec2_public_dns" {
   value       = aws_eip.dev_app.public_dns
 }
 
-output "rds_endpoint" {
-  description = "RDS 엔드포인트 (host:port)"
-  value       = aws_db_instance.mysql.endpoint
-}
-
-output "rds_address" {
-  description = "RDS 호스트"
-  value       = aws_db_instance.mysql.address
-}
-
 output "db_ec2_private_ip" {
   description = "자체 관리 DB 박스 사설 IP — SSM /piki-core/prod/db-host 에 넣을 값 (#898). 앱은 이 주소로만 접속한다."
   value       = aws_instance.db.private_ip

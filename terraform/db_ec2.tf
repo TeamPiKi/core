@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # DB 박스 Security Group
 #
-# 3306 은 앱 EC2 SG 에서만 받는다(rds.tf 의 aws_security_group.rds 와 같은 규율) — DB 를
+# 3306 은 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
 # 인터넷에 직접 노출하지 않는다. SSH 는 EC2 Instance Connect·팀원 접속을 위해 열되
 # var.ssh_ingress_cidr 로 좁힌다.
 #
