@@ -43,6 +43,21 @@ output "rds_address" {
   value       = aws_db_instance.mysql.address
 }
 
+output "db_ec2_private_ip" {
+  description = "자체 관리 DB 박스 사설 IP — SSM /piki-core/prod/db-host 에 넣을 값 (#898). 앱은 이 주소로만 접속한다."
+  value       = aws_instance.db.private_ip
+}
+
+output "db_ec2_public_ip" {
+  description = "자체 관리 DB 박스 퍼블릭 IP — EC2 Instance Connect SSH 용. EIP 가 아니라 자동 할당이라 재기동 시 바뀐다."
+  value       = aws_instance.db.public_ip
+}
+
+output "db_backup_bucket_name" {
+  description = "MySQL 논리 백업 저장 버킷명 (#898)"
+  value       = aws_s3_bucket.db_backup.id
+}
+
 output "image_bucket_name" {
   description = "운영(prod) 이미지 버킷명 (prod S3_BUCKET)"
   value       = aws_s3_bucket.images.id
