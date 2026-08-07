@@ -23,21 +23,23 @@ ssm_param() {
 }
 
 DB_NAME="$(ssm_param db-name)" || { log "SSM db-name 조회 실패"; exit 1; }
-DB_PASSWORD="$(ssm_param db-password)" || { log "SSM db-password 조회 실패"; exit 1; }
+# 덤프는 root 로 뜬다(전 스키마 접근). root 비밀번호는 앱 계정(db-password)과 분리돼 있으므로
+# 여기서 db-root-password 를 읽는다 — 앱 자격증명이 새도 백업 경로의 권한은 함께 넘어가지 않는다.
+DB_ROOT_PASSWORD="$(ssm_param db-root-password)" || { log "SSM db-root-password 조회 실패"; exit 1; }
 BUCKET="$(ssm_param db-backup-bucket)" || { log "SSM db-backup-bucket 조회 실패"; exit 1; }
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 FILE="${DB_NAME}-${TS}.sql.gz"
 mkdir -p "$WORK_DIR"
 
-# 덤프 → gzip. root 로 뜬다(컨테이너 생성 시 root 비밀번호를 db-password 와 같게 넣었다).
+# 덤프 → gzip. root 로 뜬다(스키마 전체와 routine·trigger 까지 읽어야 한다).
 # --databases 를 쓰면 CREATE DATABASE / USE 문이 함께 담겨 빈 서버에 그대로 복원된다.
 # --routines --triggers --events: 스키마 외 객체까지 포함해 "이 파일 하나면 복구된다"를 지킨다.
 #
 # 파이프 중간(mysqldump)의 실패를 놓치지 않도록 set -o pipefail 이 위에서 켜져 있다 —
 # 이게 없으면 덤프가 깨져도 gzip 성공 코드만 보고 손상된 파일을 업로드한다.
 log "덤프 시작: ${DB_NAME}"
-if ! docker exec -e MYSQL_PWD="$DB_PASSWORD" "$CONTAINER" \
+if ! docker exec -e MYSQL_PWD="$DB_ROOT_PASSWORD" "$CONTAINER" \
   mysqldump -u root --single-transaction --routines --triggers --events \
   --databases "$DB_NAME" 2>"${WORK_DIR}/dump.err" | gzip > "${WORK_DIR}/${FILE}"; then
   log "덤프 실패: $(tail -3 "${WORK_DIR}/dump.err")"

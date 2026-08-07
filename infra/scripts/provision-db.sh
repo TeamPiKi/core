@@ -37,6 +37,9 @@ ssm_param() {
 DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM(piki-prod-db-policy)·파라미터 존재 확인"; exit 1; }
 DB_USERNAME="$(ssm_param db-username)" || { echo "[mysql] SSM db-username 조회 실패"; exit 1; }
 DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회 실패"; exit 1; }
+# root 는 앱 계정과 다른 비밀번호를 쓴다. 같은 값을 공유하면 앱 자격증명이 새는 순간 DB 전체
+# 권한까지 함께 넘어간다 — 앱은 자기 스키마에만 권한이 있는 계정으로 붙고, root 는 백업·관리용으로만 남긴다.
+DB_ROOT_PASSWORD="$(ssm_param db-root-password)" || { echo "[mysql] SSM db-root-password 조회 실패"; exit 1; }
 echo "[mysql] DB 자격증명 SSM 로드 완료 (${SSM_PREFIX}/db-*)"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
@@ -46,6 +49,11 @@ else
   # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
   # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 — 3306 인바운드는
   # 앱 EC2 SG 에서 온 것만 허용한다(terraform/db_ec2.tf).
+  #
+  # MYSQL_ROOT_HOST=localhost 를 명시하는 이유: 이미지 기본값이 `%` 라 그냥 두면 네트워크 너머에서도
+  # root 로 붙을 수 있는 root@% 계정이 생긴다. 보안그룹이 앱 박스만 통과시키더라도, 앱 박스가 뚫리면
+  # 그대로 DB 전체 권한이 넘어간다. root 를 쓰는 곳은 컨테이너 안에서 도는 백업 스크립트뿐이라
+  # localhost 로 좁혀도 잃는 게 없다.
   #
   # 아래 세 튜닝은 기본값이 이 박스 크기에 안 맞아서 넣는다. 기본값으로 띄웠을 때 실측이
   # RAM 234MB + swap 185MB = 약 419MB 로 캡(384m)을 넘어 상시 스왑 상태였다.
@@ -67,7 +75,8 @@ else
     -e MYSQL_DATABASE="$DB_NAME" \
     -e MYSQL_USER="$DB_USERNAME" \
     -e MYSQL_PASSWORD="$DB_PASSWORD" \
-    -e MYSQL_ROOT_PASSWORD="$DB_PASSWORD" \
+    -e MYSQL_ROOT_PASSWORD="$DB_ROOT_PASSWORD" \
+    -e MYSQL_ROOT_HOST=localhost \
     "$MYSQL_IMAGE" \
     --performance-schema=OFF \
     --innodb-buffer-pool-size=64M \
