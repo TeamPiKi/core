@@ -253,12 +253,25 @@ resource "aws_instance" "db" {
     http_put_response_hop_limit = 2
   }
 
+  # AWS 층의 종료 보호. 아래 lifecycle 의 prevent_destroy 는 terraform 이 파괴 계획을 거부하게
+  # 할 뿐이라, 콘솔·CLI·API 로 직접 종료하는 경로는 그대로 열려 있다. 두 층을 함께 둬야
+  # "실수로 지워지지 않는다"가 성립한다. 의도적으로 종료할 때는 이 값을 false 로 바꿔 apply 한 뒤 진행한다.
+  disable_api_termination = true
+
   root_block_device {
     volume_size = var.db_ec2_volume_size
     volume_type = "gp3"
     encrypted   = true
     # 이 박스의 루트 볼륨이 곧 DB 데이터다(docker named volume 이 여기 있다).
-    # 인스턴스를 지워도 볼륨은 남겨 실수로 데이터가 함께 사라지지 않게 한다.
+    # 인스턴스가 종료돼도 볼륨은 남긴다.
+    #
+    # 다만 이것은 자동 복구 장치가 아니다 — 남은 볼륨은 새 인스턴스에 자동으로 붙지 않는다.
+    # 박스를 다시 만들면 새 루트 볼륨으로 뜨고, provision-db.sh 는 빈 MySQL 을 기동한다.
+    # 즉 "데이터가 사라지지 않는다"까지가 이 설정의 보장이고, 되살리려면 사람이 옛 볼륨을
+    # 연결하는 수동 절차가 필요하다.
+    #
+    # 그래서 주 복구 경로는 이 볼륨이 아니라 S3 백업(db-backup.sh)이다. 볼륨 보존은 백업까지
+    # 실패했을 때 남는 마지막 회수 수단으로 둔다.
     delete_on_termination = false
   }
 
