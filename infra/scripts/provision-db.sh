@@ -5,10 +5,14 @@
 # 여기가 맡는다 — user_data 는 첫 부팅에만 실행돼 스크립트를 고쳐도 반영되지 않고, 반영하려면
 # 인스턴스 교체가 필요한데 이 박스에서 교체는 곧 데이터 손실이기 때문이다.
 #
-# 실행: 같은 디렉터리의 db-backup.sh 와 함께 박스로 올린 뒤 이 스크립트를 돌린다.
+# 실행: 이 스크립트와 db-backup.sh, 그리고 공용 alloy 블록을 함께 박스로 올린 뒤 돌린다.
 #   scp -i ~/.ssh/piki-ec2-connect infra/scripts/{provision-db.sh,db-backup.sh} ubuntu@<DB_PUBLIC_IP>:/tmp/
+#   scp -i ~/.ssh/piki-ec2-connect -r <infra-repo>/blocks/alloy ubuntu@<DB_PUBLIC_IP>:/tmp/
 #   ssh  -i ~/.ssh/piki-ec2-connect ubuntu@<DB_PUBLIC_IP> 'bash /tmp/provision-db.sh'
 # (키페어가 없는 박스라 접속 전에 EC2 Instance Connect 로 공개키를 밀어 넣어야 한다 — README 참고.)
+#
+# alloy 블록을 core 에 복사해 두지 않고 매번 infra 에서 올리는 이유는 배포 워크플로와 같다 —
+# 그 블록의 SSOT 는 TeamPiKi/infra 이고, 사본을 두면 조용히 갈라진다. 안 올리면 4절이 건너뛴다.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -114,12 +118,53 @@ echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 # 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
 # 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
 CRON_LINE='0 19 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
-if sudo crontab -l 2>/dev/null | grep -qF 'piki-db-backup.sh'; then
-  echo "[backup] cron 이미 등록 — 내용 갱신"
-  sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' | { cat; echo "$CRON_LINE"; } | sudo crontab -
+# 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
+#
+# `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
+# set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
+# 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
+echo "[backup] cron 등록·갱신 (매일 19:00 UTC = 04:00 KST)"
+{ sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
+
+# ── 3) 관측 수집기(alloy) ───────────────────────────────────────────────────
+# RDS 를 걷어내면서 잃은 것을 메운다. 관리형일 때는 CloudWatch 가 메모리·연결 수·디스크 여유·
+# 쿼리 지연을 자동으로 줬는데, EC2 기본 메트릭에는 메모리조차 없다. 이 박스가 죽어가는 걸
+# 알아챌 수단이 아예 없어지는 셈이라, 다른 박스(core·extractor·renderer)와 같은 수집기를 붙인다.
+#
+# 이 박스에서 실제로 걷히는 것은 호스트 메트릭(CPU·메모리·디스크)뿐이다. 블록의 수집 대상은
+# docker label(piki.observe) opt-in 인데 MySQL 컨테이너에는 그 라벨이 없다 — redis·mysql 로그를
+# 빼는 기존 정책과 같은 결이라 여기서도 유지한다(로그 볼륨). MySQL 내부 지표(연결 수·쿼리 지연)가
+# 필요해지면 mysqld_exporter 를 따로 붙이는 별도 작업이다.
+ALLOY_DIR="${SCRIPT_DIR}/alloy"
+if [ ! -f "${ALLOY_DIR}/provision-alloy.sh" ]; then
+  echo "[alloy] ${ALLOY_DIR} 없음 — 수집기 설치를 건너뛴다 (infra 의 blocks/alloy 를 함께 올릴 것)"
 else
-  echo "[backup] cron 등록 (매일 19:00 UTC = 04:00 KST)"
-  sudo crontab -l 2>/dev/null | { cat; echo "$CRON_LINE"; } | sudo crontab -
+  obs_param() {
+    docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
+      --name "/piki/observability/$1" --with-decryption \
+      --region "$REGION" --query Parameter.Value --output text
+  }
+  # 필수 5종은 하나라도 없으면 중단한다. 빈 값으로 넘기면 provision-alloy.sh 가 skip(성공 0)으로
+  # 조용히 지나가, 관측이 없는 상태가 "설치 완료"로 보고된다.
+  GRAFANA_METRICS_URL="$(obs_param grafana-metrics-url)" || { echo "[alloy] SSM grafana-metrics-url 조회 실패"; exit 1; }
+  GRAFANA_METRICS_USER="$(obs_param grafana-metrics-user)" || { echo "[alloy] SSM grafana-metrics-user 조회 실패"; exit 1; }
+  GRAFANA_LOGS_URL="$(obs_param grafana-logs-url)" || { echo "[alloy] SSM grafana-logs-url 조회 실패"; exit 1; }
+  GRAFANA_LOGS_USER="$(obs_param grafana-logs-user)" || { echo "[alloy] SSM grafana-logs-user 조회 실패"; exit 1; }
+  GRAFANA_CLOUD_TOKEN="$(obs_param grafana-cloud-token)" || { echo "[alloy] SSM grafana-cloud-token 조회 실패"; exit 1; }
+  # 트레이스는 이 박스에 앱이 없어 쓰이지 않는다. 빈 값이어도 블록이 무해 처리한다.
+  GRAFANA_TRACES_URL="$(obs_param grafana-traces-url)" || GRAFANA_TRACES_URL=""
+  GRAFANA_TRACES_USER="$(obs_param grafana-traces-user)" || GRAFANA_TRACES_USER=""
+  export GRAFANA_METRICS_URL GRAFANA_METRICS_USER GRAFANA_LOGS_URL GRAFANA_LOGS_USER
+  export GRAFANA_TRACES_URL GRAFANA_TRACES_USER GRAFANA_CLOUD_TOKEN
+  echo "[alloy] Grafana 자격 SSM 로드 완료"
+
+  # --box piki-db: 호스트 메트릭에는 service/instance 축이 없어, 같은 environment 의 박스들을
+  # 이 라벨로만 가른다. 대시보드에서 DB 박스를 골라 보려면 이 값이 유일한 구분자다.
+  bash "${ALLOY_DIR}/provision-alloy.sh" \
+    --config "${ALLOY_DIR}/config.alloy" \
+    --name piki-alloy \
+    --environment prod \
+    --box piki-db
 fi
 
 echo "DB 박스 프로비저닝 완료"
