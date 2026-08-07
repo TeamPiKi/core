@@ -55,11 +55,11 @@ resource "aws_security_group" "db_ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # 앱 SG(aws_security_group.ec2)와 같은 이유 — 운영 중 콘솔/CLI 로 추가된 접속 IP 를
-  # terraform apply 가 되돌려 SSH·배포를 끊는 사고를 막는다.
-  lifecycle {
-    ignore_changes = [ingress]
-  }
+  # 앱 SG(aws_security_group.ec2)와 달리 ingress 에 ignore_changes 를 걸지 않는다.
+  # 앱 SG 는 콘솔/CLI 로 추가된 접속 IP 가 이미 쌓여 있어 terraform 이 덮으면 배포·SSH 가 끊기지만,
+  # 이 SG 는 방금 만들어 그런 이력이 없고 terraform 이 유일한 관리자다. 여기에 ignore_changes 를
+  # 두면 누군가 콘솔에서 3306 을 열어도 apply 가 잡아내지 못한다 — DB 포트에서 그 사각은 크다.
+  # (#223 이 기존 SG 의 ignore_changes 를 걷어내는 방향이라, 새 리소스가 역행할 이유도 없다.)
 
   tags = {
     Name = "piki-prod-db-sg"
@@ -265,8 +265,14 @@ resource "aws_instance" "db" {
   # ami·user_data 변경은 terraform 이 인스턴스를 파괴·재생성하는 사유인데, 이 박스에서는
   # 그게 DB 소멸이다. 둘 다 무시해 사고 경로를 끊는다. AMI 를 의도적으로 올릴 때는
   # 새 박스를 띄워 덤프로 옮기는 절차를 밟는다(이 이관과 같은 방식).
+  #
+  # prevent_destroy 는 그 사고 경로의 마지막 층이다. ignore_changes 가 막는 것은 "속성 변경으로
+  # 인한 재생성"뿐이라, destroy 를 직접 부르거나 다른 사유로 replace 가 잡히면 그대로 지워진다.
+  # 이 플래그가 있으면 apply 가 거부되고, 정말 지워야 할 때는 코드에서 이 줄을 먼저 지워야 한다.
+  # RDS 의 deletion_protection 과 같은 결의 의도된 마찰이다.
   lifecycle {
-    ignore_changes = [ami, user_data]
+    prevent_destroy = true
+    ignore_changes  = [ami, user_data]
   }
 
   tags = {

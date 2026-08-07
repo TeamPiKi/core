@@ -99,7 +99,12 @@ echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 # 혹시 모를 부하도 한산할 때 지나가게 한다).
 # 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
 # cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
-CRON_LINE='0 19 * * * /usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup'
+#
+# bash -o pipefail 로 감싸는 이유: 파이프라인의 종료 코드는 마지막 명령(logger)의 것이라,
+# 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
+# 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
+# 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
+CRON_LINE='0 19 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
 if sudo crontab -l 2>/dev/null | grep -qF 'piki-db-backup.sh'; then
   echo "[backup] cron 이미 등록 — 내용 갱신"
   sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' | { cat; echo "$CRON_LINE"; } | sudo crontab -
