@@ -125,6 +125,8 @@ class TournamentService(
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = userId))
     }
 
+    // 아이템 등록 한도(#339)를 차감하지 않는다 — 위시에 이미 있는 item 을 참조만 하므로 새 파싱·LLM 호출이 없다.
+    // 그 item 을 위시에 담을 때 이미 한 번 차감됐다.
     @Transactional
     fun addItemsFromWish(
         userId: UUID,

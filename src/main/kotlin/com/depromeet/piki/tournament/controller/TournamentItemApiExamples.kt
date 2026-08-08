@@ -4,6 +4,7 @@ import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
+import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.storage.ImageStorageException
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
@@ -17,6 +18,7 @@ import com.depromeet.piki.tournament.controller.dto.AddTournamentItemsFromImages
 import com.depromeet.piki.tournament.controller.dto.AddTournamentItemsFromWishResponse
 import com.depromeet.piki.tournament.controller.dto.AddTournamentItemsRequest
 import com.depromeet.piki.tournament.controller.dto.TournamentItemDetailResponse
+import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.tournament.service.TournamentException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -79,6 +81,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 차감)")
                     }
 
                 handlerMethod.binds(TournamentItemController::addItemsFromImages) ->
@@ -105,6 +108,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
+                        add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 이미지 장수만큼 차감)")
                     }
 
                 handlerMethod.binds(TournamentItemController::presignImageUploads) ->
@@ -122,6 +126,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
+                        add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (발급 시점에 오너 몫에서 차감)")
                     }
 
                 handlerMethod.binds(TournamentItemController::confirmImageRegistration) ->
@@ -286,6 +291,10 @@ class TournamentItemApiExamples(
     // ProductLinkException.invalidFormat 은 cause 를 요구하지만, example 헬퍼는 message·category·status 만
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
+
+    // 아이템 등록 한도 초과(#339). retryAfterSeconds 는 Retry-After 헤더로만 나가고 body 에는 실리지 않으므로
+    // example payload 에 영향을 주지 않는다 — 문서상 대표값으로 15분을 넣는다.
+    private val itemQuotaExceeded = ItemQuotaException.exceeded(TournamentErrorCode.ITEM_QUOTA_EXCEEDED, 900)
 
     // 이미지 등록 v2 presigned 발급 응답 샘플 — 위시와 동일 구조. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.
     private val presignedUploadsSample =

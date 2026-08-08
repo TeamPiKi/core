@@ -1,5 +1,7 @@
 package com.depromeet.piki.tournament.service
 
+import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
+import com.depromeet.piki.common.ratelimit.ItemQuotaScope
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
@@ -11,6 +13,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
+import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
@@ -23,8 +26,27 @@ class TournamentItemService(
     private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
     private val tournamentItemRepository: TournamentItemRepository,
+    private val tournamentUserRepository: TournamentUserRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val itemQuotaGuard: ItemQuotaGuard,
 ) {
+    // 아이템 등록 비용은 요청자가 아니라 **토너먼트 오너**의 몫에서 깎는다(#339). 참여자에는 게스트가 섞이는데
+    // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있다. 오너는 반드시
+    // 회원이라(토너먼트 생성이 회원 전용) 그 우회가 성립하지 않는다.
+    //
+    // tournament 를 다시 조회하는 것은 verifyCanAddItems 와 중복이지만, 오너를 함께 돌려주도록 그 시그니처를
+    // 바꾸면 호출부 전부가 쓰지도 않는 값을 받게 된다. 조회 1회 비용을 택했다.
+    private fun ownerIdOf(tournamentId: Long): UUID {
+        val tournament =
+            tournamentRepository.findTournamentById(tournamentId)
+                ?: throw TournamentException.notFoundTournament()
+        val owner =
+            tournamentUserRepository.findByIds(listOf(tournament.ownerTournamentUserId)).firstOrNull()
+                // 토너먼트가 있으면 오너 TournamentUser 도 반드시 있다(create 가 함께 만든다) — 없으면 데이터 파손이다.
+                ?: error("토너먼트 오너 행이 없다 (tournamentId=$tournamentId, ownerTournamentUserId=${tournament.ownerTournamentUserId})")
+        return owner.userId
+    }
+
     fun addItemFromLink(
         userId: UUID,
         tournamentId: Long,
@@ -34,6 +56,10 @@ class TournamentItemService(
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다(400).
         // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
         extractionRoutingPolicy.verifyRegistrable(link)
+        // 권한·상태를 차감 전에 확인한다(이미지 경로와 같은 이유) — 참여자도 아닌 요청이 오너의 몫을 깎으면 안 된다.
+        // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
+        tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        itemQuotaGuard.consume(ItemQuotaScope.TOURNAMENT, ownerIdOf(tournamentId), 1, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
         // URL 경로는 PENDING snapshot 을 커밋만 하고(작업 큐 적재) 즉시 반환한다. 파싱은 디스패처(@Scheduled)가
         // PENDING 을 집어 워커에 넘긴다 — @Async 유실과 무관하게 최소 1회는 claim 된다(at-least-once).
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
@@ -51,6 +77,13 @@ class TournamentItemService(
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
         val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
+        // 장당 OCR 이 1회씩 붙으므로 장수만큼 오너 몫에서 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
+        itemQuotaGuard.consume(
+            ItemQuotaScope.TOURNAMENT,
+            ownerIdOf(tournamentId),
+            images.size,
+            TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
+        )
         // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
         val imageKeys = productImages.map { uploadRaw(it) }
         // 사전검증을 통과해도 정원은 persist 의 FOR UPDATE 가 최종 판정한다(동시 추가 race). 거기서 거부되면 방금 올린 raw 가
@@ -74,6 +107,14 @@ class TournamentItemService(
     ): List<PresignedRawUpload> {
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        // 위시 v2 와 같은 이유로 발급 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
+        // confirm 에서만 세면 그 경로가 한도를 우회한다. confirm 은 차감하지 않는다(이중 차감 방지).
+        itemQuotaGuard.consume(
+            ItemQuotaScope.TOURNAMENT,
+            ownerIdOf(tournamentId),
+            contentTypes.size,
+            TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
+        )
         return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
             PendingUpload.tournament(key, userId, tournamentId, expiresAt)
         }
@@ -90,6 +131,7 @@ class TournamentItemService(
     ): List<Long> {
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return tournamentItemPersistenceService
             .registerClaimedImages(imageKeys, userId, tournamentId)

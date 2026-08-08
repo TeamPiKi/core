@@ -4,6 +4,7 @@ import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
+import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
@@ -18,6 +19,7 @@ import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
+import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -51,6 +53,7 @@ class WishlistApiExamples(
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
+                    add(itemQuotaExceeded, name = "아이템 등록 한도 초과")
                 }
             }
             if (handlerMethod.binds(WishlistController::getWishlist)) {
@@ -163,6 +166,7 @@ class WishlistApiExamples(
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     unauthorized()
+                    add(itemQuotaExceeded, name = "아이템 등록 한도 초과")
                 }
             }
             if (handlerMethod.binds(WishlistController::deleteWish)) {
@@ -208,6 +212,7 @@ class WishlistApiExamples(
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
+                    add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (이미지 장수만큼 소모)")
                 }
             }
             if (handlerMethod.binds(WishlistController::presignImageUploads)) {
@@ -223,6 +228,7 @@ class WishlistApiExamples(
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
+                    add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (발급 시점에 장수만큼 소모)")
                 }
             }
             if (handlerMethod.binds(WishlistController::confirmImageRegistration)) {
@@ -247,6 +253,10 @@ class WishlistApiExamples(
     // ProductLinkException.invalidFormat 은 cause 를 요구하지만, example 헬퍼는 message·category·status 만
     // 사용한다(GlobalExceptionHandler.handleBaseException 과 동일). 따라서 이 cause 는 payload 에 영향을 주지 않는 더미다.
     private val urlFormatCause = IllegalArgumentException("example")
+
+    // 아이템 등록 한도 초과(#339). retryAfterSeconds 는 Retry-After 헤더로만 나가고 body 에는 실리지 않으므로
+    // example payload 에 영향을 주지 않는다 — 문서상 대표값으로 15분을 넣는다.
+    private val itemQuotaExceeded = ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, 900)
 
     // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 수기(89,000원)가 섞여 있어,
     // source·editedByMe 로 구분해 그리는 예시다.

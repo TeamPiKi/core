@@ -1,5 +1,7 @@
 package com.depromeet.piki.wishlist.service
 
+import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
+import com.depromeet.piki.common.ratelimit.ItemQuotaScope
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
@@ -16,6 +18,7 @@ import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
+import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.repository.WishRepository
@@ -37,6 +40,7 @@ class WishlistService(
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemDisplayService: ItemDisplayService,
+    private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
 ) {
     // 위시리스트는 회원 전용. 게스트(인증은 됐으나 회원 아님)는 Security 가 아니라 여기서 도메인 계약으로 막아
@@ -63,6 +67,9 @@ class WishlistService(
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
         // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
         extractionRoutingPolicy.verifyRegistrable(link)
+        // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
+        // 링크 1건은 파싱이 파서로 풀리면 LLM 을 안 탈 수도 있지만, 등록 시점엔 알 수 없으므로 1 로 센다.
+        itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         return wishPersistenceService.persist(userId, Item(link))
     }
 
@@ -78,6 +85,8 @@ class WishlistService(
         if (images.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
         val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
+        // 장당 OCR 이 1회씩 붙으므로 장수만큼 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
+        itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, images.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
         val imageKeys = productImages.map { uploadRaw(it) }
         // 위시 이미지 등록엔 정원 같은 계약 거부가 없어 정상 흐름에선 persist 가 떨어지지 않지만, 예기치 못한 영속화 실패에도
@@ -96,6 +105,10 @@ class WishlistService(
     ): List<PresignedRawUpload> {
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
+        // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
+        // 발급만 받고 업로드를 안 하면 그만큼 몫을 손해 보지만, 그건 클라이언트가 자기 요청을 버린 경우다.
+        itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, contentTypes.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
             PendingUpload.wish(key, userId, expiresAt)
         }
@@ -111,6 +124,7 @@ class WishlistService(
     ): List<WishWithItem> {
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
     }
@@ -248,6 +262,10 @@ class WishlistService(
         wishId: Long,
     ): WishWithItem {
         requireMember(userId)
+        // 재추출도 파싱을 한 번 더 돌리므로 신규 등록과 같은 비용이다 — 1 로 차감한다.
+        // refresh 계약 검증(링크 없음·FAILED 항목 등)은 persistence 안쪽이라 여기선 앞서 깎이는데, 그 두 사유는
+        // 클라가 refresh 버튼을 띄우지 않는 상태라 정상 흐름에서 반복 호출되지 않는다.
+        itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         return wishPersistenceService.refresh(userId = userId, wishId = wishId)
     }
 
