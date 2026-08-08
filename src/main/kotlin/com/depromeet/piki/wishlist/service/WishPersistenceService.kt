@@ -176,14 +176,16 @@ class WishPersistenceService(
         return WishWithItem(wish = wish, item = item, snapshot = manual)
     }
 
-    // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 활성 포인터를 건드리지 않으므로 행 락 불필요.
+    // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 포인터를 안 바꿔도 행 락은 필요하다:
+    // UPDATE 가 전 컬럼을 쓰므로(dynamic update 아님), 락 없이 읽은 뒤 flush 하면 그 사이 스왑 경로(manualEdit·refresh)가
+    // 커밋한 snapshotId 를 읽던 옛 값으로 되덮는다(lost update). 같은 행 락으로 스왑 경로와 직렬화한다.
     @Transactional
     fun updateMemo(
         userId: UUID,
         wishId: Long,
         memo: String,
     ): WishWithItem {
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
+        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
         wish.updateMemo(memo)
         val snapshot =
