@@ -16,6 +16,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --skip-alloy: 관측 수집기 설치를 의도적으로 생략한다(긴급 복구 등). 기본은 생략하지 않으며,
+# 블록이 없으면 실패한다 — 관측 공백이 조용히 생기는 걸 막는 게 기본값이어야 한다.
+SKIP_ALLOY=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-alloy) SKIP_ALLOY=true ;;
+    *) echo "알 수 없는 인자: $arg" >&2; exit 2 ;;
+  esac
+done
+
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
 MYSQL_IMAGE="mysql:8.4"
 CONTAINER="piki-prod-mysql"
@@ -98,6 +109,29 @@ for i in $(seq 1 30); do
   [ "$i" -eq 30 ] && { echo "[mysql] readiness timeout (60s)"; exit 1; }
 done
 
+# 자격증명이 실제로 통하는지 확인한다. 위 ping 은 서버 응답만 보고 인증을 안 거치므로,
+# 그것만으로 "프로비저닝 성공"을 말하면 거짓이 될 수 있다.
+#
+# 이 검사가 필요한 이유: MYSQL_* 환경변수는 컨테이너를 "최초 생성"할 때만 쓰인다. 그 뒤 SSM 값을
+# 바꾸면 DB 안 계정은 옛 비밀번호로 남고 SSM 만 새 값이 되어, 둘이 조용히 갈라진다. 그 상태로
+# 스크립트가 성공하면 다음에 그 자격증명을 쓰는 쪽(앱 배포·백업 cron)이 대신 터진다.
+#
+# 어긋났을 때 여기서 자동으로 회전하지는 않는다. 앱 계정 비밀번호를 스크립트가 임의로 바꾸면
+# 붙어 있던 커넥션이 끊기므로, 회전은 사람이 배포 창에서 절차대로 수행할 일이다.
+for role in root app; do
+  case "$role" in
+    root) user=root;           pw="$DB_ROOT_PASSWORD" ;;
+    app)  user="$DB_USERNAME"; pw="$DB_PASSWORD" ;;
+  esac
+  if ! docker exec -e MYSQL_PWD="$pw" "$CONTAINER" mysql -u "$user" -e "SELECT 1" >/dev/null 2>&1; then
+    echo "[mysql] ${role}(${user}) 자격증명이 SSM 값과 어긋난다 — 컨테이너 안 계정은 최초 생성 시의 비밀번호를 유지한다."
+    echo "[mysql] 회전 절차: docker exec -it ${CONTAINER} mysql -uroot -p 로 접속해"
+    echo "[mysql]            ALTER USER '<user>'@'<host>' IDENTIFIED BY '<SSM 값>'; 을 실행한 뒤 이 스크립트를 다시 돌린다."
+    exit 1
+  fi
+done
+echo "[mysql] 자격증명 검증 완료 (root·${DB_USERNAME} 모두 SSM 값으로 접속 가능)"
+
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
 # repo 의 스크립트와 박스의 것이 어긋나지 않게 한다.
@@ -136,8 +170,14 @@ echo "[backup] cron 등록·갱신 (매일 19:00 UTC = 04:00 KST)"
 # 빼는 기존 정책과 같은 결이라 여기서도 유지한다(로그 볼륨). MySQL 내부 지표(연결 수·쿼리 지연)가
 # 필요해지면 mysqld_exporter 를 따로 붙이는 별도 작업이다.
 ALLOY_DIR="${SCRIPT_DIR}/alloy"
-if [ ! -f "${ALLOY_DIR}/provision-alloy.sh" ]; then
-  echo "[alloy] ${ALLOY_DIR} 없음 — 수집기 설치를 건너뛴다 (infra 의 blocks/alloy 를 함께 올릴 것)"
+if [ "$SKIP_ALLOY" = true ]; then
+  echo "[alloy] --skip-alloy 지정 — 수집기 설치를 건너뛴다"
+elif [ ! -f "${ALLOY_DIR}/provision-alloy.sh" ]; then
+  # 조용히 건너뛰지 않는다. 관측이 빠진 채 "프로비저닝 완료"가 찍히면 그 공백을 아무도 모른다 —
+  # 실제로 이 박스는 관측 없이 며칠 돌 뻔했다. 의도적으로 생략할 때만 --skip-alloy 로 명시한다.
+  echo "[alloy] ${ALLOY_DIR}/provision-alloy.sh 가 없다 — infra 의 blocks/alloy 를 함께 올릴 것"
+  echo "[alloy] 의도적으로 생략하려면 --skip-alloy 를 붙여 실행한다"
+  exit 1
 else
   obs_param() {
     docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
