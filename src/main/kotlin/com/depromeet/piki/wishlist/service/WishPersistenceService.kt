@@ -152,6 +152,7 @@ class WishPersistenceService(
         price: Int?,
         imageUrl: String?,
         currency: String?,
+        memo: String?,
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
@@ -171,7 +172,25 @@ class WishPersistenceService(
                 ),
             )
         wish.swapSnapshot(manual.getId())
+        memo?.let { wish.updateMemo(it) }
         return WishWithItem(wish = wish, item = item, snapshot = manual)
+    }
+
+    // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 활성 포인터를 건드리지 않으므로 행 락 불필요.
+    @Transactional
+    fun updateMemo(
+        userId: UUID,
+        wishId: Long,
+        memo: String,
+    ): WishWithItem {
+        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(userId)
+        wish.updateMemo(memo)
+        val snapshot =
+            itemSnapshotRepository.findById(wish.snapshotId)
+                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        val item = itemRepository.findById(snapshot.itemId) ?: error("item ${snapshot.itemId} 가 없다")
+        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
     }
 
     // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고

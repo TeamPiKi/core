@@ -34,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
+import kotlin.test.assertEquals
 
 // 조회·수정·삭제 contract 검증. 이 시나리오들의 본질은 "완성된 위시가 있을 때의 동작"이라
 // 등록(비동기) 경로를 거치지 않고 seedReadyWish 로 READY 상태를 시딩한다.
@@ -611,6 +612,123 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isBadRequest)
             // 응답 detail 이 OpenAPI example(WishlistApiExamples 가격 음수)과 같은 형식인지 contract 로 고정.
             .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.PRICE_MIN_MESSAGE))
+    }
+
+    private fun countSnapshots(): Long =
+        jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots", Long::class.java) ?: 0L
+
+    @Test
+    fun `memo 만 수정하면 200 이고 새 버전을 쌓지 않으며 상세 조회에 메모가 내려간다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+        val snapshotCountBefore = countSnapshots()
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "  생일 선물 후보  ")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+            // memo 만 온 요청은 MANUAL 버전을 만들지 않는다 — 표시값(서버 추출)이 그대로다.
+            .andExpect(jsonPath("$.data.item.name").value("상품"))
+            .andExpect(jsonPath("$.data.item.status").value("READY"))
+        assertEquals(snapshotCountBefore, countSnapshots())
+
+        // 메모는 상세 응답에만 내려간다. 저장 시 앞뒤 공백은 정리된다.
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("생일 선물 후보"))
+    }
+
+    @Test
+    fun `빈 문자열 memo 를 보내면 메모가 삭제된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "지울 메모")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value(nullValue()))
+    }
+
+    @Test
+    fun `이름과 memo 를 함께 수정하면 MANUAL 새 버전이 쌓이고 메모도 반영된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+        val snapshotCountBefore = countSnapshots()
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("name", "바꾼 이름")
+                    .param("memo", "같이 저장")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.name").value("바꾼 이름"))
+            .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
+        assertEquals(snapshotCountBefore + 1, countSnapshots())
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("같이 저장"))
+    }
+
+    @Test
+    fun `memo 가 100자를 넘으면 400 BAD_REQUEST 가 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "가".repeat(101))
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isBadRequest)
+            // 응답 detail 이 OpenAPI example(WishlistApiExamples 메모 길이 초과)과 같은 형식인지 contract 로 고정.
+            .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.MEMO_MAX_MESSAGE))
     }
 
     @Test

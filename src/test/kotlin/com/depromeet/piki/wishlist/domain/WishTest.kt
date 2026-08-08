@@ -4,6 +4,7 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 class WishTest {
     @Test
@@ -39,5 +40,28 @@ class WishTest {
         val owner = UUID.randomUUID()
         val wish = Wish(userId = owner, snapshotId = 10L)
         wish.verifyOwnedBy(owner) // 소유자면 예외 없이 반환된다
+    }
+
+    @Test
+    fun `updateMemo 는 앞뒤 공백을 정리해 메모를 저장한다`() {
+        val wish = Wish(userId = UUID.randomUUID(), snapshotId = 10L)
+        wish.updateMemo("  생일 선물 후보  ")
+        assertEquals("생일 선물 후보", wish.memo)
+    }
+
+    @Test
+    fun `updateMemo 에 빈 문자열이나 공백만 주면 메모가 삭제된다`() {
+        val wish = Wish(userId = UUID.randomUUID(), snapshotId = 10L)
+        wish.updateMemo("메모")
+        wish.updateMemo("   ")
+        assertNull(wish.memo)
+    }
+
+    @Test
+    fun `updateMemo 는 100자까지 허용하고 초과하면 실패한다`() {
+        val wish = Wish(userId = UUID.randomUUID(), snapshotId = 10L)
+        wish.updateMemo("가".repeat(100))
+        assertEquals(100, wish.memo?.length)
+        assertFailsWith<IllegalArgumentException> { wish.updateMemo("가".repeat(101)) }
     }
 }
