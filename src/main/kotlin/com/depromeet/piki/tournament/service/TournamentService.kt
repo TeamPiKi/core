@@ -38,6 +38,7 @@ import com.depromeet.piki.tournament.service.dto.TournamentItemDetail
 import com.depromeet.piki.tournament.service.dto.StartResult
 import com.depromeet.piki.tournament.service.dto.TournamentStartResult
 import com.depromeet.piki.tournament.service.dto.TournamentSummary
+import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.context.ApplicationEventPublisher
@@ -58,11 +59,26 @@ class TournamentService(
     private val wishRepository: WishRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
+    // 토너먼트 만들기는 회원 전용(#339). 게스트는 이미 만들어진 토너먼트에 참여·아이템 추가·플레이만 한다.
+    // 게스트 계정은 입력 없이 무한 발급되므로(POST /auth/guest), 비용이 드는 행위의 소유자는 항상 회원이어야
+    // 계정을 갈아타며 한도를 리셋하는 우회가 성립하지 않는다 — 소셜 계정 생성 비용이 그 우회를 막는다.
+    // 인증 principal 은 userId 뿐이라 identityType 은 조회로 확인한다.
+    //
+    // users 행 존재는 강제하지 않는다(findActiveById 가 아니라 findById + Elvis) — 인증만 되면 행 없이도 호출되던
+    // 기존 계약을 이 게이트가 404 로 바꾸지 않기 위해서다(FCM 토큰 등록의 rejectIfWithdrawnForUpdate 와 같은 결).
+    // 게이트에 구멍을 내지 않는다: 게스트는 발급이 곧 users 행 생성이라(UserService.createGuest) 반드시 행이 있고,
+    // 토큰은 우리가 서명하므로 "행 없는 유효 토큰" 은 정상 경로에서 만들어지지 않는다.
+    private fun requireMember(userId: UUID) {
+        val user = userRepository.findById(userId) ?: return
+        if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
+    }
+
     @Transactional
     fun create(
         userId: UUID,
         command: CreateTournament,
     ): CreateTournamentResult {
+        requireMember(userId)
         val inviteCode = generateUniqueInviteCode()
         val inviteExpiresAt = LocalDateTime
             .now()
@@ -906,6 +922,9 @@ class TournamentService(
         )
     }
 
+    // create 와 달리 회원 게이트를 두지 않는다(#339) — 여기서 만들어지는 것은 CLONE 이고, CLONE 은
+    // 아이템 추가가 막혀 있어(clonedTournamentCannotAddItems) 추출·LLM 비용을 만들 수 없다. 플레이 링크로
+    // 들어와 바로 플레이하는 것은 게스트의 핵심 시나리오라, 비용이 0 인 이 경로까지 회원 전용으로 만들지 않는다.
     @Transactional
     fun createFromPlayLink(
         userId: UUID,

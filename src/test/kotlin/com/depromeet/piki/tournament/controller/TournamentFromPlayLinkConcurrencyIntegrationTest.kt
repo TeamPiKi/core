@@ -53,7 +53,10 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
     fun `같은 유저가 from-play-link 를 동시에 두 번 요청해도 클론은 하나만 생성되고 둘 다 200 으로 같은 id 를 받는다`() {
         val ownerId = UUID.randomUUID()
         val clonerId = UUID.randomUUID()
-        userJpaRepository.save(User(id = ownerId, nickname = "race-owner", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.GUEST))
+        // owner 는 소스 토너먼트를 만들어야 해서 MEMBER 다(토너먼트 생성은 회원 전용, #339).
+        // cloner 는 GUEST 로 둔다 — 플레이 링크로 클론을 만드는 경로는 아이템 추가가 막힌 CLONE 이라 비용이 0 이고,
+        // 게스트에게 그대로 열려 있다. 이 조합이 곧 "게스트도 플레이 링크로 참여할 수 있다" 는 계약 검증이 된다.
+        userJpaRepository.save(User(id = ownerId, nickname = "race-owner", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER))
         userJpaRepository.save(User(id = clonerId, nickname = "race-clone", profileImage = "https://cdn.example.com/c.jpg", identityType = IdentityType.GUEST))
 
         val mockMvc = MockMvcBuilders
@@ -61,7 +64,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.GUEST)}"
+        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
         val clonerAuth = "Bearer ${jwtProvider.generateAccessToken(clonerId, IdentityType.GUEST)}"
 
         // 소스 토너먼트 준비 (단일 스레드, 직렬)

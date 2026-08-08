@@ -363,6 +363,16 @@ interface TournamentApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요 — code: TOURNAMENT-036)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun create(

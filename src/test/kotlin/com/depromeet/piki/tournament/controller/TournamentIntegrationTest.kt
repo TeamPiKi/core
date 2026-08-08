@@ -128,6 +128,30 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments 는 게스트가 요청하면 403 과 GUEST_CANNOT_CREATE_TOURNAMENT code 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val guestId = UUID.randomUUID()
+        userJpaRepository.save(
+            User(id = guestId, nickname = "게스트유저", profileImage = "https://cdn.example.com/g.jpg", identityType = IdentityType.GUEST),
+        )
+        val tournamentsBefore = tournamentJpaRepository.count()
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${jwtProvider.generateAccessToken(guestId, IdentityType.GUEST)}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"name":"게스트 토너먼트"}"""),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.code))
+            .andExpect(jsonPath("$.detail").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.message))
+            .andExpect(jsonPath("$.data").value(nullValue()))
+
+        // 거부가 응답으로만 끝나지 않고 실제로 아무것도 만들지 않았는지 확인한다 — 게이트가 saveTournament 앞에 선다.
+        assertEquals(tournamentsBefore, tournamentJpaRepository.count())
+    }
+
+    @Test
     fun `POST tournaments 에서 inviteDurationMinutes 를 지정하면 해당 시간으로 만료 시각이 설정된다`() {
         val mockMvc = buildMockMvc()
         val before = LocalDateTime.now()
