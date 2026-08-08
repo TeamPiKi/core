@@ -133,6 +133,54 @@ variable "db_allocated_storage" {
   default     = 20
 }
 
+# ----- DB EC2 (RDS 대체, #898) -----
+
+variable "db_ec2_instance_type" {
+  description = <<-EOT
+    자체 관리 MySQL 을 얹을 DB 전용 EC2 인스턴스 타입 (ARM / Graviton).
+    micro(1GiB) 로 충분하다는 실측 근거: dev 박스의 같은 구성(docker mysql:8.4)이 상시 111MB /
+    CPU 0.97% 를 쓰고, 데이터가 2.1MB 라 InnoDB 버퍼풀 기본값(128MB)에 전량이 올라간다.
+    micro 의 baseline 은 vCPU 당 10% 라 실사용 대비 10배 여유다.
+
+    사이즈를 올리면 이 이관의 명분이 사라진다 — small 은 월 $20.65 로 RDS(db.t4g.micro
+    인스턴스 $18.25 + gp3 20GB $2.62 = $20.87)와 사실상 같아진다. 반대로 nano(0.5GiB)는
+    실가용이 약 400MB 인데 OS + docker + mysql 만으로 그 이상이라 상시 스왑이 된다.
+  EOT
+  type        = string
+  default     = "t4g.micro"
+}
+
+variable "db_ec2_volume_size" {
+  description = <<-EOT
+    DB 박스 루트 볼륨 크기(GB). OS(약 3GB) + docker 이미지(mysql·aws-cli·alloy 약 1.5GB) +
+    데이터·백업 임시파일 기준으로 10GB 면 절반이 남는다. 앱 박스(20GB)와 달리 앱 이미지를
+    받지 않아 소비가 작다. EBS 는 확대만 가능하고 축소가 안 되므로 작게 시작한다.
+  EOT
+  type        = number
+  default     = 10
+}
+
+variable "db_backup_bucket_name" {
+  # 계정번호를 포함하므로 default 를 두지 않는다(퍼블릭 repo). TF_VAR_db_backup_bucket_name 또는 terraform.tfvars 로 주입.
+  description = "MySQL 논리 백업(mysqldump gzip) 저장 버킷명. 이미지·state 버킷과 일관되게 piki-db-backup-{account} 사용."
+  type        = string
+
+  # image_bucket_name 과 같은 규율 — placeholder·형식 오류가 apply 까지 가서 엉뚱한 버킷을 만들지 않게 plan 에서 차단.
+  validation {
+    condition     = can(regex("^piki-db-backup-[0-9]{12}$", var.db_backup_bucket_name))
+    error_message = "db_backup_bucket_name 은 piki-db-backup-<12자리 AWS 계정번호> 형식이어야 합니다."
+  }
+}
+
+variable "db_backup_retention_days" {
+  description = <<-EOT
+    백업 객체 보존 일수. 덤프가 gzip 약 300KB 라 30일치를 합쳐도 10MB 수준이고 S3 비용은
+    사실상 0 이므로, 보존을 짧게 잡아 아낄 실익이 없다. 값은 복구 시점 선택 폭이 결정한다.
+  EOT
+  type        = number
+  default     = 30
+}
+
 variable "github_repo" {
   description = "OIDC 신뢰 조건에 쓸 GitHub 저장소 (org/repo). 이 repo 의 Actions 만 push 역할을 assume 할 수 있다."
   type        = string

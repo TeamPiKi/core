@@ -10,3 +10,6 @@ ssh_ingress_cidr = "203.0.113.1/32"
 
 # 이미지 버킷 실명 — 계정번호 파생. <ACCOUNT_ID> 는 aws sts get-caller-identity --query Account 로 확인
 image_bucket_name = "piki-images-<ACCOUNT_ID>"
+
+# DB 백업 버킷 실명 — 위와 같은 계정번호 파생 (#898, 자체 관리 MySQL 의 mysqldump 산출물 보관)
+db_backup_bucket_name = "piki-db-backup-<ACCOUNT_ID>"
