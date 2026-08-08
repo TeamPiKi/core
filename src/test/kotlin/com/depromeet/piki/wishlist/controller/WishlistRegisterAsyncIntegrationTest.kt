@@ -1,5 +1,8 @@
 package com.depromeet.piki.wishlist.controller
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -35,6 +38,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import org.slf4j.LoggerFactory
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.time.Duration
@@ -415,6 +419,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhausted")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
         val itemId = item.getId()
+        // 종결 구조화 로그(#902)는 알림 룰·대시보드가 소비하는 계약이라 라인 모양까지 여기서 고정한다.
+        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
+        serviceLogger.addAppender(terminalLogs)
         try {
             jdbcTemplate.update(
                 "UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?",
@@ -428,7 +436,17 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, latestSnapshot(itemId)?.status)
             // 결과 메트릭(#506): recover 가 재시도 상한 소진으로 종결 → result=failed,reason=retry_exhausted +1 (recover 동기라 즉시 단언).
             assertTrue(parseCount("failed", "retry_exhausted") - exhaustedBefore >= 1.0, "retry_exhausted 메트릭이 증가해야 한다")
+            assertTrue(
+                terminalLogs.list.any {
+                    it.formattedMessage.contains("item.parse.result") &&
+                        it.formattedMessage.contains("result=failed") &&
+                        it.formattedMessage.contains("reason=retry_exhausted") &&
+                        it.formattedMessage.contains("url=shop.example.com/products/exhausted")
+                },
+                "종결 시 item.parse.result 구조화 로그(url 포함)를 남겨야 한다",
+            )
         } finally {
+            serviceLogger.detachAppender(terminalLogs)
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
         }
@@ -470,6 +488,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val item = itemRepository.save(Item(link = null))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() })
         val itemId = item.getId()
+        // 종결 구조화 로그(#902) — url 없는(입력 부재) 종결도 같은 계약의 라인을 남긴다.
+        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
+        serviceLogger.addAppender(terminalLogs)
         try {
             jdbcTemplate.update(
                 "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
@@ -483,7 +505,16 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, latestSnapshot(itemId)?.status)
             // 결과 메트릭(#506): 되살릴 입력 없음 종결 → result=failed,reason=no_source +1.
             assertTrue(parseCount("failed", "no_source") - noSourceBefore >= 1.0, "no_source 메트릭이 증가해야 한다")
+            assertTrue(
+                terminalLogs.list.any {
+                    it.formattedMessage.contains("item.parse.result") &&
+                        it.formattedMessage.contains("result=failed") &&
+                        it.formattedMessage.contains("reason=no_source")
+                },
+                "입력 없는 종결도 item.parse.result 구조화 로그를 남겨야 한다",
+            )
         } finally {
+            serviceLogger.detachAppender(terminalLogs)
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
         }
