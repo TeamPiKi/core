@@ -614,8 +614,20 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.PRICE_MIN_MESSAGE))
     }
 
-    private fun countSnapshots(): Long =
-        jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots", Long::class.java) ?: 0L
+    // 전역 카운트는 다른 item 의 비동기 파싱 행에 오염될 수 있어, 대상 wish 가 가리키는 item 으로 한정한다.
+    private fun itemIdOf(wishId: Long): Long =
+        jdbcTemplate.queryForObject(
+            "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.id = ?",
+            Long::class.java,
+            wishId,
+        ) ?: error("wish $wishId 의 item 이 없다")
+
+    private fun countSnapshots(itemId: Long): Long =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?",
+            Long::class.java,
+            itemId,
+        ) ?: 0L
 
     @Test
     fun `memo 만 수정하면 200 이고 새 버전을 쌓지 않으며 상세 조회에 메모가 내려간다`() {
@@ -624,7 +636,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
         val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
-        val snapshotCountBefore = countSnapshots()
+        val itemId = itemIdOf(wishId)
+        val snapshotCountBefore = countSnapshots(itemId)
 
         mockMvc
             .perform(
@@ -638,7 +651,17 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             // memo 만 온 요청은 MANUAL 버전을 만들지 않는다 — 표시값(서버 추출)이 그대로다.
             .andExpect(jsonPath("$.data.item.name").value("상품"))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
-        assertEquals(snapshotCountBefore, countSnapshots())
+            // 노출 계약: memo 는 상세 응답 전용 — PATCH 응답에는 없다.
+            .andExpect(jsonPath("$.data.memo").doesNotExist())
+            .andExpect(jsonPath("$.data.wish.memo").doesNotExist())
+        assertEquals(snapshotCountBefore, countSnapshots(itemId))
+
+        // 노출 계약: 목록 응답에도 memo 는 없다.
+        mockMvc
+            .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data[0].memo").doesNotExist())
+            .andExpect(jsonPath("$.data[0].wish.memo").doesNotExist())
 
         // 메모는 상세 응답에만 내려간다. 저장 시 앞뒤 공백은 정리된다.
         mockMvc
@@ -688,7 +711,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
         val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
-        val snapshotCountBefore = countSnapshots()
+        val itemId = itemIdOf(wishId)
+        val snapshotCountBefore = countSnapshots(itemId)
 
         mockMvc
             .perform(
@@ -702,12 +726,48 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("바꾼 이름"))
             .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
-        assertEquals(snapshotCountBefore + 1, countSnapshots())
+        assertEquals(snapshotCountBefore + 1, countSnapshots(itemId))
 
         mockMvc
             .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.memo").value("같이 저장"))
+    }
+
+    @Test
+    fun `memo 없이 name 만 수정하면 기존 메모가 유지된다`() {
+        // "들어온 필드만 갱신" 계약의 회귀 방어 — 이름 수정이 개인 메모를 지우면 안 된다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "지킬 메모")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("name", "이름만 수정")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.name").value("이름만 수정"))
+            .andExpect(jsonPath("$.data.memo").value("지킬 메모"))
     }
 
     @Test
