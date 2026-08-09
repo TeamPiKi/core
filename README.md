@@ -18,4 +18,4 @@
 
 ![version](https://img.shields.io/github/v/release/TeamPiKi/core?label=version&color=blue)
 
-최신 변경사항은 [릴리즈 노트](https://github.com/TeamPiKi/core/releases/latest)에서 확인한다. 모든 prod 배포는 `Promote` 워크플로로 `dev` → `prod` 승격되며, 승격 시 선택한 단위(patch/minor/major)로 semver 태그와 릴리즈가 자동 생성된다.
+최신 변경사항은 [릴리즈 노트](https://github.com/TeamPiKi/core/releases/latest)에서 확인한다. `Promote` 워크플로는 `dev` 커밋을 `main`(prod)으로 fast-forward 승격하며, 선택한 단위(patch/minor/major)의 semver 태그와 릴리즈는 배포 성공 후 자동 생성된다.
