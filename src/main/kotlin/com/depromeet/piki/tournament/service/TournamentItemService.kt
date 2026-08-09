@@ -77,7 +77,7 @@ class TournamentItemService(
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
         val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
-        // 장당 OCR 이 1회씩 붙으므로 장수만큼 오너 몫에서 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
+        // 장마다 추출이 따로 도는 별개 item 이라 장수만큼 오너 몫에서 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
         itemQuotaGuard.consume(
             ItemQuotaScope.TOURNAMENT,
             ownerIdOf(tournamentId),

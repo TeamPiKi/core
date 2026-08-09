@@ -68,7 +68,7 @@ class WishlistService(
         // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
         extractionRoutingPolicy.verifyRegistrable(link)
         // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
-        // 링크 1건은 파싱이 파서로 풀리면 LLM 을 안 탈 수도 있지만, 등록 시점엔 알 수 없으므로 1 로 센다.
+        // 파서로 풀려 LLM 을 안 타도 fetch·프록시·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
         itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         return wishPersistenceService.persist(userId, Item(link))
     }
@@ -85,7 +85,7 @@ class WishlistService(
         if (images.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
         val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
-        // 장당 OCR 이 1회씩 붙으므로 장수만큼 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
+        // 장마다 추출이 따로 도는 별개 item 이라 장수만큼 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
         itemQuotaGuard.consume(ItemQuotaScope.WISH, userId, images.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
         val imageKeys = productImages.map { uploadRaw(it) }

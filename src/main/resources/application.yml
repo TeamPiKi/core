@@ -160,8 +160,12 @@ s3:
   region: ${S3_REGION:ap-northeast-2}
   public-base-url: ${S3_PUBLIC_BASE_URL:}
 
-# 아이템 등록 한도(#339) — LLM 을 태우는 등록 경로에만 걸리는 계정 단위 quota. 세는 단위는 요청 수가 아니라
+# 아이템 등록 한도(#339) — 외부 비용이 드는 등록 경로에 걸리는 계정 단위 quota. 세는 단위는 요청 수가 아니라
 # 큐에 넣는 item 수다(이미지 5장 = 5). 값은 env 로 재정의해 배포 없이 조일 수 있다.
+#
+# "LLM 을 타는가" 가 아니라 "외부에 돈이 나가는가" 가 기준이다. 등록 1건은 파싱이 파서로 풀려 LLM 을 안 타더라도
+# fetch 대역, residential proxy 요청(HEADLESS_FIRST 사이트), 헤드리스 렌더러 시간, 이미지 저장, DB 행 영구 증가를
+# 소모한다. 그래서 LLM 여부로 차등하지 않고 등록 1건을 균일하게 센다 — 등록 시점엔 어느 경로로 풀릴지 알 수도 없다.
 item-quota:
   # 한도가 잘못 잡혀 정상 사용자를 막을 때 되돌리는 스위치. 끄면 차감·판정을 통째로 건너뛴다.
   enabled: ${ITEM_QUOTA_ENABLED:true}
