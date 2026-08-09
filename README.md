@@ -9,10 +9,10 @@
 | [client](https://github.com/TeamPiKi/client) | 앱 클라이언트 |
 | **core** (이 repo) | 백엔드 API 서버 |
 | [extractor](https://github.com/TeamPiKi/extractor) | 상품 추출 서비스. URL 을 fetch·구조화 파싱하고 LLM 으로 보완한다 |
-| renderer (private) | 비공개 내부 서비스 |
+| renderer (private) | 페이지 렌더링 내부 서비스 |
 | [infra](https://github.com/TeamPiKi/infra) | 여러 repo 에 걸치는 공통 자산의 SSOT (배포 블록·개발 규약) |
 
-호출 흐름은 client → core → extractor.
+호출 흐름은 client → core → extractor → renderer.
 
 ## 버전
 
