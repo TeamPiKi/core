@@ -28,6 +28,7 @@ import java.util.UUID
 private const val TOURNAMENT_RATE_LIMIT_DESCRIPTION =
     "아이템 등록 한도 초과 (code: TOURNAMENT-037). 한도는 요청자가 아니라 토너먼트 오너의 몫에서 차감되므로 " +
         "참여자가 처음 담는 경우에도 받을 수 있다. 요청 수가 아니라 등록하는 item 수로 세며(이미지 5장 = 5), " +
+        "남은 몫이 있으면 그보다 큰 요청도 통과하므로 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
         "Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
 @Tag(name = "Tournament Item", description = "토너먼트 아이템 API")

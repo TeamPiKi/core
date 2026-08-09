@@ -15,8 +15,18 @@ import kotlin.math.max
 class RedisItemQuotaStore(
     private val redisTemplate: StringRedisTemplate,
 ) {
-    // all-or-nothing 차감. 이미지 5장 요청이 한도 3 만 남은 상태에서 3장만 통과하고 2장이 잘리면 클라이언트가
-    // "일부만 등록됨" 을 다뤄야 하는데, 등록 API 는 그런 부분 성공 계약이 없다. 그래서 전부 되거나 전부 거부다.
+    // 잔액 방식 — **요청 크기는 판정에 쓰지 않는다.** 창에 남은 몫이 있으면(누적 < 한도) 요청 크기와 무관하게
+    // 통과시키고 쓴 만큼 그대로 더한다. 그래서 누적이 한도를 넘어 "빚"(잔액 음수)이 될 수 있고, 다음 요청부터 거부된다.
+    //
+    // 요청 크기를 판정에 넣던 방식(누적 + 요청량 > 한도면 전량 거부)을 버린 이유:
+    //   - 남은 몫 2 에 이미지 5장을 요청하면 거부되는데, 사용자는 자기 잔액을 모르니 왜 막혔는지 알 수 없고
+    //     몇 장으로 줄여야 통과하는지도 안내할 방법이 없다. 잔액 방식은 **마지막 한 번이 항상 성공**하고,
+    //     막히는 것은 그 다음부터라 "이번 창의 몫을 다 썼다" 는 경계가 사용자에게 명확해진다.
+    //   - 부분 성공 계약을 고민할 필요가 사라진다(요청은 통째로 통과하거나 통째로 거부된다).
+    //
+    // 초과 노출은 유한하다: 창당 최대 소비는 (한도 + 1회 최대 요청량)으로 바운드된다. 잔액 1 에서 5장이 들어와도
+    // -4 가 최악이고, 그 뒤로는 전부 거부되기 때문이다. 무한 초과가 아니라 계산 가능한 상한이라 받아들일 수 있다.
+    // (파싱 후 실제 소비를 정산하는 후속 과제 #910 이 붙으면 그 정산분도 같은 방식으로 음수에 얹힌다.)
     fun tryConsume(
         key: String,
         amount: Int,
@@ -50,12 +60,15 @@ class RedisItemQuotaStore(
         private const val MILLIS_PER_SECOND = 1_000L
 
         // 판정과 차감을 한 스크립트로 원자화한다. GET → 비교 → INCRBY 를 앱에서 나눠 하면 동시 요청이 각자
-        // 통과 판정을 받아 한도를 넘겨 차감할 수 있다(check-then-act race). Redis 싱글스레드 직렬화가 그걸 막는다.
+        // 통과 판정을 받아 잔액을 예상보다 깊게 파고들 수 있다(check-then-act race). Redis 싱글스레드 직렬화가 그걸 막는다.
         //
         // KEYS[1]=카운터 키, ARGV[1]=차감량, ARGV[2]=한도, ARGV[3]=창 길이(ms)
         //
+        // 판정은 `current >= limit` 하나다 — **요청량(amount)은 판정에 쓰지 않고 차감에만 쓴다.** 남은 몫이
+        // 있으면 크기와 무관하게 들여보내고, 넘긴 만큼은 다음 요청이 갚는다(위 잔액 방식 주석).
+        //
         // 반환:
-        //   "A:<누적>"     허용 — 차감 후 누적값
+        //   "A:<누적>"     허용 — 차감 후 누적값 (한도를 넘겼을 수 있다)
         //   "X:<남은 ms>"  거부 — 차감하지 않음. 창이 리셋되기까지 남은 시간
         //
         // 거부 시 INCRBY 를 하지 않는 것이 중요하다. 거부분까지 누적하면 한도에 걸린 사용자가 재시도할 때마다
@@ -70,7 +83,7 @@ class RedisItemQuotaStore(
                     local amount = tonumber(ARGV[1])
                     local limit = tonumber(ARGV[2])
                     local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-                    if current + amount > limit then
+                    if current >= limit then
                         local ttl = redis.call('PTTL', KEYS[1])
                         if ttl < 0 then ttl = 0 end
                         return 'X:' .. ttl

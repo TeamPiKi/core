@@ -24,20 +24,34 @@ class ItemQuotaStoreIntegrationTest : IntegrationTestSupport() {
     private lateinit var redisTemplate: StringRedisTemplate
 
     @Test
-    fun `한도까지는 허용하고 한도를 넘기는 순간 거부한다`() {
+    fun `잔액이 남아 있으면 허용하고 한도에 닿은 뒤부터 거부한다`() {
         val key = newKey()
 
-        // 경계 바로 아래·정확히 경계까지는 통과한다.
         assertIs<ItemQuotaVerdict.Allowed>(store.tryConsume(key, amount = 7, limit = 10, windowMillis = WINDOW_MILLIS))
+        // 누적 7 < 10 이라 아직 잔액이 있다. 이 요청이 정확히 한도를 채운다.
         assertIs<ItemQuotaVerdict.Allowed>(store.tryConsume(key, amount = 3, limit = 10, windowMillis = WINDOW_MILLIS))
-        // 10/10 을 쓴 상태에서 1 을 더하면 11 이라 거부다.
+        // 누적 10 >= 10 — 잔액이 0 이므로 이제부터 거부다.
+        assertIs<ItemQuotaVerdict.Exceeded>(store.tryConsume(key, amount = 1, limit = 10, windowMillis = WINDOW_MILLIS))
+    }
+
+    @Test
+    fun `잔액보다 큰 요청도 통과시키고 누적이 한도를 넘어 음수 잔액이 된다`() {
+        val key = newKey()
+        store.tryConsume(key, amount = 8, limit = 10, windowMillis = WINDOW_MILLIS)
+
+        // 남은 몫은 2 뿐이지만 요청량은 판정에 쓰지 않으므로 3 이 통째로 통과한다.
+        // 사용자 입장에서 "마지막 한 번은 항상 성공" 이고, 넘긴 만큼은 다음 요청이 갚는다.
+        assertIs<ItemQuotaVerdict.Allowed>(store.tryConsume(key, amount = 3, limit = 10, windowMillis = WINDOW_MILLIS))
+        assertEquals("11", redisTemplate.opsForValue().get(key))
+
+        // 잔액이 음수(-1)라 다음 요청은 크기와 무관하게 거부된다.
         assertIs<ItemQuotaVerdict.Exceeded>(store.tryConsume(key, amount = 1, limit = 10, windowMillis = WINDOW_MILLIS))
     }
 
     @Test
     fun `거부된 차감은 카운터를 올리지 않는다`() {
         val key = newKey()
-        store.tryConsume(key, amount = 9, limit = 10, windowMillis = WINDOW_MILLIS)
+        store.tryConsume(key, amount = 10, limit = 10, windowMillis = WINDOW_MILLIS)
 
         // 넘치는 요청을 여러 번 반복해도 누적되지 않는다 — 누적하면 창이 끝나도 한도를 넘긴 채 시작해 사실상 영구 차단된다.
         repeat(3) {
@@ -45,20 +59,7 @@ class ItemQuotaStoreIntegrationTest : IntegrationTestSupport() {
             assertIs<ItemQuotaVerdict.Exceeded>(verdict)
         }
 
-        assertEquals("9", redisTemplate.opsForValue().get(key))
-        // 거부 뒤에도 남은 1 은 그대로 쓸 수 있다.
-        assertIs<ItemQuotaVerdict.Allowed>(store.tryConsume(key, amount = 1, limit = 10, windowMillis = WINDOW_MILLIS))
-    }
-
-    @Test
-    fun `all-or-nothing 이라 남은 몫보다 큰 요청은 부분 차감 없이 전부 거부된다`() {
-        val key = newKey()
-        store.tryConsume(key, amount = 8, limit = 10, windowMillis = WINDOW_MILLIS)
-
-        // 남은 몫 2 에 3 을 요청 — 2 만 통과시키는 부분 성공은 등록 API 계약에 없다.
-        assertIs<ItemQuotaVerdict.Exceeded>(store.tryConsume(key, amount = 3, limit = 10, windowMillis = WINDOW_MILLIS))
-
-        assertEquals("8", redisTemplate.opsForValue().get(key))
+        assertEquals("10", redisTemplate.opsForValue().get(key))
     }
 
     @Test
@@ -78,6 +79,7 @@ class ItemQuotaStoreIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `거부 응답의 재시도 시간은 남은 창 안에서 최소 1초 이상이다`() {
         val key = newKey()
+        // 잔액을 0 으로 만들어 다음 요청이 거부되게 한다.
         store.tryConsume(key, amount = 10, limit = 10, windowMillis = WINDOW_MILLIS)
 
         val verdict = store.tryConsume(key, amount = 1, limit = 10, windowMillis = WINDOW_MILLIS)

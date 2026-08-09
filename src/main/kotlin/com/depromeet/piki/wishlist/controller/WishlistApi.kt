@@ -23,7 +23,8 @@ import java.util.UUID
 // 세는 단위가 요청 수가 아니라 item 수라는 점이 클라이언트 계약의 핵심이라 명시한다.
 private const val RATE_LIMIT_DESCRIPTION =
     "아이템 등록 한도 초과 (code: WISH-010). 한도는 요청 수가 아니라 등록하는 item 수로 센다 — " +
-        "이미지 5장 등록은 5 를 소모한다. Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
+        "이미지 5장 등록은 5 를 소모한다. 남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) " +
+        "이 응답은 몫을 이미 다 쓴 뒤부터 나온다. Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
 @Tag(name = "Wishlist", description = "위시리스트 등록/조회/복구/삭제 API")
 interface WishlistApi {

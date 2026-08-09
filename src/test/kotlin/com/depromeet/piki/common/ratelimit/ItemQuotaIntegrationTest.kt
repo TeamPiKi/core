@@ -29,7 +29,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// 아이템 등록 한도(#339)의 계약 검증. 한도 자체의 산술(창 경계·all-or-nothing)은 RedisItemQuotaStore 쪽 검증이
+// 아이템 등록 한도(#339)의 계약 검증. 한도 자체의 산술(창 경계·잔액 판정)은 RedisItemQuotaStore 쪽 검증이
 // 맡고, 여기서는 "진입점에서 무엇이 얼마나 차감되고 넘치면 어떤 응답이 나가는가" 라는 계약만 본다.
 //
 // DB 는 클래스 레벨 @Transactional 로 롤백되지만 **Redis 는 롤백되지 않는다.** 그래서 매 테스트가 새 UUID 를
@@ -91,8 +91,6 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
-        // 남은 몫을 2 로 만든다 — 3장은 넘치고 2장은 통과해야 한다.
-        fillQuota(ItemQuotaScope.WISH, userId, properties.wishLimit - 2)
 
         mockMvc
             .perform(
@@ -100,19 +98,42 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"contentTypes":["image/png","image/png","image/png"]}"""),
-            ).andExpect(status().isTooManyRequests)
-            .andExpect(jsonPath("$.code").value(WishErrorCode.ITEM_QUOTA_EXCEEDED.code))
+            ).andExpect(status().isOk)
 
-        // all-or-nothing — 3장이 거부됐어도 부분 차감이 없어 2장은 그대로 통과한다.
+        // 요청 1건이 아니라 3 이 빠져야 한다 — 장마다 추출이 따로 돌기 때문이다.
+        assertEquals(3L, currentCount(ItemQuotaScope.WISH, userId))
+    }
+
+    @Test
+    fun `잔액이 남아 있으면 그보다 큰 요청도 통과시키고 그 다음부터 거부한다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        // 잔액을 1 만 남긴다 — 5장 요청은 그보다 크다.
+        fillQuota(ItemQuotaScope.WISH, userId, properties.wishLimit - 1)
+
+        // 요청량은 판정에 쓰지 않으므로 통째로 통과한다. "2장만 남아서 안 됩니다" 로 막으면 사용자는 자기 잔액을
+        // 모르는 채 몇 장으로 줄여야 할지도 알 수 없다 — 마지막 한 번은 성공시키고 그 다음부터 막는다.
         mockMvc
             .perform(
                 post("/api/v1/wishlists/images/presigned")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content("""{"contentTypes":["image/png","image/png"]}"""),
+                    .content("""{"contentTypes":["image/png","image/png","image/png","image/png","image/png"]}"""),
             ).andExpect(status().isOk)
 
-        assertEquals(properties.wishLimit.toLong(), currentCount(ItemQuotaScope.WISH, userId))
+        // 한도를 넘겨 잔액이 음수가 됐다.
+        assertEquals((properties.wishLimit + 4).toLong(), currentCount(ItemQuotaScope.WISH, userId))
+
+        // 이제부터는 크기와 무관하게 거부다.
+        mockMvc
+            .perform(
+                post("/api/v1/wishlists")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"url":"https://www.musinsa.com/products/9"}"""),
+            ).andExpect(status().isTooManyRequests)
+            .andExpect(jsonPath("$.code").value(WishErrorCode.ITEM_QUOTA_EXCEEDED.code))
     }
 
     @Test
