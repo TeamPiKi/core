@@ -185,6 +185,8 @@ interface WishlistApi {
             - priceHistory: 이 상품의 가격 기록을 최신순 최대 50건. 서버 추출값과 사용자 입력값이 함께 들어가고
               source·editedByMe 로 구분한다.
             - **지금 보이는 값은 항상 item 에서 읽는다.** priceHistory 는 표시값 선택 규칙을 타지 않아 첫 항목이 item 과 다를 수 있다.
+            - memo: 본인만 보는 개인 메모(최대 100자). 같은 상품을 담은 다른 사용자와 공유되지 않으며,
+              상세 응답에만 내려간다(목록 응답에는 없다). 수정은 수기 수정 API(PATCH)의 memo 필드로 한다.
         """,
     )
     @ApiResponses(
@@ -256,13 +258,17 @@ interface WishlistApi {
             수정은 기존 버전을 고치지 않고 **수기(MANUAL) 새 버전**으로 쌓인다 — 들어온 값은 현재 버전 값 위에 병합되고,
             이 위시의 표시가 그 버전으로 바뀐다. 진행 중이던 파싱은 계속돼 완료 시 이력으로 남는다.
             본인 위시만 수정 가능하며, item 을 직접 노출하지 않고 위시 소유 단위로 권한을 검증한다.
+
+            **memo(개인 메모, 최대 100자)** 도 이 API 로 수정한다 — 미전송(null)이면 미변경, 빈 문자열이면 삭제.
+            메모는 상품 정보와 달리 버전으로 쌓이지 않는 위시 개인 필드라, **memo 만 보내면 새 버전을 만들지 않고**
+            메모만 바뀐다(이때 병합 필수값 검증도 없다). 메모는 상세 조회 응답에서만 확인한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "수기 수정 성공 — 수기(MANUAL) 새 버전이 이 위시의 표시 버전이 됨",
+                description = "수기 수정 성공 — 수기(MANUAL) 새 버전이 이 위시의 표시 버전이 됨 (memo 만 수정한 경우 버전은 그대로)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -274,7 +280,7 @@ interface WishlistApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청 (보정 후에도 상품명 없음 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
-                        "이미지 없이 READY 전환 — code: ITEM-005 · price 음수 · name/currency 길이 초과 · " +
+                        "이미지 없이 READY 전환 — code: ITEM-005 · price 음수 · name/currency/memo 길이 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [

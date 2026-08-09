@@ -48,7 +48,10 @@ class AsyncImageParsingWorker(
         // (부모 없는 JDBC 관측은 ObservationConfig 가 거부하므로 아예 사라진다).
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
-        Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry).observe {
+        // 링크 워커와 같은 이유로 실패 경로가 observation.error() 를 직접 마킹한다 — runCatching 이 예외를 삼켜
+        // 그냥 두면 실패 span 이 정상(status 미설정)으로 남는다(#902).
+        val observation = Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry)
+        observation.observe {
             parsingHeartbeat.guarded(
                 snapshotId,
                 expectedAttempt,
@@ -57,8 +60,11 @@ class AsyncImageParsingWorker(
                 },
             ) { attempt ->
                 runCatching { imageSnapshotExtractor.extract(imageKey) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
-                    .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt, observation) }
+                    .onFailure { e ->
+                        observation.error(e)
+                        onExtractFailed(itemId, snapshotId, imageKey, e, attempt)
+                    }
             }
         }
     }
@@ -69,6 +75,7 @@ class AsyncImageParsingWorker(
         imageKey: String,
         snapshot: ProductSnapshot,
         attempt: Int,
+        observation: Observation,
     ) {
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
         runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
@@ -79,13 +86,27 @@ class AsyncImageParsingWorker(
                     log.info("item {} 이미지 좀비 결과 — 전이·raw 회수 생략 (attempt={})", itemId, attempt)
                     return@onSuccess
                 }
-                log.info("item {} 이미지 파싱 완료 → READY", itemId)
+                // 링크 워커와 같은 구조화 결과 라인 — 로그 기반 결과 분포·알림이 이미지 경로도 같은 모집단으로 세게 한다(#902).
+                log.info(
+                    "item.parse.result item={} type=image result={} reason={}",
+                    itemId,
+                    ItemParsingMetrics.RESULT_READY,
+                    ItemParsingMetrics.REASON_NONE,
+                )
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
                 deleteRawQuietly(imageKey)
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없음 → PROCESSING 방치 대신 FAILED.
-                log.warn("item {} READY 전이 거부 → FAILED: {}", itemId, e.message)
+                observation.error(e)
+                log.warn(
+                    "item.parse.result item={} type=image result={} reason={}",
+                    itemId,
+                    ItemParsingMetrics.RESULT_FAILED,
+                    ItemParsingMetrics.REASON_READY_REJECTED,
+                )
+                // 예외 상세(스택)는 별도 줄로 — 구조화 줄에 붙이면 logfmt 파싱이 깨진다(링크 워커와 동일).
+                log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
                 // 종결이 실제로 적용됐을 때만 결과를 세고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존).
                 if (markFailedQuietly(itemId, snapshotId, attempt)) {
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)

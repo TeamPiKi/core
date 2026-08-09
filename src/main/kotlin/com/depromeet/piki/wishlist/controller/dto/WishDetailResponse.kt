@@ -12,6 +12,12 @@ data class WishDetailResponse(
     @field:Schema(description = "위시 기록")
     val wish: WishItemResponse.WishView,
     @field:Schema(
+        description = "개인 메모 — 이 위시를 담은 본인만 본다(같은 상품을 담은 다른 사용자와 공유되지 않는다). 없으면 null.",
+        example = "생일 선물 후보",
+        nullable = true,
+    )
+    val memo: String?,
+    @field:Schema(
         description = "지금 화면에 보일 상품 값. 목록 응답의 item 과 같은 규칙으로 파생된다(같은 카드가 목록과 상세에서 같게 보인다).",
     )
     val item: WishItemResponse.ItemView,
@@ -38,6 +44,7 @@ data class WishDetailResponse(
         ): WishDetailResponse =
             WishDetailResponse(
                 wish = WishItemResponse.WishView.from(detail.wish),
+                memo = detail.wish.memo,
                 item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, sourcePlatform),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
             )

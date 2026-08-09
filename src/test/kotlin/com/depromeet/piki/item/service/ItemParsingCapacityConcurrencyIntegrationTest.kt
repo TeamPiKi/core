@@ -1,5 +1,8 @@
 package com.depromeet.piki.item.service
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -11,6 +14,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubItemParsingWorker
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.junit.jupiter.api.Timeout
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
@@ -115,6 +119,11 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
         // (b) 실행 예산이 남아 있고 박동으로 updated_at 이 신선한 PROCESSING 이 함께 종결된다 — 종결 보증의 최후 시계다.
         val pending = overdue(ItemStatus.PENDING)
         val beating = overdue(ItemStatus.PROCESSING)
+        // 종결 구조화 로그(#902) — 알림 룰이 소비하는 계약. 특히 "한 번도 실행되지 않은 PENDING 의 마감 종결"이
+        // 로그 한 줄을 남기는 것이 이 계약의 핵심 보증이라 그 행(item id)으로 직접 단언한다.
+        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
+        serviceLogger.addAppender(terminalLogs)
         try {
             // threshold 를 지금으로 잡으면 위에서 created_at 을 과거로 민 두 행이 마감 대상이 된다.
             val expired = itemParsingService.failOverdue(LocalDateTime.now(), 100)
@@ -123,7 +132,18 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, statusOf(pending.second), "집히지 못한 PENDING 도 마감 대상이다")
             assertEquals(ItemStatus.FAILED, statusOf(beating.second), "박동이 신선해도 마감은 종결한다")
             assertEquals(0, attemptOf(beating.second), "마감은 예산을 소모하지 않고 종결한다")
+            assertTrue(
+                terminalLogs.list.any {
+                    it.formattedMessage.contains("item.parse.result") &&
+                        it.formattedMessage.contains("item=${pending.first}") &&
+                        it.formattedMessage.contains("result=failed") &&
+                        it.formattedMessage.contains("reason=deadline") &&
+                        it.formattedMessage.contains("url=shop.example.com/products/overdue-")
+                },
+                "미실행 PENDING 의 마감 종결도 item.parse.result 구조화 로그(url 포함)를 남겨야 한다",
+            )
         } finally {
+            serviceLogger.detachAppender(terminalLogs)
             deleteItem(pending.first)
             deleteItem(beating.first)
         }
