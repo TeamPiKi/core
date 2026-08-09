@@ -535,6 +535,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
+        // 종결 구조화 로그(#902) — release 예산 소진 종결도 같은 계약의 라인을 남긴다 (이 라인은 url 없이 남는 경로).
+        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
+        serviceLogger.addAppender(terminalLogs)
         try {
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
             // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
@@ -542,7 +546,16 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
             await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
             assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
+            assertTrue(
+                terminalLogs.list.any {
+                    it.formattedMessage.contains("item.parse.result") &&
+                        it.formattedMessage.contains("result=failed") &&
+                        it.formattedMessage.contains("reason=retry_exhausted")
+                },
+                "release 예산 소진 종결도 item.parse.result 구조화 로그를 남겨야 한다",
+            )
         } finally {
+            serviceLogger.detachAppender(terminalLogs)
             cleanup(userId)
         }
     }
