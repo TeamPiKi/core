@@ -210,26 +210,32 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                             }.header(HttpHeaders.AUTHORIZATION, auth)
                     },
                 )
-            requests.forEach { request ->
-                executor.submit {
-                    ready.countDown()
-                    start.await()
-                    try {
-                        val res = mockMvc.perform(request()).andReturn()
-                        when (res.response.status) {
-                            200 -> status200.incrementAndGet()
-                            else -> statusOther.incrementAndGet()
+            // 단언 실패(락 회귀로 요청 스레드 정지 등)에도 executor 를 반드시 종료한다 — non-daemon 스레드가
+            // 남으면 테스트 JVM 전체가 타임아웃까지 잡힌다.
+            try {
+                requests.forEach { request ->
+                    executor.submit {
+                        ready.countDown()
+                        start.await()
+                        try {
+                            val res = mockMvc.perform(request()).andReturn()
+                            when (res.response.status) {
+                                200 -> status200.incrementAndGet()
+                                else -> statusOther.incrementAndGet()
+                            }
+                        } finally {
+                            done.countDown()
                         }
-                    } finally {
-                        done.countDown()
                     }
                 }
-            }
 
-            ready.await()
-            start.countDown()
-            assertTrue(done.await(10, TimeUnit.SECONDS), "동시 요청이 10초 안에 완료되어야 한다")
-            executor.shutdown()
+                assertTrue(ready.await(10, TimeUnit.SECONDS), "작업 스레드가 10초 안에 시작되어야 한다")
+                start.countDown()
+                assertTrue(done.await(10, TimeUnit.SECONDS), "동시 요청이 10초 안에 완료되어야 한다")
+            } finally {
+                executor.shutdownNow()
+                executor.awaitTermination(5, TimeUnit.SECONDS)
+            }
 
             assertEquals(2, status200.get(), "두 요청 모두 200 이어야 한다")
             assertEquals(0, statusOther.get())
