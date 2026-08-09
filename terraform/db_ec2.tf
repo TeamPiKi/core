@@ -88,6 +88,17 @@ data "aws_iam_policy_document" "db_instance" {
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/db-*"]
   }
 
+  # 백업 실패 알림을 보낼 Discord webhook (#905). 위 db-* 패턴에 안 걸려 따로 열어야 한다 —
+  # 최소 권한으로 좁혀 둔 대가이고, 넓히는 대신 필요한 파라미터 하나만 이름으로 더한다.
+  #
+  # 배포 알림용 webhook 과 다른 채널이라 이름도 alert- 로 구분한다. 운영 실패 알림이 배포
+  # 로그에 섞이면 정작 봐야 할 때 묻힌다.
+  statement {
+    sid       = "ReadAlertWebhook"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/discord-alert-webhook-url"]
+  }
+
   # 관측 수집기(alloy)가 쓰는 Grafana Cloud 자격 공유 경로 (#771).
   statement {
     sid       = "ReadObservabilityCredentials"
