@@ -26,9 +26,23 @@ class Wish(
         require(snapshotId > 0) { "snapshotId 는 양수여야 한다: $snapshotId" }
     }
 
+    // 개인 메모 — item·snapshot 은 여러 사용자가 공유하므로 개인 기록은 user 소유인 wish 행이 든다.
+    @Column(name = "memo", length = MEMO_MAX_LENGTH)
+    var memo: String? = null
+        protected set
+
     // 소유자가 아니면 거부. 도메인이 자기방어해 어느 통로로 호출되든 같은 결과를 낸다.
     fun verifyOwnedBy(userId: UUID) {
         if (this.userId != userId) throw WishException.forbiddenWishItems()
+    }
+
+    // 빈 문자열(공백 포함)은 삭제로 정규화한다. 길이 계약은 입력 경계(@Size)가 거르고 여기는 불변식(500)이다.
+    fun updateMemo(rawMemo: String) {
+        val normalized = rawMemo.trim().ifEmpty { null }
+        normalized?.let {
+            require(it.length <= MEMO_MAX_LENGTH) { "메모는 ${MEMO_MAX_LENGTH}자 이하여야 한다: ${it.length}자" }
+        }
+        memo = normalized
     }
 
     // 활성 포인터를 새 추출 버전으로 교체한다(수동 새로고침). 옛 snapshot 행은 유지돼 토너먼트 출전 격리를 지킨다 —
@@ -41,5 +55,9 @@ class Wish(
     // soft delete — 행을 지우지 않고 deletedAt 으로 마킹한다. 조회는 deletedAt IS NULL 만 본다.
     fun delete() {
         deletedAt = LocalDateTime.now()
+    }
+
+    companion object {
+        const val MEMO_MAX_LENGTH = 100
     }
 }

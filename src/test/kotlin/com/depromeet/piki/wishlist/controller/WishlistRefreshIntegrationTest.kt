@@ -386,6 +386,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     price = 200,
                     imageUrl = "https://img.example.com/a.png",
                     currency = "KRW",
+                    memo = null,
                 )
 
             // 새 MANUAL 버전이 활성으로 스왑됐다 — 편집자·출처가 박힌다.
