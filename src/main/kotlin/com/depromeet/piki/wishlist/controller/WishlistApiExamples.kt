@@ -120,6 +120,11 @@ class WishlistApiExamples(
                         payload = ApiResponseBody.ok(sampleEntry),
                     )
                     add(
+                        status = HttpStatus.OK,
+                        name = "memo 만 수정 (버전을 쌓지 않음 — 표시값 그대로, 메모는 상세 조회로 확인)",
+                        payload = ApiResponseBody.ok(sampleEntry),
+                    )
+                    add(
                         status = HttpStatus.BAD_REQUEST,
                         name = "가격 음수",
                         payload =
@@ -127,6 +132,15 @@ class WishlistApiExamples(
                                 CommonErrorCode.INVALID_INPUT,
                                 // @ModelAttribute Bean Validation 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                 detail = WishlistUpdateRequest.PRICE_MIN_MESSAGE,
+                            ),
+                    )
+                    add(
+                        status = HttpStatus.BAD_REQUEST,
+                        name = "메모 길이 초과 (100자)",
+                        payload =
+                            ApiResponseBody.fail<Unit>(
+                                CommonErrorCode.INVALID_INPUT,
+                                detail = WishlistUpdateRequest.MEMO_MAX_MESSAGE,
                             ),
                     )
                     add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
@@ -257,6 +271,7 @@ class WishlistApiExamples(
                     id = 1024,
                     createdAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                 ),
+            memo = "생일 선물 후보",
             item =
                 WishItemResponse.ItemView(
                     id = 512,
@@ -330,6 +345,7 @@ class WishlistApiExamples(
                     id = 1027,
                     createdAt = LocalDateTime.of(2026, 5, 21, 10, 11, 0),
                 ),
+            memo = null,
             item =
                 WishItemResponse.ItemView(
                     id = 515,

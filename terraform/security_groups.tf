@@ -56,29 +56,5 @@ resource "aws_security_group" "ec2" {
   }
 }
 
-# -----------------------------------------------------------------------------
-# RDS Security Group — EC2 SG 로부터의 3306 만 허용
-# -----------------------------------------------------------------------------
-resource "aws_security_group" "rds" {
-  name        = "${local.name_prefix}-rds-sg"
-  description = "Allow MySQL from EC2 SG only"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "MySQL from EC2"
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2.id]
-  }
-
-  # egress 블록을 의도적으로 생략한다.
-  # aws_security_group 은 VPC 내 생성 시 AWS 가 자동으로 붙이는 기본 all-allow 아웃바운드 룰을
-  # Terraform 이 제거해 주므로, 블록을 두지 않으면 RDS SG 는 송신이 전부 차단된 상태가 된다.
-  # RDS 는 인바운드 응답만으로 동작하고 공식 backup/snapshot 은 AWS 관리 경로라 SG egress 와 무관.
-  # 추후 외부 연동(S3 Data Export 등) 이 필요하면 그때 최소 대상만 명시적으로 열 것.
-
-  tags = {
-    Name = "${local.name_prefix}-rds-sg"
-  }
-}
+# RDS Security Group 은 #898 로 RDS 자체를 폐기하면서 함께 제거했다.
+# 그 자리를 대신하는 것은 db_ec2.tf 의 aws_security_group.db_ec2 다.

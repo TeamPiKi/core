@@ -188,7 +188,7 @@ class TournamentItemApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "READY - 파싱 완료 (링크 등록)",
+                            name = "READY - 파싱 완료 (링크 등록, 내 위시에 담긴 상품이라 memo 포함)",
                             payload =
                                 ApiResponseBody.ok(
                                     TournamentItemDetailResponse(
@@ -200,6 +200,7 @@ class TournamentItemApiExamples(
                                         price = 129_000,
                                         currency = "KRW",
                                         status = ItemStatus.READY,
+                                        memo = "생일 선물 후보",
                                     ),
                                 ),
                         )

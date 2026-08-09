@@ -33,6 +33,7 @@ import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
+import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.WishPersistenceService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -91,6 +92,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
+
+    @Autowired private lateinit var wishRepository: WishRepository
 
     @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
 
@@ -2712,6 +2715,69 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.name").doesNotExist())
             .andExpect(jsonPath("$.data.price").doesNotExist())
             .andExpect(jsonPath("$.data.imageUrl").doesNotExist())
+    }
+
+    @Test
+    fun `GET tournaments-id-items-tournamentItemId 는 내 위시에 담긴 상품이면 내 메모를 내려주고 메모가 없으면 필드를 생략한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveWishItem(name = "나이키 에어맥스", price = 129_000)
+        addItemsToTournament(mockMvc, tournamentId, userId, itemId)
+        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+
+        // 위시에는 있지만 메모를 안 적은 상태 — NON_NULL 직렬화로 필드 자체가 빠진다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").doesNotExist())
+
+        val wish = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first()
+        wishPersistenceService.updateMemo(userId = userId, wishId = wish.getId(), memo = "생일 선물 후보")
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("생일 선물 후보"))
+    }
+
+    @Test
+    fun `GET tournaments-id-items-tournamentItemId 에서 추가자의 위시 메모는 다른 참여자에게 내려가지 않는다`() {
+        // memo 는 "요청자 본인의 위시" 기준이다 — 같은 아이템을 봐도 추가자에게만 자기 메모가 보이고,
+        // 다른 참여자에게는 타인 메모가 어떤 경우에도 내려가지 않는다(개인 격리).
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        val itemId = saveWishItem(name = "나이키 에어맥스", price = 129_000)
+        addItemsToTournament(mockMvc, tournamentId, userId, itemId)
+        val wish = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first()
+        wishPersistenceService.updateMemo(userId = userId, wishId = wish.getId(), memo = "방장의 메모")
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode"}"""),
+            ).andExpect(status().isOk)
+        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.name").value("나이키 에어맥스"))
+            .andExpect(jsonPath("$.data.memo").doesNotExist())
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("방장의 메모"))
     }
 
     @Test
