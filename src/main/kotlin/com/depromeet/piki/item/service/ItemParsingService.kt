@@ -6,6 +6,7 @@ import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -89,6 +90,9 @@ class ItemParsingService(
             target.markFailed()
             eventPublisher.publishEvent(ItemParsingFailed(target.itemId, target.getId()))
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
+            // 워커 스레드(observation 스코프)에서 불리므로 이 라인엔 trace_id 가 붙는다. url 은 마지막 시도의
+            // item.parse.retry 라인·트레이스로 본다(락 구간에서 item 로드를 피한다).
+            logTerminalFailure(target.itemId, ItemParsingMetrics.REASON_RETRY_EXHAUSTED, link = null)
             return true
         }
         target.release()
@@ -170,6 +174,7 @@ class ItemParsingService(
                     snapshot.markFailed()
                     eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_NO_SOURCE)
+                    logTerminalFailure(snapshot.itemId, ItemParsingMetrics.REASON_NO_SOURCE, itemById[snapshot.itemId]?.link)
                     failedCount++
                     return@forEach
                 }
@@ -178,6 +183,7 @@ class ItemParsingService(
                 snapshot.markFailed()
                 eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_RETRY_EXHAUSTED)
+                logTerminalFailure(snapshot.itemId, ItemParsingMetrics.REASON_RETRY_EXHAUSTED, itemById[snapshot.itemId]?.link)
                 failedCount++
                 return@forEach
             }
@@ -200,12 +206,31 @@ class ItemParsingService(
         batchSize: Int,
     ): Int {
         val overdue = itemSnapshotRepository.findOverdue(threshold, batchSize)
+        if (overdue.isEmpty()) return 0
+        // 종결 로그에 url 을 실으려는 item 로드 — 정상 사이클은 위 early return 으로 여기 안 오므로 비용이 없다.
+        val itemById = itemRepository.findByIds(overdue.map { it.itemId }).associateBy { it.getId() }
         overdue.forEach { snapshot ->
             snapshot.expire()
             eventPublisher.publishEvent(ItemParsingFailed(snapshot.itemId, snapshot.getId()))
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_DEADLINE)
+            logTerminalFailure(snapshot.itemId, ItemParsingMetrics.REASON_DEADLINE, itemById[snapshot.itemId]?.link)
         }
         return overdue.size
+    }
+
+    // recover 경로 FAILED 종결의 구조화 결과 로그 — 워커의 item.parse.result 라인과 같은 logfmt 계약이다.
+    // 알림·대시보드가 이 한 줄 == 종결 1건으로 세므로, FAILED 전이를 새로 만들면 반드시 함께 남긴다(#902).
+    // 레벨은 warn — 클라이언트 잘못(워커의 확정 실패, info)과 달리 파이프라인이 끝내 못 끝낸 서버측 문제라서다.
+    private fun logTerminalFailure(
+        itemId: Long,
+        reason: String,
+        link: ProductLink?,
+    ) {
+        link ?: run {
+            log.warn("item.parse.result item={} result={} reason={}", itemId, ItemParsingMetrics.RESULT_FAILED, reason)
+            return
+        }
+        log.warn("item.parse.result item={} result={} reason={} url={}", itemId, ItemParsingMetrics.RESULT_FAILED, reason, link.safeLogString())
     }
 
     // snapshot 의 item 입력(link XOR imageKey)으로 claim 객체를 만든다. link 우선, 없으면 imageKey, 둘 다 없으면
