@@ -129,6 +129,7 @@ class WishlistController(
                 price = request.price,
                 currency = request.currency,
                 image = image,
+                memo = request.memo,
             )
         return ApiResponseBody.ok(toResponse(result))
     }

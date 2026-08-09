@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
@@ -144,6 +145,107 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                     itemId,
                 )
             assertEquals(2, snapshotCount, "옛 READY 1 + 새 PENDING 1 = 2 (락이 없으면 동시 생성으로 3+)")
+        } finally {
+            stubItemParsingWorker.enabled = true
+            jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
+            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
+            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+            jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
+        }
+    }
+
+    @Test
+    fun `같은 위시에 새로고침과 메모 수정을 동시에 보내도 행 락으로 직렬화되어 스왑과 메모가 모두 보존된다`() {
+        // memo 경로가 락 없이 읽으면, UPDATE 가 전 컬럼을 쓰므로(dynamic update 아님) 동시 refresh 가 커밋한
+        // snapshot_id 스왑을 memo flush 가 읽어 둔 옛 값으로 되덮는다(lost update). 행 락 직렬화가 그 손실을 막는다 —
+        // 어느 순서로 잡히든 "스왑된 포인터 + 저장된 메모" 둘 다 남는 것이 직렬화의 시그니처다.
+        val userId = UUID.randomUUID()
+        userJpaRepository.save(
+            User(id = userId, nickname = "memo-race", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
+        )
+        stubProductLinkExtractor.build = {
+            ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW")
+        }
+
+        val item = itemJpaRepository.save(Item(ProductLink.parse("https://shop.example.com/products/race-memo")))
+        val oldSnapshot =
+            itemSnapshotJpaRepository.save(
+                ItemSnapshot(
+                    itemId = item.getId(),
+                    name = "옛 상품",
+                    price = 10_000,
+                    currency = "KRW",
+                    status = ItemStatus.READY,
+                    extractedAt = LocalDateTime.now(),
+                ),
+            )
+        val wish = wishJpaRepository.save(Wish(userId = userId, snapshotId = oldSnapshot.getId()))
+        val itemId = item.getId()
+
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val auth = "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
+
+        try {
+            stubItemParsingWorker.enabled = false
+            val status200 = AtomicInteger(0)
+            val statusOther = AtomicInteger(0)
+            val executor = Executors.newFixedThreadPool(2)
+            val ready = CountDownLatch(2)
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(2)
+
+            val requests =
+                listOf(
+                    { post("/api/v1/wishlists/${wish.getId()}/refresh").header(HttpHeaders.AUTHORIZATION, auth) },
+                    {
+                        multipart("/api/v1/wishlists/${wish.getId()}")
+                            .param("memo", "동시 메모")
+                            .with {
+                                it.method = "PATCH"
+                                it
+                            }.header(HttpHeaders.AUTHORIZATION, auth)
+                    },
+                )
+            // 단언 실패(락 회귀로 요청 스레드 정지 등)에도 executor 를 반드시 종료한다 — non-daemon 스레드가
+            // 남으면 테스트 JVM 전체가 타임아웃까지 잡힌다.
+            try {
+                requests.forEach { request ->
+                    executor.submit {
+                        ready.countDown()
+                        start.await()
+                        try {
+                            val res = mockMvc.perform(request()).andReturn()
+                            when (res.response.status) {
+                                200 -> status200.incrementAndGet()
+                                else -> statusOther.incrementAndGet()
+                            }
+                        } finally {
+                            done.countDown()
+                        }
+                    }
+                }
+
+                assertTrue(ready.await(10, TimeUnit.SECONDS), "작업 스레드가 10초 안에 시작되어야 한다")
+                start.countDown()
+                assertTrue(done.await(10, TimeUnit.SECONDS), "동시 요청이 10초 안에 완료되어야 한다")
+            } finally {
+                executor.shutdownNow()
+                executor.awaitTermination(5, TimeUnit.SECONDS)
+            }
+
+            assertEquals(2, status200.get(), "두 요청 모두 200 이어야 한다")
+            assertEquals(0, statusOther.get())
+            val row = jdbcTemplate.queryForMap("SELECT snapshot_id, memo FROM wishes WHERE id = ?", wish.getId())
+            assertEquals("동시 메모", row["memo"], "메모가 저장되어야 한다")
+            val finalSnapshotId = (row["snapshot_id"] as Number).toLong()
+            assertTrue(
+                finalSnapshotId != oldSnapshot.getId(),
+                "refresh 가 스왑한 포인터가 memo 갱신의 전 컬럼 UPDATE 에 되덮이면 안 된다",
+            )
         } finally {
             stubItemParsingWorker.enabled = true
             jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
