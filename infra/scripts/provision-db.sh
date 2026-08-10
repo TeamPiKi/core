@@ -142,8 +142,16 @@ fi
 sudo install -m 0755 "${SCRIPT_DIR}/db-backup.sh" /usr/local/bin/piki-db-backup.sh
 echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 
-# 19:00 UTC = 04:00 KST. 트래픽이 가장 적은 시간대에 둔다(백업 자체는 무중단이지만
-# 혹시 모를 부하도 한산할 때 지나가게 한다).
+# 백업 결과 지표가 놓일 자리. alloy 의 node_exporter textfile collector 가 이 디렉터리를
+# 마운트해 읽는다(#905). 미리 만들어 두는 이유는 두 가지다 - 백업이 root 로 돌아 여기 쓸 수
+# 있어야 하고, 디렉터리가 없으면 alloy 마운트가 빈 경로를 잡아 지표가 조용히 사라진다.
+sudo mkdir -p /var/lib/node_exporter/textfile
+sudo chmod 755 /var/lib/node_exporter/textfile
+echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
+
+# 15:00 UTC = 00:00 KST(자정). 처음엔 04:00 KST 였는데, 그 시각을 고를 이유가 사실상
+# 없었다 - 데이터가 2.1MB 라 백업이 2초에 끝나고 --single-transaction 이라 락도 안 건다.
+# 반대로 새벽에 실패하면 아침까지 방치되므로, 사람이 알림을 볼 수 있는 시간으로 옮긴다.
 # 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
 # cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
 #
@@ -151,13 +159,13 @@ echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 # 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
 # 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
 # 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
-CRON_LINE='0 19 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
+CRON_LINE='0 15 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
 # 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
 #
 # `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
 # set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
 # 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
-echo "[backup] cron 등록·갱신 (매일 19:00 UTC = 04:00 KST)"
+echo "[backup] cron 등록·갱신 (매일 15:00 UTC = 00:00 KST)"
 { sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
 
 # ── 3) 관측 수집기(alloy) ───────────────────────────────────────────────────

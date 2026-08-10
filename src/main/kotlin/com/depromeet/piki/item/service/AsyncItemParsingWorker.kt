@@ -45,7 +45,10 @@ class AsyncItemParsingWorker(
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
         // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다(ext 호출·부수효과 없음).
-        Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
+        // runCatching 이 예외를 삼켜 observation 은 실패를 못 보므로, 실패 경로가 error() 로 직접 마킹해야
+        // Tempo 에서 `status = error` 검색·실패 표시가 동작한다(#902). 그래서 참조를 잡아 핸들러에 넘긴다.
+        val observation = Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry)
+        observation.observe {
             parsingHeartbeat.guarded(
                 snapshotId,
                 expectedAttempt,
@@ -55,8 +58,11 @@ class AsyncItemParsingWorker(
             ) { attempt ->
                 val started = System.nanoTime()
                 runCatching { productLinkExtractor.extract(link) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt) }
-                    .onFailure { e -> onExtractFailed(itemId, snapshotId, link, e, attempt) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt, observation) }
+                    .onFailure { e ->
+                        observation.error(e)
+                        onExtractFailed(itemId, snapshotId, link, e, attempt)
+                    }
             }
         }
     }
@@ -68,6 +74,7 @@ class AsyncItemParsingWorker(
         snapshot: ProductSnapshot,
         started: Long,
         attempt: Int,
+        observation: Observation,
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
@@ -94,6 +101,7 @@ class AsyncItemParsingWorker(
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.
+                observation.error(e)
                 log.warn(
                     "item.parse.result item={} result={} reason={} url={}",
                     itemId,
