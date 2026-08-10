@@ -2,15 +2,18 @@ package com.depromeet.piki.auth.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.auth.infrastructure.redis.RefreshTokenStore
+import com.depromeet.piki.auth.service.AuthService
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubRefreshTokenStore
 import com.depromeet.piki.support.uuidToBytes
+import com.depromeet.piki.user.service.UserService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
+import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -33,6 +36,13 @@ class AuthTokenStateIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var refreshTokenStore: RefreshTokenStore
+
+    // 같은 계정의 두 번째 기기 로그인을 재현한다 — /auth/guest 는 매번 새 유저라 계정을 공유할 수 없다.
+    @Autowired
+    private lateinit var authService: AuthService
+
+    @Autowired
+    private lateinit var userService: UserService
 
     // grace TTL 경과를 시뮬레이션하기 위해 stub 의 expireGrace 를 호출한다 (실제 Redis 는 키 TTL 만료가 함).
     @Autowired
@@ -57,7 +67,8 @@ class AuthTokenStateIntegrationTest : IntegrationTestSupport() {
     }
 
     private fun cleanup(userId: UUID) {
-        refreshTokenStore.delete(userId)
+        // 세션 id 를 모르는 정리 코드라 전 세션을 지운다(#893 으로 키가 세션별로 갈렸다).
+        refreshTokenStore.deleteAll(userId)
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 
@@ -231,4 +242,80 @@ class AuthTokenStateIntegrationTest : IntegrationTestSupport() {
             cleanup(userId)
         }
     }
+
+    // ── 멀티 디바이스(#893) ────────────────────────────────────────────
+
+    // 이슈가 보고한 실패 그대로다. 예전엔 키가 refresh:{userId} 하나라 B 로그인이 A 토큰을 덮어썼고,
+    // 뒤늦은 A 의 갱신이 재사용으로 오인돼 family invalidation 이 돌면서 방금 로그인한 B 까지 죽었다.
+    @Test
+    fun `POST auth token refresh - 두 기기가 각자 로그인해도 서로의 갱신을 죽이지 않는다`() {
+        val mockMvc = mockMvc()
+        val (accessToken, deviceA) = createGuest()
+        val userId = jwtProvider.parseAccessToken(accessToken)?.userId ?: error("accessToken 파싱 실패")
+
+        try {
+            // 같은 계정으로 두 번째 기기 로그인 — 이 시점에 A 의 슬롯이 덮이면 안 된다.
+            val deviceB = authService.createTokensForUser(userService.findById(userId)).refreshToken
+
+            // 먼저 로그인한 A 가 뒤늦게 갱신해도 정상이어야 한다.
+            refresh(mockMvc, deviceA).andExpect(status().isOk)
+
+            // A 의 갱신 때문에 B 가 무효화되지 않아야 한다 — 이게 이슈의 핵심 증상이었다.
+            refresh(mockMvc, deviceB).andExpect(status().isOk)
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `POST auth logout - 한 기기에서 로그아웃해도 다른 기기의 세션은 유지된다`() {
+        val mockMvc = mockMvc()
+        val (accessToken, deviceA) = createGuest()
+        val userId = jwtProvider.parseAccessToken(accessToken)?.userId ?: error("accessToken 파싱 실패")
+
+        try {
+            val deviceB = authService.createTokensForUser(userService.findById(userId)).refreshToken
+
+            // A 의 refresh 토큰을 함께 보내 "이 기기" 를 특정한다.
+            mockMvc
+                .perform(
+                    post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer $accessToken")
+                        .content(objectMapper.writeValueAsString(mapOf("refreshToken" to deviceA))),
+                ).andExpect(status().isOk)
+
+            refresh(mockMvc, deviceA).andExpect(status().isUnauthorized)
+            refresh(mockMvc, deviceB).andExpect(status().isOk)
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    // sid 클레임이 없는 토큰 = #893 배포 이전 발급분. 세션 슬롯을 특정할 수 없어 재로그인을 유도한다.
+    @Test
+    fun `POST auth token refresh - sid 없는 레거시 refresh 토큰은 401 이다`() {
+        val mockMvc = mockMvc()
+        val (accessToken, _) = createGuest()
+        val userId = jwtProvider.parseAccessToken(accessToken)?.userId ?: error("accessToken 파싱 실패")
+
+        try {
+            // sid 를 비워 배포 이전 토큰을 재현한다 (서명은 유효하다).
+            val legacy = jwtProvider.generateRefreshToken(userId, "")
+
+            refresh(mockMvc, legacy).andExpect(status().isUnauthorized)
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    private fun refresh(
+        mockMvc: MockMvc,
+        refreshToken: String,
+    ) = mockMvc.perform(
+        post("/api/v1/auth/token/refresh")
+            .header("X-Client-Type", "app")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(mapOf("refreshToken" to refreshToken))),
+    )
 }

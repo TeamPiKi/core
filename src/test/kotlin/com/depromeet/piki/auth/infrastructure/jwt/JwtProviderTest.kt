@@ -5,6 +5,7 @@ import java.time.Duration
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -28,15 +29,35 @@ class JwtProviderTest {
     }
 
     @Test
-    fun `refresh token 을 발급하면 동일한 userId 를 parseRefreshToken 으로 추출할 수 있다`() {
+    fun `refresh token 을 발급하면 동일한 userId 와 sessionId 를 parseRefreshToken 으로 추출할 수 있다`() {
         val userId = UUID.randomUUID()
-        val token = jwtProvider.generateRefreshToken(userId)
-        assertEquals(userId, jwtProvider.parseRefreshToken(token))
+        val sessionId = jwtProvider.newSessionId()
+        val token = jwtProvider.generateRefreshToken(userId, sessionId)
+        val payload = jwtProvider.parseRefreshToken(token)
+        assertEquals(userId, payload?.userId)
+        assertEquals(sessionId, payload?.sessionId)
+    }
+
+    // 회전이 세션을 이어가려면 같은 sid 를 넘겼을 때 토큰만 새로 나와야 한다. jti 를 세션 축으로 쓰면
+    // 회전마다 값이 바뀌어 Redis 슬롯이 갈리는데, 그 실수를 여기서 잡는다(#893).
+    @Test
+    fun `같은 sessionId 로 다시 발급하면 토큰은 달라도 sessionId 는 유지된다`() {
+        val userId = UUID.randomUUID()
+        val sessionId = jwtProvider.newSessionId()
+        val first = jwtProvider.generateRefreshToken(userId, sessionId)
+        val second = jwtProvider.generateRefreshToken(userId, sessionId)
+        assertNotEquals(first, second)
+        assertEquals(sessionId, jwtProvider.parseRefreshToken(second)?.sessionId)
+    }
+
+    @Test
+    fun `로그인마다 새로 발급한 sessionId 는 서로 다르다`() {
+        assertNotEquals(jwtProvider.newSessionId(), jwtProvider.newSessionId())
     }
 
     @Test
     fun `refresh token 을 parseAccessToken 으로 호출하면 type 불일치로 null 을 반환한다`() {
-        val token = jwtProvider.generateRefreshToken(UUID.randomUUID())
+        val token = jwtProvider.generateRefreshToken(UUID.randomUUID(), jwtProvider.newSessionId())
         assertNull(jwtProvider.parseAccessToken(token))
     }
 
