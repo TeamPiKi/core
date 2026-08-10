@@ -36,21 +36,26 @@ class PushNotificationChannel(
     // 로컬·미설정 환경에서 로그가 폭주하므로, 인스턴스 생애 1회만 warn 해 관측은 되되 스팸은 막는다.
     private val senderMissingWarned = AtomicBoolean(false)
 
+    // 항상 0 을 반환한다 — OS 트레이 푸시는 "도착" 이지 "화면에서 봄" 이 아니라 자동읽음(#812)의 근거가 될 수 없다.
+    // (전달 실패를 뜻하는 게 아니다. 실시간 인앱 반영 건수를 세는 계약이라 이 채널의 몫이 0 인 것이다.)
     override fun send(
         userId: UUID,
         notification: Notification,
-    ) {
+    ): Int {
         // 푸시가 꺼진 타입(예: 아이템 추가/삭제 — 인앱 SSE 로 충분)은 OS 트레이 푸시를 보내지 않는다 — 토큰 게이트와 같은 자리의 자기-적용 판단.
         // 발송 여부는 백오피스가 토글하는 DB 값(push_enabled)이라 캐시에서 읽는다(@Volatile 캐시 lookup 이라 싸다).
-        if (!templateProvider.find(notification.type).pushEnabled) return
-        val sender = sender() ?: return
+        if (!templateProvider.find(notification.type).pushEnabled) return 0
+        val sender = sender() ?: return 0
         val tokens = userDeviceService.findTokens(userId)
-        if (tokens.isEmpty()) return
+        if (tokens.isEmpty()) return 0
         // 안읽음 수(OS 아이콘 badge)는 persistence.save 커밋 이후·트랜잭션 밖(dispatcher 호출 시점)에 세어 방금 도착한 알림을 포함한다.
         // REST unreadCount 와 동일 소스라 앱 내부 badge 와 OS 아이콘 badge 가 같은 수를 가리킨다(#487).
+        // 인앱 자동읽음(#812)이 걸리는 경우엔 이 값이 방금 알림을 포함해 1 크지만, dispatcher 가 읽음 처리 후
+        // NotificationReadOrchestrator 로 badge 를 다시 맞추므로 최종적으로 수렴한다.
         val badge = badgeCountOf(notificationRepository.countUnread(userId))
         val result = sender.send(tokens, notification, badge)
         userDeviceService.removeStaleTokens(result.staleTokens)
+        return 0
     }
 
     // 읽음 처리 후 갱신된 안읽음 수만 silent 푸시로 보내 OS 아이콘 badge 를 내린다(#487, 멀티 디바이스 동기화).

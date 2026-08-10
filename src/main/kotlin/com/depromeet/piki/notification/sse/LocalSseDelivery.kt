@@ -21,17 +21,23 @@ class LocalSseDelivery(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 한 유저의 모든 연결에 알림 이벤트를 보낸다. 이벤트는 유저당 한 번 만들어 그 유저의 emitter 들에 재사용한다.
+    // 한 유저의 모든 연결에 알림 이벤트를 보내고 **write 에 성공한 연결 수**를 반환한다.
+    // 이벤트는 유저당 한 번 만들어 그 유저의 emitter 들에 재사용한다.
+    //
+    // 반환값이 자동읽음(#812)의 근거다 — "레지스트리에 연결이 있었나" 가 아니라 "실제로 써 넣었나" 여야 한다.
+    // 둘 사이엔 창이 있다: 하트비트가 30초 주기라 끊긴 소켓이 그동안 레지스트리에 살아 있고(half-open),
+    // 그런 연결은 여기 write 에서 IOException 으로 드러나 evict 된다. 연결 유무로 판정하면 그 창에서
+    // "전달 못 했는데 읽음" 이 되어 사용자가 알림을 영영 못 본다.
     fun deliver(
         userId: UUID,
         notification: Notification,
-    ) {
+    ): Int {
         val event =
             SseEmitter
                 .event()
                 .name(EVENT_NOTIFICATION)
                 .data(NotificationSsePayload.from(notification))
-        registry.emittersOf(userId).forEach { sendOrEvict(userId, it, event) }
+        return registry.emittersOf(userId).count { sendOrEvict(userId, it, event) }
     }
 
     // 조용한(silent) 화면 갱신 신호를 대상 유저들 연결에 실시간 흘려보낸다(알림 아님 — 토스트·알림센터·FCM 표시 푸시 없이 SSE 로만).
@@ -70,11 +76,12 @@ class LocalSseDelivery(
     // write 실패 = 죽은 연결(클라이언트가 끊겼는데 onError/onCompletion 콜백이 아직 안 탄 경우 등).
     // 레지스트리에서 빼 더 흘려보내지 않게 하고 completeWithError 로 정리를 마무리한다. completeWithError 가
     // onError 콜백(컨트롤러의 unregister)을 다시 깨울 수 있으나 unregister 는 멱등이라 중복 호출이 무해하다.
+    // write 성공 여부를 반환한다 — deliver 가 이걸 세어 자동읽음(#812) 근거로 쓴다.
     private fun sendOrEvict(
         userId: UUID,
         emitter: SseEmitter,
         event: SseEmitter.SseEventBuilder,
-    ) {
+    ): Boolean =
         runCatching { emitter.send(event) }
             .onFailure { e ->
                 // 클라이언트가 연결을 끊은 정상 종료는 SSE 의 일상적 라이프사이클이라 DEBUG 로 둔다.
@@ -87,8 +94,7 @@ class LocalSseDelivery(
                 }
                 registry.unregister(userId, emitter)
                 runCatching { emitter.completeWithError(e) }
-            }
-    }
+            }.isSuccess
 
     companion object {
         // SSE 이벤트 name. 클라이언트는 이 이름으로 알림 이벤트와 connect/하트비트를 구분한다.
