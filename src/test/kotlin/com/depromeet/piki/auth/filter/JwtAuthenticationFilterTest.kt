@@ -100,7 +100,7 @@ class JwtAuthenticationFilterTest {
 
     @Test
     fun `refresh token 으로 호출하면 type 불일치로 SecurityContext 가 비어 있다`() {
-        val refreshToken = jwtProvider.generateRefreshToken(UUID.randomUUID())
+        val refreshToken = jwtProvider.generateRefreshToken(UUID.randomUUID(), jwtProvider.newSessionId())
         val request =
             MockHttpServletRequest().apply {
                 addHeader(HttpHeaders.AUTHORIZATION, "Bearer $refreshToken")

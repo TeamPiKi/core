@@ -109,7 +109,8 @@ class RefreshTokenRotationConcurrencyIntegrationTest : IntegrationTestSupport() 
             assertNotEquals(r1, refreshed.first())
             assertTrue(refreshed.first().isNotBlank())
         } finally {
-            refreshTokenStore.delete(userId)
+            // 세션 id 를 모르는 정리 코드라 전 세션을 지운다(#893 으로 키가 세션별로 갈렸다).
+            refreshTokenStore.deleteAll(userId)
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
         }
     }
