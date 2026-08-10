@@ -136,8 +136,11 @@ class NotificationHistoryApiExamples(
             id = 1026,
             type = NotificationType.TOURNAMENT_JOINED,
             kind = NotificationKind.of(NotificationType.TOURNAMENT_JOINED, null),
-            title = "토너먼트에 참가했어요",
-            body = "지금 바로 픽을 시작해보세요",
+            // 템플릿이 렌더한 실제 모양으로 둔다 — 문구는 DB 템플릿(V20260615015148 seed)이 소유한다.
+            // TOURNAMENT_JOINED 는 "${actorName}님이 참가했어요" + body 빈 값이라, actorName 은 백오피스
+            // 미리보기와 같은 샘플값(NotificationTemplateVariables)을 쓴다. body 는 전 타입이 빈 문자열이다.
+            title = "홍길동님이 참가했어요",
+            body = "",
             refId = 77,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 10, 0),

@@ -12,10 +12,16 @@ import com.depromeet.piki.tournament.event.TournamentJoined
 import com.depromeet.piki.tournament.event.TournamentStarted
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.transaction.annotation.Transactional
 import kotlin.test.assertEquals
 
 // 핸들러가 이제 repo·resolver 를 주입받으므로 무인자 생성이 불가하다. 실제 와이어링된 빈을 autowire 해
 // 베이스 클래스의 제네릭 eventType 도출·notificationType·유일성을 검증한다(내부 모킹 없이 실제 빈으로).
+//
+// @Transactional 자동 롤백 — itemName 검증이 실제 snapshot 행을 쓰는데, 롤백이 없으면 items 행 없는
+// PROCESSING snapshot 이 공유 DB 에 남는다. 그걸 살아있는 ItemParsingScheduler.recover() 가 stale 로
+// 집어 markFailed·ItemParsingFailed 발행·log.error 를 내고, 정원 배치 스캔에도 유령 행으로 섞인다.
+@Transactional
 class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemParsingCompletedHandler: ItemParsingCompletedHandler
 

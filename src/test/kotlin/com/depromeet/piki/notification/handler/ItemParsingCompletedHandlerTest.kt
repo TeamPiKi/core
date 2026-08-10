@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.handler
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ItemParsingCompletedHandlerTest {
     @Test
@@ -50,5 +51,26 @@ class ItemParsingCompletedHandlerTest {
     @Test
     fun `이름이 공백뿐이면 기본값을 쓴다`() {
         assertEquals("상품", ItemParsingCompletedHandler.displayName("   "))
+    }
+
+    @Test
+    fun `앞뒤 공백은 제거하고 이름 길이 예산에 넣지 않는다`() {
+        // 추출 이름은 상류에서 trim 되지 않는다. 앞 공백이 10글자 예산을 먹으면 실제 이름이 일찍 잘린다.
+        assertEquals("일이삼사오육칠팔구십", ItemParsingCompletedHandler.displayName("  일이삼사오육칠팔구십  "))
+    }
+
+    @Test
+    fun `이름 속 개행은 한 칸 공백으로 접어 한 줄을 유지한다`() {
+        // 개행이 그대로 들어가면 알림·푸시가 두 줄이 되어 이 문구 설계의 전제가 깨진다.
+        assertEquals("나이키 에어맥스", ItemParsingCompletedHandler.displayName("나이키\n에어맥스"))
+    }
+
+    @Test
+    fun `표시 10글자여도 char 길이가 과도하면 한 번 더 자른다`() {
+        // 조합 부호를 쌓으면 grapheme 1개가 수백 char 이 될 수 있다. 그대로 두면 Notification 의
+        // require(title.length <= 255)에 걸리고, dispatcher 가 그 예외를 삼켜 알림이 전 수신자에게 누락된다.
+        val heavyCluster = "가" + "́".repeat(300) // 표시상 1글자, UTF-16 301 char
+        val result = ItemParsingCompletedHandler.displayName(heavyCluster)
+        assertTrue(result.length <= 101, "char 상한을 넘었다: ${result.length}")
     }
 }
