@@ -102,17 +102,19 @@ class AsyncItemParsingWorker(
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.
                 observation.error(e)
-                log.warn(
-                    "item.parse.result item={} result={} reason={} latency={}ms url={}",
-                    itemId,
-                    ItemParsingMetrics.RESULT_FAILED,
-                    ItemParsingMetrics.REASON_READY_REJECTED,
-                    elapsedMs,
-                    link.safeLogString(),
-                )
                 // 예외 상세(스택)는 별도 줄로 — 구조화(item.parse.result) 줄에 스택을 붙이면 logfmt 파싱이 깨진다.
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
+                // 원장(로그·메트릭)은 전이가 실제로 적용됐을 때만 — 좀비 폐기·전이 실패면 이 실행의 결과가 반영되지 않았다
+                // (확정 실패 경로와 같은 원칙. 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다).
                 if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    log.warn(
+                        "item.parse.result item={} result={} reason={} latency={}ms url={}",
+                        itemId,
+                        ItemParsingMetrics.RESULT_FAILED,
+                        ItemParsingMetrics.REASON_READY_REJECTED,
+                        elapsedMs,
+                        link.safeLogString(),
+                    )
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                 }
             }

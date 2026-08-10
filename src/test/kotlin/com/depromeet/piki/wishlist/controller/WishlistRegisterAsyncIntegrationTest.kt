@@ -170,13 +170,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, snapshot.status)
             // 실패 항목은 추출 결과가 비어 있다.
             assertNull(snapshot.name)
+            // item 을 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 하고, latency 는 값 형식(\d+ms)까지 조인다.
+            val expectedResultLog =
+                Regex("""item\.parse\.result item=$itemId result=failed reason=not_product latency=\d+ms""")
             assertTrue(
-                workerLogs.list.any {
-                    it.formattedMessage.contains("item.parse.result") &&
-                        it.formattedMessage.contains("result=failed") &&
-                        it.formattedMessage.contains("reason=not_product") &&
-                        it.formattedMessage.contains("latency=")
-                },
+                workerLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
                 "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
             )
         } finally {

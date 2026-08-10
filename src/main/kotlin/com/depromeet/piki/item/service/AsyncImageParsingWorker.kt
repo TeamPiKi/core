@@ -103,17 +103,18 @@ class AsyncImageParsingWorker(
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없음 → PROCESSING 방치 대신 FAILED.
                 observation.error(e)
-                log.warn(
-                    "item.parse.result item={} type=image result={} reason={} latency={}ms",
-                    itemId,
-                    ItemParsingMetrics.RESULT_FAILED,
-                    ItemParsingMetrics.REASON_READY_REJECTED,
-                    elapsedMs,
-                )
                 // 예외 상세(스택)는 별도 줄로 — 구조화 줄에 붙이면 logfmt 파싱이 깨진다(링크 워커와 동일).
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
-                // 종결이 실제로 적용됐을 때만 결과를 세고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존).
+                // 종결이 실제로 적용됐을 때만 원장(로그·메트릭)에 남기고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존.
+                // 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다 — 링크 워커와 같은 원칙).
                 if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    log.warn(
+                        "item.parse.result item={} type=image result={} reason={} latency={}ms",
+                        itemId,
+                        ItemParsingMetrics.RESULT_FAILED,
+                        ItemParsingMetrics.REASON_READY_REJECTED,
+                        elapsedMs,
+                    )
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                     deleteRawQuietly(imageKey)
                 }
