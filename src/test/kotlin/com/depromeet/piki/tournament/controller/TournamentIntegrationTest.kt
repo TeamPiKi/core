@@ -309,7 +309,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     fun `POST tournaments-id-join-guest 는 토큰 발급 실패 시 게스트 계정과 참여 레코드를 보상 삭제한다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
-        stubRefreshTokenStore.onSave = { _, _ -> throw RuntimeException("Redis 장애 시뮬레이션") }
+        stubRefreshTokenStore.onSave = { _, _, _ -> throw RuntimeException("Redis 장애 시뮬레이션") }
         try {
             mockMvc
                 .perform(

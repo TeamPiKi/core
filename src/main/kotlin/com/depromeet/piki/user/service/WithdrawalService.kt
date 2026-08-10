@@ -39,7 +39,8 @@ class WithdrawalService(
         // 2. refresh token(Redis) 무효화 — 트랜잭션 밖(외부 의존성). 재발급 경로를 끊는다.
         //    best-effort: Redis 장애로 던져도 탈퇴는 완료시킨다. refresh 재발급 경로는 DB deletedAt 이
         //    이중으로 막으므로(AuthService.refresh) 재시도까진 두지 않고, 실패만 관측한다.
-        runCatching { refreshTokenStore.delete(userId) }
+        //    탈퇴는 계정 차원이라 전 세션을 지운다(#893 으로 키가 세션별로 갈렸다 — userId 하나로는 안 지워진다).
+        runCatching { refreshTokenStore.deleteAll(userId) }
             .onFailure { e ->
                 log.warn("탈퇴 refresh 토큰 무효화 실패(후속 관측 대상) userId={}", userId, e)
                 WithdrawalMetrics.record(meterRegistry, WithdrawalMetrics.STEP_REFRESH)

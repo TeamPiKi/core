@@ -384,7 +384,7 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
         // refresh 삭제만 던지고, 이후 단계(markWithdrawn)는 정상이어야 한다 — best-effort 격리.
-        stubRefreshTokenStore.onDelete = { throw RuntimeException("redis down") }
+        stubRefreshTokenStore.onDeleteAll = { throw RuntimeException("redis down") }
         val before =
             meterRegistry
                 .counter(

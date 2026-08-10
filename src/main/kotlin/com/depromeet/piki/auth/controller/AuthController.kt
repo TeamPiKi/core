@@ -49,11 +49,17 @@ class AuthController(
         return ApiResponseBody.ok(TokenRefreshResponse.from(tokenPair))
     }
 
+    // 로그아웃은 이 기기의 세션만 끊는다(#893). 어느 세션인지는 refresh 토큰의 sid 로 가르므로
+    // 갱신과 같은 자리(쿠키 또는 body)에서 토큰을 읽는다. 토큰이 없으면 세션 특정이 불가해
+    // 서비스가 전 세션 정리로 떨어진다(#893 이전 동작과 동일).
     @PostMapping("/logout")
     override fun logout(
         @AuthenticationPrincipal userId: UUID,
+        @RequestBody(required = false) request: TokenRefreshRequest?,
+        @CookieValue(name = TokenCookieWriter.REFRESH_COOKIE, required = false) cookieRefreshToken: String?,
     ): ApiResponseBody<LogoutResponse> {
-        authService.logout(userId)
+        val refreshToken = cookieRefreshToken?.ifBlank { null } ?: request?.refreshToken
+        authService.logout(userId, refreshToken)
         return ApiResponseBody.ok(LogoutResponse())
     }
 }

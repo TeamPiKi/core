@@ -132,7 +132,8 @@ class AppleNotificationControllerIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         val socialId = "apple_sub_${userId.toString().take(8)}"
         insertAppleUser(userId, socialId, nickname = "애플멤버")
-        stubRefreshTokenStore.save(userId, "refresh-token-value")
+        stubRefreshTokenStore.save(userId, "session-1", "refresh-token-value")
+        stubRefreshTokenStore.save(userId, "session-2", "refresh-token-value-2")
         stubAppleNotificationVerifier.verifyStub = {
             AppleNotificationEvent(AppleNotificationEventType.CONSENT_REVOKED, socialId)
         }
@@ -145,7 +146,8 @@ class AppleNotificationControllerIntegrationTest : IntegrationTestSupport() {
         entityManager.clear()
 
         // refresh token 은 삭제(재발급 차단)
-        assertNull(stubRefreshTokenStore.get(userId), "consent-revoked 면 refresh token 이 삭제되어야 한다")
+        assertNull(stubRefreshTokenStore.get(userId, "session-1"), "consent-revoked 면 전 세션이 삭제되어야 한다")
+        assertNull(stubRefreshTokenStore.get(userId, "session-2"), "consent-revoked 면 전 세션이 삭제되어야 한다")
 
         // 계정은 살아있음 — tombstone 되지 않고 닉네임·user_detail 유지(재로그인 복귀 보장)
         val nickname =
