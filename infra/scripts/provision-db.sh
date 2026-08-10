@@ -40,6 +40,13 @@ SSM_PREFIX="/piki-core/prod"
 MEM_LIMIT="384m"
 MEM_SWAP="768m"
 
+# 지표 수집기(#912). 상태 조회만 하는 작은 프로세스라 32m 이면 충분하고, 캡을 둬서
+# 이쪽이 흘러도 MySQL 몫을 잠식하지 못하게 한다.
+EXPORTER_CONTAINER="piki-mysqld-exporter"
+EXPORTER_IMAGE="prom/mysqld-exporter:v0.19.0"
+EXPORTER_USER="exporter"
+EXPORTER_MEM_LIMIT="32m"
+
 ssm_param() {
   docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
     --name "${SSM_PREFIX}/$1" --with-decryption \
@@ -131,6 +138,75 @@ for role in root app; do
   fi
 done
 echo "[mysql] 자격증명 검증 완료 (root·${DB_USERNAME} 모두 SSM 값으로 접속 가능)"
+
+# ── 1b) 지표 수집용 DB 계정 ─────────────────────────────────────────────────
+# RDS 가 CloudWatch 로 주던 DB 내부 지표(연결 수·처리량 등)를 대신 걷는다(#912). exporter 에
+# root 를 물리지 않고 전용 계정을 둔다 - 수집기는 상시 붙어 있는 프로세스라, 뚫렸을 때 넘어가는
+# 권한이 작아야 한다. PROCESS·REPLICATION CLIENT 는 상태 조회에 필요한 최소 권한이고 데이터는
+# 읽지 못한다.
+#
+# 계정의 host 는 docker 브리지 게이트웨이다. 수집기가 host 네트워크에서 127.0.0.1:3306 으로
+# 붙어도, MySQL 컨테이너의 포트 매핑(-p)을 지나며 SNAT 되어 MySQL 에는 게이트웨이 주소로 보인다.
+# 그래서 127.0.0.1 로 만들면 Access denied 가 난다(실측). 값을 박지 않고 조회하는 이유는
+# 브리지 대역이 환경마다 다를 수 있어서다.
+#
+# 위 앱·root 계정과 달리 비밀번호를 매번 SSM 값으로 맞춘다(ALTER USER). 이 계정은 앱이 쓰지
+# 않아 재설정해도 끊길 커넥션이 수집기 하나뿐이고, 그 편이 SSM 과 실제가 갈라지는 걸 원천 차단한다.
+DB_EXPORTER_PASSWORD="$(ssm_param db-exporter-password)" || { echo "[exporter] SSM db-exporter-password 조회 실패"; exit 1; }
+DOCKER_GW="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')" \
+  || { echo "[exporter] docker 브리지 게이트웨이 조회 실패"; exit 1; }
+[ -n "$DOCKER_GW" ] || { echo "[exporter] 게이트웨이가 비어 있다"; exit 1; }
+# 옛 127.0.0.1 계정은 접속에 안 쓰이므로 정리한다(초기 구현 잔재).
+printf "DROP USER IF EXISTS '%s'@'127.0.0.1';
+CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';
+ALTER USER '%s'@'%s' IDENTIFIED BY '%s';
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'%s';
+FLUSH PRIVILEGES;\n" \
+  "$EXPORTER_USER" \
+  "$EXPORTER_USER" "$DOCKER_GW" "$DB_EXPORTER_PASSWORD" \
+  "$EXPORTER_USER" "$DOCKER_GW" "$DB_EXPORTER_PASSWORD" \
+  "$EXPORTER_USER" "$DOCKER_GW" \
+  | docker exec -i -e MYSQL_PWD="$DB_ROOT_PASSWORD" "$CONTAINER" mysql -uroot \
+  || { echo "[exporter] DB 계정 생성·갱신 실패"; exit 1; }
+echo "[exporter] DB 계정 준비 완료 (${EXPORTER_USER}@${DOCKER_GW}, PROCESS·REPLICATION CLIENT)"
+
+# ── 1c) mysqld_exporter ─────────────────────────────────────────────────────
+# 127.0.0.1 에만 바인딩한다. alloy 도 host 네트워크라 루프백으로 닿고, 외부에는 아예 안 열린다
+# (보안그룹에 의존하지 않는 편이 낫다).
+#
+# 라벨 3종이 alloy 의 수집 계약이다(contracts/observability.md) - piki.observe 가 없으면
+# 어떤 신호도 안 걷힌다. 컨테이너는 매번 재생성해 이미지·옵션 변경이 바로 반영되게 한다.
+# 데이터를 들고 있지 않아 재생성 비용이 없다(MySQL 과 다르다).
+docker rm -f "$EXPORTER_CONTAINER" >/dev/null 2>&1 || true
+docker run -d \
+  --name "$EXPORTER_CONTAINER" \
+  --restart unless-stopped \
+  --network host \
+  --memory "$EXPORTER_MEM_LIMIT" \
+  -e MYSQLD_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
+  -l piki.observe=true \
+  -l piki.service=piki-db \
+  -l piki.metrics.port=9104 \
+  "$EXPORTER_IMAGE" \
+  --mysqld.address=127.0.0.1:3306 \
+  --mysqld.username="$EXPORTER_USER" \
+  --web.listen-address=127.0.0.1:9104 > /dev/null
+echo "[exporter] ${EXPORTER_CONTAINER} 기동 (${EXPORTER_IMAGE}, 127.0.0.1:9104)"
+
+# 수집기가 실제로 DB 에 붙어 지표를 내는지 확인한다. 컨테이너가 떠 있다는 것만으로는
+# 자격증명·권한이 맞는지 알 수 없고, 그 상태로 두면 대시보드가 조용히 빈다.
+for i in $(seq 1 15); do
+  if curl -fsS --max-time 3 http://127.0.0.1:9104/metrics 2>/dev/null | grep -q '^mysql_up 1$'; then
+    echo "[exporter] 수집 확인 (mysql_up=1, attempt $i)"
+    break
+  fi
+  sleep 2
+  if [ "$i" -eq 15 ]; then
+    echo "[exporter] mysql_up 이 1 이 되지 않는다 — 계정 권한·접속 경로 확인"
+    docker logs "$EXPORTER_CONTAINER" --tail 10 2>&1 | sed 's/^/[exporter] /'
+    exit 1
+  fi
+done
 
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
