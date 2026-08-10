@@ -153,6 +153,18 @@ echo "[mysql] 자격증명 검증 완료 (root·${DB_USERNAME} 모두 SSM 값으
 # 위 앱·root 계정과 달리 비밀번호를 매번 SSM 값으로 맞춘다(ALTER USER). 이 계정은 앱이 쓰지
 # 않아 재설정해도 끊길 커넥션이 수집기 하나뿐이고, 그 편이 SSM 과 실제가 갈라지는 걸 원천 차단한다.
 DB_EXPORTER_PASSWORD="$(ssm_param db-exporter-password)" || { echo "[exporter] SSM db-exporter-password 조회 실패"; exit 1; }
+# 아래 SQL 은 비밀번호를 문자열 리터럴로 끼워 넣는다. 값에 작은따옴표나 역슬래시가 있으면
+# 문장이 깨지거나 의도치 않은 SQL 이 되므로, 그런 값은 아예 거부한다.
+#
+# 이스케이프 대신 거부를 택한 이유: 셸에서 MySQL 의 이스케이프 규칙을 정확히 재현하려다
+# 틀리면 조용히 잘못된 비밀번호가 설정된다. 이 값은 우리가 만드는 것이라(openssl rand -hex)
+# 특수문자가 낄 이유가 없고, 낀다면 그건 누군가 다른 방식으로 넣었다는 신호다.
+case "$DB_EXPORTER_PASSWORD" in
+  *\'*|*\\*)
+    echo "[exporter] db-exporter-password 에 따옴표나 역슬래시가 있다 — SQL 리터럴로 다룰 수 없다."
+    echo "[exporter] openssl rand -hex 24 처럼 영숫자만으로 재발급한 뒤 SSM 을 갱신할 것."
+    exit 1 ;;
+esac
 DOCKER_GW="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')" \
   || { echo "[exporter] docker 브리지 게이트웨이 조회 실패"; exit 1; }
 [ -n "$DOCKER_GW" ] || { echo "[exporter] 게이트웨이가 비어 있다"; exit 1; }
@@ -195,14 +207,39 @@ echo "[exporter] ${EXPORTER_CONTAINER} 기동 (${EXPORTER_IMAGE}, 127.0.0.1:9104
 
 # 수집기가 실제로 DB 에 붙어 지표를 내는지 확인한다. 컨테이너가 떠 있다는 것만으로는
 # 자격증명·권한이 맞는지 알 수 없고, 그 상태로 두면 대시보드가 조용히 빈다.
+#
+# mysql_up 만 보지 않는다. 그 값은 접속 성공만 뜻해서, 권한이 모자라 상태 조회가 막히거나
+# collector 구성이 바뀌어 지표가 안 나와도 1 이 될 수 있다. 실제로 쓰는 계열이 값을 내는지까지
+# 확인해야 "수집된다"고 말할 수 있다. 전수 검사는 하지 않는다 - 소비하는 지표 목록이 아직
+# 없고, 계열이 늘 때마다 이 목록을 따라 고치는 비용이 이득을 넘는다.
+#
+# performance_schema 기반 계열은 넣지 않는다. #898 에서 메모리 때문에 껐으므로 없는 게 정상이다.
+EXPORTER_REQUIRED_METRICS="mysql_up mysql_global_status_threads_connected mysql_global_status_uptime"
+check_exporter_metrics() {
+  local body
+  # timeout 을 넉넉히 둔다. exporter 는 /metrics 요청을 받을 때 MySQL 에 쿼리하므로 응답이
+  # 즉시 오지 않는다. 짧게 잡으면 앞부분(mysql_up)만 받고 뒤쪽 계열이 잘린 채 "누락"으로
+  # 오판한다(3초로 뒀다가 실제로 겪었다).
+  body="$(curl -fsS --max-time 10 http://127.0.0.1:9104/metrics 2>/dev/null)" || return 1
+  # here-string 으로 넘긴다. `printf ... | grep -q` 로 쓰면 grep 이 첫 매칭에서 즉시 끝나며
+  # printf 가 SIGPIPE 를 받고, set -o pipefail 이 그것을 파이프라인 실패로 집는다. 즉 매칭에
+  # 성공했는데도 실패로 판정된다(응답이 180KB 라 실제로 걸렸다). here-string 은 파이프가 아니라
+  # 이 함정이 없다.
+  grep -q '^mysql_up 1$' <<< "$body" || return 1
+  local m
+  for m in $EXPORTER_REQUIRED_METRICS; do
+    grep -q "^${m} " <<< "$body" || { MISSING_METRIC="$m"; return 1; }
+  done
+  return 0
+}
 for i in $(seq 1 15); do
-  if curl -fsS --max-time 3 http://127.0.0.1:9104/metrics 2>/dev/null | grep -q '^mysql_up 1$'; then
-    echo "[exporter] 수집 확인 (mysql_up=1, attempt $i)"
+  if check_exporter_metrics; then
+    echo "[exporter] 수집 확인 (mysql_up=1 + 필수 계열 존재, attempt $i)"
     break
   fi
   sleep 2
   if [ "$i" -eq 15 ]; then
-    echo "[exporter] mysql_up 이 1 이 되지 않는다 — 계정 권한·접속 경로 확인"
+    echo "[exporter] 수집이 확인되지 않는다 (누락 계열: ${MISSING_METRIC:-mysql_up}) — 계정 권한·접속 경로 확인"
     docker logs "$EXPORTER_CONTAINER" --tail 10 2>&1 | sed 's/^/[exporter] /'
     exit 1
   fi
