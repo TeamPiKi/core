@@ -232,9 +232,21 @@ class UserService(
 
     // 소셜 신규 가입용 MEMBER 생성. 닉네임은 게스트와 동일하게 자동 생성하고 사용자가 나중에 수정한다.
     // 프로필 이미지는 provider 가 준 게 있으면 쓰고, 없으면(동의 거부 등) 기본 아바타 중 랜덤.
+    //
+    // saveNewUser 를 쓰지 않는다 — 그쪽은 닉네임 unique 충돌을 duplicateNickname(409, "다른 걸 입력해 주세요")으로
+    // 바꾸는데, 여기 닉네임은 사용자가 입력한 게 아니라 서버가 뽑은 값이라 그 문구가 거짓이 된다. 자동 생성 경로의
+    // 충돌은 race 일 뿐이므로 원본 예외를 그대로 올려, 호출부(SocialAccountService)가 닉네임을 다시 뽑아 재시도한다.
+    // createGuest 가 같은 이유로 saveNewUser 를 우회하는 것과 같은 결.
     @Transactional
     fun createSocialUser(profileImage: String?): User =
-        saveNewUser(generateUniqueGuestNickname(), profileImage ?: defaultProfileImages.random(), IdentityType.MEMBER)
+        userRepository.saveAndFlush(
+            User(
+                id = UUID.randomUUID(),
+                nickname = generateUniqueGuestNickname(),
+                profileImage = profileImage ?: defaultProfileImages.random(),
+                identityType = IdentityType.MEMBER,
+            ),
+        )
 
     // 신규 user 영속화 공통 경로. 닉네임 unique 충돌(uq_users_nickname)만 duplicateNickname 으로 변환하고,
     // 그 외 DB 제약 위반(NOT NULL·길이 등)은 원본 예외를 그대로 던져 500 으로 드러나게 한다.
