@@ -43,10 +43,15 @@ class RedisRefreshTokenStore(
         redisTemplate.opsForSet().remove(indexKey(userId), sessionId)
     }
 
+    // 인덱스 조회와 삭제를 한 번에 처리한다. 둘로 나누면 그 사이에 낀 새 로그인의 세션이
+    // 인덱스만 지워진 채 살아남아, 이후 어떤 전 세션 무효화로도 못 찾는 유령 세션이 된다.
     override fun deleteAll(userId: UUID) {
-        val sessionIds = redisTemplate.opsForSet().members(indexKey(userId)).orEmpty()
-        val keys = sessionIds.flatMap { listOf(currentKey(userId, it), graceKey(userId, it)) } + indexKey(userId)
-        redisTemplate.delete(keys)
+        redisTemplate.execute(
+            DELETE_ALL_SCRIPT,
+            listOf(indexKey(userId)),
+            "$KEY_PREFIX$userId:",
+            "$GRACE_PREFIX$userId:",
+        )
     }
 
     override fun rotateOrReplay(
@@ -112,6 +117,30 @@ class RedisRefreshTokenStore(
         private const val REUSE = "-1"
         private const val REPLAY_PREFIX = "P:"
 
+        // 전 세션 무효화(탈퇴·동의철회·토큰 없는 로그아웃). 인덱스를 읽어 그 유저의 세션 키를 전부 지운다.
+        //
+        // 키를 KEYS 로 미리 못 넘긴다 — 무엇을 지울지는 인덱스를 읽어봐야 알 수 있어서다. 그래서 접두사를
+        // ARGV 로 받아 스크립트 안에서 키를 조립한다. Redis Cluster 의 키 선언 규칙에는 어긋나지만,
+        // 위 REFRESH_SCRIPT 도 해시태그 없는 키 3개를 쓰고 있어 이 코드베이스는 이미 단일 노드를 전제한다.
+        //
+        // KEYS[1]=index, ARGV[1]=current 키 접두사, ARGV[2]=grace 키 접두사
+        // 반환: 지운 세션 수 (관측용, 호출자는 쓰지 않는다)
+        private val DELETE_ALL_SCRIPT =
+            DefaultRedisScript<Long>().apply {
+                setScriptText(
+                    """
+                    local ids = redis.call('SMEMBERS', KEYS[1])
+                    for i = 1, #ids do
+                        redis.call('DEL', ARGV[1] .. ids[i])
+                        redis.call('DEL', ARGV[2] .. ids[i])
+                    end
+                    redis.call('DEL', KEYS[1])
+                    return #ids
+                    """.trimIndent(),
+                )
+                setResultType(Long::class.java)
+            }
+
         // OAuth 2.0 RFC 6819 / 8252 의 "Refresh Token Rotation + Family Invalidation" + Auth0 식 reuse interval.
         //
         // 토큰 생성은 앱(JwtProvider)이 하므로 "consume → generate → save" 가 본래 다단계라 동시 요청에 race 가 난다.
@@ -123,12 +152,12 @@ class RedisRefreshTokenStore(
         //
         // KEYS[1]=current, KEYS[2]=grace, KEYS[3]=index
         // ARGV[1]=presented(제시 토큰), ARGV[2]=candidate(새 토큰), ARGV[3]=현재토큰 TTL(ms),
-        // ARGV[4]=grace TTL(ms), ARGV[5]=sessionId(인덱스에서 뺄 멤버)
+        // ARGV[4]=grace TTL(ms), ARGV[5]=sessionId(인덱스에 넣거나 뺄 멤버)
         //
         // grace 값 포맷 "<old>|<new>": JWT 는 base64url(`[A-Za-z0-9_-]`)·점(.)뿐이라 '|' 와 충돌하지 않는다.
         //
         // 반환:
-        //   "R"        현재 토큰과 일치 → 회전 (current=candidate, grace="presented|candidate")
+        //   "R"        현재 토큰과 일치 → 회전 (current=candidate, grace="presented|candidate", 인덱스 TTL 갱신)
         //   "P:<tok>"  grace 의 old 가 presented 와 일치 → 멱등 replay (이미 발급된 new 를 반환). 회전·무효화 없음
         //   "0"        현재 토큰 없음 + grace 도 없음 → 만료/이미 소비 → 거부
         //   "-1"       현재 토큰은 있으나 불일치 + grace 밖 → 재사용 의심 → 이 세션의 current·grace 를 DEL 하고
@@ -141,6 +170,10 @@ class RedisRefreshTokenStore(
                     if cur == ARGV[1] then
                         redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
                         redis.call('SET', KEYS[2], ARGV[1] .. '|' .. ARGV[2], 'PX', ARGV[4])
+                        -- 회전이 current TTL 을 미는 만큼 인덱스도 함께 민다. 안 그러면 계속 쓰는 세션에서
+                        -- 인덱스가 먼저 만료돼, 탈퇴·동의철회의 전 세션 무효화가 그 세션을 못 찾는다.
+                        redis.call('SADD', KEYS[3], ARGV[5])
+                        redis.call('PEXPIRE', KEYS[3], ARGV[3])
                         return 'R'
                     end
                     local g = redis.call('GET', KEYS[2])

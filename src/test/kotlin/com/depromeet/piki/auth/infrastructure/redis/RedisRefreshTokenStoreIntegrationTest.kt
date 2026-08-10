@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RedisRefreshTokenStoreIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -141,7 +142,43 @@ class RedisRefreshTokenStoreIntegrationTest : IntegrationTestSupport() {
 
         assertNull(store.get(userId, phone))
         assertNull(store.get(userId, laptop))
-        assertNull(redisTemplate.opsForValue().get("refresh:idx:$userId"))
+        assertEquals(false, redisTemplate.hasKey("refresh:idx:$userId"))
+    }
+
+    // 인덱스는 전 세션 무효화가 키를 찾아가는 유일한 경로다. 회전이 current TTL 만 늘리고 인덱스를 방치하면
+    // 계속 쓰는 세션에서 인덱스가 먼저 만료되고, 그 뒤 탈퇴·동의철회가 살아 있는 세션을 못 찾는다.
+    // 인덱스가 이미 사라진 뒤에는 인덱스 기반 설계상 복구가 불가능하므로, 애초에 만료되지 않게 미는 것을 검증한다.
+    @Test
+    fun `회전은 세션 인덱스의 TTL 도 함께 민다`() {
+        val userId = UUID.randomUUID()
+        val sessionId = sid()
+        store.save(userId, sessionId, "A")
+        // 인덱스가 곧 만료될 상황을 만든다 (오래 살아 있는 세션에서 자연히 도달하는 상태).
+        redisTemplate.expire("refresh:idx:$userId", 2, TimeUnit.SECONDS)
+
+        store.rotateOrReplay(userId, sessionId, presented = "A", candidateRefreshToken = "B")
+
+        val ttl = redisTemplate.getExpire("refresh:idx:$userId", TimeUnit.SECONDS)
+        assertTrue(ttl > 60, "회전이 인덱스 TTL 을 밀지 않았다 (남은 TTL=${ttl}s)")
+        // 그래서 이후 전 세션 무효화가 회전된 세션까지 찾아간다.
+        store.deleteAll(userId)
+        assertNull(store.get(userId, sessionId))
+    }
+
+    @Test
+    fun `deleteAll 중 새로 로그인한 세션도 인덱스에 남아 다음 무효화에 잡힌다`() {
+        val userId = UUID.randomUUID()
+        val old = sid()
+        val fresh = sid()
+        store.save(userId, old, "old-token")
+
+        store.deleteAll(userId)
+        // 무효화 직후 새 로그인 — 인덱스가 다시 서야 다음 전 세션 무효화가 이 세션을 찾는다.
+        store.save(userId, fresh, "fresh-token")
+
+        store.deleteAll(userId)
+
+        assertNull(store.get(userId, fresh))
     }
 
     @Test
