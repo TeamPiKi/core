@@ -38,7 +38,7 @@ class GuestNicknameGenerationIntegrationTest : IntegrationTestSupport() {
     // 경계값: 64개 subset 이 전부 taken 인 near-exhaustion 에서, 샘플 고갈을 풀 고갈로 오인하지 않는다(#760 CodeRabbit).
     // 풀에 닉네임을 1개만 남기면 subset(64)은 사실상 전부 taken 이라 fallback 전체 조회 경로를 태운다.
     @Test
-    fun `풀이 소진 직전이면 남은 닉네임을 발급하고 완전 소진되면 재생성에 실패한다`() {
+    fun `풀이 소진 직전이면 남은 닉네임을 발급하고 완전 소진되면 숫자를 붙여 확장한다`() {
         val pool = UserService.NICKNAME_POOL
         val onlyFree = pool.first()
         (pool - onlyFree).forEach { nickname ->
@@ -49,7 +49,29 @@ class GuestNicknameGenerationIntegrationTest : IntegrationTestSupport() {
         val issued = userService.createGuest()
         assertEquals(onlyFree, issued.nickname, "풀에 하나 남은 닉네임이 발급돼야 한다")
 
-        // 위 createGuest 로 onlyFree 까지 점유돼 풀이 완전 소진 → 이제야 재생성 실패.
-        assertFailsWith<UserException> { userService.createGuest() }
+        // 위 createGuest 로 onlyFree 까지 점유돼 풀이 완전 소진 → 숫자 suffix 확장 경로로 넘어간다(#920).
+        val expanded = userService.createGuest().nickname
+        assertTrue(expanded !in pool.toSet(), "'$expanded' 는 풀 밖(숫자 확장)이어야 한다")
+        assertTrue(expanded.length <= User.NICKNAME_MAX_LENGTH, "'$expanded'(${expanded.length}자)가 길이 제한을 넘는다")
+
+        // "{풀 조합}{숫자}" 형태 — base 는 풀 안에 있고 나머지는 앞자리 0 없는 숫자다.
+        val base = expanded.dropLastWhile { it.isDigit() }
+        val suffix = expanded.substring(base.length)
+        assertTrue(base in pool.toSet(), "base '$base' 가 풀 안에 있어야 한다")
+        assertTrue(suffix.isNotEmpty() && !suffix.startsWith("0"), "suffix '$suffix' 는 앞자리 0 없는 숫자여야 한다")
+    }
+
+    @Test
+    fun `확장 구간에서도 발급 닉네임은 서로 겹치지 않는다`() {
+        val pool = UserService.NICKNAME_POOL
+        pool.forEach { nickname ->
+            userRepository.save(User(UUID.randomUUID(), nickname, "https://example.test/avatar", IdentityType.GUEST))
+        }
+
+        // 풀이 완전히 소진된 상태에서 연속 발급 — 전부 확장 경로를 탄다.
+        val issued = (1..20).map { userService.createGuest().nickname }
+
+        assertEquals(issued.size, issued.toSet().size, "확장 구간에서도 중복이 없어야 한다")
+        assertTrue(issued.none { it in pool.toSet() }, "모두 풀 밖(숫자 확장)이어야 한다")
     }
 }

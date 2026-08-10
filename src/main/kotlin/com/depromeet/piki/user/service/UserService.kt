@@ -176,6 +176,24 @@ class UserService(
         // 64: 흔한 경우 subset 1회로 끝난다. subset 이 전부 taken(near-exhaustion)일 때만 전체 풀을 한 번 더
         // 조회해 진짜 소진을 확인하므로(generateUniqueGuestNickname 의 fallback), 샘플 고갈을 풀 고갈로 오인한 실패는 없다.
         private const val GUEST_NICKNAME_SAMPLE_SIZE = 64
+
+        // 풀(4096)이 소진되면 조합 뒤에 숫자를 붙여 확장한다(#920). 여기가 그 자릿수 상한 — 최단 조합에 붙일 수
+        // 있는 최대 자릿수다. 조합이 길수록 여유가 좁아 자릿수 단계마다 basesFor 가 걸러낸다.
+        internal val NICKNAME_SUFFIX_MAX_WIDTH: Int by lazy {
+            User.NICKNAME_MAX_LENGTH - NICKNAME_POOL.minOf { it.length }
+        }
+
+        // 자릿수 width 가 표현하는 숫자 범위 — 앞자리 0 없이 정확히 그 자릿수다. 1→1..9, 2→10..99, 3→100..999.
+        // 단계마다 범위가 겹치지 않아, 좁은 자릿수에서 이미 소진된 숫자를 다음 단계가 다시 뽑는 헛일이 없다.
+        internal fun suffixRange(width: Int): IntRange {
+            var first = 1
+            repeat(width - 1) { first *= 10 }
+            return first..(first * 10 - 1)
+        }
+
+        // 그 자릿수를 붙여도 닉네임 길이 제한을 넘지 않는 조합만 남긴다. 길이 검증을 분기로 흩지 않고
+        // 후보 생성 단계에서 한 번에 거른다 — 9자 조합은 1자리 단계에만, 8자는 2자리까지만 후보가 된다.
+        internal fun basesFor(width: Int): List<String> = NICKNAME_POOL.filter { it.length + width <= User.NICKNAME_MAX_LENGTH }
     }
 
     // 게스트는 닉네임을 자동 생성하므로 '닉네임 중복' 이라는 사용자 입력 오류가 없다. 다만 generateUniqueGuestNickname()
@@ -236,6 +254,10 @@ class UserService(
             if (isNicknameUniqueViolation(e)) throw UserException.duplicateNickname()
             throw e
         }
+
+    // 닉네임 unique 충돌 판별을 소셜 가입 경로(SocialAccountService)와 공유한다 — 그쪽은 트랜잭션 밖에서
+    // 재시도해야 해(안에서 재시도하면 rollback-only 로 마킹돼 무의미) 이 판별이 서비스 밖에서도 필요하다.
+    internal fun isNicknameConflict(e: DataIntegrityViolationException): Boolean = isNicknameUniqueViolation(e)
 
     // DataIntegrityViolationException 이 닉네임 unique 제약(uq_users_nickname) 위반인지 판별한다.
     // cause 체인을 끝까지 훑는다 — PersistenceException 같은 래퍼가 한 겹 더 끼면 e.cause 만 봐서는 ConstraintViolationException
@@ -396,6 +418,22 @@ class UserService(
         // subset 이 전부 taken(near-exhaustion)이면 진짜 소진인지 전체 풀로 확인한다 — 샘플 고갈을 풀 고갈로
         // 오인해, 사용 가능한 닉네임이 남았는데도 재생성 실패로 던지는 것을 막는다.
         val takenInPool = userRepository.findNicknamesIn(NICKNAME_POOL).toSet()
-        return (NICKNAME_POOL - takenInPool).randomOrNull() ?: throw UserException.nicknameGenerationFailed()
+        return (NICKNAME_POOL - takenInPool).randomOrNull() ?: generateSuffixedNickname()
+    }
+
+    // 풀(4096)이 소진된 뒤의 확장 경로(#920) — 조합 뒤에 숫자를 붙여 발급한다. 여기 닿기 전까지는 동작이
+    // 이전과 완전히 같다(위 두 단계가 먼저 처리하므로 4096명 이전 사용자는 영향을 받지 않는다).
+    //
+    // 자릿수를 1부터 넓히며 각 단계에서 subset 조회를 한 번씩 한다 — 위 정상 경로와 같은 모양이라
+    // 조회 비용 특성이 같고, 작은 숫자부터 소비해 발급되는 닉네임이 필요 이상으로 길어지지 않는다.
+    private fun generateSuffixedNickname(): String {
+        (1..NICKNAME_SUFFIX_MAX_WIDTH).forEach { width ->
+            val range = suffixRange(width)
+            val candidates = basesFor(width).shuffled().take(GUEST_NICKNAME_SAMPLE_SIZE).map { "$it${range.random()}" }
+            val taken = userRepository.findNicknamesIn(candidates).toSet()
+            (candidates - taken).randomOrNull()?.let { return it }
+        }
+        // 최대 자릿수까지 소진 — 용량이 사실상 무한(수백만)이라 도달할 수 없지만, 무한 재시도 대신 실패로 끝낸다.
+        throw UserException.nicknameGenerationFailed()
     }
 }
