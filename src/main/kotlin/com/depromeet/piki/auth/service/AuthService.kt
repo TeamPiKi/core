@@ -146,8 +146,14 @@ class AuthService(
         deviceId: String?,
     ) {
         val device = deviceId?.ifBlank { null } ?: return
-        runCatching { userDeviceService.unregister(userId, device) }
-            .onFailure { e -> log.warn("로그아웃 FCM 기기 해제 실패(후속 정리 대상) userId={}", userId, e) }
+        // runCatching 이 아니라 Exception 한정 catch 다 — runCatching 은 Throwable 을 잡아
+        // OutOfMemoryError 같은 JVM 오류까지 로그로 덮고 로그아웃을 성공으로 내려보낸다.
+        // JVM 이 망가졌다는 신호는 best-effort 로 삼킬 대상이 아니라 그대로 전파돼야 한다.
+        try {
+            userDeviceService.unregister(userId, device)
+        } catch (e: Exception) {
+            log.warn("로그아웃 FCM 기기 해제 실패(후속 정리 대상) userId={}", userId, e)
+        }
     }
 
     fun createTokensForUser(user: User): TokenPair {
