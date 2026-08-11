@@ -84,6 +84,11 @@ spring:
     username: ${DB_USERNAME:piki}
     password: ${DB_PASSWORD:piki}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # JDBC 스팬의 원격 서비스명 근거 — datasource-micrometer 는 명시된 pool 이름을 1순위로 쓰고
+      # (기본 "HikariPool-*" 는 무시) 없으면 DB catalog("piki")를 써서, 트레이스에서 서비스 식별자
+      # piki-core 와 혼동됐다(#929). 이 이름은 HikariCP 메트릭의 pool 라벨로도 노출된다.
+      pool-name: piki-db
   jpa:
     hibernate:
       ddl-auto: validate
