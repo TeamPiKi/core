@@ -6,6 +6,8 @@ import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.event.TournamentItemDeleted
 import com.depromeet.piki.tournament.event.TournamentJoined
@@ -13,6 +15,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.transaction.annotation.Transactional
+import java.util.UUID
 import kotlin.test.assertEquals
 
 // 핸들러가 이제 repo·resolver 를 주입받으므로 무인자 생성이 불가하다. 실제 와이어링된 빈을 autowire 해
@@ -38,6 +41,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var handlers: List<NotificationEventHandler<*>>
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
+
+    @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
 
     // eventType 은 제네릭 타입 인자 E 에서 GenericTypeResolver 로 자동 도출된다(::class 명시 제거).
     // reflection 기반이라 클래스 계층이 바뀌면 조용히 틀어질 수 있어, 도출 결과를 직접 못 박아 회귀를 잡는다.
@@ -85,5 +90,27 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9102L, snapshotId = 9_999_999L))
 
         assertEquals("상품", context.variables["itemName"])
+    }
+
+    // body 문구는 등록 출처로 갈린다(#913) — 토너먼트에 올린 상품이 위시리스트에 들어가지는 않으므로 같은 문구를 쓸 수 없다.
+    // 출처 판정은 라우팅(그 버전을 pin 한 출전이 있나)이 이미 하고 있고, 그 결과를 그대로 재사용한다.
+    @Test
+    fun `위시 출처 파싱 완료는 completionMessage 를 위시 문구로 담는다`() {
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9103L, name = "나이키 에어맥스")).getId()
+
+        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9103L, snapshotId = snapshotId))
+
+        assertEquals(ItemParsingCompletedHandler.WISH_MESSAGE, context.variables["completionMessage"])
+    }
+
+    @Test
+    fun `토너먼트 출처 파싱 완료는 completionMessage 를 토너먼트 문구로 담는다`() {
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9104L, name = "나이키 덩크")).getId()
+        // 그 버전을 pin 한 출전이 있으면 라우팅이 Tournament 로 해석된다.
+        tournamentItemJpaRepository.save(TournamentItem(tournamentId = 9201L, userId = UUID.randomUUID(), snapshotId = snapshotId))
+
+        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9104L, snapshotId = snapshotId))
+
+        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_MESSAGE, context.variables["completionMessage"])
     }
 }

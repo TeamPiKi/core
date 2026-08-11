@@ -31,12 +31,15 @@ class TournamentItemDeletedHandler(
 
     override fun resolveActorContext(event: TournamentItemDeleted): ActorContext {
         val base = tournamentVariables.context(event.tournamentId, event.actorId)
-        val itemName = itemSnapshotRepository.findById(event.snapshotId)?.name ?: FALLBACK_ITEM_NAME
+        val itemName = ItemDisplayName.of(itemSnapshotRepository.findById(event.snapshotId)?.name, MAX_NAME_LENGTH)
         return base.copy(variables = base.variables + ("itemName" to itemName))
     }
 
     companion object {
-        // 삭제 시점에 상품명이 아직 없을 때(파싱 전 PENDING/PROCESSING 아이템 삭제)의 대체 문구.
-        private const val FALLBACK_ITEM_NAME = "상품"
+        // 이 문구는 이름 뒤에 "…을(를) 삭제했어요" 가 붙고 앞에는 닉네임이 온다. 이름을 안 자르면 OS 푸시 제목 절단에
+        // 정작 무슨 일인지가 먹히고, 길면 엔티티 불변식(require(title.length <= 255))까지 걸려 dispatcher 의
+        // runCatching 이 예외를 삼켜 삭제 알림이 전 수신자에게 조용히 누락된다(상품명은 512자까지 허용된다).
+        // 파싱 완료 알림은 제목이 이름뿐이라 절단하지 않지만(#913) 이쪽은 캡이 필요하다.
+        private const val MAX_NAME_LENGTH = 10
     }
 }

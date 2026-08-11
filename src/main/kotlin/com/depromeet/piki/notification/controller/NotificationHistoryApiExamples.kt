@@ -6,6 +6,7 @@ import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
+import com.depromeet.piki.notification.handler.ItemParsingCompletedHandler
 import com.depromeet.piki.notification.controller.dto.NotificationDeleteRequest
 import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
@@ -152,8 +153,10 @@ class NotificationHistoryApiExamples(
             id = 1025,
             type = NotificationType.ITEM_PARSING_COMPLETED,
             kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH),
-            title = "에어 조던 1 미드 파싱이 완료되었어요",
-            body = "",
+            // 파싱 완료만 title=이름 / body=상태 로 나뉜다(#913). 상태 문구는 리터럴로 박지 않고 핸들러 상수를 끌어와
+            // 문구가 바뀌면 example 이 따라오게 한다(kind 를 NotificationKind.of 로 파생시키는 것과 같은 결).
+            title = "에어 조던 1 미드",
+            body = ItemParsingCompletedHandler.WISH_MESSAGE,
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
@@ -165,8 +168,8 @@ class NotificationHistoryApiExamples(
             id = 1024,
             type = NotificationType.ITEM_PARSING_COMPLETED,
             kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
-            title = "나이키 덩크 로우 파싱이 완료되었어요",
-            body = "",
+            title = "나이키 덩크 로우",
+            body = ItemParsingCompletedHandler.TOURNAMENT_MESSAGE,
             refId = 513,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),
