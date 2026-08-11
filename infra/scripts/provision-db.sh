@@ -28,24 +28,28 @@ for arg in "$@"; do
 done
 
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
-MYSQL_IMAGE="mysql:8.4"
+# 이미지 태그와 데이터 볼륨 이름은 compose 파일이 갖는다. 여기 남는 CONTAINER 는 SQL 실행·검증에
+# docker exec 로 부를 때 쓰는 이름이라, compose 쪽 container_name 과 같은 값을 유지해야 한다.
 CONTAINER="piki-prod-mysql"
-VOLUME="piki-prod-mysql-data"
 REGION="ap-northeast-2"
 SSM_PREFIX="/piki-core/prod"
 
-# 컨테이너 메모리 캡. t4g.micro(실가용 약 906MB)에서 OS·docker 몫을 남기려면 상한이 필요하다.
-# 384m 은 dev 박스 같은 구성의 실사용(111MB)의 3배 이상이고, InnoDB 버퍼풀 기본값(128MB)에
-# 데이터 전량(2.1MB)이 올라가는 상태를 여유 있게 덮는다. swap 은 캡의 2배로 둬 순간 초과를 흡수한다.
-MEM_LIMIT="384m"
-MEM_SWAP="768m"
-
-# 지표 수집기(#912). 상태 조회만 하는 작은 프로세스라 32m 이면 충분하고, 캡을 둬서
-# 이쪽이 흘러도 MySQL 몫을 잠식하지 못하게 한다.
+# 컨테이너 정의(이미지·포트·메모리 캡·MySQL 튜닝·라벨)는 전부 compose 파일에 있다(#918).
+# 여기 남는 것은 그 파일을 찾는 좌표와, SQL·검증에서 쓰는 이름뿐이다.
+#
+# 두 위치를 찾는다. repo 에서는 scripts/ 와 compose/ 가 형제라 ../compose 이고, 박스로 올릴
+# 때는 보통 한 디렉터리에 몰아 넣어 나란히 놓인다. 어느 쪽이든 돌게 해서 "올리는 방식"이
+# 스크립트 동작을 좌우하지 않게 한다.
+if [ -f "${SCRIPT_DIR}/../compose/db.yml" ]; then
+  COMPOSE_FILE="${SCRIPT_DIR}/../compose/db.yml"
+else
+  COMPOSE_FILE="${SCRIPT_DIR}/compose/db.yml"
+fi
+# 프로젝트명을 고정한다. compose 는 기본적으로 파일이 있는 디렉터리명을 쓰는데, 스크립트를
+# 어디에 두고 실행하느냐에 따라 그 값이 달라져 별개 스택으로 갈라진다.
+COMPOSE_PROJECT="piki-db"
 EXPORTER_CONTAINER="piki-mysqld-exporter"
-EXPORTER_IMAGE="prom/mysqld-exporter:v0.19.0"
 EXPORTER_USER="exporter"
-EXPORTER_MEM_LIMIT="32m"
 
 ssm_param() {
   docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
@@ -64,46 +68,37 @@ DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회
 DB_ROOT_PASSWORD="$(ssm_param db-root-password)" || { echo "[mysql] SSM db-root-password 조회 실패"; exit 1; }
 echo "[mysql] DB 자격증명 SSM 로드 완료 (${SSM_PREFIX}/db-*)"
 
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "[mysql] ${CONTAINER} 이미 존재 — skip"
-else
-  echo "[mysql] ${CONTAINER} 기동 (named volume: ${VOLUME})"
-  # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
-  # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 — 3306 인바운드는
-  # 앱 EC2 SG 에서 온 것만 허용한다(terraform/db_ec2.tf).
-  #
-  # MYSQL_ROOT_HOST=localhost 를 명시하는 이유: 이미지 기본값이 `%` 라 그냥 두면 네트워크 너머에서도
-  # root 로 붙을 수 있는 root@% 계정이 생긴다. 보안그룹이 앱 박스만 통과시키더라도, 앱 박스가 뚫리면
-  # 그대로 DB 전체 권한이 넘어간다. root 를 쓰는 곳은 컨테이너 안에서 도는 백업 스크립트뿐이라
-  # localhost 로 좁혀도 잃는 게 없다.
-  #
-  # 아래 세 튜닝은 기본값이 이 박스 크기에 안 맞아서 넣는다. 기본값으로 띄웠을 때 실측이
-  # RAM 234MB + swap 185MB = 약 419MB 로 캡(384m)을 넘어 상시 스왑 상태였다.
-  #   --performance-schema=OFF   기본 ON 이고 이 구성에서 가장 큰 몫이다. 앱 지표는 Micrometer·
-  #                              Grafana 로 따로 받고 있어 DB 내부 계측을 켜 둘 실익이 없다.
-  #                              (진단이 필요하면 그때 켜서 재기동한다.)
-  #   --innodb-buffer-pool-size  기본 128M. 데이터 총량이 2.1MB 라 64M 에도 전량이 캐시된다.
-  #   --max-connections          기본 151. 앱 HikariCP 는 기본 풀 10 이고 blue-green 전환 때만
-  #                              잠시 2배가 되므로, 백업·관리 여유를 포함해도 60 이면 남는다.
-  # 값을 바꾸면 컨테이너 재생성이 필요하다(옵션은 기동 인자다). 데이터는 named volume 에 있어
-  # 재생성 자체는 안전하지만, 재생성 동안 앱 연결이 끊기므로 배포 창을 잡아 수행한다.
-  docker run -d \
-    --name "$CONTAINER" \
-    --restart unless-stopped \
-    --memory "$MEM_LIMIT" \
-    --memory-swap "$MEM_SWAP" \
-    -p 3306:3306 \
-    -v "${VOLUME}:/var/lib/mysql" \
-    -e MYSQL_DATABASE="$DB_NAME" \
-    -e MYSQL_USER="$DB_USERNAME" \
-    -e MYSQL_PASSWORD="$DB_PASSWORD" \
-    -e MYSQL_ROOT_PASSWORD="$DB_ROOT_PASSWORD" \
-    -e MYSQL_ROOT_HOST=localhost \
-    "$MYSQL_IMAGE" \
-    --performance-schema=OFF \
-    --innodb-buffer-pool-size=64M \
-    --max-connections=60
+# exporter 자격증명도 여기서 함께 읽는다. compose 가 두 서비스를 한 번에 올리므로 필요한 값이
+# 모두 갖춰진 뒤에 호출해야 한다.
+DB_EXPORTER_PASSWORD="$(ssm_param db-exporter-password)" || { echo "[exporter] SSM db-exporter-password 조회 실패"; exit 1; }
+# 아래 SQL 은 비밀번호를 문자열 리터럴로 끼워 넣는다. 값에 작은따옴표나 역슬래시가 있으면
+# 문장이 깨지거나 의도치 않은 SQL 이 되므로, 그런 값은 아예 거부한다.
+#
+# 이스케이프 대신 거부를 택한 이유: 셸에서 MySQL 의 이스케이프 규칙을 정확히 재현하려다
+# 틀리면 조용히 잘못된 비밀번호가 설정된다. 이 값은 우리가 만드는 것이라(openssl rand -hex)
+# 특수문자가 낄 이유가 없고, 낀다면 그건 누군가 다른 방식으로 넣었다는 신호다.
+case "$DB_EXPORTER_PASSWORD" in
+  *\'*|*\\*)
+    echo "[exporter] db-exporter-password 에 따옴표나 역슬래시가 있다 — SQL 리터럴로 다룰 수 없다."
+    echo "[exporter] openssl rand -hex 24 처럼 영숫자만으로 재발급한 뒤 SSM 을 갱신할 것."
+    exit 1 ;;
+esac
+
+# 컨테이너 기동은 compose 에 맡긴다. "이미 있으면 skip" 을 손으로 짜지 않아도 되고, 정의가
+# 스크립트가 아니라 파일 하나에 모여 무엇이 떠 있어야 하는지 한눈에 드러난다.
+#
+# 데이터 볼륨은 compose 파일에서 external 로 선언돼 있다. 그게 없으면 compose 가 프로젝트명을
+# 앞에 붙인 새 볼륨을 만들어 빈 DB 로 뜬다 — 이 전환에서 가장 조심할 지점이다.
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "[mysql] ${COMPOSE_FILE} 가 없다 — provision-db.sh 와 함께 올렸는지 확인"
+  exit 1
 fi
+echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
+DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
+DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
+  docker compose --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" up -d --wait \
+  || { echo "[mysql] compose up 실패"; exit 1; }
+echo "[mysql] compose up 완료"
 
 # readiness — 최초 기동은 DB·유저 생성 후 내부 재시작이 있어, 바로 접속하면 실패한다.
 echo "[mysql] readiness 대기"
@@ -152,21 +147,14 @@ echo "[mysql] 자격증명 검증 완료 (root·${DB_USERNAME} 모두 SSM 값으
 #
 # 위 앱·root 계정과 달리 비밀번호를 매번 SSM 값으로 맞춘다(ALTER USER). 이 계정은 앱이 쓰지
 # 않아 재설정해도 끊길 커넥션이 수집기 하나뿐이고, 그 편이 SSM 과 실제가 갈라지는 걸 원천 차단한다.
-DB_EXPORTER_PASSWORD="$(ssm_param db-exporter-password)" || { echo "[exporter] SSM db-exporter-password 조회 실패"; exit 1; }
-# 아래 SQL 은 비밀번호를 문자열 리터럴로 끼워 넣는다. 값에 작은따옴표나 역슬래시가 있으면
-# 문장이 깨지거나 의도치 않은 SQL 이 되므로, 그런 값은 아예 거부한다.
-#
-# 이스케이프 대신 거부를 택한 이유: 셸에서 MySQL 의 이스케이프 규칙을 정확히 재현하려다
-# 틀리면 조용히 잘못된 비밀번호가 설정된다. 이 값은 우리가 만드는 것이라(openssl rand -hex)
-# 특수문자가 낄 이유가 없고, 낀다면 그건 누군가 다른 방식으로 넣었다는 신호다.
-case "$DB_EXPORTER_PASSWORD" in
-  *\'*|*\\*)
-    echo "[exporter] db-exporter-password 에 따옴표나 역슬래시가 있다 — SQL 리터럴로 다룰 수 없다."
-    echo "[exporter] openssl rand -hex 24 처럼 영숫자만으로 재발급한 뒤 SSM 을 갱신할 것."
-    exit 1 ;;
-esac
-DOCKER_GW="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')" \
-  || { echo "[exporter] docker 브리지 게이트웨이 조회 실패"; exit 1; }
+# (값과 형식 검사는 compose 호출 전에 이미 끝냈다.)
+# 기본 브리지(bridge)가 아니라 MySQL 컨테이너가 실제로 붙은 네트워크의 게이트웨이를 본다.
+# compose 는 프로젝트마다 전용 네트워크를 만들어(172.18.x 등) 기본 브리지(172.17.x)와 대역이
+# 다르다. `docker network inspect bridge` 로 조회하면 엉뚱한 주소가 나와 Access denied 가 난다
+# (스크립트에서 compose 로 옮기면서 실제로 겪었다). 컨테이너를 직접 물어보면 어느 네트워크에
+# 있든 맞는 값을 얻는다.
+DOCKER_GW="$(docker inspect "$CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$v.Gateway}}{{end}}')" \
+  || { echo "[exporter] ${CONTAINER} 네트워크 게이트웨이 조회 실패"; exit 1; }
 [ -n "$DOCKER_GW" ] || { echo "[exporter] 게이트웨이가 비어 있다"; exit 1; }
 # 옛 127.0.0.1 계정은 접속에 안 쓰이므로 정리한다(초기 구현 잔재).
 printf "DROP USER IF EXISTS '%s'@'127.0.0.1';
@@ -182,29 +170,10 @@ FLUSH PRIVILEGES;\n" \
   || { echo "[exporter] DB 계정 생성·갱신 실패"; exit 1; }
 echo "[exporter] DB 계정 준비 완료 (${EXPORTER_USER}@${DOCKER_GW}, PROCESS·REPLICATION CLIENT)"
 
-# ── 1c) mysqld_exporter ─────────────────────────────────────────────────────
-# 127.0.0.1 에만 바인딩한다. alloy 도 host 네트워크라 루프백으로 닿고, 외부에는 아예 안 열린다
-# (보안그룹에 의존하지 않는 편이 낫다).
+# exporter 컨테이너 자체는 위 compose 가 이미 올렸다. 여기서는 그것이 실제로 DB 에 붙어
+# 지표를 내는지만 확인한다 — 계정이 방금 만들어졌으므로, compose 가 먼저 올린 exporter 는
+# 초기 몇 초간 인증에 실패할 수 있다(재시도로 흡수된다).
 #
-# 라벨 3종이 alloy 의 수집 계약이다(contracts/observability.md) - piki.observe 가 없으면
-# 어떤 신호도 안 걷힌다. 컨테이너는 매번 재생성해 이미지·옵션 변경이 바로 반영되게 한다.
-# 데이터를 들고 있지 않아 재생성 비용이 없다(MySQL 과 다르다).
-docker rm -f "$EXPORTER_CONTAINER" >/dev/null 2>&1 || true
-docker run -d \
-  --name "$EXPORTER_CONTAINER" \
-  --restart unless-stopped \
-  --network host \
-  --memory "$EXPORTER_MEM_LIMIT" \
-  -e MYSQLD_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
-  -l piki.observe=true \
-  -l piki.service=piki-db \
-  -l piki.metrics.port=9104 \
-  "$EXPORTER_IMAGE" \
-  --mysqld.address=127.0.0.1:3306 \
-  --mysqld.username="$EXPORTER_USER" \
-  --web.listen-address=127.0.0.1:9104 > /dev/null
-echo "[exporter] ${EXPORTER_CONTAINER} 기동 (${EXPORTER_IMAGE}, 127.0.0.1:9104)"
-
 # 수집기가 실제로 DB 에 붙어 지표를 내는지 확인한다. 컨테이너가 떠 있다는 것만으로는
 # 자격증명·권한이 맞는지 알 수 없고, 그 상태로 두면 대시보드가 조용히 빈다.
 #
