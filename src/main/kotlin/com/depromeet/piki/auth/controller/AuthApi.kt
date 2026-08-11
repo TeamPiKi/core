@@ -131,7 +131,11 @@ interface AuthApi {
                 "- APP 은 쿠키를 쓰지 않아 영향 없다.\n" +
                 "- **이 기기만 로그아웃된다.** 다른 기기의 로그인은 유지된다.\n" +
                 "- 끊을 세션은 리프레시 토큰(쿠키 또는 body)으로 가른다. 토큰을 보내지 않으면 " +
-                "어느 세션인지 특정할 수 없어 **그 계정의 전 기기가 로그아웃**된다.",
+                "어느 세션인지 특정할 수 없어 **그 계정의 전 기기가 로그아웃**된다.\n" +
+                "- **이 기기의 푸시 수신(FCM 기기 토큰)도 함께 해제된다.** 기기는 `device_id` 쿠키로 가르며, " +
+                "이 쿠키는 클라이언트가 FCM 토큰 등록 시점에 심는다. 별도의 FCM 해제 요청은 필요 없다.\n" +
+                "- 쿠키가 없으면(푸시 미등록 기기) 해제할 대상이 없어 그대로 넘어간다. 알림 정리 실패가 " +
+                "로그아웃을 실패시키지 않는다.",
     )
     @ApiResponses(
         value = [
@@ -161,5 +165,6 @@ interface AuthApi {
         @Parameter(hidden = true) userId: UUID,
         request: TokenRefreshRequest?,
         @Parameter(hidden = true) cookieRefreshToken: String?,
+        @Parameter(hidden = true) cookieDeviceId: String?,
     ): ApiResponseBody<LogoutResponse>
 }
