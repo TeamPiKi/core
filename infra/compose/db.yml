@@ -1,0 +1,107 @@
+# prod DB 박스의 컨테이너 정의 (#918).
+#
+# 왜 Compose 인가: 이전에는 provision-db.sh 가 docker run 인자를 손으로 조립하고 "있으면 skip,
+# 없으면 생성" 하는 멱등 로직까지 직접 짰다. 그 과정에서 셸 특유의 함정을 여러 번 밟았고(파이프
+# 종료 코드·응답 잘림 등), 무엇이 떠 있어야 하는지 알려면 스크립트 178줄을 읽어야 했다.
+# 여기서는 "이런 상태여야 한다"만 쓰고, 그 상태로 맞추는 일은 compose 가 한다.
+#
+# 값 주입: 비밀번호 같은 값은 이 파일에 두지 않는다. provision-db.sh 가 SSM 에서 읽어 환경변수로
+# 넘기고(compose 가 ${...} 를 치환), 파일에는 이름만 남는다.
+#
+# alloy 는 여기 없다. infra repo 의 공용 블록이 관리하고 extractor·renderer 박스도 같은 블록을
+# 쓰므로, 옮기려면 그쪽 구조부터 정리해야 한다.
+
+services:
+  mysql:
+    # 컨테이너 이름을 고정한다. 백업 스크립트가 docker exec 로 이 이름을 부르고, compose 기본
+    # 이름(<project>-<service>-<n>)에 기대면 프로젝트명이 바뀔 때 조용히 어긋난다.
+    container_name: piki-prod-mysql
+    image: mysql:8.4
+    restart: unless-stopped
+
+    # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
+    # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 - 3306 인바운드는
+    # 앱 EC2 SG 에서 온 것만 허용한다(terraform/db_ec2.tf).
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME 미주입}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME 미주입}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 미주입}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD 미주입}
+      # 이미지 기본값이 `%` 라 그냥 두면 네트워크 너머에서도 root 로 붙을 수 있는 root@% 계정이
+      # 생긴다. 보안그룹이 앱 박스만 통과시키더라도 그 박스가 뚫리면 DB 전체 권한이 넘어간다.
+      # root 를 쓰는 곳은 컨테이너 안에서 도는 백업 스크립트뿐이라 localhost 로 좁혀도 잃는 게 없다.
+      MYSQL_ROOT_HOST: localhost
+
+    # t4g.micro(실가용 약 906MB)에서 OS·docker 몫을 남기려면 상한이 필요하다. 384m 은 dev 박스
+    # 같은 구성의 실사용(111MB)의 3배 이상이고, 버퍼풀에 데이터 전량(2.1MB)이 올라가는 상태를
+    # 여유 있게 덮는다. swap 은 캡의 2배로 둬 순간 초과를 흡수한다.
+    mem_limit: 384m
+    memswap_limit: 768m
+
+    # 기본값이 이 박스 크기에 안 맞아 넣는 튜닝이다. 기본값으로 띄웠을 때 실측이
+    # RAM 234MB + swap 185MB = 약 419MB 로 캡을 넘어 상시 스왑 상태였다.
+    #   performance-schema=OFF   기본 ON 이고 이 구성에서 가장 큰 몫이다. 앱 지표는 Micrometer·
+    #                            Grafana 로 따로 받고 있어 DB 내부 계측을 켜 둘 실익이 없다.
+    #   innodb-buffer-pool-size  기본 128M. 데이터 총량이 2.1MB 라 64M 에도 전량이 캐시된다.
+    #   max-connections          기본 151. 앱 HikariCP 는 기본 풀 10 이고 blue-green 전환 때만
+    #                            잠시 2배가 되므로, 백업·관리 여유를 포함해도 60 이면 남는다.
+    command:
+      - --performance-schema=OFF
+      - --innodb-buffer-pool-size=64M
+      - --max-connections=60
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  mysqld-exporter:
+    container_name: piki-mysqld-exporter
+    image: prom/mysqld-exporter:v0.19.0
+    restart: unless-stopped
+
+    # host 네트워크로 127.0.0.1:3306 에 붙고, 자기 지표도 127.0.0.1:9104 에만 연다.
+    # alloy 도 host 네트워크라 루프백으로 닿으므로, 외부에는 아예 열리지 않는다
+    # (보안그룹에만 의존하지 않는 편이 낫다).
+    network_mode: host
+
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${DB_EXPORTER_PASSWORD:?DB_EXPORTER_PASSWORD 미주입}
+
+    command:
+      - --mysqld.address=127.0.0.1:3306
+      - --mysqld.username=exporter
+      - --web.listen-address=127.0.0.1:9104
+
+    # alloy 의 수집 계약이다(infra repo contracts/observability.md). piki.observe 가 없으면
+    # 어떤 신호도 안 걷히므로, 이 세 줄이 빠지면 컨테이너는 멀쩡히 떠 있는데 대시보드만 빈다.
+    labels:
+      piki.observe: "true"
+      piki.service: "piki-db"
+      piki.metrics.port: "9104"
+
+    # 상태 조회만 하는 작은 프로세스라 32m 이면 충분하고(실측 7.8MB), 캡을 둬서 이쪽이 흘러도
+    # MySQL 몫을 잠식하지 못하게 한다.
+    mem_limit: 32m
+
+    # network_mode: host 라 compose 의 서비스 이름 해석이 안 통한다. depends_on 은 기동 순서만
+    # 맞추고, 실제 접속 가능 여부는 provision-db.sh 의 mysql_up 확인이 책임진다.
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  # external 이 핵심이다. 이 선언이 없으면 compose 가 프로젝트명을 앞에 붙인 새 볼륨
+  # (<project>_mysql-data)을 만들어, 기존 데이터가 아니라 빈 DB 로 뜬다.
+  # 이름은 스크립트 시절 만든 볼륨 그대로다.
+  mysql-data:
+    external: true
+    name: piki-prod-mysql-data
