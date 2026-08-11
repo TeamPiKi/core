@@ -75,6 +75,14 @@ class SocialNicknameCollisionConcurrencyIntegrationTest : IntegrationTestSupport
             assertTrue(onlyFree in nicknames, "남은 조합 '$onlyFree' 이 누군가에게 발급돼야 한다")
             assertTrue(nicknames.any { it !in pool.toSet() }, "충돌한 요청은 숫자 확장 닉네임을 받아야 한다")
         } finally {
+            // 정리보다 워커 종료가 먼저다. 위 단언이 깨져 이 블록에 들어온 경우 워커가 아직 살아 있을 수 있고,
+            // 살아남은 워커가 정리 쿼리 뒤에 커밋하면 그 행이 uq_users_nickname 을 물고 남아 이후 실행을 깨뜨린다.
+            // start 를 먼저 열어 게이트에 갇힌 워커를 풀어 준다 — ready 단언이 깨진 경로에선 countDown 이 안 돌아
+            // 워커 4개가 non-daemon 스레드로 영구 대기하고, 그대로면 테스트 JVM 이 종료하지 못한다.
+            // (CountDownLatch 는 0 에서 더 안 내려가고 종료된 executor 의 shutdownNow 도 무해해, 정상 경로엔 영향이 없다.)
+            start.countDown()
+            executor.shutdownNow()
+            executor.awaitTermination(30, TimeUnit.SECONDS)
             jdbcTemplate.update(
                 "DELETE FROM users WHERE id IN (SELECT user_id FROM user_details WHERE social_id LIKE ?)",
                 "$socialIdPrefix%",

@@ -1,16 +1,16 @@
 package com.depromeet.piki.user.service
 
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.User
-import com.depromeet.piki.user.domain.UserException
-import com.depromeet.piki.user.repository.UserRepository
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.annotation.Transactional
+import java.sql.Timestamp
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 // 게스트 닉네임 생성의 불변식 회귀 가드: 반복 생성 시 풀 안에서 서로 겹치지 않는 닉네임이 발급된다.
@@ -23,7 +23,7 @@ class GuestNicknameGenerationIntegrationTest : IntegrationTestSupport() {
     private lateinit var userService: UserService
 
     @Autowired
-    private lateinit var userRepository: UserRepository
+    private lateinit var jdbcTemplate: JdbcTemplate
 
     @Test
     fun `게스트를 여러 번 생성하면 풀 안에서 서로 겹치지 않는 닉네임이 발급된다`() {
@@ -41,9 +41,7 @@ class GuestNicknameGenerationIntegrationTest : IntegrationTestSupport() {
     fun `풀이 소진 직전이면 남은 닉네임을 발급하고 완전 소진되면 숫자를 붙여 확장한다`() {
         val pool = UserService.NICKNAME_POOL
         val onlyFree = pool.first()
-        (pool - onlyFree).forEach { nickname ->
-            userRepository.save(User(UUID.randomUUID(), nickname, "https://example.test/avatar", IdentityType.GUEST))
-        }
+        occupy(pool - onlyFree)
 
         // subset 이 전부 taken 이어도 fallback 전체 조회로 유일하게 남은 onlyFree 를 찾아 발급한다.
         val issued = userService.createGuest()
@@ -64,14 +62,24 @@ class GuestNicknameGenerationIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `확장 구간에서도 발급 닉네임은 서로 겹치지 않는다`() {
         val pool = UserService.NICKNAME_POOL
-        pool.forEach { nickname ->
-            userRepository.save(User(UUID.randomUUID(), nickname, "https://example.test/avatar", IdentityType.GUEST))
-        }
+        // 여기선 풀을 하나도 남기지 않는다 — 하나라도 비면 첫 발급이 그 조합을 가져가 확장 경로를 안 탄다.
+        occupy(pool)
 
         // 풀이 완전히 소진된 상태에서 연속 발급 — 전부 확장 경로를 탄다.
         val issued = (1..20).map { userService.createGuest().nickname }
 
         assertEquals(issued.size, issued.toSet().size, "확장 구간에서도 중복이 없어야 한다")
         assertTrue(issued.none { it in pool.toSet() }, "모두 풀 밖(숫자 확장)이어야 한다")
+    }
+
+    // 점유는 JPA 개별 save 대신 batch INSERT 로 넣는다 — 4096행이라 왕복 비용이 테스트 시간을 지배한다.
+    // 클래스 레벨 @Transactional 안에서 같은 커넥션을 쓰므로 이 행들도 함께 롤백되고, createGuest 의
+    // 닉네임 조회는 flush 후 같은 트랜잭션을 읽어 점유가 그대로 보인다.
+    private fun occupy(nicknames: List<String>) {
+        val now = Timestamp.valueOf(LocalDateTime.now())
+        jdbcTemplate.batchUpdate(
+            "INSERT INTO users (id, nickname, profile_image, identity_type, created_at, updated_at) VALUES (?, ?, ?, 'GUEST', ?, ?)",
+            nicknames.map { arrayOf<Any>(uuidToBytes(UUID.randomUUID()), it, "https://example.test/avatar", now, now) },
+        )
     }
 }
