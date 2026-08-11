@@ -566,10 +566,13 @@ jobs:
       - name: Health check and switch
         id: health
         uses: appleboy/ssh-action@v1
+        env:
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: DOMAIN
           script: |
             # 슬롯 재판정 - 배포 스텝과 같은 공용 블록·같은 값으로 읽는다 (상태 파일이 source of truth)
             DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/team3-upstream.conf \
@@ -590,8 +593,14 @@ jobs:
               # 실패 시 이전 upstream 원복까지 블록의 원복 경계 안에서 돈다. 종전 인라인(tee + reload)에는
               # 원복이 없어 전환 실패 시 상태 파일과 실제 서빙이 어긋난 채 남았고, 그 괴리는 다음 배포가
               # 서빙 중인 슬롯을 비활성으로 오판·제거하게 만들었다 (infra#37 에서 실사고로 실증된 결함의 해소).
+              # verify-cmd: 전환 직후 소비자 경로(프론트 443 → nginx → 새 슬롯)를 통째로 검증한다 - 앱만
+              # 살아있고 배달 경로가 끊긴 부류(extractor 이행 배포의 Host/444 사고가 그 실례)를 원복 경계
+              # 안에서 잡는다. /health 는 conf 가 127.0.0.1 에만 열어 둔 내부 검증 전용 경로. -k 는 cert 가
+              # 도메인 앞으로라 IP 접속에서 hostname 검증만 끄는 것이고, SNI 미전송이어도 박스당 서버 블록이
+              # 하나뿐이라 default 매칭으로 닿는다. --retry 는 reload 직후 워커 교체의 순간 흔들림 흡수.
               if ! bash /tmp/piki-deploy/slot_switch.sh \
-                --state-file /etc/nginx/team3-upstream.conf --server "localhost:$INACTIVE_PORT"; then
+                --state-file /etc/nginx/team3-upstream.conf --server "localhost:$INACTIVE_PORT" \
+                --verify-cmd "curl -skf -o /dev/null -m 5 --retry 4 --retry-delay 2 --retry-all-errors -H 'Host: $DOMAIN' https://127.0.0.1/health"; then
                 echo "슬롯 전환 실패(이전 upstream 원복됨) - 새 슬롯 정리 후 중단"
                 timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
                 timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
