@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 // 핸들러의 수신자(resolveRecipients)·actor 컨텍스트(resolveActorContext) 도출은 DB 역조회에 의존하므로 통합으로 검증한다.
@@ -126,6 +127,53 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
             mapOf("actorName" to "홍길동", "tournamentId" to "1202", "tournamentName" to "토너먼트", "itemName" to "나이키 에어맥스"),
             variables,
         )
+    }
+
+    // 삭제 알림은 이름 앞뒤로 닉네임과 "…을(를) 삭제했어요" 가 붙어, 이름을 안 자르면 엔티티 불변식(title 255자)에
+    // 걸려 dispatcher 의 runCatching 이 예외를 삼키고 알림이 조용히 누락된다(상품명은 512자까지 허용).
+    // 절단 규칙 자체는 ItemDisplayNameTest 가 망라하고, 여기선 핸들러가 그 규칙에 이름을 실제로 통과시키는지만 본다.
+    @Test
+    fun `토너먼트 아이템 삭제 변수의 itemName 은 표시 길이로 잘린다`() {
+        val actor = UUID.randomUUID()
+        userRepository.save(User(id = actor, nickname = "홍길동", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
+        val longName = "가".repeat(30)
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7205L, name = longName)).getId()
+
+        val variables =
+            itemDeletedHandler.resolveActorContext(
+                TournamentItemDeleted(tournamentId = 1205L, tournamentItemId = 1L, snapshotId = snapshotId, actorId = actor),
+            ).variables
+
+        val itemName = variables.getValue("itemName")
+        assertTrue(itemName.length < longName.length, "긴 상품명이 그대로 실리면 안 된다 (실제=$itemName)")
+        assertTrue(longName.startsWith(itemName.trimEnd('…')), "잘린 이름은 원본의 앞부분이어야 한다 (실제=$itemName)")
+    }
+
+    // 이모지는 UTF-16 코드 유닛으로 자르면 surrogate pair 가 쪼개져 깨진다. 핸들러가 grapheme 기준 절단을 거치는지 본다.
+    // 입력을 단순 이모지(1 grapheme = 2 char)로 둬 절단 결과가 char 안전망(ItemDisplayName.MAX_CHARS) 아래에 남게 한다 —
+    // 그 안전망은 조합 부호를 쌓은 비정상 입력에 한해 글자 깨짐보다 알림 누락 방지를 택하는 의도된 트레이드오프라,
+    // 여기서 검증할 대상은 그 앞단의 grapheme 절단이다.
+    @Test
+    fun `토너먼트 아이템 삭제 변수의 itemName 은 이모지를 쪼개지 않는다`() {
+        val actor = UUID.randomUUID()
+        userRepository.save(User(id = actor, nickname = "홍길동", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
+        // 앞에 1 char 를 둬 절단 경계를 홀수로 민다 — 이모지(2 char)만 있으면 코드 유닛으로 잘라도 짝이 맞아떨어져
+        // 회귀가 드러나지 않는다. 이 한 글자가 경계를 surrogate pair 한가운데로 옮긴다.
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7206L, name = "가" + "😀".repeat(20))).getId()
+
+        val variables =
+            itemDeletedHandler.resolveActorContext(
+                TournamentItemDeleted(tournamentId = 1206L, tournamentItemId = 1L, snapshotId = snapshotId, actorId = actor),
+            ).variables
+
+        val itemName = variables.getValue("itemName")
+        // 코드 유닛으로 자르면 surrogate pair 가 반쪽만 남아 깨진 문자가 된다. 짝 잃은 surrogate 가 없어야 한다.
+        val orphanSurrogate =
+            itemName.withIndex().any { (i, c) ->
+                (c.isHighSurrogate() && (i + 1 >= itemName.length || !itemName[i + 1].isLowSurrogate())) ||
+                    (c.isLowSurrogate() && (i == 0 || !itemName[i - 1].isHighSurrogate()))
+            }
+        assertFalse(orphanSurrogate, "잘린 이름에 짝 잃은 surrogate 가 남았다 (실제=$itemName)")
     }
 
     @Test
