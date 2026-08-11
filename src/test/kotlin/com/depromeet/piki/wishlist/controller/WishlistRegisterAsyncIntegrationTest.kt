@@ -9,6 +9,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.AsyncItemParsingWorker
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -148,6 +149,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
+        // 실패 원장 라인도 latency 를 갖는 계약(#916)을 라인 모양으로 고정한다 — 성공만 latency 를 가지면
+        // 타임아웃형(느린) 실패가 로그 기반 소요 통계에서 통째로 사라진다.
+        val workerLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val workerLogger = LoggerFactory.getLogger(AsyncItemParsingWorker::class.java) as Logger
+        workerLogger.addAppender(workerLogs)
         try {
             // 파싱 결과 실패는 동기 400 이 아니라 FAILED 상태로 남는다 (등록 응답은 이미 201 로 끝났으므로).
             stubProductLinkExtractor.build = { throw ProductSnapshotException.notProductPage() }
@@ -164,7 +170,15 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, snapshot.status)
             // 실패 항목은 추출 결과가 비어 있다.
             assertNull(snapshot.name)
+            // item 을 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 하고, latency 는 값 형식(\d+ms)까지 조인다.
+            val expectedResultLog =
+                Regex("""item\.parse\.result item=$itemId result=failed reason=not_product latency=\d+ms""")
+            assertTrue(
+                workerLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
+                "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
+            )
         } finally {
+            workerLogger.detachAppender(workerLogs)
             cleanup(userId)
         }
     }
