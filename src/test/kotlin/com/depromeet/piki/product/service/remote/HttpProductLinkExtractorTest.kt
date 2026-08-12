@@ -32,8 +32,15 @@ import kotlin.test.assertTrue
 class HttpProductLinkExtractorTest {
     private val link = ProductLink.parse("https://shop.example.com/p/1")
 
-    private class FakeRoutingPolicy(private val route: ExtractionRoute? = null) : ExtractionRoutingPolicy {
+    // headlessAllowed 의 기본을 false 로 둔다 — 허가는 정책 행에 명시적으로 켜야만 생기는 사실이라(default-deny),
+    // Fake 도 그 전제를 지켜야 "허가를 안 켰는데 true 로 나가는" 회귀를 잡을 수 있다.
+    private class FakeRoutingPolicy(
+        private val route: ExtractionRoute? = null,
+        private val headlessAllowed: Boolean = false,
+    ) : ExtractionRoutingPolicy {
         override fun routeOf(link: ProductLink): ExtractionRoute? = route
+
+        override fun headlessAllowedOf(link: ProductLink): Boolean = headlessAllowed
     }
 
     // 지정한 축에만 값을 준다 — target 을 무시하고 늘 같은 값을 돌려주면, 링크 추출기가 IMAGE 축을 읽는
@@ -47,6 +54,7 @@ class HttpProductLinkExtractorTest {
 
     private fun extractorWith(
         route: ExtractionRoute? = null,
+        headlessAllowed: Boolean = false,
         model: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpProductLinkExtractor {
@@ -55,7 +63,7 @@ class HttpProductLinkExtractorTest {
         server(mockServer)
         return HttpProductLinkExtractor(
             builder.build(),
-            FakeRoutingPolicy(route),
+            FakeRoutingPolicy(route, headlessAllowed),
             FakeModelSettings(ExtractionTarget.LINK, model),
         )
     }
@@ -88,10 +96,11 @@ class HttpProductLinkExtractorTest {
     }
 
     @Test
-    fun `라우팅 정책이 HEADLESS_FIRST 인 도메인은 headlessFirst=true 힌트를 실어 보낸다`() {
+    fun `라우팅 정책이 HEADLESS_FIRST 이고 허가된 도메인은 headlessFirst=true 힌트를 실어 보낸다`() {
         // 정책(DB·백오피스)의 단일 진실은 이쪽 — extractor 는 이 힌트로 plain 을 건너뛰고 브라우저 직행한다(계약 §2).
+        // headlessFirst 는 route 가 HEADLESS_FIRST 이면서 허가된 도메인에만 켜지므로 허가(headlessAllowed=true)를 함께 준다.
         val extractor =
-            extractorWith(route = ExtractionRoute.HEADLESS_FIRST) { server ->
+            extractorWith(route = ExtractionRoute.HEADLESS_FIRST, headlessAllowed = true) { server ->
                 server
                     .expect(requestTo("http://extractor.test/internal/extractions/link"))
                     .andExpect(jsonPath("$.headlessFirst").value(true))
@@ -117,6 +126,88 @@ class HttpProductLinkExtractorTest {
                 server
                     .expect(requestTo("http://extractor.test/internal/extractions/link"))
                     .andExpect(jsonPath("$.headlessFirst").value(false))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        extractor.extract(link)
+    }
+
+    @Test
+    fun `정책 행이 없는 도메인은 headlessAllowed=false 로 보낸다 - 허가 원장의 기본은 거부다`() {
+        // 대부분의 도메인이 이 경로다. 여기가 true 로 새면 "허가받은 곳만 브라우저로 연다"는 약속이 통째로 무너진다.
+        val extractor =
+            extractorWith { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessAllowed").value(false))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
+    }
+
+    @Test
+    fun `허가받은 도메인은 headlessAllowed=true 를 실어 보낸다`() {
+        // 허가 원장(extraction_platform_policies.headless_allowed)의 단일 진실은 이쪽 DB 이고, 무상태인 extractor 는
+        // 요청 단위로만 받는다 — 이 필드가 빠지면 저쪽은 허가 여부를 알 길이 없다.
+        val extractor =
+            extractorWith(route = ExtractionRoute.HEADLESS_FIRST, headlessAllowed = true) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessAllowed").value(true))
+                    .andExpect(jsonPath("$.headlessFirst").value(true))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"허가 상품","imageUrl":"https://cdn.example.com/k.png","currentPrice":209000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("허가 상품", extractor.extract(link).name)
+    }
+
+    @Test
+    fun `route 가 HEADLESS_FIRST 여도 허가가 없으면 headlessFirst=false 로 보낸다 - 모순 요청을 막는 게이트`() {
+        // 허가 없이 HEADLESS_FIRST 로 남은 행(이 기능 이전 데이터·구버전이 만든 행)을 만나도 core 가 스스로
+        // default-deny 를 지킨다 — "브라우저 직행(headlessFirst)"과 "허가 없음(headlessAllowed=false)"이 함께
+        // 나가는 모순 요청을 원천 차단한다. extractor 가 먼저 배포되는 구간의 안전이 이 게이트에 달려 있다.
+        val extractor =
+            extractorWith(route = ExtractionRoute.HEADLESS_FIRST, headlessAllowed = false) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessFirst").value(false))
+                    .andExpect(jsonPath("$.headlessAllowed").value(false))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        extractor.extract(link)
+    }
+
+    @Test
+    fun `허가받지 않은 도메인은 정책이 있어도 headlessAllowed=false 다`() {
+        // 정책 행이 있다는 사실만으로 허가가 되지 않는다. 허가 컬럼을 켜기 전(또는 이 기능 이전에 만들어진 행)에는
+        // 정책이 무엇이든 브라우저를 열 수 없다.
+        val extractor =
+            extractorWith(route = ExtractionRoute.SUPPORTED) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.headlessAllowed").value(false))
                     .andRespond(
                         withSuccess(
                             """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",

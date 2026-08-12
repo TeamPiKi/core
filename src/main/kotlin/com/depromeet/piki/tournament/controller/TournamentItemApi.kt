@@ -13,6 +13,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentItemDetailResponse
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentItemRequest
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -21,6 +22,15 @@ import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.MediaType
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
+
+// 아이템 등록 한도(#339) 응답 설명. 이 축의 한도는 요청자가 아니라 **토너먼트 오너**의 몫에서 깎이므로,
+// 참여자는 자기가 처음 담는 경우에도 429 를 받을 수 있다. 클라이언트가 그 상황을 오해하지 않게 명시한다.
+// (응답 문구 자체는 오너의 사용량을 드러내지 않는다 — 남의 사용량은 요청자에게 알릴 정보가 아니다.)
+private const val TOURNAMENT_RATE_LIMIT_DESCRIPTION =
+    "아이템 등록 한도 초과 (code: TOURNAMENT-037). 한도는 요청자가 아니라 토너먼트 오너의 몫에서 차감되므로 " +
+        "참여자가 처음 담는 경우에도 받을 수 있다. 요청 수가 아니라 등록하는 item 수로 세며(이미지 5장 = 5), " +
+        "남은 몫이 있으면 그보다 큰 요청도 통과하므로 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
+        "Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
 @Tag(name = "Tournament Item", description = "토너먼트 아이템 API")
 interface TournamentItemApi {
@@ -246,6 +256,23 @@ interface TournamentItemApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "429",
+                description = TOURNAMENT_RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun addItemFromLink(
@@ -322,6 +349,23 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "409",
                 description = "상태 충돌 (PENDING이 아닌 토너먼트)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "429",
+                description = TOURNAMENT_RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -413,6 +457,23 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "409",
                 description = "상태 충돌 (PENDING이 아닌 토너먼트)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "429",
+                description = "$TOURNAMENT_RATE_LIMIT_DESCRIPTION 발급 시점에 차감하므로 이어지는 confirm 은 추가로 소모하지 않는다.",
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

@@ -19,6 +19,10 @@ enum class ErrorCategory(
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 형식이에요."),
     CONFLICT(HttpStatus.CONFLICT, "요청을 처리하지 못했어요. 다시 확인해 주세요."),
 
+    // 429 — 사용자·리소스 단위 사용량 한도를 넘긴 경우(#339). 5xx 의 SERVER_BUSY(503, 서버 전체가 바쁨)와 다르다:
+    // 이쪽은 서버가 멀쩡하고 "이 요청자의 몫"만 소진된 상태라 4xx 이며, 기다리면 창이 갱신돼 다시 쓸 수 있다.
+    TOO_MANY_REQUESTS(HttpStatus.TOO_MANY_REQUESTS, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."),
+
     // RETRYABLE·SERVER_BUSY·SERVER_ERROR 는 셋 다 5xx 지만 클라의 재시도 방식이 다르다. description 을 구분해
     // 재시도 여부 오해를 없앤다: RETRYABLE=즉시 재시도, SERVER_BUSY=대기 후 재시도, SERVER_ERROR=재시도 무의미.
     RETRYABLE(HttpStatus.BAD_GATEWAY, "일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요."),

@@ -363,6 +363,26 @@ interface TournamentApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요 — code: TOURNAMENT-036)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun create(
