@@ -22,6 +22,7 @@ import java.util.UUID
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -216,6 +217,130 @@ class AdminExtractionPolicyIntegrationTest : IntegrationTestSupport() {
         seeded.forEach { domain ->
             val reason = policyRepository.findById(domain).orElseThrow().reason ?: return@forEach
             assertFalse(datePattern.containsMatchIn(reason), "$domain 사유에 날짜가 남아 있다: $reason")
+        }
+    }
+
+    @Test
+    fun `허가 없이 HEADLESS_FIRST 를 지정하면 거절되고 행이 만들어지지 않는다`() {
+        // default-deny 의 실제 조작 지점. 추가 폼은 허가를 켤 수 없으므로(허가는 상세의 몫) 여기서 직행을 고르면
+        // 저장 자체가 막혀야 한다 — 막히지 않으면 허가 없는 도메인이 브라우저로 열린다.
+        val mockMvc = mockMvc()
+        val domain = "deny-${UUID.randomUUID()}.example.com"
+        try {
+            mockMvc
+                .perform(
+                    post("/admin/extraction-policies")
+                        .with(csrf())
+                        .param("domain", domain)
+                        .param("route", "HEADLESS_FIRST")
+                        .param("reason", "no permission yet"),
+                ).andExpect(status().isOk) // 리다이렉트가 아니라 에러를 실은 보드 재표시
+
+            assertTrue(policyRepository.findById(domain).isEmpty, "허가 없는 HEADLESS_FIRST 는 저장되면 안 된다")
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
+    fun `상세에서 허가를 켜면 근거·허가 시각이 원장에 남고 HEADLESS_FIRST 로 저장된다`() {
+        // "메일 받아 화이트리스트에 추가"의 실제 경로. 허가와 정책이 한 번의 저장으로 함께 확정돼야
+        // "허가 없는 HEADLESS_FIRST" 같은 중간 상태를 지나지 않는다.
+        val mockMvc = mockMvc()
+        val domain = "granted-${UUID.randomUUID()}.example.com"
+        val permissionRef = "PERMIT-${UUID.randomUUID()}"
+        try {
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.SUPPORTED.name, reason = null),
+            )
+            routingPolicy.reload()
+
+            mockMvc
+                .perform(
+                    post("/admin/extraction-policies/$domain")
+                        .with(csrf())
+                        .param("route", "HEADLESS_FIRST")
+                        .param("reason", "static fetch blocked")
+                        .param("headlessAllowed", "true")
+                        .param("permissionRef", permissionRef),
+                ).andExpect(status().is3xxRedirection)
+                .andExpect(redirectedUrl("/admin/extraction-policies?updated"))
+
+            val saved = policyRepository.findById(domain).orElseThrow()
+            assertTrue(saved.headlessAllowed)
+            assertEquals(permissionRef, saved.permissionRef)
+            assertNotNull(saved.permissionGrantedAt, "허가를 켠 시각이 원장에 남아야 한다")
+            // afterCommit reload 로 배포 없이 곧바로 추출 요청의 허가 판정에 반영된다.
+            assertTrue(routingPolicy.headlessAllowedOf(ProductLink.parse("https://$domain/p")))
+
+            // 상세 화면이 근거를 다시 보여준다(다음 사람이 "왜 열려 있나"를 되짚는 자리).
+            assertContains(html(mockMvc, "/admin/extraction-policies/$domain"), permissionRef)
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
+    fun `허가를 끄면 그 도메인은 다시 헤드리스 불가가 되고 허가 시각도 비워진다`() {
+        val mockMvc = mockMvc()
+        val domain = "revoked-${UUID.randomUUID()}.example.com"
+        try {
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(
+                    domain = domain,
+                    route = ExtractionRoute.HEADLESS_FIRST.name,
+                    reason = null,
+                    headlessAllowed = true,
+                    permissionRef = "old permission",
+                ),
+            )
+            routingPolicy.reload()
+
+            // 허가를 끄면 HEADLESS_FIRST 는 유지될 수 없다 — 정책도 함께 내려야 저장된다(같은 폼이라 한 번에 끝난다).
+            mockMvc
+                .perform(
+                    post("/admin/extraction-policies/$domain")
+                        .with(csrf())
+                        .param("route", "SUPPORTED")
+                        .param("reason", "permission revoked"),
+                ).andExpect(status().is3xxRedirection)
+                .andExpect(redirectedUrl("/admin/extraction-policies?updated"))
+
+            val saved = policyRepository.findById(domain).orElseThrow()
+            assertFalse(saved.headlessAllowed)
+            assertNull(saved.permissionGrantedAt)
+            assertFalse(routingPolicy.headlessAllowedOf(ProductLink.parse("https://$domain/p")))
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
+    fun `근거 없이 허가만 켜면 거절된다 - 근거 없는 허가는 원장 구실을 못 한다`() {
+        val mockMvc = mockMvc()
+        val domain = "noref-${UUID.randomUUID()}.example.com"
+        try {
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.SUPPORTED.name, reason = null),
+            )
+            routingPolicy.reload()
+
+            mockMvc
+                .perform(
+                    post("/admin/extraction-policies/$domain")
+                        .with(csrf())
+                        .param("route", "SUPPORTED")
+                        .param("headlessAllowed", "true")
+                        .param("permissionRef", "   "),
+                ).andExpect(status().isOk) // 에러를 실은 상세 재표시
+
+            assertFalse(policyRepository.findById(domain).orElseThrow().headlessAllowed)
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
         }
     }
 
