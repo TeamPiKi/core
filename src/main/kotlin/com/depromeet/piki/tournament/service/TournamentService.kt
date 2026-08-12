@@ -508,6 +508,9 @@ class TournamentService(
         val snapshot = if (tournament.isPending()) itemDisplayService.resolveDisplay(pointer) else pointer
         val item = itemRepository.findById(snapshot.itemId)
             ?: throw TournamentException.notFoundTournamentItem()
+        // 이 상품이 요청자 본인의 위시에 담겨 있으면 그 위시의 개인 메모를 함께 내린다(#906). 조회를 요청자
+        // 소유 wish 로 한정하므로 남의 메모는 구조적으로 내려갈 수 없다. 게스트·미담음·삭제된 위시는 조회에 안 잡힌다.
+        val memo = wishRepository.findByItemIdsAndUserId(listOf(item.getId()), userId).firstOrNull()?.memo
         return TournamentItemDetail(
             tournamentItemId = tournamentItem.getId(),
             itemId = item.getId(),
@@ -517,6 +520,7 @@ class TournamentService(
             price = snapshot.price,
             currency = snapshot.currency,
             status = snapshot.status,
+            memo = memo,
         )
     }
 

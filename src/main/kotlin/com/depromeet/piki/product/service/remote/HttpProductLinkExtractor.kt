@@ -15,7 +15,14 @@ import org.springframework.web.client.RestClient
 //
 // headlessFirst: 라우팅 정책(HEADLESS_FIRST, DB·백오피스)의 판정을 요청 힌트로 싣는다 — 정책의 단일 진실은
 // 이쪽(DB) 이고, 무상태인 extractor 는 요청 단위로만 받는다(계약 §2). extractor 의 headless 스위치가 꺼져
-// 있으면 저쪽에서 무시되므로 여기서 따로 게이트하지 않는다 — 스위치는 능력을 가진 쪽(extractor) 한 곳에 둔다.
+// 있으면 저쪽에서 무시되므로 그 스위치는 여기서 게이트하지 않는다 — 능력을 가진 쪽(extractor) 한 곳에 둔다.
+// 단, 허가(headlessAllowed)만큼은 이쪽이 게이트한다: headlessFirst 는 HEADLESS_FIRST 이면서 허가된 도메인에만
+// true 다. 허가 없이 route 만 HEADLESS_FIRST 인 행을 만나도 힌트를 싣지 않아 core 가 스스로 default-deny 를 지킨다.
+//
+// headlessAllowed: "이 도메인을 브라우저로 열어도 되는가"의 허가 판정(플랫폼에서 받은 명시적 허가). 정책과 같은
+// 이유로 요청에 싣는다 — 허가 원장(extraction_platform_policies)은 이쪽 DB 에만 있고 extractor 는 무상태다.
+// 기본은 거부라 정책 행이 없는 대부분의 도메인은 false 로 나간다. 브라우저를 열어도 되는지의 최종 판단 근거이며,
+// headlessFirst("빠른 길" 힌트)도 이 값이 true 일 때만 켜진다.
 //
 // model 도 같은 이유로 요청에 싣는다(#875). extractor 박스 하나를 여러 환경이 공유하므로 저쪽 환경변수로
 // 모델을 잡으면 dev 실험이 prod 를 덮는다 — 요청 단위로 주면 환경마다 다른 이쪽 DB 가 그대로 경계가 된다.
@@ -28,19 +35,27 @@ class HttpProductLinkExtractor(
     private val routingPolicy: ExtractionRoutingPolicy,
     private val modelSettings: ExtractionModelSettings,
 ) : ProductLinkExtractor {
-    override fun extract(link: ProductLink): ProductSnapshot =
-        RemoteExtractionContract.postForSnapshot(
+    override fun extract(link: ProductLink): ProductSnapshot {
+        // 허가 게이트를 headlessFirst 에도 AND 한다 — 허가받지 않은 도메인엔 "브라우저 직행" 힌트조차 싣지 않는다.
+        // 허가 없이 HEADLESS_FIRST 로 남은 행(이 기능 이전 데이터·구버전이 만든 행)을 만나도 core 가 스스로
+        // default-deny 를 지켜 (headlessFirst=true, headlessAllowed=false) 같은 모순 요청이 나가지 않는다 —
+        // extractor 가 먼저 배포되는 구간에서도 허가 없는 헤드리스가 열리지 않게 core 를 자기완결적으로 둔다.
+        // 허가가 없으면(대부분의 도메인) 단락 평가로 routeOf 스캔조차 건너뛴다.
+        val headlessAllowed = routingPolicy.headlessAllowedOf(link)
+        return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
             path = LINK_EXTRACTION_PATH,
             request =
                 RemoteLinkExtractionRequest(
                     url = link.value.toString(),
-                    headlessFirst = routingPolicy.routeOf(link) == ExtractionRoute.HEADLESS_FIRST,
+                    headlessFirst = headlessAllowed && routingPolicy.routeOf(link) == ExtractionRoute.HEADLESS_FIRST,
+                    headlessAllowed = headlessAllowed,
                     model = modelSettings.modelOf(ExtractionTarget.LINK),
                 ),
             link = link,
             target = "url=${link.safeLogString()}",
         )
+    }
 
     companion object {
         private const val LINK_EXTRACTION_PATH = "/internal/extractions/link"
@@ -52,5 +67,6 @@ class HttpProductLinkExtractor(
 private data class RemoteLinkExtractionRequest(
     val url: String,
     val headlessFirst: Boolean,
+    val headlessAllowed: Boolean,
     val model: String?,
 )

@@ -13,6 +13,11 @@ import javax.crypto.SecretKey
 
 private const val CLAIM_TYPE = "type"
 private const val CLAIM_ROLE = "role"
+
+// 로그인 세션 식별자(#893). refresh 토큰에만 실린다.
+// jti 와 구분할 것 — jti 는 토큰마다 새로 생겨 회전할 때마다 바뀌므로 세션을 가리킬 수 없다.
+// sid 는 로그인 때 한 번 만들어 회전 시 그대로 복사되며, Redis 키를 기기별로 가르는 축이다.
+private const val CLAIM_SESSION_ID = "sid"
 private val logger = LoggerFactory.getLogger(JwtProvider::class.java)
 
 @Component
@@ -36,13 +41,20 @@ class JwtProvider(
             role = identityType.name,
         )
 
-    fun generateRefreshToken(userId: UUID): String =
+    // sessionId 는 로그인 때 발급하고 회전 시 같은 값을 넘겨 유지한다 — 그래야 회전을 거쳐도 세션이 이어진다.
+    fun generateRefreshToken(
+        userId: UUID,
+        sessionId: String,
+    ): String =
         buildToken(
             userId = userId,
             type = TokenType.REFRESH,
             expiry = jwtProperties.refreshTokenExpiry,
             role = null,
+            sessionId = sessionId,
         )
+
+    fun newSessionId(): String = UUID.randomUUID().toString()
 
     fun parseAccessToken(token: String): AccessTokenPayload? =
         runCatching {
@@ -60,7 +72,9 @@ class JwtProvider(
         }.onFailure { logger.info("ACCESS JWT 파싱 실패: {}", it.message) }
             .getOrNull()
 
-    fun parseRefreshToken(token: String): UUID? =
+    // sessionId 는 nullable — #893 이전에 발급된 토큰에는 sid 클레임이 없다(refresh TTL 만큼 최대 14일 잔존).
+    // 여기서 거부하지 않고 그대로 올려, 호출자가 "레거시 토큰" 을 별도 사유로 로깅·처리하게 한다.
+    fun parseRefreshToken(token: String): RefreshTokenPayload? =
         runCatching {
             val claims = parseClaims(token)
             val rawType = claims[CLAIM_TYPE] as? String
@@ -68,7 +82,10 @@ class JwtProvider(
             check(actualType == TokenType.REFRESH) {
                 "JWT type mismatch: expected=refresh, actual=${rawType ?: "<missing>"}"
             }
-            UUID.fromString(claims.subject)
+            RefreshTokenPayload(
+                userId = UUID.fromString(claims.subject),
+                sessionId = (claims[CLAIM_SESSION_ID] as? String)?.ifBlank { null },
+            )
         }.onFailure { logger.info("REFRESH JWT 파싱 실패: {}", it.message) }
             .getOrNull()
 
@@ -79,6 +96,7 @@ class JwtProvider(
         type: TokenType,
         expiry: Duration,
         role: String?,
+        sessionId: String? = null,
     ): String {
         val now = Date()
         return Jwts
@@ -89,6 +107,7 @@ class JwtProvider(
             .issuedAt(now)
             .expiration(Date(now.time + expiry.toMillis()))
             .apply { role?.let { claim(CLAIM_ROLE, it) } }
+            .apply { sessionId?.let { claim(CLAIM_SESSION_ID, it) } }
             .signWith(secretKey)
             .compact()
     }
@@ -104,5 +123,11 @@ class JwtProvider(
     data class AccessTokenPayload(
         val userId: UUID,
         val identityType: IdentityType,
+    )
+
+    // sessionId 가 null 이면 #893 이전 발급 토큰이다 — 세션 슬롯을 특정할 수 없어 갱신을 거부한다(재로그인 유도).
+    data class RefreshTokenPayload(
+        val userId: UUID,
+        val sessionId: String?,
     )
 }

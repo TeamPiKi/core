@@ -45,7 +45,10 @@ class AsyncItemParsingWorker(
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
         // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다(ext 호출·부수효과 없음).
-        Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry).observe {
+        // runCatching 이 예외를 삼켜 observation 은 실패를 못 보므로, 실패 경로가 error() 로 직접 마킹해야
+        // Tempo 에서 `status = error` 검색·실패 표시가 동작한다(#902). 그래서 참조를 잡아 핸들러에 넘긴다.
+        val observation = Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry)
+        observation.observe {
             parsingHeartbeat.guarded(
                 snapshotId,
                 expectedAttempt,
@@ -55,8 +58,11 @@ class AsyncItemParsingWorker(
             ) { attempt ->
                 val started = System.nanoTime()
                 runCatching { productLinkExtractor.extract(link) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt) }
-                    .onFailure { e -> onExtractFailed(itemId, snapshotId, link, e, attempt) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt, observation) }
+                    .onFailure { e ->
+                        observation.error(e)
+                        onExtractFailed(itemId, snapshotId, link, e, started, attempt)
+                    }
             }
         }
     }
@@ -68,6 +74,7 @@ class AsyncItemParsingWorker(
         snapshot: ProductSnapshot,
         started: Long,
         attempt: Int,
+        observation: Observation,
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
@@ -94,16 +101,20 @@ class AsyncItemParsingWorker(
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.
-                log.warn(
-                    "item.parse.result item={} result={} reason={} url={}",
-                    itemId,
-                    ItemParsingMetrics.RESULT_FAILED,
-                    ItemParsingMetrics.REASON_READY_REJECTED,
-                    link.safeLogString(),
-                )
+                observation.error(e)
                 // 예외 상세(스택)는 별도 줄로 — 구조화(item.parse.result) 줄에 스택을 붙이면 logfmt 파싱이 깨진다.
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
+                // 원장(로그·메트릭)은 전이가 실제로 적용됐을 때만 — 좀비 폐기·전이 실패면 이 실행의 결과가 반영되지 않았다
+                // (확정 실패 경로와 같은 원칙. 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다).
                 if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    log.warn(
+                        "item.parse.result item={} result={} reason={} latency={}ms url={}",
+                        itemId,
+                        ItemParsingMetrics.RESULT_FAILED,
+                        ItemParsingMetrics.REASON_READY_REJECTED,
+                        elapsedMs,
+                        link.safeLogString(),
+                    )
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                 }
             }
@@ -117,8 +128,12 @@ class AsyncItemParsingWorker(
         snapshotId: Long,
         link: ProductLink,
         e: Throwable,
+        started: Long,
         attempt: Int,
     ) {
+        // 실패에도 소요 시간을 남긴다 — latency 는 타임아웃형(오래 기다리다 실패)과 즉시 실패를 로그만으로 가른다.
+        // 성공 로그만 latency 를 가지면 느린 실패가 로그 통계에서 통째로 사라진다(#916).
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
         if (isRetryable(e)) {
             // 일시 외부 오류(네트워크·timeout·5xx 게이트웨이 등) — 다시 하면 될 수도 있으므로 FAILED 로 종결하지 않고
             // 소유권을 반납해 다음 tick(1s)이 곧바로 다시 집게 한다(execution at-least-once, #461).
@@ -127,12 +142,13 @@ class AsyncItemParsingWorker(
             // 재시도 로그만으로도 일시 오류 종류(network·timeout·5xx 등)를 분류할 수 있게 errorType·category·status 는 남긴다.
             val mappable = e as? HttpMappable
             log.warn(
-                "item.parse.retry item={} url={} errorType={} category={} status={}",
+                "item.parse.retry item={} url={} errorType={} category={} status={} latency={}ms",
                 itemId,
                 link.safeLogString(),
                 e::class.simpleName,
                 mappable?.category,
                 mappable?.httpStatus?.value(),
+                elapsedMs,
             )
             releaseQuietly(itemId, snapshotId, attempt)
             return
@@ -143,10 +159,11 @@ class AsyncItemParsingWorker(
         // 전이가 실제로 적용됐을 때만 결과를 원장에 남긴다 — 좀비 폐기·전이 실패면 이 워커의 결과는 반영되지 않았다.
         if (!markFailedQuietly(itemId, snapshotId, attempt)) return
         log.info(
-            "item.parse.result item={} result={} reason={} url={}",
+            "item.parse.result item={} result={} reason={} latency={}ms url={}",
             itemId,
             ItemParsingMetrics.RESULT_FAILED,
             reason,
+            elapsedMs,
             link.safeLogString(),
         )
         // 실패 사유 원문(공백 포함 가능)은 별도 줄로 — 구조화 줄의 logfmt 필드 파싱을 깨지 않게 분리한다.

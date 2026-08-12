@@ -48,7 +48,10 @@ class AsyncImageParsingWorker(
         // (부모 없는 JDBC 관측은 ObservationConfig 가 거부하므로 아예 사라진다).
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
-        Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry).observe {
+        // 링크 워커와 같은 이유로 실패 경로가 observation.error() 를 직접 마킹한다 — runCatching 이 예외를 삼켜
+        // 그냥 두면 실패 span 이 정상(status 미설정)으로 남는다(#902).
+        val observation = Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry)
+        observation.observe {
             parsingHeartbeat.guarded(
                 snapshotId,
                 expectedAttempt,
@@ -56,9 +59,13 @@ class AsyncImageParsingWorker(
                     log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
                 },
             ) { attempt ->
+                val started = System.nanoTime()
                 runCatching { imageSnapshotExtractor.extract(imageKey) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, attempt) }
-                    .onFailure { e -> onExtractFailed(itemId, snapshotId, imageKey, e, attempt) }
+                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, started, attempt, observation) }
+                    .onFailure { e ->
+                        observation.error(e)
+                        onExtractFailed(itemId, snapshotId, imageKey, e, started, attempt)
+                    }
             }
         }
     }
@@ -68,8 +75,11 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         imageKey: String,
         snapshot: ProductSnapshot,
+        started: Long,
         attempt: Int,
+        observation: Observation,
     ) {
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
         runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
             .onSuccess { applied ->
@@ -79,15 +89,32 @@ class AsyncImageParsingWorker(
                     log.info("item {} 이미지 좀비 결과 — 전이·raw 회수 생략 (attempt={})", itemId, attempt)
                     return@onSuccess
                 }
-                log.info("item {} 이미지 파싱 완료 → READY", itemId)
+                // 링크 워커와 같은 구조화 결과 라인 — 로그 기반 결과 분포·알림이 이미지 경로도 같은 모집단으로 세게 한다(#902).
+                log.info(
+                    "item.parse.result item={} type=image result={} reason={} latency={}ms",
+                    itemId,
+                    ItemParsingMetrics.RESULT_READY,
+                    ItemParsingMetrics.REASON_NONE,
+                    elapsedMs,
+                )
                 ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
                 deleteRawQuietly(imageKey)
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없음 → PROCESSING 방치 대신 FAILED.
-                log.warn("item {} READY 전이 거부 → FAILED: {}", itemId, e.message)
-                // 종결이 실제로 적용됐을 때만 결과를 세고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존).
+                observation.error(e)
+                // 예외 상세(스택)는 별도 줄로 — 구조화 줄에 붙이면 logfmt 파싱이 깨진다(링크 워커와 동일).
+                log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
+                // 종결이 실제로 적용됐을 때만 원장(로그·메트릭)에 남기고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존.
+                // 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다 — 링크 워커와 같은 원칙).
                 if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                    log.warn(
+                        "item.parse.result item={} type=image result={} reason={} latency={}ms",
+                        itemId,
+                        ItemParsingMetrics.RESULT_FAILED,
+                        ItemParsingMetrics.REASON_READY_REJECTED,
+                        elapsedMs,
+                    )
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                     deleteRawQuietly(imageKey)
                 }
@@ -103,19 +130,23 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         imageKey: String,
         e: Throwable,
+        started: Long,
         attempt: Int,
     ) {
+        // 실패에도 소요 시간을 남긴다 — 링크 워커와 같은 이유(#916): 성공만 latency 를 가지면 느린 실패가 로그 통계에서 사라진다.
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
         if (isRetryable(e)) {
             // 일시 외부 오류 — FAILED 로 종결하지 않고 소유권을 반납해 다음 tick(1s)이 다시 집게 한다
             // (execution at-least-once, #461). **raw 는 보존한다** — 재실행이 바로 그 원본을 다시 읽어야 하므로
             // 반납 경로에는 deleteRaw 가 없다. 종결이 아니라 메트릭도 여기서 세지 않는다(종결 시점에 집계).
             val mappable = e as? HttpMappable
             log.warn(
-                "item.parse.retry item={} type=image errorType={} category={} status={}",
+                "item.parse.retry item={} type=image errorType={} category={} status={} latency={}ms",
                 itemId,
                 e::class.simpleName,
                 mappable?.category,
                 mappable?.httpStatus?.value(),
+                elapsedMs,
             )
             releaseQuietly(itemId, snapshotId, attempt)
             return
@@ -124,7 +155,13 @@ class AsyncImageParsingWorker(
         // 단 전이가 실제로 적용됐을 때만이다 — 좀비 폐기·전이 실패면 결과를 세지도, raw 를 지우지도 않는다.
         val reason = reasonOf(e)
         if (!markFailedQuietly(itemId, snapshotId, attempt)) return
-        log.info("item.parse.result item={} type=image result={} reason={}", itemId, ItemParsingMetrics.RESULT_FAILED, reason)
+        log.info(
+            "item.parse.result item={} type=image result={} reason={} latency={}ms",
+            itemId,
+            ItemParsingMetrics.RESULT_FAILED,
+            reason,
+            elapsedMs,
+        )
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
         deleteRawQuietly(imageKey)

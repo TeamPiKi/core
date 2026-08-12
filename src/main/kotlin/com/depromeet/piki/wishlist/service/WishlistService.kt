@@ -219,8 +219,18 @@ class WishlistService(
         price: Int?,
         currency: String?,
         image: MultipartFile?,
+        memo: String?,
     ): WishWithItem {
         requireMember(userId)
+        // memo 만 온 요청은 버전을 쌓지 않는다 — memo 는 wish 행의 개인 필드라 snapshot 이력과 무관하다.
+        // item 필드가 함께 오면 아래 수기 수정 경로가 같은 트랜잭션(manualEdit)에서 memo 도 반영한다.
+        if (listOfNotNull(name, price, currency, image).isEmpty()) {
+            memo?.let {
+                val result = wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = it)
+                // 표시값 파생(#857) — 조회와 같은 규칙으로 응답의 item 을 맞춘다.
+                return result.copy(snapshot = itemDisplayService.resolveDisplay(result.snapshot))
+            }
+        }
         // 이미지 형식 검증(빈 바이트·미지원 MIME) — 외부 호출 전에 동기로 거른다(400).
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
@@ -251,6 +261,7 @@ class WishlistService(
             price = price,
             imageUrl = imageUrl,
             currency = currency,
+            memo = memo,
         )
     }
 

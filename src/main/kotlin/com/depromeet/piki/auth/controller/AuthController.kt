@@ -8,6 +8,7 @@ import com.depromeet.piki.auth.exception.AuthException
 import com.depromeet.piki.auth.service.AuthService
 import com.depromeet.piki.auth.web.TokenCookieWriter
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.notification.fcm.web.DeviceCookie
 import jakarta.validation.Valid
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -49,11 +50,21 @@ class AuthController(
         return ApiResponseBody.ok(TokenRefreshResponse.from(tokenPair))
     }
 
+    // 로그아웃은 이 기기의 세션만 끊는다(#893). 어느 세션인지는 refresh 토큰의 sid 로 가르므로
+    // 갱신과 같은 자리(쿠키 또는 body)에서 토큰을 읽는다. 토큰이 없으면 세션 특정이 불가해
+    // 서비스가 전 세션 정리로 떨어진다(#893 이전 동작과 동일).
+    //
+    // 기기 식별자도 쿠키에서 함께 읽어 그 기기의 푸시 수신까지 끊는다(#922). 클라가 FCM 등록 시 심어 둔 쿠키라
+    // 별도 요청 필드가 필요 없다. 없어도 로그아웃은 그대로 성공한다(FCM 미등록 기기).
     @PostMapping("/logout")
     override fun logout(
         @AuthenticationPrincipal userId: UUID,
+        @RequestBody(required = false) request: TokenRefreshRequest?,
+        @CookieValue(name = TokenCookieWriter.REFRESH_COOKIE, required = false) cookieRefreshToken: String?,
+        @CookieValue(name = DeviceCookie.DEVICE_ID, required = false) cookieDeviceId: String?,
     ): ApiResponseBody<LogoutResponse> {
-        authService.logout(userId)
+        val refreshToken = cookieRefreshToken?.ifBlank { null } ?: request?.refreshToken
+        authService.logout(userId, refreshToken, cookieDeviceId)
         return ApiResponseBody.ok(LogoutResponse())
     }
 }

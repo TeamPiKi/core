@@ -4,7 +4,7 @@ import com.depromeet.piki.notification.domain.NotificationType
 
 // 타입별 사용 가능한 템플릿 변수 카탈로그. 백오피스(#250) 편집 화면의 "쓸 수 있는 변수" 표시 + 검증(선언 안 된
 // 변수 차단) + 미리보기 샘플값의 SSOT 다. 현재는 발송 dispatch 가 실제로 채우는 변수만 선언한다 —
-// actorName(토너먼트 소셜), title/body(공지). ${tournamentName} 등 쿼리 변수는 핸들러 resolver 확장과 함께 추가한다.
+// actorName·tournamentName(토너먼트), itemName(파싱 완료, #895), title/body(공지). 채우는 핸들러 resolver 와 함께 추가한다.
 data class TemplateVariable(
     val name: String,
     val sample: String,
@@ -32,7 +32,7 @@ object NotificationTemplateVariables {
             NotificationType.TOURNAMENT_PLAYED_FROM_LINK to TOURNAMENT,
             NotificationType.TOURNAMENT_COMPLETED to TOURNAMENT,
             NotificationType.TOURNAMENT_RESULT_READY to TOURNAMENT,
-            NotificationType.ITEM_PARSING_COMPLETED to emptyList(),
+            NotificationType.ITEM_PARSING_COMPLETED to listOf(TemplateVariable("itemName", "나이키 에어맥스")),
             NotificationType.ITEM_PARSING_FAILED to emptyList(),
             NotificationType.ANNOUNCEMENT to
                 listOf(

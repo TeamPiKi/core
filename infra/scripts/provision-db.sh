@@ -28,17 +28,28 @@ for arg in "$@"; do
 done
 
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
-MYSQL_IMAGE="mysql:8.4"
+# 이미지 태그와 데이터 볼륨 이름은 compose 파일이 갖는다. 여기 남는 CONTAINER 는 SQL 실행·검증에
+# docker exec 로 부를 때 쓰는 이름이라, compose 쪽 container_name 과 같은 값을 유지해야 한다.
 CONTAINER="piki-prod-mysql"
-VOLUME="piki-prod-mysql-data"
 REGION="ap-northeast-2"
 SSM_PREFIX="/piki-core/prod"
 
-# 컨테이너 메모리 캡. t4g.micro(실가용 약 906MB)에서 OS·docker 몫을 남기려면 상한이 필요하다.
-# 384m 은 dev 박스 같은 구성의 실사용(111MB)의 3배 이상이고, InnoDB 버퍼풀 기본값(128MB)에
-# 데이터 전량(2.1MB)이 올라가는 상태를 여유 있게 덮는다. swap 은 캡의 2배로 둬 순간 초과를 흡수한다.
-MEM_LIMIT="384m"
-MEM_SWAP="768m"
+# 컨테이너 정의(이미지·포트·메모리 캡·MySQL 튜닝·라벨)는 전부 compose 파일에 있다(#918).
+# 여기 남는 것은 그 파일을 찾는 좌표와, SQL·검증에서 쓰는 이름뿐이다.
+#
+# 두 위치를 찾는다. repo 에서는 scripts/ 와 compose/ 가 형제라 ../compose 이고, 박스로 올릴
+# 때는 보통 한 디렉터리에 몰아 넣어 나란히 놓인다. 어느 쪽이든 돌게 해서 "올리는 방식"이
+# 스크립트 동작을 좌우하지 않게 한다.
+if [ -f "${SCRIPT_DIR}/../compose/db.yml" ]; then
+  COMPOSE_FILE="${SCRIPT_DIR}/../compose/db.yml"
+else
+  COMPOSE_FILE="${SCRIPT_DIR}/compose/db.yml"
+fi
+# 프로젝트명을 고정한다. compose 는 기본적으로 파일이 있는 디렉터리명을 쓰는데, 스크립트를
+# 어디에 두고 실행하느냐에 따라 그 값이 달라져 별개 스택으로 갈라진다.
+COMPOSE_PROJECT="piki-db"
+EXPORTER_CONTAINER="piki-mysqld-exporter"
+EXPORTER_USER="exporter"
 
 ssm_param() {
   docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
@@ -57,46 +68,37 @@ DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회
 DB_ROOT_PASSWORD="$(ssm_param db-root-password)" || { echo "[mysql] SSM db-root-password 조회 실패"; exit 1; }
 echo "[mysql] DB 자격증명 SSM 로드 완료 (${SSM_PREFIX}/db-*)"
 
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "[mysql] ${CONTAINER} 이미 존재 — skip"
-else
-  echo "[mysql] ${CONTAINER} 기동 (named volume: ${VOLUME})"
-  # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
-  # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 — 3306 인바운드는
-  # 앱 EC2 SG 에서 온 것만 허용한다(terraform/db_ec2.tf).
-  #
-  # MYSQL_ROOT_HOST=localhost 를 명시하는 이유: 이미지 기본값이 `%` 라 그냥 두면 네트워크 너머에서도
-  # root 로 붙을 수 있는 root@% 계정이 생긴다. 보안그룹이 앱 박스만 통과시키더라도, 앱 박스가 뚫리면
-  # 그대로 DB 전체 권한이 넘어간다. root 를 쓰는 곳은 컨테이너 안에서 도는 백업 스크립트뿐이라
-  # localhost 로 좁혀도 잃는 게 없다.
-  #
-  # 아래 세 튜닝은 기본값이 이 박스 크기에 안 맞아서 넣는다. 기본값으로 띄웠을 때 실측이
-  # RAM 234MB + swap 185MB = 약 419MB 로 캡(384m)을 넘어 상시 스왑 상태였다.
-  #   --performance-schema=OFF   기본 ON 이고 이 구성에서 가장 큰 몫이다. 앱 지표는 Micrometer·
-  #                              Grafana 로 따로 받고 있어 DB 내부 계측을 켜 둘 실익이 없다.
-  #                              (진단이 필요하면 그때 켜서 재기동한다.)
-  #   --innodb-buffer-pool-size  기본 128M. 데이터 총량이 2.1MB 라 64M 에도 전량이 캐시된다.
-  #   --max-connections          기본 151. 앱 HikariCP 는 기본 풀 10 이고 blue-green 전환 때만
-  #                              잠시 2배가 되므로, 백업·관리 여유를 포함해도 60 이면 남는다.
-  # 값을 바꾸면 컨테이너 재생성이 필요하다(옵션은 기동 인자다). 데이터는 named volume 에 있어
-  # 재생성 자체는 안전하지만, 재생성 동안 앱 연결이 끊기므로 배포 창을 잡아 수행한다.
-  docker run -d \
-    --name "$CONTAINER" \
-    --restart unless-stopped \
-    --memory "$MEM_LIMIT" \
-    --memory-swap "$MEM_SWAP" \
-    -p 3306:3306 \
-    -v "${VOLUME}:/var/lib/mysql" \
-    -e MYSQL_DATABASE="$DB_NAME" \
-    -e MYSQL_USER="$DB_USERNAME" \
-    -e MYSQL_PASSWORD="$DB_PASSWORD" \
-    -e MYSQL_ROOT_PASSWORD="$DB_ROOT_PASSWORD" \
-    -e MYSQL_ROOT_HOST=localhost \
-    "$MYSQL_IMAGE" \
-    --performance-schema=OFF \
-    --innodb-buffer-pool-size=64M \
-    --max-connections=60
+# exporter 자격증명도 여기서 함께 읽는다. compose 가 두 서비스를 한 번에 올리므로 필요한 값이
+# 모두 갖춰진 뒤에 호출해야 한다.
+DB_EXPORTER_PASSWORD="$(ssm_param db-exporter-password)" || { echo "[exporter] SSM db-exporter-password 조회 실패"; exit 1; }
+# 아래 SQL 은 비밀번호를 문자열 리터럴로 끼워 넣는다. 값에 작은따옴표나 역슬래시가 있으면
+# 문장이 깨지거나 의도치 않은 SQL 이 되므로, 그런 값은 아예 거부한다.
+#
+# 이스케이프 대신 거부를 택한 이유: 셸에서 MySQL 의 이스케이프 규칙을 정확히 재현하려다
+# 틀리면 조용히 잘못된 비밀번호가 설정된다. 이 값은 우리가 만드는 것이라(openssl rand -hex)
+# 특수문자가 낄 이유가 없고, 낀다면 그건 누군가 다른 방식으로 넣었다는 신호다.
+case "$DB_EXPORTER_PASSWORD" in
+  *\'*|*\\*)
+    echo "[exporter] db-exporter-password 에 따옴표나 역슬래시가 있다 — SQL 리터럴로 다룰 수 없다."
+    echo "[exporter] openssl rand -hex 24 처럼 영숫자만으로 재발급한 뒤 SSM 을 갱신할 것."
+    exit 1 ;;
+esac
+
+# 컨테이너 기동은 compose 에 맡긴다. "이미 있으면 skip" 을 손으로 짜지 않아도 되고, 정의가
+# 스크립트가 아니라 파일 하나에 모여 무엇이 떠 있어야 하는지 한눈에 드러난다.
+#
+# 데이터 볼륨은 compose 파일에서 external 로 선언돼 있다. 그게 없으면 compose 가 프로젝트명을
+# 앞에 붙인 새 볼륨을 만들어 빈 DB 로 뜬다 — 이 전환에서 가장 조심할 지점이다.
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "[mysql] ${COMPOSE_FILE} 가 없다 — provision-db.sh 와 함께 올렸는지 확인"
+  exit 1
 fi
+echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
+DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
+DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
+  docker compose --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" up -d --wait \
+  || { echo "[mysql] compose up 실패"; exit 1; }
+echo "[mysql] compose up 완료"
 
 # readiness — 최초 기동은 DB·유저 생성 후 내부 재시작이 있어, 바로 접속하면 실패한다.
 echo "[mysql] readiness 대기"
@@ -132,6 +134,86 @@ for role in root app; do
 done
 echo "[mysql] 자격증명 검증 완료 (root·${DB_USERNAME} 모두 SSM 값으로 접속 가능)"
 
+# ── 1b) 지표 수집용 DB 계정 ─────────────────────────────────────────────────
+# RDS 가 CloudWatch 로 주던 DB 내부 지표(연결 수·처리량 등)를 대신 걷는다(#912). exporter 에
+# root 를 물리지 않고 전용 계정을 둔다 - 수집기는 상시 붙어 있는 프로세스라, 뚫렸을 때 넘어가는
+# 권한이 작아야 한다. PROCESS·REPLICATION CLIENT 는 상태 조회에 필요한 최소 권한이고 데이터는
+# 읽지 못한다.
+#
+# 계정의 host 는 docker 브리지 게이트웨이다. 수집기가 host 네트워크에서 127.0.0.1:3306 으로
+# 붙어도, MySQL 컨테이너의 포트 매핑(-p)을 지나며 SNAT 되어 MySQL 에는 게이트웨이 주소로 보인다.
+# 그래서 127.0.0.1 로 만들면 Access denied 가 난다(실측). 값을 박지 않고 조회하는 이유는
+# 브리지 대역이 환경마다 다를 수 있어서다.
+#
+# 위 앱·root 계정과 달리 비밀번호를 매번 SSM 값으로 맞춘다(ALTER USER). 이 계정은 앱이 쓰지
+# 않아 재설정해도 끊길 커넥션이 수집기 하나뿐이고, 그 편이 SSM 과 실제가 갈라지는 걸 원천 차단한다.
+# (값과 형식 검사는 compose 호출 전에 이미 끝냈다.)
+# 기본 브리지(bridge)가 아니라 MySQL 컨테이너가 실제로 붙은 네트워크의 게이트웨이를 본다.
+# compose 는 프로젝트마다 전용 네트워크를 만들어(172.18.x 등) 기본 브리지(172.17.x)와 대역이
+# 다르다. `docker network inspect bridge` 로 조회하면 엉뚱한 주소가 나와 Access denied 가 난다
+# (스크립트에서 compose 로 옮기면서 실제로 겪었다). 컨테이너를 직접 물어보면 어느 네트워크에
+# 있든 맞는 값을 얻는다.
+DOCKER_GW="$(docker inspect "$CONTAINER" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$v.Gateway}}{{end}}')" \
+  || { echo "[exporter] ${CONTAINER} 네트워크 게이트웨이 조회 실패"; exit 1; }
+[ -n "$DOCKER_GW" ] || { echo "[exporter] 게이트웨이가 비어 있다"; exit 1; }
+# 옛 127.0.0.1 계정은 접속에 안 쓰이므로 정리한다(초기 구현 잔재).
+printf "DROP USER IF EXISTS '%s'@'127.0.0.1';
+CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';
+ALTER USER '%s'@'%s' IDENTIFIED BY '%s';
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO '%s'@'%s';
+FLUSH PRIVILEGES;\n" \
+  "$EXPORTER_USER" \
+  "$EXPORTER_USER" "$DOCKER_GW" "$DB_EXPORTER_PASSWORD" \
+  "$EXPORTER_USER" "$DOCKER_GW" "$DB_EXPORTER_PASSWORD" \
+  "$EXPORTER_USER" "$DOCKER_GW" \
+  | docker exec -i -e MYSQL_PWD="$DB_ROOT_PASSWORD" "$CONTAINER" mysql -uroot \
+  || { echo "[exporter] DB 계정 생성·갱신 실패"; exit 1; }
+echo "[exporter] DB 계정 준비 완료 (${EXPORTER_USER}@${DOCKER_GW}, PROCESS·REPLICATION CLIENT)"
+
+# exporter 컨테이너 자체는 위 compose 가 이미 올렸다. 여기서는 그것이 실제로 DB 에 붙어
+# 지표를 내는지만 확인한다 — 계정이 방금 만들어졌으므로, compose 가 먼저 올린 exporter 는
+# 초기 몇 초간 인증에 실패할 수 있다(재시도로 흡수된다).
+#
+# 수집기가 실제로 DB 에 붙어 지표를 내는지 확인한다. 컨테이너가 떠 있다는 것만으로는
+# 자격증명·권한이 맞는지 알 수 없고, 그 상태로 두면 대시보드가 조용히 빈다.
+#
+# mysql_up 만 보지 않는다. 그 값은 접속 성공만 뜻해서, 권한이 모자라 상태 조회가 막히거나
+# collector 구성이 바뀌어 지표가 안 나와도 1 이 될 수 있다. 실제로 쓰는 계열이 값을 내는지까지
+# 확인해야 "수집된다"고 말할 수 있다. 전수 검사는 하지 않는다 - 소비하는 지표 목록이 아직
+# 없고, 계열이 늘 때마다 이 목록을 따라 고치는 비용이 이득을 넘는다.
+#
+# performance_schema 기반 계열은 넣지 않는다. #898 에서 메모리 때문에 껐으므로 없는 게 정상이다.
+EXPORTER_REQUIRED_METRICS="mysql_up mysql_global_status_threads_connected mysql_global_status_uptime"
+check_exporter_metrics() {
+  local body
+  # timeout 을 넉넉히 둔다. exporter 는 /metrics 요청을 받을 때 MySQL 에 쿼리하므로 응답이
+  # 즉시 오지 않는다. 짧게 잡으면 앞부분(mysql_up)만 받고 뒤쪽 계열이 잘린 채 "누락"으로
+  # 오판한다(3초로 뒀다가 실제로 겪었다).
+  body="$(curl -fsS --max-time 10 http://127.0.0.1:9104/metrics 2>/dev/null)" || return 1
+  # here-string 으로 넘긴다. `printf ... | grep -q` 로 쓰면 grep 이 첫 매칭에서 즉시 끝나며
+  # printf 가 SIGPIPE 를 받고, set -o pipefail 이 그것을 파이프라인 실패로 집는다. 즉 매칭에
+  # 성공했는데도 실패로 판정된다(응답이 180KB 라 실제로 걸렸다). here-string 은 파이프가 아니라
+  # 이 함정이 없다.
+  grep -q '^mysql_up 1$' <<< "$body" || return 1
+  local m
+  for m in $EXPORTER_REQUIRED_METRICS; do
+    grep -q "^${m} " <<< "$body" || { MISSING_METRIC="$m"; return 1; }
+  done
+  return 0
+}
+for i in $(seq 1 15); do
+  if check_exporter_metrics; then
+    echo "[exporter] 수집 확인 (mysql_up=1 + 필수 계열 존재, attempt $i)"
+    break
+  fi
+  sleep 2
+  if [ "$i" -eq 15 ]; then
+    echo "[exporter] 수집이 확인되지 않는다 (누락 계열: ${MISSING_METRIC:-mysql_up}) — 계정 권한·접속 경로 확인"
+    docker logs "$EXPORTER_CONTAINER" --tail 10 2>&1 | sed 's/^/[exporter] /'
+    exit 1
+  fi
+done
+
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
 # repo 의 스크립트와 박스의 것이 어긋나지 않게 한다.
@@ -142,8 +224,16 @@ fi
 sudo install -m 0755 "${SCRIPT_DIR}/db-backup.sh" /usr/local/bin/piki-db-backup.sh
 echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 
-# 19:00 UTC = 04:00 KST. 트래픽이 가장 적은 시간대에 둔다(백업 자체는 무중단이지만
-# 혹시 모를 부하도 한산할 때 지나가게 한다).
+# 백업 결과 지표가 놓일 자리. alloy 의 node_exporter textfile collector 가 이 디렉터리를
+# 마운트해 읽는다(#905). 미리 만들어 두는 이유는 두 가지다 - 백업이 root 로 돌아 여기 쓸 수
+# 있어야 하고, 디렉터리가 없으면 alloy 마운트가 빈 경로를 잡아 지표가 조용히 사라진다.
+sudo mkdir -p /var/lib/node_exporter/textfile
+sudo chmod 755 /var/lib/node_exporter/textfile
+echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
+
+# 15:00 UTC = 00:00 KST(자정). 처음엔 04:00 KST 였는데, 그 시각을 고를 이유가 사실상
+# 없었다 - 데이터가 2.1MB 라 백업이 2초에 끝나고 --single-transaction 이라 락도 안 건다.
+# 반대로 새벽에 실패하면 아침까지 방치되므로, 사람이 알림을 볼 수 있는 시간으로 옮긴다.
 # 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
 # cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
 #
@@ -151,13 +241,13 @@ echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
 # 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
 # 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
 # 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
-CRON_LINE='0 19 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
+CRON_LINE='0 15 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
 # 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
 #
 # `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
 # set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
 # 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
-echo "[backup] cron 등록·갱신 (매일 19:00 UTC = 04:00 KST)"
+echo "[backup] cron 등록·갱신 (매일 15:00 UTC = 00:00 KST)"
 { sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
 
 # ── 3) 관측 수집기(alloy) ───────────────────────────────────────────────────

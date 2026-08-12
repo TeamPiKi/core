@@ -14,10 +14,9 @@ import java.util.UUID
 class SseNotificationChannel(
     private val localDelivery: LocalSseDelivery,
 ) : NotificationChannel {
+    // 실시간 인앱 전달 채널이라 write 성공 수를 그대로 돌려준다 — dispatcher 의 자동읽음(#812) 판단 근거다.
     override fun send(
         userId: UUID,
         notification: Notification,
-    ) {
-        localDelivery.deliver(userId, notification)
-    }
+    ): Int = localDelivery.deliver(userId, notification)
 }

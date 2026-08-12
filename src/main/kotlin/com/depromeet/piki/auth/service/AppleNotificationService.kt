@@ -59,8 +59,9 @@ class AppleNotificationService(
     // consent-revoked 세션 종료: refresh token 삭제(재발급 차단) + SSE 연결 즉시 종료.
     // access token denylist 는 쓰지 않는다 — userId 단위라 마킹하면 재로그인으로 받은 새 access token 까지
     // 거부되어 "재로그인 시 기존 계정 복귀"가 깨진다. access token 은 짧은 수명으로 자연 만료에 맡긴다.
+    // 계정 차원의 동의 철회라 기기 하나가 아니라 전 세션을 끊는다(#893 으로 키가 세션별로 갈렸다).
     private fun terminateSession(userId: UUID) {
-        refreshTokenStore.delete(userId)
+        refreshTokenStore.deleteAll(userId)
         localSseDelivery.closeAll(userId)
         log.info("Apple consent-revoked 세션 종료 userId={}", userId)
     }
