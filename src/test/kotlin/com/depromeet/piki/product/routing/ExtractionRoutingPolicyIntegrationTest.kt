@@ -22,6 +22,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 // 추출 라우팅 정책(#9 디스패처)이 DB + 캐시 reload 로 배포 없이 등록 판정을 바꾸는지 검증한다.
 // @Transactional 자동 롤백을 쓰지 않는다 — 정책 캐시(@Volatile)는 롤백으로 되돌아가지 않아 다른 테스트로 누수되므로,
@@ -66,6 +68,59 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `시드된 미지원 플랫폼은 헤드리스 허가가 꺼진 채로 남는다 - 마이그레이션 기본값이 곧 default-deny`() {
+        // 허가 컬럼을 더한 마이그레이션이 기존 행을 건드리지 않았는지 실제 DB 로 확인한다. 기본값이 TRUE 로
+        // 잘못 들어가면 차단 플랫폼 전부가 조용히 브라우저로 열리는 셈이 된다 — 그 회귀를 CI 빨간불로 만든다.
+        val seeded =
+            listOf(
+                "kream.co.kr",
+                "coupang.com",
+                "naver.com",
+                "naver.me",
+                "oliveyoung.co.kr",
+                "oy.run",
+                "a-bly.com",
+            )
+        seeded.forEach { domain ->
+            assertFalse(policyRepository.findById(domain).orElseThrow().headlessAllowed, "$domain 의 허가가 켜져 있다")
+            assertFalse(routingPolicy.headlessAllowedOf(ProductLink.parse("https://www.$domain/p/1")))
+        }
+    }
+
+    @Test
+    fun `정책 행이 없는 도메인은 헤드리스 불가이고, 허가를 켠 행만 가능으로 바뀐다`() {
+        // "행 없음 = 기본 = 불가" 규약과 그 반대 축(허가를 켜면 즉시 반영)을 한 자리에서 고정한다.
+        val domain = "permission-${UUID.randomUUID()}.example.com"
+        val link = ProductLink.parse("https://shop.$domain/p/1")
+        try {
+            assertFalse(routingPolicy.headlessAllowedOf(link), "정책 행이 없는 도메인은 허가 없음이어야 한다")
+
+            // 허가 없이 정책만 있는 행도 여전히 불가 — 행의 존재가 허가를 뜻하지 않는다.
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(domain = domain, route = ExtractionRoute.SUPPORTED.name, reason = null),
+            )
+            routingPolicy.reload()
+            assertFalse(routingPolicy.headlessAllowedOf(link))
+
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(
+                    domain = domain,
+                    route = ExtractionRoute.HEADLESS_FIRST.name,
+                    reason = null,
+                    headlessAllowed = true,
+                    permissionRef = "test permission",
+                ),
+            )
+            routingPolicy.reload()
+            assertTrue(routingPolicy.headlessAllowedOf(link), "허가를 켠 행은 서브도메인까지 허가로 판정돼야 한다")
+            assertEquals(ExtractionRoute.HEADLESS_FIRST, routingPolicy.routeOf(link))
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            routingPolicy.reload()
+        }
+    }
+
+    @Test
     fun `부모 도메인과 서브도메인 정책이 겹치면 더 구체적인(긴) 도메인의 정책이 이긴다`() {
         // 최장 매치가 없으면 승자가 enum 선언 순서로 정해져, 서브도메인만 열어 주는 운영 시나리오
         // (부모 차단 유지 + 서브도메인 직행)가 조용히 무시된다.
@@ -73,7 +128,16 @@ class ExtractionRoutingPolicyIntegrationTest : IntegrationTestSupport() {
         val sub = "m.$parent"
         try {
             policyRepository.save(ExtractionPlatformPolicyEntity(domain = parent, route = ExtractionRoute.UNSUPPORTED.name, reason = null))
-            policyRepository.save(ExtractionPlatformPolicyEntity(domain = sub, route = ExtractionRoute.HEADLESS_FIRST.name, reason = null))
+            // HEADLESS_FIRST 는 허가 없이는 만들 수 없다(엔티티 불변식) — 서브도메인만 열어 주는 시나리오라 허가도 함께 켠다.
+            policyRepository.save(
+                ExtractionPlatformPolicyEntity(
+                    domain = sub,
+                    route = ExtractionRoute.HEADLESS_FIRST.name,
+                    reason = null,
+                    headlessAllowed = true,
+                    permissionRef = "test permission",
+                ),
+            )
             routingPolicy.reload()
 
             assertEquals(ExtractionRoute.HEADLESS_FIRST, routingPolicy.routeOf(ProductLink.parse("https://$sub/p/1")))
