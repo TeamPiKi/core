@@ -18,11 +18,14 @@ class ItemQuotaGuard(
     private val log = LoggerFactory.getLogger(javaClass)
 
     // 두 축을 함께 확인하고, 통과하면 그만큼 차감한 뒤 반환한다.
-    //   - 요청자 몫 소진 → ItemQuotaException(429). errorCode 는 호출 도메인이 넘긴다 — 사용자에게 보일 문구와
-    //     code 의 소유권은 도메인에 있다.
+    //   - 요청자 몫 소진 → ItemQuotaException(429). errorCode 는 호출 도메인이 넘긴다 — 카운터는 하나지만 사용자에게
+    //     보일 문구와 code 는 경로마다 달라야 한다(게스트가 남의 토너먼트에서 막힌 응답에 오너의 사용량이 드러나면 안 된다).
     //   - 전역 가용량 소진 → ItemQuotaException(503). 어느 도메인에서 닿든 원인이 같아 공통 code 를 쓴다.
+    //
+    // ownerId 는 요청자가 아니라 **몫의 주인**이다. 토너먼트 경로에서는 참여 게스트가 넣어도 오너의 몫에서 깎인다 —
+    // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있고, 오너는 반드시
+    // 회원이라(토너먼트 생성이 회원 전용) 소셜 계정 생성 비용이 그 우회를 막는다.
     fun consume(
-        scope: ItemQuotaScope,
         ownerId: UUID,
         amount: Int,
         errorCode: ErrorCode,
@@ -32,10 +35,10 @@ class ItemQuotaGuard(
         val verdict =
             try {
                 store.tryConsume(
-                    ownerKey = scope.keyPrefix + ownerId,
+                    ownerKey = RedisItemQuotaStore.USER_KEY_PREFIX + ownerId,
                     capacityKey = RedisItemQuotaStore.CAPACITY_KEY,
                     amount = amount,
-                    ownerLimit = properties.limitOf(scope),
+                    ownerLimit = properties.userLimit,
                     capacityLimit = properties.capacityLimit,
                     windowMillis = properties.window.toMillis(),
                 )
@@ -47,7 +50,7 @@ class ItemQuotaGuard(
                 //
                 // runCatching 이 아니라 catch(Exception) 인 이유: runCatching 은 Throwable 을 잡아 OutOfMemoryError
                 // 같은 치명적 Error 까지 삼킨다. 그런 상황에서 fail-open 으로 요청을 계속 받으면 장애를 키운다.
-                log.warn("아이템 한도 검사 실패 — 통과시킨다(fail-open). scope={} ownerId={} amount={}", scope, ownerId, amount, e)
+                log.warn("아이템 한도 검사 실패 — 통과시킨다(fail-open). ownerId={} amount={}", ownerId, amount, e)
                 return
             }
 

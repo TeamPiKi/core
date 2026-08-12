@@ -66,6 +66,9 @@ class RedisItemQuotaStore(
         max(1L, (remainingMillis.toLong() + MILLIS_PER_SECOND - 1) / MILLIS_PER_SECOND)
 
     companion object {
+        // 계정 몫 카운터 키 접두사. 등록 경로(위시·토너먼트)를 가리지 않는 하나의 몫이라 경로가 키에 들어가지 않는다.
+        const val USER_KEY_PREFIX = "quota:item:user:"
+
         // 전역 가용량 카운터 키(#927). 요청자 몫과 달리 서비스에 하나뿐이라 접두사 + 식별자가 아니라 고정 키다.
         const val CAPACITY_KEY = "quota:item:capacity"
 
