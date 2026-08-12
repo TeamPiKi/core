@@ -131,6 +131,56 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments 는 게스트가 요청하면 403 과 GUEST_CANNOT_CREATE_TOURNAMENT code 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val guestId = UUID.randomUUID()
+        userJpaRepository.save(
+            User(id = guestId, nickname = "게스트유저", profileImage = "https://cdn.example.com/g.jpg", identityType = IdentityType.GUEST),
+        )
+        val tournamentsBefore = tournamentJpaRepository.count()
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${jwtProvider.generateAccessToken(guestId, IdentityType.GUEST)}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"name":"게스트 토너먼트"}"""),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.code))
+            .andExpect(jsonPath("$.detail").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.message))
+            .andExpect(jsonPath("$.data").value(nullValue()))
+
+        // 거부가 응답으로만 끝나지 않고 실제로 아무것도 만들지 않았는지 확인한다 — 게이트가 saveTournament 앞에 선다.
+        assertEquals(tournamentsBefore, tournamentJpaRepository.count())
+    }
+
+    @Test
+    fun `POST tournaments 는 탈퇴한 회원이 요청하면 409 를 반환한다`() {
+        // 탈퇴 tombstone 은 닉네임·프로필만 비우고 identityType 은 MEMBER 로 남는다. identityType 만 보면
+        // 죽은 계정이 토너먼트를 만들 수 있어, 탈퇴 시 토큰 무효화가 부분 실패한 창에서 실제로 닿는다.
+        val mockMvc = buildMockMvc()
+        val withdrawnId = UUID.randomUUID()
+        val user =
+            userJpaRepository.save(
+                // "탈퇴" 로 시작하는 닉네임은 tombstone 예약 접두어라 입력 경계가 막는다 — 다른 이름을 쓴다.
+                User(id = withdrawnId, nickname = "떠날회원", profileImage = "https://cdn.example.com/w.jpg", identityType = IdentityType.MEMBER),
+            )
+        user.softDelete()
+        userJpaRepository.save(user)
+        val tournamentsBefore = tournamentJpaRepository.count()
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(withdrawnId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"name":"탈퇴 토너먼트"}"""),
+            ).andExpect(status().isConflict)
+
+        assertEquals(tournamentsBefore, tournamentJpaRepository.count())
+    }
+
+    @Test
     fun `POST tournaments 에서 inviteDurationMinutes 를 지정하면 해당 시간으로 만료 시각이 설정된다`() {
         val mockMvc = buildMockMvc()
         val before = LocalDateTime.now()

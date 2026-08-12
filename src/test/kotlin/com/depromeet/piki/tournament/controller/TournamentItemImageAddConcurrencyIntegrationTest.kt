@@ -70,7 +70,9 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
         val ownerId = UUID.randomUUID()
         userJpaRepository.save(
-            User(id = ownerId, nickname = "race-image", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.GUEST),
+            // 토너먼트 생성은 회원 전용(#339)이라 owner 는 MEMBER 다. 이 테스트의 관심사는 동시 추가 경합이지
+            // 게스트 권한이 아니므로, 계약을 맞추기만 하고 나머지 시나리오는 그대로 둔다.
+            User(id = ownerId, nickname = "race-image", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
 
         val mockMvc = MockMvcBuilders
@@ -78,7 +80,7 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.GUEST)}"
+        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
 
         // 이 테스트가 새로 만드는 item/snapshot 의 하한 — finally 에서 이보다 큰 id 만 지워 추가분(사전 27 + 성공 5)까지 정리한다.
         val maxItemIdBefore = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(id), 0) FROM items", Long::class.java) ?: 0L

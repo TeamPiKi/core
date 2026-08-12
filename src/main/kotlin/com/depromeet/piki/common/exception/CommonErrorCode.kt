@@ -28,6 +28,7 @@ enum class CommonErrorCode(
     METHOD_NOT_ALLOWED("COMMON-METHOD-NOT-ALLOWED", ErrorCategory.METHOD_NOT_ALLOWED, "지원하지 않는 요청 방식이에요."),
     UNSUPPORTED_MEDIA_TYPE("COMMON-UNSUPPORTED-MEDIA-TYPE", ErrorCategory.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 형식이에요."),
     INVALID_INPUT("COMMON-INVALID-INPUT", ErrorCategory.INVALID_INPUT, "요청 값을 다시 확인해 주세요."),
+    TOO_MANY_REQUESTS("COMMON-TOO-MANY-REQUESTS", ErrorCategory.TOO_MANY_REQUESTS, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."),
     RETRYABLE("COMMON-RETRYABLE", ErrorCategory.RETRYABLE, "일시적인 오류예요. 잠시 후 다시 시도해 주세요."),
     SERVER_BUSY("COMMON-SERVER-BUSY", ErrorCategory.SERVER_BUSY, "지금 요청이 많아요. 잠시 후 다시 시도해 주세요."),
     SERVER_ERROR("COMMON-SERVER-ERROR", ErrorCategory.SERVER_ERROR, "서버에 문제가 발생했어요. 불편을 드려 죄송해요."),
