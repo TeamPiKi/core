@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ItemQuotaPropertiesTest {
     @Test
@@ -45,5 +47,55 @@ class ItemQuotaPropertiesTest {
     fun `토너먼트 한도가 0 이하면 부팅에서 실패한다`() {
         assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(tournamentLimit = 0) }
         assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(tournamentLimit = -1) }
+    }
+
+    @Test
+    fun `전역 상한이 0 이하면 부팅에서 실패한다`() {
+        // 계정별과 달리 이 값이 0 이면 특정 사용자가 아니라 **모든** 사용자의 등록이 막힌다.
+        assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(capacityLimit = 0) }
+        assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(capacityLimit = -1) }
+    }
+
+    @Test
+    fun `경고선 비율이 1 에서 100 밖이면 부팅에서 실패한다`() {
+        // 0 이하면 첫 요청부터 경고가 울려 신호가 죽고, 100 초과면 영원히 안 울려 경고선이 없는 것과 같다.
+        assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(capacityAlertPercent = 0) }
+        assertFailsWith<IllegalArgumentException> { ItemQuotaProperties(capacityAlertPercent = 101) }
+        // 경계값 1·100 은 통과해야 한다 — 100 은 "상한에 닿을 때만 알린다" 는 유효한 설정이다.
+        assertEquals(1, ItemQuotaProperties(capacityAlertPercent = 1).capacityAlertPercent)
+        assertEquals(100, ItemQuotaProperties(capacityAlertPercent = 100).capacityAlertPercent)
+    }
+
+    @Test
+    fun `경고선은 상한의 비율만큼으로 계산된다`() {
+        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+
+        assertEquals(800, properties.capacityAlertThreshold)
+    }
+
+    @Test
+    fun `경고선 계산은 내림한다`() {
+        // 정수 나눗셈이라 33 * 80 / 100 = 26.4 → 26. 경고가 한 건 앞당겨질 뿐이라 무해하다.
+        assertEquals(26, ItemQuotaProperties(capacityLimit = 33, capacityAlertPercent = 80).capacityAlertThreshold)
+    }
+
+    @Test
+    fun `경고선을 넘긴 첫 차감에서만 참이 된다`() {
+        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+
+        // 799 까지는 아직 아래. 800 을 만든 이 한 건이 경계를 넘긴 건이다.
+        assertFalse(properties.crossedCapacityAlert(capacityUsed = 799, amount = 1))
+        assertTrue(properties.crossedCapacityAlert(capacityUsed = 800, amount = 1))
+        // 이미 넘긴 뒤의 차감은 거짓 — 참으로 두면 창이 끝날 때까지 매 요청이 같은 경고를 반복해 알림이 무뎌진다.
+        assertFalse(properties.crossedCapacityAlert(capacityUsed = 801, amount = 1))
+    }
+
+    @Test
+    fun `한 번에 경고선을 건너뛰어도 그 차감에서 참이 된다`() {
+        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+
+        // 이미지 5장 등록처럼 한 요청이 여러 건을 소모하면 경고선을 정확히 밟지 않고 넘어간다(798 → 803).
+        // "누적 == 경고선" 으로 판정했다면 이 경우를 통째로 놓쳐 경고가 영영 안 울린다.
+        assertTrue(properties.crossedCapacityAlert(capacityUsed = 803, amount = 5))
     }
 }

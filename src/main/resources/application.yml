@@ -179,6 +179,12 @@ item-quota:
   wish-limit: ${ITEM_QUOTA_WISH_LIMIT:10}
   # 토너먼트는 오너 한 명의 몫을 참여자 전원(최대 8명)이 나눠 쓰므로 위시보다 크게 둔다.
   tournament-limit: ${ITEM_QUOTA_TOURNAMENT_LIMIT:30}
+  # 전역 가용량 상한(#927) — 계정별 위에 얹는 총량. 계정별은 "한 사람이 100번" 을 막지만 "100명이 각자 10번" 은
+  # 못 막는다. 넘으면 503(SERVER_BUSY) + Retry-After 로 흘려보낸다. 정상 운영에서는 닿지 않아야 하는 마지노선이라,
+  # 도달은 인기 신호가 아니라 이상 신호다. 파싱 경량화(화이트리스트 전환) 동안 더 조이고 싶으면 배포 없이 내린다.
+  capacity-limit: ${ITEM_QUOTA_CAPACITY_LIMIT:1000}
+  # 경고선(%). 상한에 닿으면 이미 사용자가 막히고 있어 늦으므로, 손 쓸 시간을 버는 이 지점이 실질 방어선이다.
+  capacity-alert-percent: ${ITEM_QUOTA_CAPACITY_ALERT_PERCENT:80}
 
 notification:
   # 알림 보존 기간(일). 생성 후 이 기간을 넘긴 알림은 N일 자동삭제 스케줄러(NotificationCleanupScheduler)가 하드삭제한다.

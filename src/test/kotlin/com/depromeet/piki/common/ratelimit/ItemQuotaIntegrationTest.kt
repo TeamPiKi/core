@@ -1,6 +1,7 @@
 package com.depromeet.piki.common.ratelimit
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageParsingWorker
 import com.depromeet.piki.support.StubImageStorage
@@ -91,6 +92,39 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
 
         // 거부된 요청은 카운터를 올리지 않는다 — 올리면 재시도할수록 창이 끝나도 한도를 넘긴 채 시작한다.
         assertEquals(properties.wishLimit.toLong(), currentCount(ItemQuotaScope.WISH, userId))
+    }
+
+    @Test
+    fun `전역 가용량이 소진되면 자기 몫이 남아 있어도 503 과 SERVER-BUSY code, Retry-After 헤더를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        // 이 사용자는 자기 몫을 한 건도 쓰지 않았다. 그래도 막힌다는 것이 이 축의 존재 이유다 —
+        // 계정별 한도는 "한 사람이 100번" 을 막지만 "100명이 각자 10번" 은 막지 못한다.
+        fillCapacity()
+
+        try {
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/9"}"""),
+                ).andExpect(status().isServiceUnavailable)
+                // 사용자 잘못이 아니라 서비스가 꽉 찬 것이라 4xx 가 아니고, 도메인 code 도 아니다.
+                .andExpect(jsonPath("$.code").value(CommonErrorCode.SERVER_BUSY.code))
+                .andExpect(jsonPath("$.detail").value(CommonErrorCode.SERVER_BUSY.message))
+                .andExpect(jsonPath("$.data").doesNotExist())
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+
+            // 전역에서 막힌 요청은 요청자의 몫을 건드리지 않는다. 깎으면 안내대로 재시도할 때마다 자기 몫을 잃고,
+            // 가용량이 회복된 뒤에도 자기 한도에 걸려 429 를 받게 된다.
+            assertNull(currentCount(ItemQuotaScope.WISH, userId))
+        } finally {
+            // 전역 카운터는 서비스에 하나뿐이라 UUID 로 격리할 수 없다. 지우지 않으면 같은 Redis 를 쓰는
+            // 이후 등록 테스트가 전부 503 으로 깨진다(Redis 는 @Transactional 롤백 대상이 아니다).
+            redisTemplate.delete(RedisItemQuotaStore.CAPACITY_KEY)
+        }
     }
 
     @Test
@@ -310,6 +344,13 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         scope: ItemQuotaScope,
         userId: UUID,
     ): Long? = redisTemplate.opsForValue().get(scope.keyPrefix + userId)?.toLong()
+
+    // 전역 카운터를 상한까지 채워 "서비스가 꽉 찬" 상태를 만든다. 부르는 테스트가 끝에서 반드시 키를 지운다.
+    private fun fillCapacity() {
+        redisTemplate
+            .opsForValue()
+            .set(RedisItemQuotaStore.CAPACITY_KEY, properties.capacityLimit.toString(), properties.window)
+    }
 
     private fun createTournament(
         mockMvc: MockMvc,

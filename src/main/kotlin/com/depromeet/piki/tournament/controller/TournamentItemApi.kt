@@ -32,6 +32,13 @@ private const val TOURNAMENT_RATE_LIMIT_DESCRIPTION =
         "남은 몫이 있으면 그보다 큰 요청도 통과하므로 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
         "Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
+// 전역 가용량 소진(#927) 응답 설명. 429 와 원인이 다르다 — 오너의 몫이 남아 있어도 서비스 전체가 차면 나간다.
+private const val CAPACITY_DESCRIPTION =
+    "서비스 전체의 시간당 처리 가용량 소진 (code: COMMON-SERVER-BUSY). 오너의 몫이 남아 있어도 나갈 수 있다 — " +
+        "서비스가 감당하기로 정한 총량이 찬 상태라 같은 시각 모든 사용자에게 동일하게 나간다. 정상 운영에서는 " +
+        "닿지 않는 마지노선이므로 이 응답이 반복되면 서버 쪽 이상 신호다. Retry-After 헤더에 가용량이 회복되기까지 " +
+        "남은 시간(초)이 실린다."
+
 @Tag(name = "Tournament Item", description = "토너먼트 아이템 API")
 interface TournamentItemApi {
 
@@ -273,6 +280,23 @@ interface TournamentItemApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "503",
+                description = CAPACITY_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun addItemFromLink(
@@ -383,6 +407,23 @@ interface TournamentItemApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "503",
+                description = CAPACITY_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun addItemsFromImages(
@@ -484,6 +525,23 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "502",
                 description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-002",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "503",
+                description = "$CAPACITY_DESCRIPTION 발급 시점에 확인하므로 이어지는 confirm 은 이 응답을 받지 않는다.",
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

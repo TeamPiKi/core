@@ -54,6 +54,7 @@ class WishlistApiExamples(
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(itemQuotaExceeded, name = "아이템 등록 한도 초과")
+                    add(capacityExceeded, name = "서비스 전체 가용량 소진")
                 }
             }
             if (handlerMethod.binds(WishlistController::getWishlist)) {
@@ -181,6 +182,7 @@ class WishlistApiExamples(
                     add(WishException.notFound(), name = "존재하지 않는 위시 항목")
                     unauthorized()
                     add(itemQuotaExceeded, name = "아이템 등록 한도 초과")
+                    add(capacityExceeded, name = "서비스 전체 가용량 소진")
                 }
             }
             if (handlerMethod.binds(WishlistController::deleteWish)) {
@@ -227,6 +229,7 @@ class WishlistApiExamples(
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (이미지 장수만큼 소모)")
+                    add(capacityExceeded, name = "서비스 전체 가용량 소진")
                 }
             }
             if (handlerMethod.binds(WishlistController::presignImageUploads)) {
@@ -243,6 +246,7 @@ class WishlistApiExamples(
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (발급 시점에 장수만큼 소모)")
+                    add(capacityExceeded, name = "서비스 전체 가용량 소진 (발급 시점에 확인)")
                 }
             }
             if (handlerMethod.binds(WishlistController::confirmImageRegistration)) {
@@ -271,6 +275,9 @@ class WishlistApiExamples(
     // 아이템 등록 한도 초과(#339). retryAfterSeconds 는 Retry-After 헤더로만 나가고 body 에는 실리지 않으므로
     // example payload 에 영향을 주지 않는다 — 문서상 대표값으로 15분을 넣는다.
     private val itemQuotaExceeded = ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, 900)
+
+    // 전역 가용량 소진(#927). 요청자의 몫과 무관하게 서비스 전체가 찬 상태라 503 이고, code 도 도메인이 아닌 공통이다.
+    private val capacityExceeded = ItemQuotaException.capacityExceeded(900)
 
     // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 수기(89,000원)가 섞여 있어,
     // source·editedByMe 로 구분해 그리는 예시다.

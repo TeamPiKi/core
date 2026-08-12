@@ -82,6 +82,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 차감)")
+                        add(capacityExceeded, name = "서비스 전체 가용량 소진")
                     }
 
                 handlerMethod.binds(TournamentItemController::addItemsFromImages) ->
@@ -109,6 +110,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 이미지 장수만큼 차감)")
+                        add(capacityExceeded, name = "서비스 전체 가용량 소진")
                     }
 
                 handlerMethod.binds(TournamentItemController::presignImageUploads) ->
@@ -127,6 +129,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (발급 시점에 오너 몫에서 차감)")
+                        add(capacityExceeded, name = "서비스 전체 가용량 소진 (발급 시점에 확인)")
                     }
 
                 handlerMethod.binds(TournamentItemController::confirmImageRegistration) ->
@@ -296,6 +299,9 @@ class TournamentItemApiExamples(
     // 아이템 등록 한도 초과(#339). retryAfterSeconds 는 Retry-After 헤더로만 나가고 body 에는 실리지 않으므로
     // example payload 에 영향을 주지 않는다 — 문서상 대표값으로 15분을 넣는다.
     private val itemQuotaExceeded = ItemQuotaException.exceeded(TournamentErrorCode.ITEM_QUOTA_EXCEEDED, 900)
+
+    // 전역 가용량 소진(#927). 오너의 몫과 무관하게 서비스 전체가 찬 상태라 503 이고, code 도 도메인이 아닌 공통이다.
+    private val capacityExceeded = ItemQuotaException.capacityExceeded(900)
 
     // 이미지 등록 v2 presigned 발급 응답 샘플 — 위시와 동일 구조. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.
     private val presignedUploadsSample =
