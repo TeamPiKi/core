@@ -144,9 +144,9 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
                 TournamentItemDeleted(tournamentId = 1205L, tournamentItemId = 1L, snapshotId = snapshotId, actorId = actor),
             ).variables
 
-        val itemName = variables.getValue("itemName")
-        assertTrue(itemName.length < longName.length, "긴 상품명이 그대로 실리면 안 된다 (실제=$itemName)")
-        assertTrue(longName.startsWith(itemName.trimEnd('…')), "잘린 이름은 원본의 앞부분이어야 한다 (실제=$itemName)")
+        // "짧아졌나" 가 아니라 정확한 결과를 못 박는다 — 길이만 보면 핸들러가 캡을 10 대신 20 으로 바꿔도 통과하고,
+        // ItemDisplayNameTest 는 캡을 인자로 받아 검증하므로 핸들러가 고른 캡 값은 여기서만 고정된다.
+        assertEquals("가".repeat(10) + "…", variables.getValue("itemName"))
     }
 
     // 이모지는 UTF-16 코드 유닛으로 자르면 surrogate pair 가 쪼개져 깨진다. 핸들러가 grapheme 기준 절단을 거치는지 본다.
@@ -167,7 +167,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
             ).variables
 
         val itemName = variables.getValue("itemName")
-        // 코드 유닛으로 자르면 surrogate pair 가 반쪽만 남아 깨진 문자가 된다. 짝 잃은 surrogate 가 없어야 한다.
+        // 기대값을 통째로 못 박는다 — 코드 유닛으로 잘랐다면 10번째 경계가 surrogate pair 한가운데라 다른 문자열이 나온다.
+        // "짝 잃은 surrogate 없음" 만 보면 아예 안 자르는 구현도 통과한다(원본도 짝이 맞아서다).
+        assertEquals("가" + "😀".repeat(9) + "…", itemName)
+        // 위 단언이 깨졌을 때 원인이 절단 경계임을 바로 읽히게 남긴다.
         val orphanSurrogate =
             itemName.withIndex().any { (i, c) ->
                 (c.isHighSurrogate() && (i + 1 >= itemName.length || !itemName[i + 1].isLowSurrogate())) ||

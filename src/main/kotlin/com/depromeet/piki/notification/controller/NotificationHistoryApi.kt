@@ -46,11 +46,11 @@ interface NotificationHistoryApi {
                 "| `TOURNAMENT_PLAYED_FROM_LINK` | 플레이링크로 플레이 시작 | `TOURNAMENT` | ROOT 토너먼트 id | {플레이어}님이 회원님 토너먼트를 플레이했어요 |\n" +
                 "| `TOURNAMENT_COMPLETED` | 멤버가 클론 완료 | `TOURNAMENT` | ROOT 토너먼트 id | {멤버}님이 회원님 토너먼트를 완료했어요 |\n" +
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
-                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` 에 상태 문구) |\n" +
+                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 파싱이 완료되었어요) |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
-                "> `ITEM_PARSING_COMPLETED` 의 `body` 도 같은 출처로 갈린다 — 위시에 직접 담았으면 \"위시 저장이 성공했어요\", " +
-                "토너먼트에 직접 올렸으면 \"아이템이 등록됐어요\". 토너먼트에 올린 상품이 위시리스트에 들어가지는 않으므로 두 문구를 구분한다.\n\n" +
+                "> `ITEM_PARSING_COMPLETED` 의 `body` 는 `kind` 와 무관하게 하나다 — 위시로 담았든 토너먼트로 올렸든 같은 문구가 온다. " +
+                "화면 분기는 `kind` 로 하고 `body` 문구에 기대지 않는다.\n\n" +
                 "> 파싱 알림(`ITEM_PARSING_*`)만 `kind` 가 발행 출처(위시 등록 / 토너먼트 추가)에 따라 갈린다 — 같은 `type` 이 두 플로우에서 발행되기 때문. " +
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> 아이템 좌표(`tournamentId`·`tournamentItemId`)가 추가로 실리는 타입: 토너먼트 출처 파싱 알림(`ITEM_PARSING_*` + `kind`=TOURNAMENT)과 " +

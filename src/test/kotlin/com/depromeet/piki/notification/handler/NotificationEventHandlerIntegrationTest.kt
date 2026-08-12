@@ -92,25 +92,21 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         assertEquals("상품", context.variables["itemName"])
     }
 
-    // body 문구는 등록 출처로 갈린다(#913) — 토너먼트에 올린 상품이 위시리스트에 들어가지는 않으므로 같은 문구를 쓸 수 없다.
-    // 출처 판정은 라우팅(그 버전을 pin 한 출전이 있나)이 이미 하고 있고, 그 결과를 그대로 재사용한다.
+    // 파싱 완료 문구는 등록 출처(위시/토너먼트)로 갈리지 않는다 — 갈리면 안 되는 이유가 구조에 있다.
+    // dispatcher 는 문구·라우팅을 수신자 루프 **밖에서 한 번** 해석해 전 수신자에게 같은 값을 박는데, 공유(#825)의
+    // "진행 중 합류" 로 한 snapshot 에 위시 주인과 토너먼트 등록자가 함께 붙을 수 있다. 그 상태로 출처별 문구를 쓰면
+    // 위시 주인이 토너먼트 문구를 받는다. 출처별 분기는 수신자별 라우팅 해석과 함께 후속(#933)에서 한다.
+    //
+    // 그래서 "출전 pin 이 있어도 문구 변수가 늘지 않는다" 를 못 박는다 — 수신자별 해석 없이 분기를 되살리면 여기서 깨진다.
     @Test
-    fun `위시 출처 파싱 완료는 completionMessage 를 위시 문구로 담는다`() {
+    fun `파싱 완료 문구 변수는 출전 pin 이 있어도 itemName 하나뿐이다`() {
         val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9103L, name = "나이키 에어맥스")).getId()
+        // 이 버전을 pin 한 출전이 있으면 라우팅은 Tournament 로 해석된다. 그래도 문구는 그대로여야 한다.
+        tournamentItemJpaRepository.save(TournamentItem(tournamentId = 9201L, userId = UUID.randomUUID(), snapshotId = snapshotId))
 
         val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9103L, snapshotId = snapshotId))
 
-        assertEquals(ItemParsingCompletedHandler.WISH_MESSAGE, context.variables["completionMessage"])
-    }
-
-    @Test
-    fun `토너먼트 출처 파싱 완료는 completionMessage 를 토너먼트 문구로 담는다`() {
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9104L, name = "나이키 덩크")).getId()
-        // 그 버전을 pin 한 출전이 있으면 라우팅이 Tournament 로 해석된다.
-        tournamentItemJpaRepository.save(TournamentItem(tournamentId = 9201L, userId = UUID.randomUUID(), snapshotId = snapshotId))
-
-        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9104L, snapshotId = snapshotId))
-
-        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_MESSAGE, context.variables["completionMessage"])
+        assertEquals(setOf("itemName"), context.variables.keys)
+        assertEquals("나이키 에어맥스", context.variables["itemName"])
     }
 }

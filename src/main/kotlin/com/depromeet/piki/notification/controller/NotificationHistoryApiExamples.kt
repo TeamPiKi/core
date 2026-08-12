@@ -6,7 +6,6 @@ import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
-import com.depromeet.piki.notification.handler.ItemParsingCompletedHandler
 import com.depromeet.piki.notification.controller.dto.NotificationDeleteRequest
 import com.depromeet.piki.notification.controller.dto.NotificationDeleteResponse
 import com.depromeet.piki.notification.controller.dto.NotificationHistoryResponse
@@ -153,10 +152,10 @@ class NotificationHistoryApiExamples(
             id = 1025,
             type = NotificationType.ITEM_PARSING_COMPLETED,
             kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.WISH),
-            // 파싱 완료만 title=이름 / body=상태 로 나뉜다(#913). 상태 문구는 리터럴로 박지 않고 핸들러 상수를 끌어와
-            // 문구가 바뀌면 example 이 따라오게 한다(kind 를 NotificationKind.of 로 파생시키는 것과 같은 결).
+            // 파싱 완료만 title=이름 / body=상태 로 나뉜다(#913). 두 값 다 템플릿이 렌더한 실제 모양으로 둔다 —
+            // body 문구는 DB 템플릿(V20260811010101)이 소유하므로 referenceItem 의 title 과 같이 리터럴로 적는다.
             title = "에어 조던 1 미드",
-            body = ItemParsingCompletedHandler.WISH_MESSAGE,
+            body = PARSING_COMPLETED_BODY,
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
@@ -169,7 +168,7 @@ class NotificationHistoryApiExamples(
             type = NotificationType.ITEM_PARSING_COMPLETED,
             kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
             title = "나이키 덩크 로우",
-            body = ItemParsingCompletedHandler.TOURNAMENT_MESSAGE,
+            body = PARSING_COMPLETED_BODY,
             refId = 513,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),
@@ -178,4 +177,9 @@ class NotificationHistoryApiExamples(
         )
 
     private val sampleItems = listOf(referenceItem, wishParsingItem, tournamentParsingItem)
+
+    companion object {
+        // 파싱 완료 body — 출처(위시/토너먼트)와 무관하게 하나다. 두 example 이 같은 값을 쓰는 게 계약이라 상수로 묶는다.
+        private const val PARSING_COMPLETED_BODY = "파싱이 완료되었어요"
+    }
 }

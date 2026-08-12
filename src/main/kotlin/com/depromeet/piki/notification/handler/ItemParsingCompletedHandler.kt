@@ -14,8 +14,10 @@ import java.util.UUID
 // 줄에 담으면 이름이 길 때 정작 무슨 일인지가 사라진다. 이름만 제목에 두면 잘려도 잃는 게 없고, body 는 두 줄까지
 // 보이므로 상태 문구가 온전히 남는다. 그래서 이름은 표시 글자 절단을 하지 않는다(char 안전망만).
 //
-// body 문구는 등록 출처에 따라 갈린다 — 위시에 직접 담은 것과 토너먼트에 직접 올린 것은 사용자에게 다른 사건이다
-// (토너먼트에 올려도 위시리스트에는 안 들어간다). 출처 판정은 라우팅이 이미 하고 있어 그대로 재사용한다.
+// body 문구는 출처(위시/토너먼트)와 무관하게 하나다. 출처별로 가르려면 수신자마다 달라져야 하는데, dispatcher 는
+// 라우팅·문구를 수신자 루프 **밖에서 한 번** 해석해 전원에게 같은 값을 박는다. 한 snapshot 에 위시 주인과
+// 토너먼트 등록자가 함께 붙을 수 있어(공유 #825 의 "진행 중 합류"), 그 상태로 가르면 위시 주인이 토너먼트 문구를
+// 받는다. 출처별 문구는 수신자별 라우팅 해석과 함께 후속(#933)에서 다룬다.
 @Component
 class ItemParsingCompletedHandler(
     private val recipientResolver: ItemParsingRecipientResolver,
@@ -27,32 +29,10 @@ class ItemParsingCompletedHandler(
 
     override fun resolveRouting(event: ItemParsingCompleted): NotificationRouting = recipientResolver.resolveRouting(event.snapshotId)
 
-    // 문구 변수 둘 — itemName(제목)·completionMessage(본문).
+    // 문구 변수는 itemName(제목) 하나다. body 는 변수 없는 고정 문구라 템플릿이 통째로 소유한다 —
+    // 백오피스(#252)에서 title·body 둘 다 그대로 편집된다.
     // best-effort: 버전이 없거나 이름이 비어도 이름 하나 때문에 알림 전체를 떨구지 않고 기본값을 쓴다
     // (토너먼트 알림의 tournamentName fallback 과 같은 결).
-    //
-    // 이벤트당 한 번만 호출된다(dispatcher 가 수신자 루프 밖에서 부른다) — 라우팅 조회가 한 번 더 들어가도 수신자
-    // 수와 무관하다.
     override fun resolveActorContext(event: ItemParsingCompleted): ActorContext =
-        ActorContext(
-            variables =
-                mapOf(
-                    "itemName" to ItemDisplayName.of(itemSnapshotRepository.findById(event.snapshotId)?.name),
-                    "completionMessage" to completionMessageOf(resolveRouting(event)),
-                ),
-        )
-
-    // 문장을 통째로 변수로 채운다. notification_templates 는 타입당 한 행(PK=type)이라 위시용·토너먼트용 body 를
-    // 따로 둘 자리가 없고, 두 문장이 구조도 달라("위시 저장이 성공" vs "아이템이 등록") 공통 뼈대 + 변수로도 안 쪼개진다.
-    // 대가로 이 body 문구는 백오피스(#252)에서 편집할 수 없다 — title 은 여전히 템플릿이 소유한다.
-    private fun completionMessageOf(routing: NotificationRouting): String =
-        when (routing) {
-            NotificationRouting.Wish -> WISH_MESSAGE
-            is NotificationRouting.Tournament -> TOURNAMENT_MESSAGE
-        }
-
-    companion object {
-        const val WISH_MESSAGE = "위시 저장이 성공했어요"
-        const val TOURNAMENT_MESSAGE = "아이템이 등록됐어요"
-    }
+        ActorContext(variables = mapOf("itemName" to ItemDisplayName.of(itemSnapshotRepository.findById(event.snapshotId)?.name)))
 }

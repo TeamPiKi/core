@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.domain.NotificationType
-import com.depromeet.piki.notification.handler.ItemParsingCompletedHandler
 
 // 타입별 사용 가능한 템플릿 변수 카탈로그. 백오피스(#250) 편집 화면의 "쓸 수 있는 변수" 표시 + 검증(선언 안 된
 // 변수 차단) + 미리보기 샘플값의 SSOT 다. 현재는 발송 dispatch 가 실제로 채우는 변수만 선언한다 —
@@ -33,13 +32,8 @@ object NotificationTemplateVariables {
             NotificationType.TOURNAMENT_PLAYED_FROM_LINK to TOURNAMENT,
             NotificationType.TOURNAMENT_COMPLETED to TOURNAMENT,
             NotificationType.TOURNAMENT_RESULT_READY to TOURNAMENT,
-            // completionMessage 는 문장을 통째로 담는다(#913) — 등록 출처(위시/토너먼트)에 따라 갈리는데 이 테이블이
-            // 타입당 한 행이라 body 를 두 벌 둘 자리가 없다. 그래서 이 문구만 백오피스 편집 대상이 아니다.
-            NotificationType.ITEM_PARSING_COMPLETED to
-                listOf(
-                    TemplateVariable("itemName", "나이키 에어맥스"),
-                    TemplateVariable("completionMessage", ItemParsingCompletedHandler.WISH_MESSAGE),
-                ),
+            // title 만 변수를 쓴다(#913) — body 는 변수 없는 고정 문구라 백오피스가 통째로 편집한다.
+            NotificationType.ITEM_PARSING_COMPLETED to listOf(TemplateVariable("itemName", "나이키 에어맥스")),
             NotificationType.ITEM_PARSING_FAILED to emptyList(),
             NotificationType.ANNOUNCEMENT to
                 listOf(
