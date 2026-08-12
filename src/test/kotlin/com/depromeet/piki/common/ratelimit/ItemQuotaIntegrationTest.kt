@@ -2,6 +2,8 @@ package com.depromeet.piki.common.ratelimit
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.StubImageParsingWorker
+import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubItemParsingWorker
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -60,6 +62,12 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var stubItemParsingWorker: StubItemParsingWorker
 
+    @Autowired
+    private lateinit var stubImageParsingWorker: StubImageParsingWorker
+
+    @Autowired
+    private lateinit var stubImageStorage: StubImageStorage
+
     @Test
     fun `위시 링크 등록이 한도를 넘으면 429 와 WISH-010 code, Retry-After 헤더를 반환한다`() {
         val mockMvc = buildMockMvc()
@@ -81,9 +89,8 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             // 남은 시간은 창 길이에 따라 달라지므로 값이 아니라 "양수가 실렸다" 를 계약으로 고정한다.
             .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
 
-        val retryAfter = requireNotNull(currentCount(ItemQuotaScope.WISH, userId))
         // 거부된 요청은 카운터를 올리지 않는다 — 올리면 재시도할수록 창이 끝나도 한도를 넘긴 채 시작한다.
-        assertEquals(properties.wishLimit.toLong(), retryAfter)
+        assertEquals(properties.wishLimit.toLong(), currentCount(ItemQuotaScope.WISH, userId))
     }
 
     @Test
@@ -102,6 +109,46 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
 
         // 요청 1건이 아니라 3 이 빠져야 한다 — 장마다 추출이 따로 돌기 때문이다.
         assertEquals(3L, currentCount(ItemQuotaScope.WISH, userId))
+    }
+
+    @Test
+    fun `이미지 등록은 presign 에서만 차감하고 confirm 은 추가로 차감하지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        stubImageParsingWorker.enabled = false
+        // 공유 stub 이라 이 테스트가 쓰는 동작을 명시 세팅한다 — "업로드가 끝났다"(exists=true)가 confirm 의 전제다.
+        stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
+
+        try {
+            val response =
+                mockMvc
+                    .perform(
+                        post("/api/v1/wishlists/images/presigned")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""{"contentTypes":["image/png","image/jpeg"]}"""),
+                    ).andExpect(status().isOk)
+                    .andReturn()
+                    .response
+                    .getContentAsString(Charsets.UTF_8)
+            val uploads = objectMapper.readTree(response).path("data").path("uploads")
+            val keys = listOf(uploads.path(0).path("imageKey").asString(), uploads.path(1).path("imageKey").asString())
+            assertEquals(2L, currentCount(ItemQuotaScope.WISH, userId))
+
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/images/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(mapOf("imageKeys" to keys))),
+                ).andExpect(status().isCreated)
+
+            // 발급 시점에 이미 깎았으므로 확정은 0 이다. 여기서 또 깎으면 이미지 한 장이 두 번 세어진다.
+            assertEquals(2L, currentCount(ItemQuotaScope.WISH, userId))
+        } finally {
+            stubImageParsingWorker.enabled = true
+        }
     }
 
     @Test

@@ -368,7 +368,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    private fun insertMember(userId: UUID) = insertUser(userId, "MEMBER")
+    private fun insertMember(userId: UUID) = insertUser(userId, IdentityType.MEMBER.name)
 
     private fun insertUser(
         userId: UUID,
