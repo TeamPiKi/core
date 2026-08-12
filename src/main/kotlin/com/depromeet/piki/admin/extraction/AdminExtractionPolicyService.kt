@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime
+import java.util.Optional
 
 // 백오피스 추출 라우팅 정책 관리(#9 디스패처). 배포 없이 도메인별 지원 표기(SUPPORTED)·차단(UNSUPPORTED)·
 // 브라우저 직행(HEADLESS_FIRST)을 저장(upsert)·삭제한다.
@@ -50,11 +51,23 @@ class AdminExtractionPolicyService(
             .toView()
 
     private fun ExtractionPlatformPolicyEntity.toView() =
-        ExtractionPolicyView(domain = domain, route = route, reason = reason, updatedAt = updatedAt)
+        ExtractionPolicyView(
+            domain = domain,
+            route = route,
+            reason = reason,
+            updatedAt = updatedAt,
+            headlessAllowed = headlessAllowed,
+            permissionRef = permissionRef,
+            permissionGrantedAt = permissionGrantedAt,
+        )
 
     // upsert — 같은 도메인이 있으면 정책을 교체한다. "삭제 후 재추가"로 수정하게 하면 그 사이 정책 공백 창이 생기고
     // (삭제 시점에 캐시가 즉시 갱신돼 기본 체인으로 열림), 중복 검사 후 저장의 check-then-act 레이스도 남는다 —
     // 교체 의미로 두면 둘 다 사라진다.
+    //
+    // headlessAllowed·permissionRef 는 헤드리스 허가 원장이다. 정책·사유와 같은 폼으로 받는 이유도 같다 —
+    // 허가와 정책이 따로 저장되면 "허가 없는 HEADLESS_FIRST" 같은 어긋난 중간 상태를 지나야 하고, 그 창에서
+    // 브라우저 직행이 열린다. 한 번의 저장으로 허가와 정책이 함께 확정된다.
     @Transactional
     fun save(
         rawDomain: String,
@@ -62,13 +75,28 @@ class AdminExtractionPolicyService(
         reason: String?,
         actor: String,
         clientIp: String?,
+        headlessAllowed: Boolean = false,
+        permissionRef: String? = null,
     ) {
         val domain = normalize(rawDomain)
         val trimmedReason = reason?.trim()?.ifBlank { null }
-        validateLengths(domain, trimmedReason)
-        val replaced = policyRepository.existsById(domain)
+        val trimmedPermissionRef = permissionRef?.trim()?.ifBlank { null }
+        validateLengths(domain, trimmedReason, trimmedPermissionRef)
+        validatePermission(route, headlessAllowed, trimmedPermissionRef)
+        // 이전 행을 읽어 두는 이유 둘 — 교체/추가 감사 문구와, 이미 켜져 있던 허가의 시각 보존(grantedAt).
+        val previous = policyRepository.findById(domain)
+        val replaced = previous.isPresent
         try {
-            policyRepository.saveAndFlush(ExtractionPlatformPolicyEntity(domain = domain, route = route.name, reason = trimmedReason))
+            policyRepository.saveAndFlush(
+                ExtractionPlatformPolicyEntity(
+                    domain = domain,
+                    route = route.name,
+                    reason = trimmedReason,
+                    headlessAllowed = headlessAllowed,
+                    permissionRef = trimmedPermissionRef,
+                    permissionGrantedAt = grantedAt(headlessAllowed, previous),
+                ),
+            )
         } catch (e: DataIntegrityViolationException) {
             // 같은 신규 도메인이 동시에 저장되면(수동 @Id 라 둘 다 INSERT 시도) 늦은 쪽이 PK 충돌로 떨어진다 —
             // 전역 핸들러의 500 대신 목록 화면 에러로 흡수한다. flush 를 여기서 강제해 커밋 시점이 아니라 이 자리에서 잡는다.
@@ -77,7 +105,7 @@ class AdminExtractionPolicyService(
         auditService.record(
             actor,
             AdminAuditAction.EXTRACTION_POLICY_UPDATE,
-            "$domain → $route ${if (replaced) "교체" else "추가"}",
+            "$domain → $route${if (headlessAllowed) " (헤드리스 허가)" else ""} ${if (replaced) "교체" else "추가"}",
             clientIp,
         )
         reloadAfterCommit()
@@ -108,14 +136,45 @@ class AdminExtractionPolicyService(
         return domain
     }
 
-    // DB 컬럼 한계(둘 다 255)를 서비스에서 먼저 막아 운영자 입력 실수를 편집 화면 에러로 처리한다.
+    // DB 컬럼 한계(셋 다 255)를 서비스에서 먼저 막아 운영자 입력 실수를 편집 화면 에러로 처리한다.
     // 안 막으면 커밋 시점 DB 제약 위반으로 500 이 난다 (AdminTemplateService.validateLengths 와 같은 이유).
     private fun validateLengths(
         domain: String,
         reason: String?,
+        permissionRef: String?,
     ) {
         require(domain.length <= COLUMN_MAX_LENGTH) { "도메인은 ${COLUMN_MAX_LENGTH}자를 초과할 수 없습니다." }
         require((reason?.length ?: 0) <= COLUMN_MAX_LENGTH) { "사유는 ${COLUMN_MAX_LENGTH}자를 초과할 수 없습니다." }
+        require((permissionRef?.length ?: 0) <= COLUMN_MAX_LENGTH) { "허가 근거는 ${COLUMN_MAX_LENGTH}자를 초과할 수 없습니다." }
+    }
+
+    // 헤드리스 허가의 계약 검증(입력 경계). 백오피스 폼으로 멀쩡한 운영자가 정상 조작으로 닿는 자리라 커스텀
+    // 도메인 예외가 아니라 이 화면의 기존 방식(IllegalArgumentException → 화면 에러 표시)을 따른다.
+    // 같은 default-deny 불변식이 엔티티 생성자에도 있다 — 여기는 사용자 문구로 안내하는 층이고, 저쪽은 어떤
+    // 경로로 만들든 허가 없는 직행 행이 생기지 않게 하는 최후의 보루다(다층 방어).
+    private fun validatePermission(
+        route: ExtractionRoute,
+        headlessAllowed: Boolean,
+        permissionRef: String?,
+    ) {
+        // 허가는 사람이 플랫폼에서 받아 오는 것이라, 켜는 순간 근거를 함께 남기게 강제한다. 근거 없는 허가가
+        // 쌓이면 원장이 "왜 열려 있나"에 답하지 못해 원장 구실을 못 한다.
+        require(!headlessAllowed || !permissionRef.isNullOrBlank()) {
+            "헤드리스 허가를 켜려면 허가 근거를 함께 남겨 주세요 (예: 메일 스레드·담당자)."
+        }
+        require(headlessAllowed || route != ExtractionRoute.HEADLESS_FIRST) {
+            "허가받지 않은 도메인은 HEADLESS_FIRST 로 지정할 수 없습니다. 상세 화면에서 헤드리스 허가를 함께 켜 주세요."
+        }
+    }
+
+    // 허가를 켠 시각. 이미 켜져 있던 행은 그 시각을 보존한다 — 사유 수정 같은 다른 편집이 허가 시각을 밀어내면
+    // "언제부터 열려 있었나"가 사라진다. 새로 켜는 순간에만 지금으로 찍고, 끄면 비운다.
+    private fun grantedAt(
+        headlessAllowed: Boolean,
+        previous: Optional<ExtractionPlatformPolicyEntity>,
+    ): LocalDateTime? {
+        if (!headlessAllowed) return null
+        return previous.filter { it.headlessAllowed }.map { it.permissionGrantedAt }.orElseGet { LocalDateTime.now() }
     }
 
     // 캐시 갱신은 커밋 후로 미룬다 — 커밋 전 reload 면 이후 단계 롤백 시 캐시만 새 정책으로 남아 DB 와 어긋난다.
@@ -137,6 +196,10 @@ data class ExtractionPolicyView(
     val route: String,
     val reason: String?,
     val updatedAt: LocalDateTime,
+    // 헤드리스 허가 원장 — 화면이 "이 도메인을 브라우저로 열어도 되는가"와 그 근거를 함께 보여준다.
+    val headlessAllowed: Boolean,
+    val permissionRef: String?,
+    val permissionGrantedAt: LocalDateTime?,
 )
 
 // 한 갈래(route)와 거기 속한 정책들. 열 헤더가 개수를 보여주므로 빈 열도 열 자체는 렌더된다.

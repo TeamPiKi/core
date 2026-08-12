@@ -34,6 +34,9 @@ class AdminExtractionPolicyController(
         model: Model,
     ): String = boardView(route, model, guideOpen = !guide.isNullOrBlank())
 
+    // 추가 폼은 헤드리스 허가를 켜지 않는다(save 의 기본값 = 거부). 허가는 "메일로 받아 원장에 남기는" 조작이라
+    // 근거 입력·현재 상태 확인이 있는 상세 화면의 몫이다 — 목록의 한 줄짜리 폼에서 지나가듯 켤 일이 아니다.
+    // 그래서 여기서 HEADLESS_FIRST 를 고르면 default-deny 가드에 걸려 "상세에서 허가를 켜라"는 안내가 뜬다.
     @PostMapping
     fun add(
         @RequestParam domain: String,
@@ -65,24 +68,43 @@ class AdminExtractionPolicyController(
             "redirect:/admin/extraction-policies?missing"
         }
 
-    // 상세의 정책·사유 수정. save 가 upsert 라 추가 폼과 같은 경로를 탄다 (도메인은 PK 라 상세에서 바꾸지 않는다).
-    // 정책과 사유를 한 폼으로 받는 이유: 정책이 바뀌는 순간이 곧 근거가 새로 필요한 순간이라, 둘이 따로 저장되면
-    // "403 봇 차단" 사유가 SUPPORTED 행에 남는 식으로 근거가 정책과 어긋난다.
+    // 상세의 정책·사유·헤드리스 허가 수정. save 가 upsert 라 추가 폼과 같은 경로를 탄다 (도메인은 PK 라 상세에서
+    // 바꾸지 않는다). 정책과 사유를 한 폼으로 받는 이유: 정책이 바뀌는 순간이 곧 근거가 새로 필요한 순간이라, 둘이
+    // 따로 저장되면 "403 봇 차단" 사유가 SUPPORTED 행에 남는 식으로 근거가 정책과 어긋난다. 허가도 같은 폼에 둔다 —
+    // 허가와 정책이 따로 저장되면 "허가 없는 HEADLESS_FIRST" 같은 어긋난 중간 상태를 지나야 한다.
+    //
+    // headlessAllowed 는 체크박스라 끄면 파라미터 자체가 오지 않는다 — 없음을 곧 거부(false)로 읽는다(default-deny).
     @PostMapping("/{domain}")
     fun update(
         @PathVariable domain: String,
         @RequestParam route: ExtractionRoute,
         @RequestParam(required = false) reason: String?,
+        @RequestParam(required = false) headlessAllowed: Boolean?,
+        @RequestParam(required = false) permissionRef: String?,
         request: HttpServletRequest,
         model: Model,
     ): String =
         try {
-            adminExtractionPolicyService.save(domain, route, reason, actor = AdminSession.actorName(request), clientIp = ClientIp.of(request))
+            adminExtractionPolicyService.save(
+                domain,
+                route,
+                reason,
+                actor = AdminSession.actorName(request),
+                clientIp = ClientIp.of(request),
+                headlessAllowed = headlessAllowed ?: false,
+                permissionRef = permissionRef,
+            )
             "redirect:/admin/extraction-policies?updated"
         } catch (e: IllegalArgumentException) {
             model.addAttribute("error", e.message)
             model.addAttribute("draftReason", reason)
-            detailView(adminExtractionPolicyService.find(domain), model, selectedRoute = route.name)
+            detailView(
+                adminExtractionPolicyService.find(domain),
+                model,
+                selectedRoute = route.name,
+                draftHeadlessAllowed = headlessAllowed ?: false,
+                draftPermissionRef = permissionRef,
+            )
         }
 
     @PostMapping("/{domain}/delete")
@@ -119,15 +141,22 @@ class AdminExtractionPolicyController(
 
     // knownRoute: 저장된 route 문자열이 이 바이너리의 enum 에 있는가. 없으면(신버전이 만든 값 → 구버전 롤백)
     // select 에 고를 항목이 없으므로 화면이 경고를 띄우고 운영자가 알려진 정책으로 교체하거나 삭제하게 한다.
+    //
+    // 허가 입력값은 selectedRoute 와 같은 방식으로 컨트롤러가 확정해 넘긴다 — 에러 재표시에서는 방금 제출한
+    // 값을, 평소에는 저장된 값을 보여준다(체크 해제는 draft 가 false 라 그대로 유지된다).
     private fun detailView(
         policy: ExtractionPolicyView,
         model: Model,
         selectedRoute: String? = null,
+        draftHeadlessAllowed: Boolean? = null,
+        draftPermissionRef: String? = null,
     ): String {
         model.addAttribute("policy", policy)
         model.addAttribute("routes", ExtractionRoute.entries)
         model.addAttribute("selectedRoute", selectedRoute ?: policy.route)
         model.addAttribute("knownRoute", ExtractionRoute.entries.any { it.name == policy.route })
+        model.addAttribute("headlessAllowedChecked", draftHeadlessAllowed ?: policy.headlessAllowed)
+        model.addAttribute("permissionRefValue", draftPermissionRef ?: policy.permissionRef)
         return "admin/extraction-policy-detail"
     }
 
