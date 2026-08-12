@@ -15,6 +15,12 @@ interface ExtractionRoutingPolicy {
     // 이 링크의 host 에 지정된 정책. 정책 행이 없으면 null — 기본 추출 체인(구조화 → LLM, 차단 시 헤드리스 에스컬레이트).
     fun routeOf(link: ProductLink): ExtractionRoute?
 
+    // 이 링크의 host 를 헤드리스(브라우저)로 열어도 되는가 — 플랫폼에서 받은 명시적 허가의 판정. 기본은 거부다:
+    // 정책 행이 없으면(= 대부분의 도메인) false 이고, 행이 있어도 허가를 켜지 않았으면 false 다.
+    // 인터페이스 기본 구현을 false 로 두는 이유는 그 default-deny 를 시그니처에 박기 위해서다 — 허가 원장을
+    // 아는 구현(DbExtractionRoutingPolicy)만 true 를 낼 수 있고, 원장을 모르는 대체 구현은 거부로 수렴한다.
+    fun headlessAllowedOf(link: ProductLink): Boolean = false
+
     // 등록 입력 경계 전용 — UNSUPPORTED 플랫폼이면 등록을 거른다(400). parse(형식 불변식)와 분리된 정책 계약이라
     // 등록 경계가 진다: 이미 저장된 미지원 URL 조회·redirect 추적은 막지 않고, 차단이 풀리면 백오피스에서 행만 지운다.
     fun verifyRegistrable(link: ProductLink) {
@@ -57,7 +63,7 @@ class DbExtractionRoutingPolicy(
             log.warn("모르는 추출 route 를 스킵(해당 도메인은 기본 체인): domain={} route={}", entity.domain, entity.route)
             return null
         }
-        return DomainPolicy(entity.domain, route)
+        return DomainPolicy(entity.domain, route, entity.headlessAllowed)
     }
 
     // 백오피스 수정 직후(afterCommit)와 주기 재적재가 함께 부른다. 주기 재적재는 다른 인스턴스에서 바뀐 정책을
@@ -67,13 +73,20 @@ class DbExtractionRoutingPolicy(
     @Scheduled(fixedDelay = RELOAD_INTERVAL_MS)
     fun reload() = load()
 
+    override fun routeOf(link: ProductLink): ExtractionRoute? = matched(link)?.route
+
+    // 허가는 매칭된 정책 행 하나가 답한다 — 행이 없으면(또는 모르는 route 라 캐시에서 스킵됐으면) false 로 떨어져
+    // 기본 거부가 유지된다. route 와 같은 최장 매치를 쓰므로 한 host 에 대해 두 값이 서로 다른 행을 가리키지 않는다.
+    override fun headlessAllowedOf(link: ProductLink): Boolean = matched(link)?.headlessAllowed ?: false
+
     // 길이 내림차순 목록의 첫 매치 = 가장 구체적인 정책. domain 이 PK 라 같은 도메인 문자열의 중복은 없고,
     // 길이가 같은 서로 다른 도메인을 한 host 가 동시에 suffix 로 가질 수 없어 동률도 없다.
-    override fun routeOf(link: ProductLink): ExtractionRoute? = policies.firstOrNull { link.matchesAnyDomain(it.domains) }?.route
+    private fun matched(link: ProductLink): DomainPolicy? = policies.firstOrNull { link.matchesAnyDomain(it.domains) }
 
     private class DomainPolicy(
         val domain: String,
         val route: ExtractionRoute,
+        val headlessAllowed: Boolean,
     ) {
         // matchesAnyDomain 이 Collection 을 받으므로 미리 감싸 판정마다 리스트를 재생성하지 않는다.
         val domains: List<String> = listOf(domain)

@@ -26,6 +26,12 @@
     input{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
     input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
     .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
+    /* 허가 체크박스. 위의 input 전역 규칙(width:100%)이 체크박스에도 걸리므로 여기서 되돌린다. */
+    .check{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:500;color:var(--ink);margin:0;cursor:pointer;}
+    .check input{width:auto;padding:0;margin:0;accent-color:var(--accent);cursor:pointer;}
+    /* 허가 여부는 도메인 옆에서 한눈에 보여야 하는 상태다 — 폼을 읽어야 알 수 있으면 원장이 아니다. */
+    .badge.allowed{background:var(--violet-soft);color:var(--violet);}
+    .badge.denied{background:#fff;color:#9aa1aa;border:1px dashed #ccd2d9;}
     /* 정책 설명은 목록 화면의 "정책 종류 설명" 한 곳에만 둔다. 여기 복사해 두면 한쪽만 고쳐져 어긋난다. */
     .hint a{color:var(--accent);font-weight:700;text-decoration:none;}
     .hint a:hover{text-decoration:underline;}
@@ -63,6 +69,8 @@
     <div class="domain" th:text="${policy.domain}">example.com</div>
     <div class="meta">
       <span class="badge" th:classappend="${knownRoute} ? ${policy.route} : 'unknown'" th:text="${policy.route}">ROUTE</span>
+      <span class="badge" th:classappend="${policy.headlessAllowed} ? 'allowed' : 'denied'"
+            th:text="${policy.headlessAllowed} ? '헤드리스 허가' : '헤드리스 불가'">헤드리스 불가</span>
       <span>마지막 수정 <b th:text="${#temporals.format(policy.updatedAt, 'yyyy-MM-dd HH:mm')}">-</b></span>
     </div>
 
@@ -92,6 +100,26 @@
       <div class="hint">정책을 바꿀 때 근거도 함께 고쳐 주세요. 사유가 옛 정책의 것으로 남으면 다음 사람이 잘못된 근거를 믿게 됩니다.<br>
         <b>날짜는 적지 않습니다.</b> 언제 바뀌었는지는 위의 수정일이 답합니다.</div>
 
+      <!-- 허가 원장. 정책과 같은 폼에 두는 이유: 따로 저장되면 "허가 없는 HEADLESS_FIRST" 같은 어긋난 중간 상태를
+           지나야 하고 그 창에서 브라우저 직행이 열린다. 한 번의 저장으로 허가와 정책이 함께 확정된다. -->
+      <div class="lbl">헤드리스 허가</div>
+      <label class="check" for="headlessAllowed">
+        <input id="headlessAllowed" name="headlessAllowed" type="checkbox" value="true"
+               th:checked="${headlessAllowedChecked}">
+        <span>이 도메인을 브라우저로 열어도 된다고 <b>허가받았습니다</b></span>
+      </label>
+      <div class="hint">기본은 <b>거부</b>입니다. 플랫폼에서 명시적으로 허가를 받은 도메인만 켭니다.
+        <b>HEADLESS_FIRST 정책은 이 허가가 켜져 있어야</b> 저장됩니다.</div>
+
+      <label for="permissionRef">허가 근거</label>
+      <input id="permissionRef" name="permissionRef" type="text" maxlength="255" autocomplete="off"
+             placeholder="예: 제휴 담당자 메일 회신 (2026-08-11 수신, 홍길동)"
+             th:value="${permissionRefValue}">
+      <div class="hint">허가를 켜려면 근거가 필요합니다. 나중에 <b>누가 언제 무엇을 근거로 열었는지</b> 되짚을 수 있게
+        메일 스레드·수신일·담당자를 남겨 주세요.
+        <span th:if="${policy.permissionGrantedAt}">현재 허가 시각:
+          <b th:text="${#temporals.format(policy.permissionGrantedAt, 'yyyy-MM-dd HH:mm')}">-</b></span></div>
+
       <button class="btn" type="submit">저장</button>
       <a class="btn ghost" th:href="@{/admin/extraction-policies}">취소</a>
     </form>
@@ -105,7 +133,9 @@
         <th:block th:case="'HEADLESS_FIRST'">삭제하면 이 도메인은 정책 없음으로 돌아가, 브라우저로 여는 대신 <b>기본 추출</b>(정적 fetch 부터)을 탑니다.</th:block>
         <th:block th:case="'UNSUPPORTED'">삭제 즉시 이 도메인의 <b>사용자 등록이 다시 열립니다</b>. 정책 없음으로 돌아가 기본 추출을 탑니다.</th:block>
         <th:block th:case="*">삭제해도 추출 동작은 그대로입니다 (모르는 정책은 이미 정책 없음처럼 처리됩니다). 남아 있던 이 행만 사라집니다.</th:block>
-        되돌리려면 정책을 새로 추가해야 합니다.</div>
+        되돌리려면 정책을 새로 추가해야 합니다.
+        <!-- 허가는 이 행에 얹혀 있다. 행이 사라지면 허가도 근거도 함께 사라진다는 사실을 삭제 전에 알린다. -->
+        <span th:if="${policy.headlessAllowed}"><b>헤드리스 허가와 그 근거도 함께 사라집니다</b> — 이 도메인은 다시 브라우저로 열 수 없게 됩니다.</span></div>
       <form method="post" th:action="@{/admin/extraction-policies/{d}/delete(d=${policy.domain})}">
         <button type="submit">이 정책 삭제</button>
       </form>
