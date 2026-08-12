@@ -39,6 +39,7 @@ import com.depromeet.piki.tournament.service.dto.StartResult
 import com.depromeet.piki.tournament.service.dto.TournamentStartResult
 import com.depromeet.piki.tournament.service.dto.TournamentSummary
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.context.ApplicationEventPublisher
@@ -68,8 +69,12 @@ class TournamentService(
     // 기존 계약을 이 게이트가 404 로 바꾸지 않기 위해서다(FCM 토큰 등록의 rejectIfWithdrawnForUpdate 와 같은 결).
     // 게이트에 구멍을 내지 않는다: 게스트는 발급이 곧 users 행 생성이라(UserService.createGuest) 반드시 행이 있고,
     // 토큰은 우리가 서명하므로 "행 없는 유효 토큰" 은 정상 경로에서 만들어지지 않는다.
+    // 탈퇴(tombstone) 계정도 막는다 — anonymize 는 닉네임·프로필만 비우고 identityType 은 MEMBER 로 남기므로,
+    // identityType 만 보면 죽은 계정이 토너먼트를 만든다. 탈퇴 시 토큰 무효화가 부분 실패한 창에서 실제로 닿을 수 있다
+    // (위시가 findActiveById 로 막는 것과 같은 사유, #691).
     private fun requireMember(userId: UUID) {
         val user = userRepository.findById(userId) ?: return
+        user.deletedAt?.let { throw UserException.deletedUser() }
         if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
     }
 

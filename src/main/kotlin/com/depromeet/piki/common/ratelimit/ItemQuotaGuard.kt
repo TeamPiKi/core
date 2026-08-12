@@ -28,18 +28,21 @@ class ItemQuotaGuard(
         if (!properties.enabled) return
 
         val verdict =
-            runCatching {
+            try {
                 store.tryConsume(
                     key = scope.keyPrefix + ownerId,
                     amount = amount,
                     limit = properties.limitOf(scope),
                     windowMillis = properties.window.toMillis(),
                 )
-            }.getOrElse { e ->
+            } catch (e: Exception) {
                 // fail-open — Redis 장애로 등록 기능 전체가 멈추는 것보다, 한도가 잠시 안 걸리는 쪽이 낫다.
                 // 이 선택의 위험(장애 창 동안 한도 없이 호출됨)은 제한적이다: Redis 가 죽으면 refresh 토큰 저장소도
                 // 함께 죽어 로그인 흐름이 이미 망가지므로, 그 창에서 대량 호출이 지속되기 어렵다.
                 // 외부 의존성 실패라 warn (로그 레벨 정책).
+                //
+                // runCatching 이 아니라 catch(Exception) 인 이유: runCatching 은 Throwable 을 잡아 OutOfMemoryError
+                // 같은 치명적 Error 까지 삼킨다. 그런 상황에서 fail-open 으로 요청을 계속 받으면 장애를 키운다.
                 log.warn("아이템 한도 검사 실패 — 통과시킨다(fail-open). scope={} ownerId={} amount={}", scope, ownerId, amount, e)
                 return
             }

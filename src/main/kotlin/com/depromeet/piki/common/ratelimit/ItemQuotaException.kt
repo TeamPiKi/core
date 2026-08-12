@@ -33,6 +33,10 @@ class ItemQuotaException private constructor(
             require(errorCode.category == ErrorCategory.TOO_MANY_REQUESTS) {
                 "한도 초과 예외의 category 는 TOO_MANY_REQUESTS 여야 한다: ${errorCode.code} → ${errorCode.category}"
             }
+            // 0 이면 클라가 즉시 재시도해 또 거부되고, 음수는 Retry-After 로 나갈 수 없는 값이다.
+            // 현재 유일한 호출자(RedisItemQuotaStore)가 최소 1초를 보장하지만 그건 그쪽 사정이라,
+            // 이 팩토리로 만드는 예외는 어느 호출자가 오든 유효한 재시도 시점을 갖도록 여기서 못박는다.
+            require(retryAfterSeconds > 0) { "재시도 시점($retryAfterSeconds)은 양수여야 한다." }
             return ItemQuotaException(errorCode, retryAfterSeconds)
         }
     }

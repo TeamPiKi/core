@@ -26,8 +26,8 @@ import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 // 아이템 등록 한도(#339)의 계약 검증. 한도 자체의 산술(창 경계·잔액 판정)은 RedisItemQuotaStore 쪽 검증이
 // 맡고, 여기서는 "진입점에서 무엇이 얼마나 차감되고 넘치면 어떤 응답이 나가는가" 라는 계약만 본다.
@@ -211,11 +211,16 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                         .content("""{"url":"https://www.musinsa.com/products/4"}"""),
                 ).andExpect(status().isTooManyRequests)
                 .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.code))
-                // 응답 문구가 오너의 사용량을 드러내지 않는지 — 남의 사용량은 요청자에게 알릴 정보가 아니다.
                 .andExpect(jsonPath("$.detail").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message))
                 .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
 
-            assertTrue(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message.contains("토너먼트"))
+            // 이 응답은 참여 게스트도 받는다. 남의(오너의) 사용량은 요청자에게 알릴 정보가 아니므로 문구가
+            // 그것을 드러내지 않는지 금지 단어 부재로 고정한다 — "토너먼트가 들어있다" 같은 단언은 이 규칙과
+            // 무관해서, 문구를 "오너의 남은 사용량이 0이에요" 로 바꿔도 통과해버린다.
+            val message = TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message
+            listOf("오너", "소유자", "사용량", "남은").forEach {
+                assertFalse(message.contains(it), "429 문구가 오너의 사용량을 드러낸다: $message")
+            }
         } finally {
             stubItemParsingWorker.enabled = true
         }

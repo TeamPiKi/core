@@ -107,6 +107,9 @@ class TournamentItemService(
     ): List<PresignedRawUpload> {
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        // content-type 검증을 차감 앞으로 당긴다 — 지원하지 않는 MIME 을 보낸 요청이 오너의 몫을 깎고 400 을 받지 않게 한다
+        // (위시 presignImageUploads 와 같은 순서).
+        contentTypes.forEach { ProductImage.extensionForMimeType(it) }
         // 위시 v2 와 같은 이유로 발급 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 한도를 우회한다. confirm 은 차감하지 않는다(이중 차감 방지).
         itemQuotaGuard.consume(

@@ -36,8 +36,10 @@ data class ItemQuotaProperties(
     val tournamentLimit: Int = 30,
 ) {
     init {
-        require(!window.isZero && !window.isNegative) {
-            "item-quota.window($window)는 양수여야 한다 — 0 이면 창이 즉시 만료돼 한도가 무의미해진다."
+        // 밀리초로 환산해 검사한다 — Redis PEXPIRE 가 ms 단위라, 1ms 미만(예: 500us)은 양수여도 환산 결과가 0 이 되어
+        // 창이 즉시 만료된다. 그러면 매 요청이 새 창을 열어 한도가 사실상 무제한이 되는데, 설정만 보면 정상으로 보인다.
+        require(window.toMillis() > 0) {
+            "item-quota.window($window)는 1ms 이상이어야 한다 — 그 미만은 창이 즉시 만료돼 한도가 무의미해진다."
         }
         require(wishLimit > 0) { "item-quota.wish-limit($wishLimit)은 양수여야 한다 — 0 이면 위시 등록이 통째로 막힌다." }
         require(tournamentLimit > 0) {

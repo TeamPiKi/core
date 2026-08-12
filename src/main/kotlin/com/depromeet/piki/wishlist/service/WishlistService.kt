@@ -105,6 +105,10 @@ class WishlistService(
     ): List<PresignedRawUpload> {
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        // content-type 검증을 차감 앞으로 당긴다 — presignRawUploads 안에서 걸러도 결과는 같지만, 그러면 지원하지
+        // 않는 MIME 을 보낸 요청이 몫을 깎고 400 을 받는다. v1(registerFromImages)이 ProductImage.of 로 형식을
+        // 먼저 거르는 것과 순서를 맞춘다. 같은 검증이 발급 시점에 한 번 더 도는 것은 부작용 없는 순수 함수라 무해하다.
+        contentTypes.forEach { ProductImage.extensionForMimeType(it) }
         // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
         // 발급만 받고 업로드를 안 하면 그만큼 몫을 손해 보지만, 그건 클라이언트가 자기 요청을 버린 경우다.

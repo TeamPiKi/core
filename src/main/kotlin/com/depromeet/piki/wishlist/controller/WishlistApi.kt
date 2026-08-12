@@ -10,6 +10,7 @@ import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -103,6 +104,13 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "429",
                 description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -443,6 +451,13 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "429",
                 description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -651,6 +666,13 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "429",
                 description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -741,6 +763,13 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "429",
                 description = "$RATE_LIMIT_DESCRIPTION 발급 시점에 차감하므로 이어지는 confirm 은 추가로 소모하지 않는다.",
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

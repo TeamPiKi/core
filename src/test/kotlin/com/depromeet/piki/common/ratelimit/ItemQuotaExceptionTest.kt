@@ -30,6 +30,18 @@ class ItemQuotaExceptionTest {
     }
 
     @Test
+    fun `재시도 시점이 0 이하면 코드 버그로 즉시 실패한다`() {
+        // 0 이면 클라가 즉시 재시도해 또 거부되고, 음수는 Retry-After 로 나갈 수 없는 값이다.
+        // 지금 유일한 호출자는 최소 1초를 보장하지만, 그건 그쪽 사정이라 팩토리가 자기 불변식으로 못박는다.
+        assertFailsWith<IllegalArgumentException> {
+            ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = 0)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = -1)
+        }
+    }
+
+    @Test
     fun `429 가 아닌 code 로 만들면 코드 버그로 즉시 실패한다`() {
         // status 는 category 가 소유하므로, 429 아닌 code 를 넘기면 "한도 초과인데 409" 같은 응답이 조용히 나간다.
         // 클라이언트가 도달할 수 없는 개발자 실수라 계약 예외가 아니라 불변식 위반(require)으로 막는다.
