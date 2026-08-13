@@ -131,7 +131,8 @@ class TournamentService(
     }
 
     // 아이템 등록 한도(#339)를 차감하지 않는다 — 위시에 이미 있는 item 을 참조만 하므로 새 파싱·LLM 호출이 없다.
-    // 그 item 을 위시에 담을 때 이미 한 번 차감됐다.
+    // 그 item 을 위시에 담을 때 이미 한 번 차감됐다. 차감 여부의 기준은 경로가 아니라 "새 파싱 작업이 큐에
+    // 들어가는가" 이고, 이동은 여기 해당하지 않는다(같은 기준으로 새로고침은 파싱이 한 번 더 돌아 차감한다).
     @Transactional
     fun addItemsFromWish(
         userId: UUID,

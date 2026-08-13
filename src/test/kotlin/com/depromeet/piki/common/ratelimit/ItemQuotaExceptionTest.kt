@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.ratelimit
 
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.wishlist.domain.WishErrorCode
@@ -39,6 +40,25 @@ class ItemQuotaExceptionTest {
         assertFailsWith<IllegalArgumentException> {
             ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = -1)
         }
+    }
+
+    @Test
+    fun `전역 가용량 소진은 429 가 아니라 503 과 공통 code 를 쓴다`() {
+        // 요청자가 자기 몫을 다 쓴 것이 아니라 서비스가 꽉 찬 상태라 4xx 가 아니다. 어느 등록 경로로 닿든
+        // 원인도 안내도 하나라 도메인 code 를 두지 않고 공통 SERVER_BUSY 를 쓴다.
+        val exception = ItemQuotaException.capacityExceeded(retryAfterSeconds = 900)
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.httpStatus)
+        assertEquals(ErrorCategory.SERVER_BUSY, exception.category)
+        assertEquals(CommonErrorCode.SERVER_BUSY, exception.errorCode)
+        assertEquals(CommonErrorCode.SERVER_BUSY.message, exception.message)
+        assertEquals(900, exception.retryAfterSeconds)
+    }
+
+    @Test
+    fun `전역 가용량 소진도 재시도 시점이 0 이하면 코드 버그로 즉시 실패한다`() {
+        assertFailsWith<IllegalArgumentException> { ItemQuotaException.capacityExceeded(retryAfterSeconds = 0) }
+        assertFailsWith<IllegalArgumentException> { ItemQuotaException.capacityExceeded(retryAfterSeconds = -1) }
     }
 
     @Test

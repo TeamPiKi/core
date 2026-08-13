@@ -62,6 +62,14 @@ jwt:
   refresh-token-expiry: 14d
   refresh-token-grace: 10s
 
+# 아이템 등록 한도 — 계정별 축은 키가 사용자 UUID 로 갈려 테스트끼리 안 섞이지만, **전역 축은 키가 하나**라
+# 스위트 전체의 등록이 한 카운터에 누적된다(Redis 는 @Transactional 롤백 대상이 아니다). 운영 기본값(1000)을
+# 그대로 쓰면 등록이 많은 스위트가 상한에 닿아 무관한 테스트가 503 으로 깨진다. 전역 축의 강제를 검증하는
+# 테스트는 카운터를 직접 채워 상한 상태를 만들고 끝에서 지우므로(ItemQuotaIntegrationTest), 여기선 넉넉히 열어둔다.
+# 나머지 값(enabled·window·wish-limit·tournament-limit)은 운영과 같은 data class 기본값을 그대로 쓴다.
+item-quota:
+  capacity-limit: 1000000
+
 # S3 업로드는 ImageStorage stub 으로 격리되지만, S3Properties·S3Client 빈 자체는 컨텍스트에 생성되므로
 # 더미 값으로 부팅만 통과시킨다 (S3Properties.init 의 notBlank 검증 충족).
 s3:

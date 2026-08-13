@@ -21,11 +21,21 @@ import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 // 아이템 등록 한도(#339) 응답 설명. 위시 등록 계열 4개 엔드포인트가 같은 문구를 쓰므로 한 곳에 둔다.
-// 세는 단위가 요청 수가 아니라 item 수라는 점이 클라이언트 계약의 핵심이라 명시한다.
+// 세는 단위가 요청 수가 아니라 item 수라는 점, 그리고 몫이 위시 전용이 아니라 계정 전체 몫이라는 점이
+// 클라이언트 계약의 핵심이라 명시한다.
 private const val RATE_LIMIT_DESCRIPTION =
-    "아이템 등록 한도 초과 (code: WISH-010). 한도는 요청 수가 아니라 등록하는 item 수로 센다 — " +
-        "이미지 5장 등록은 5 를 소모한다. 남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) " +
-        "이 응답은 몫을 이미 다 쓴 뒤부터 나온다. Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
+    "아이템 등록 한도 초과 (code: WISH-010). 몫은 위시 전용이 아니라 계정 하나의 몫이라, 이 사용자가 소유한 " +
+        "토너먼트에 아이템이 추가된 양(참여 게스트가 넣은 것 포함)도 같은 몫에서 빠진다. 한도는 요청 수가 아니라 " +
+        "등록하는 item 수로 센다 — 이미지 5장 등록은 5 를 소모하고, 새로고침도 파싱이 다시 돌므로 1 을 소모한다. " +
+        "남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
+        "Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
+
+// 전역 가용량 소진(#927) 응답 설명. 429 와 원인이 다르다 — 요청자가 자기 몫을 다 쓴 것이 아니라 서비스가 꽉 찼다.
+private const val CAPACITY_DESCRIPTION =
+    "서비스 전체의 시간당 처리 가용량 소진 (code: COMMON-SERVER-BUSY). 요청자가 자기 몫을 다 쓴 429 와 달리, " +
+        "서비스가 감당하기로 정한 총량이 찬 상태라 같은 시각 모든 사용자에게 동일하게 나간다. 정상 운영에서는 " +
+        "닿지 않는 마지노선이므로 이 응답이 반복되면 서버 쪽 이상 신호다. Retry-After 헤더에 가용량이 회복되기까지 " +
+        "남은 시간(초)이 실린다."
 
 @Tag(name = "Wishlist", description = "위시리스트 등록/조회/복구/삭제 API")
 interface WishlistApi {
@@ -108,6 +118,23 @@ interface WishlistApi {
                     Header(
                         name = "Retry-After",
                         description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "503",
+                description = CAPACITY_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
                         schema = Schema(type = "integer", format = "int64"),
                     ),
                 ],
@@ -465,6 +492,23 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "503",
+                description = CAPACITY_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun refreshWishItem(
@@ -690,6 +734,23 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "503",
+                description = CAPACITY_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun registerFromImages(
@@ -780,6 +841,23 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "502",
                 description = "presigned URL 발급 실패 (스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-002",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "503",
+                description = "$CAPACITY_DESCRIPTION 발급 시점에 확인하므로 이어지는 confirm 은 이 응답을 받지 않는다.",
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "가용량이 회복되기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

@@ -1,6 +1,12 @@
 package com.depromeet.piki.common.ratelimit
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.exception.CommonErrorCode
+import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.repository.ItemJpaRepository
+import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageParsingWorker
 import com.depromeet.piki.support.StubImageStorage
@@ -8,7 +14,9 @@ import com.depromeet.piki.support.StubItemParsingWorker
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
+import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -26,6 +34,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -68,13 +77,22 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
 
+    @Autowired
+    private lateinit var itemJpaRepository: ItemJpaRepository
+
+    @Autowired
+    private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
+
+    @Autowired
+    private lateinit var wishJpaRepository: WishJpaRepository
+
     @Test
     fun `위시 링크 등록이 한도를 넘으면 429 와 WISH-010 code, Retry-After 헤더를 반환한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
         // 한도를 정확히 소진한 상태 — 다음 1건이 넘긴다.
-        fillQuota(ItemQuotaScope.WISH, userId, properties.wishLimit)
+        fillQuota(userId, properties.userLimit)
 
         mockMvc
             .perform(
@@ -90,7 +108,40 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
 
         // 거부된 요청은 카운터를 올리지 않는다 — 올리면 재시도할수록 창이 끝나도 한도를 넘긴 채 시작한다.
-        assertEquals(properties.wishLimit.toLong(), currentCount(ItemQuotaScope.WISH, userId))
+        assertEquals(properties.userLimit.toLong(), currentCount(userId))
+    }
+
+    @Test
+    fun `전역 가용량이 소진되면 자기 몫이 남아 있어도 503 과 SERVER-BUSY code, Retry-After 헤더를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        // 이 사용자는 자기 몫을 한 건도 쓰지 않았다. 그래도 막힌다는 것이 이 축의 존재 이유다 —
+        // 계정별 한도는 "한 사람이 100번" 을 막지만 "100명이 각자 10번" 은 막지 못한다.
+        fillCapacity()
+
+        try {
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/9"}"""),
+                ).andExpect(status().isServiceUnavailable)
+                // 사용자 잘못이 아니라 서비스가 꽉 찬 것이라 4xx 가 아니고, 도메인 code 도 아니다.
+                .andExpect(jsonPath("$.code").value(CommonErrorCode.SERVER_BUSY.code))
+                .andExpect(jsonPath("$.detail").value(CommonErrorCode.SERVER_BUSY.message))
+                .andExpect(jsonPath("$.data").doesNotExist())
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+
+            // 전역에서 막힌 요청은 요청자의 몫을 건드리지 않는다. 깎으면 안내대로 재시도할 때마다 자기 몫을 잃고,
+            // 가용량이 회복된 뒤에도 자기 한도에 걸려 429 를 받게 된다.
+            assertNull(currentCount(userId))
+        } finally {
+            // 전역 카운터는 서비스에 하나뿐이라 UUID 로 격리할 수 없다. 지우지 않으면 같은 Redis 를 쓰는
+            // 이후 등록 테스트가 전부 503 으로 깨진다(Redis 는 @Transactional 롤백 대상이 아니다).
+            redisTemplate.delete(RedisItemQuotaStore.CAPACITY_KEY)
+        }
     }
 
     @Test
@@ -108,7 +159,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
 
         // 요청 1건이 아니라 3 이 빠져야 한다 — 장마다 추출이 따로 돌기 때문이다.
-        assertEquals(3L, currentCount(ItemQuotaScope.WISH, userId))
+        assertEquals(3L, currentCount(userId))
     }
 
     @Test
@@ -134,7 +185,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                     .getContentAsString(Charsets.UTF_8)
             val uploads = objectMapper.readTree(response).path("data").path("uploads")
             val keys = listOf(uploads.path(0).path("imageKey").asString(), uploads.path(1).path("imageKey").asString())
-            assertEquals(2L, currentCount(ItemQuotaScope.WISH, userId))
+            assertEquals(2L, currentCount(userId))
 
             mockMvc
                 .perform(
@@ -145,7 +196,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isCreated)
 
             // 발급 시점에 이미 깎았으므로 확정은 0 이다. 여기서 또 깎으면 이미지 한 장이 두 번 세어진다.
-            assertEquals(2L, currentCount(ItemQuotaScope.WISH, userId))
+            assertEquals(2L, currentCount(userId))
         } finally {
             stubImageParsingWorker.enabled = true
         }
@@ -157,7 +208,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
         // 잔액을 1 만 남긴다 — 5장 요청은 그보다 크다.
-        fillQuota(ItemQuotaScope.WISH, userId, properties.wishLimit - 1)
+        fillQuota(userId, properties.userLimit - 1)
 
         // 요청량은 판정에 쓰지 않으므로 통째로 통과한다. "2장만 남아서 안 됩니다" 로 막으면 사용자는 자기 잔액을
         // 모르는 채 몇 장으로 줄여야 할지도 알 수 없다 — 마지막 한 번은 성공시키고 그 다음부터 막는다.
@@ -170,7 +221,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
 
         // 한도를 넘겨 잔액이 음수가 됐다.
-        assertEquals((properties.wishLimit + 4).toLong(), currentCount(ItemQuotaScope.WISH, userId))
+        assertEquals((properties.userLimit + 4).toLong(), currentCount(userId))
 
         // 이제부터는 크기와 무관하게 거부다.
         mockMvc
@@ -204,38 +255,93 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
 
             // 요청자는 게스트지만 차감은 오너 몫에서 일어난다 — 게스트 계정을 갈아타도 한도가 리셋되지 않는 근거.
-            assertEquals(1L, currentCount(ItemQuotaScope.TOURNAMENT, ownerId))
-            assertNull(currentCount(ItemQuotaScope.TOURNAMENT, guestId))
+            assertEquals(1L, currentCount(ownerId))
+            assertNull(currentCount(guestId))
         } finally {
             stubItemParsingWorker.enabled = true
         }
     }
 
     @Test
-    fun `위시 한도를 다 써도 토너먼트 아이템은 담을 수 있다`() {
+    fun `위시로 몫을 다 쓰면 같은 계정의 토너먼트 아이템 추가도 막힌다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        fillQuota(ItemQuotaScope.WISH, ownerId, properties.wishLimit)
+        fillQuota(ownerId, properties.userLimit)
         stubItemParsingWorker.enabled = false
 
         try {
             val (tournamentId, _) = createTournament(mockMvc, ownerId)
 
-            // 두 축은 별개 키라 위시 소진이 토너먼트를 막지 않는다 — 합쳐 두면 "친구들이 내 토너먼트에 담아서
-            // 내가 내 위시를 못 쓰는" 반대 방향 사고도 함께 생긴다.
+            // 몫은 경로별이 아니라 계정 하나짜리다. 한때 위시·토너먼트를 별개 축으로 나눠 이 요청이 통과했는데,
+            // 그러면 한 계정의 실제 상한이 두 한도의 합이 되어 "이 계정이 시간당 얼마나 쓰나" 를 한 숫자로 말할 수 없다.
             mockMvc
                 .perform(
                     post("/api/v1/tournaments/$tournamentId/items/link")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""{"url":"https://www.musinsa.com/products/3"}"""),
-                ).andExpect(status().isOk)
-
-            assertEquals(1L, currentCount(ItemQuotaScope.TOURNAMENT, ownerId))
+                ).andExpect(status().isTooManyRequests)
+                // 카운터는 하나지만 응답 code 는 경로가 소유한다 — 토너먼트에서 막혔으면 토너먼트 code 다.
+                .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.code))
         } finally {
             stubItemParsingWorker.enabled = true
         }
+    }
+
+    @Test
+    fun `위시 등록과 토너먼트 추가가 같은 카운터를 함께 쓴다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertUser(ownerId, IdentityType.MEMBER)
+        stubItemParsingWorker.enabled = false
+
+        try {
+            val (tournamentId, _) = createTournament(mockMvc, ownerId)
+
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/10"}"""),
+                ).andExpect(status().isCreated)
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/11"}"""),
+                ).andExpect(status().isOk)
+
+            // 두 경로가 각자 카운터를 가지면 여기서 1 과 1 이 되어 이 단언이 깨진다.
+            assertEquals(2L, currentCount(ownerId))
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
+    fun `위시에 있는 아이템을 토너먼트로 담는 것은 몫을 쓰지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertUser(ownerId, IdentityType.MEMBER)
+        // 등록 API 를 태우지 않고 READY 위시를 바로 만든다 — 등록분 차감을 섞지 않아야 "이동이 0" 인지가 선명하다.
+        // (출전은 활성 snapshot 이 READY 인 item 만 허용하므로 PENDING 인 갓 등록분으로는 이 경로를 탈 수 없다.)
+        val itemId = insertReadyWish(ownerId)
+        val (tournamentId, _) = createTournament(mockMvc, ownerId)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isOk)
+
+        // 이동은 이미 있는 item 을 참조만 할 뿐 새 파싱이 없다. 여기서 깎으면 같은 상품이 두 번 세어진다
+        // (그 item 은 위시에 담길 때 이미 한 번 깎였다).
+        assertNull(currentCount(ownerId))
     }
 
     @Test
@@ -248,7 +354,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         try {
             val (tournamentId, inviteCode) = createTournament(mockMvc, ownerId)
             val guestId = joinAsGuest(mockMvc, tournamentId, inviteCode)
-            fillQuota(ItemQuotaScope.TOURNAMENT, ownerId, properties.tournamentLimit)
+            fillQuota(ownerId, properties.userLimit)
 
             mockMvc
                 .perform(
@@ -299,17 +405,42 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     // 카운터를 미리 채워 경계 직전 상태를 만든다. 창 TTL 은 운영 경로(Lua)가 첫 차감 때 걸므로 여기서도 함께 건다 —
     // TTL 없는 키를 남기면 이후 테스트가 같은 UUID 를 재사용할 때(없지만) 영구 키가 된다.
     private fun fillQuota(
-        scope: ItemQuotaScope,
         userId: UUID,
         amount: Int,
     ) {
-        redisTemplate.opsForValue().set(scope.keyPrefix + userId, amount.toString(), properties.window)
+        redisTemplate
+            .opsForValue()
+            .set(RedisItemQuotaStore.USER_KEY_PREFIX + userId, amount.toString(), properties.window)
     }
 
-    private fun currentCount(
-        scope: ItemQuotaScope,
-        userId: UUID,
-    ): Long? = redisTemplate.opsForValue().get(scope.keyPrefix + userId)?.toLong()
+    private fun currentCount(userId: UUID): Long? =
+        redisTemplate.opsForValue().get(RedisItemQuotaStore.USER_KEY_PREFIX + userId)?.toLong()
+
+    // 파싱이 끝난(READY) 위시 항목을 등록 API 없이 바로 만든다 — 토너먼트 출전은 활성 snapshot 이 READY 인
+    // item 만 허용하므로, 등록 API 로 만든 PENDING 항목으로는 이동 경로를 탈 수 없다. itemId 를 돌려준다.
+    private fun insertReadyWish(userId: UUID): Long {
+        val item = itemJpaRepository.save(Item())
+        val snapshot =
+            itemSnapshotJpaRepository.save(
+                ItemSnapshot(
+                    itemId = item.getId(),
+                    name = "한도 테스트 아이템",
+                    price = 10_000,
+                    currency = "KRW",
+                    status = ItemStatus.READY,
+                    extractedAt = LocalDateTime.now(),
+                ),
+            )
+        wishJpaRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+        return item.getId()
+    }
+
+    // 전역 카운터를 상한까지 채워 "서비스가 꽉 찬" 상태를 만든다. 부르는 테스트가 끝에서 반드시 키를 지운다.
+    private fun fillCapacity() {
+        redisTemplate
+            .opsForValue()
+            .set(RedisItemQuotaStore.CAPACITY_KEY, properties.capacityLimit.toString(), properties.window)
+    }
 
     private fun createTournament(
         mockMvc: MockMvc,

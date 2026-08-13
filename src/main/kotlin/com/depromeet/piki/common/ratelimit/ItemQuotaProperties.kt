@@ -3,10 +3,17 @@ package com.depromeet.piki.common.ratelimit
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
-// 아이템 등록 한도(#339) 설정. @ConfigurationPropertiesScan(PikiApplication)으로 자동 등록된다.
+// 아이템 등록 한도 설정. @ConfigurationPropertiesScan(PikiApplication)으로 자동 등록된다.
+//
+// 축이 둘이고 서로를 대체하지 않는다. **계정별**(#339)은 한 사람이 얼마나 쓸 수 있는지를, **전역**(#927)은
+// 서비스 전체가 얼마나 감당하는지를 정한다. 전자는 남용을, 후자는 정상 사용자가 몰리는 상황을 막는다.
 //
 // 세는 단위는 요청 수가 아니라 **큐에 넣는 item 수**다 — 이미지 등록은 한 요청이 최대 5장이고 장마다 추출이
 // 따로 돌므로, 요청 수로 세면 링크 1건과 이미지 5장이 같은 비용으로 취급돼 실제 소비가 5배까지 벌어진다.
+//
+// 무엇이 차감 대상인지의 기준은 **"새 파싱 작업이 큐에 들어가는가"** 하나다. 그래서 새로고침은 파싱이 한 번 더
+// 도므로 신규 등록과 같이 세고, 위시에 있는 item 을 토너먼트로 담는 것은 기존 item 을 참조만 하므로 세지 않는다
+// (그 item 은 위시에 담길 때 이미 한 번 깎였다).
 //
 // 기준은 "LLM 을 타는가" 가 아니라 **"외부에 돈이 나가는가"** 다. 등록 1건은 파싱이 파서로 풀려 LLM 을 안 타도
 // fetch 대역·residential proxy 요청(HEADLESS_FIRST 사이트)·헤드리스 렌더러 시간·이미지 저장·DB 행 영구 증가를
@@ -27,13 +34,30 @@ data class ItemQuotaProperties(
     // 끄면 차감·판정을 통째로 건너뛴다. 한도가 잘못 잡혀 정상 사용자를 막을 때 배포 없이 되돌리는 스위치다.
     val enabled: Boolean = true,
     val window: Duration = Duration.ofHours(1),
-    // 위시 등록 — 요청자 본인이 차감 주체다. 이미지 등록(최대 5장) 2번 또는 링크 10건에 해당한다.
-    val wishLimit: Int = 10,
-    // 토너먼트 아이템 등록 — 오너 한 명의 몫을 참여자 전원(최대 8명, 게스트 포함)이 나눠 쓴다.
-    // 위시보다 크게 두는 이유가 여기 있다: 같은 값이면 친구들이 넣은 만큼 오너가 체감하게 된다.
-    // "체감 완화" 를 차감 가중치(예: 0.5)로 풀지 않는 이유는 실제 비용과 카운터가 어긋나면 메트릭으로
-    // 실제 호출량을 읽을 수 없게 되기 때문이다 — 차감은 1:1 로 정직하게 두고 한도로 조절한다.
-    val tournamentLimit: Int = 30,
+    // 계정 한 명이 창당 쓸 수 있는 총량. **등록 경로를 가리지 않는 하나의 몫**이다 — 내 위시 등록, 내가 내
+    // 토너먼트에 넣는 것, 참여 게스트가 내 토너먼트에 넣는 것이 전부 여기서 깎인다.
+    //
+    // 한때 위시·토너먼트를 별개 축으로 나눴다가 합쳤다. 나눴던 이유는 "친구들이 내 토너먼트에 아이템을 넣어서
+    // 내가 내 위시리스트를 못 쓰는" 상황을 막으려던 것이고, 합치면 그 상황이 생긴다. 그럼에도 합친 이유는
+    // **막으려는 대상이 경로가 아니라 계정의 총 소비**이기 때문이다. 축이 둘이면 한 계정의 실제 상한이
+    // 둘의 합(예전 40)이 되어, "이 계정이 시간당 얼마나 쓰나" 를 한 숫자로 말할 수 없다.
+    val userLimit: Int = 30,
+    // 전역 가용량 상한(#927) — 계정별 한도 위에 얹는 총량이다. 계정별은 "한 사람이 100번" 을 막지만
+    // "100명이 각자 30번" 은 막지 못한다. 비용 방어가 아니라 **가용량 선언**이라, 정상 운영에서는 닿지 않아야 하는
+    // 마지노선이다. 닿았다면 인기가 아니라 이상 신호로 읽고 원인부터 가른다.
+    //
+    // 3000 은 계정 한도(30)를 꽉 채운 사용자 100명분이다. 파싱 워커가 maxPoolSize 8 · queueCapacity 0 이라
+    // 동시 처리는 최대 8건이고, 건당 소요를 파서 1~2초로 잡으면 이론 처리량이 시간당 14,000건을 넘는다
+    // (실측이 아니라 timeout 상한에서 잡은 추정). 헤드리스·LLM 이 섞이면 건당 5~20초까지 늘어 이론 처리량이
+    // 시간당 1,400건까지 떨어지는데, 그 구간에서는 이 상한이 워커보다 느슨해 상한에 닿기 전에 PENDING 이 쌓인다.
+    // 거부가 아니라 대기라 장애는 아니지만, 화이트리스트 전환으로 파서 위주가 되는 것을 전제로 잡은 값이다.
+    val capacityLimit: Int = 3_000,
+    // 상한의 몇 %에서 경고를 남길지. **상한에 닿으면 이미 늦으므로 이 지점이 실질 방어선이다** — 여기서
+    // 손 쓸 시간을 벌기 위한 값이지, 도달 자체가 정상이라는 뜻이 아니다.
+    //
+    // 기본 3000 기준 1980 건에서 울린다. 상한까지 1020 건이 남으므로, 원인을 가르고(정상 성장인지·특정 계정의
+    // 이상 패턴인지·파싱 실패 재시도 폭증인지) 손 쓸 여유가 창의 3분의 1 남는다.
+    val capacityAlertPercent: Int = 66,
 ) {
     init {
         // 밀리초로 환산해 검사한다 — Redis PEXPIRE 가 ms 단위라, 1ms 미만(예: 500us)은 양수여도 환산 결과가 0 이 되어
@@ -41,15 +65,23 @@ data class ItemQuotaProperties(
         require(window.toMillis() > 0) {
             "item-quota.window($window)는 1ms 이상이어야 한다 — 그 미만은 창이 즉시 만료돼 한도가 무의미해진다."
         }
-        require(wishLimit > 0) { "item-quota.wish-limit($wishLimit)은 양수여야 한다 — 0 이면 위시 등록이 통째로 막힌다." }
-        require(tournamentLimit > 0) {
-            "item-quota.tournament-limit($tournamentLimit)은 양수여야 한다 — 0 이면 토너먼트 아이템 등록이 통째로 막힌다."
+        require(userLimit > 0) { "item-quota.user-limit($userLimit)은 양수여야 한다 — 0 이면 아이템 등록이 통째로 막힌다." }
+        require(capacityLimit > 0) {
+            "item-quota.capacity-limit($capacityLimit)은 양수여야 한다 — 0 이면 모든 사용자의 등록이 통째로 막힌다."
+        }
+        // 상한은 100 까지 허용한다(도달 시점에만 경고). 0 이하면 첫 요청부터, 100 초과면 영원히 안 울려 둘 다 무의미하다.
+        require(capacityAlertPercent in 1..100) {
+            "item-quota.capacity-alert-percent($capacityAlertPercent)는 1 에서 100 사이여야 한다."
         }
     }
 
-    fun limitOf(scope: ItemQuotaScope): Int =
-        when (scope) {
-            ItemQuotaScope.WISH -> wishLimit
-            ItemQuotaScope.TOURNAMENT -> tournamentLimit
-        }
+    // 경고선(건수). 정수 나눗셈이라 내림되지만 경고 시점이 한 건 앞당겨질 뿐이라 무해하다.
+    val capacityAlertThreshold: Int get() = capacityLimit * capacityAlertPercent / 100
+
+    // 이번 차감이 경고선을 **처음** 넘겼는지. 넘긴 뒤 매 요청마다 경고하면 창이 끝날 때까지 같은 줄이 반복돼
+    // 알림이 무뎌지므로, "직전엔 아래였는데 지금은 위" 인 한 건만 참이 된다.
+    fun crossedCapacityAlert(
+        capacityUsed: Long,
+        amount: Int,
+    ): Boolean = capacityUsed >= capacityAlertThreshold && capacityUsed - amount < capacityAlertThreshold
 }

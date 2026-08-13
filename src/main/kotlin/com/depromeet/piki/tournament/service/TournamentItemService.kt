@@ -1,7 +1,6 @@
 package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
-import com.depromeet.piki.common.ratelimit.ItemQuotaScope
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
@@ -59,7 +58,7 @@ class TournamentItemService(
         // 권한·상태를 차감 전에 확인한다(이미지 경로와 같은 이유) — 참여자도 아닌 요청이 오너의 몫을 깎으면 안 된다.
         // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
-        itemQuotaGuard.consume(ItemQuotaScope.TOURNAMENT, ownerIdOf(tournamentId), 1, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
+        itemQuotaGuard.consume(ownerIdOf(tournamentId), 1, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
         // URL 경로는 PENDING snapshot 을 커밋만 하고(작업 큐 적재) 즉시 반환한다. 파싱은 디스패처(@Scheduled)가
         // PENDING 을 집어 워커에 넘긴다 — @Async 유실과 무관하게 최소 1회는 claim 된다(at-least-once).
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
@@ -78,12 +77,7 @@ class TournamentItemService(
         // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
         val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
         // 장마다 추출이 따로 도는 별개 item 이라 장수만큼 오너 몫에서 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
-        itemQuotaGuard.consume(
-            ItemQuotaScope.TOURNAMENT,
-            ownerIdOf(tournamentId),
-            images.size,
-            TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
-        )
+        itemQuotaGuard.consume(ownerIdOf(tournamentId), images.size, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
         // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
         val imageKeys = productImages.map { uploadRaw(it) }
         // 사전검증을 통과해도 정원은 persist 의 FOR UPDATE 가 최종 판정한다(동시 추가 race). 거기서 거부되면 방금 올린 raw 가
@@ -112,12 +106,7 @@ class TournamentItemService(
         contentTypes.forEach { ProductImage.extensionForMimeType(it) }
         // 위시 v2 와 같은 이유로 발급 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 한도를 우회한다. confirm 은 차감하지 않는다(이중 차감 방지).
-        itemQuotaGuard.consume(
-            ItemQuotaScope.TOURNAMENT,
-            ownerIdOf(tournamentId),
-            contentTypes.size,
-            TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
-        )
+        itemQuotaGuard.consume(ownerIdOf(tournamentId), contentTypes.size, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
         return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
             PendingUpload.tournament(key, userId, tournamentId, expiresAt)
         }
