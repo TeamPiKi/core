@@ -70,11 +70,17 @@ jobs:
       # shared-infra/contracts/extraction-error-codes.yaml 을 읽어 translate 매핑·메트릭 reason 과 대조한다.
       # 경로가 shared-infra 인 이유: infra 의 install.sh 도 로컬에 같은 경로로 설치해 로컬과 CI 가 같은 파일을 본다.
       # 체크아웃이 없으면 그 테스트가 실패한다(skip 하면 계약 강제가 조용히 사라지므로 의도된 동작).
+      # 옵션은 extractor 쪽 같은 스텝과 일치시킨다(extractor#32) — 같은 목적으로 같은 repo 를 받는 두 소비자가
+      # 갈리면 한쪽만 손보게 된다. sparse-checkout 은 필요한 디렉터리만, persist-credentials=false 는 러너에
+      # 자격증명을 남기지 않게, ref 는 어느 브랜치가 정본인지 명시한다.
       - name: Checkout extraction contract
         uses: actions/checkout@v4
         with:
           repository: TeamPiKi/infra
+          ref: main
           path: shared-infra
+          sparse-checkout: contracts
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
