@@ -6,6 +6,8 @@ import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.event.TournamentItemDeleted
 import com.depromeet.piki.tournament.event.TournamentJoined
@@ -13,6 +15,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.transaction.annotation.Transactional
+import java.util.UUID
 import kotlin.test.assertEquals
 
 // 핸들러가 이제 repo·resolver 를 주입받으므로 무인자 생성이 불가하다. 실제 와이어링된 빈을 autowire 해
@@ -38,6 +41,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var handlers: List<NotificationEventHandler<*>>
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
+
+    @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
 
     // eventType 은 제네릭 타입 인자 E 에서 GenericTypeResolver 로 자동 도출된다(::class 명시 제거).
     // reflection 기반이라 클래스 계층이 바뀌면 조용히 틀어질 수 있어, 도출 결과를 직접 못 박아 회귀를 잡는다.
@@ -85,5 +90,23 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9102L, snapshotId = 9_999_999L))
 
         assertEquals("상품", context.variables["itemName"])
+    }
+
+    // 파싱 완료 문구는 등록 출처(위시/토너먼트)로 갈리지 않는다 — 갈리면 안 되는 이유가 구조에 있다.
+    // dispatcher 는 문구·라우팅을 수신자 루프 **밖에서 한 번** 해석해 전 수신자에게 같은 값을 박는데, 공유(#825)의
+    // "진행 중 합류" 로 한 snapshot 에 위시 주인과 토너먼트 등록자가 함께 붙을 수 있다. 그 상태로 출처별 문구를 쓰면
+    // 위시 주인이 토너먼트 문구를 받는다. 출처별 분기는 수신자별 라우팅 해석과 함께 후속(#933)에서 한다.
+    //
+    // 그래서 "출전 pin 이 있어도 문구 변수가 늘지 않는다" 를 못 박는다 — 수신자별 해석 없이 분기를 되살리면 여기서 깨진다.
+    @Test
+    fun `파싱 완료 문구 변수는 출전 pin 이 있어도 itemName 하나뿐이다`() {
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9103L, name = "나이키 에어맥스")).getId()
+        // 이 버전을 pin 한 출전이 있으면 라우팅은 Tournament 로 해석된다. 그래도 문구는 그대로여야 한다.
+        tournamentItemJpaRepository.save(TournamentItem(tournamentId = 9201L, userId = UUID.randomUUID(), snapshotId = snapshotId))
+
+        val context = itemParsingCompletedHandler.resolveActorContext(ItemParsingCompleted(itemId = 9103L, snapshotId = snapshotId))
+
+        assertEquals(setOf("itemName"), context.variables.keys)
+        assertEquals("나이키 에어맥스", context.variables["itemName"])
     }
 }
