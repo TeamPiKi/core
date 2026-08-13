@@ -186,7 +186,8 @@ item-quota:
   # 도달은 인기 신호가 아니라 이상 신호다. 파싱 경량화(화이트리스트 전환) 동안 더 조이고 싶으면 배포 없이 내린다.
   capacity-limit: ${ITEM_QUOTA_CAPACITY_LIMIT:3000}
   # 경고선(%). 상한에 닿으면 이미 사용자가 막히고 있어 늦으므로, 손 쓸 시간을 버는 이 지점이 실질 방어선이다.
-  capacity-alert-percent: ${ITEM_QUOTA_CAPACITY_ALERT_PERCENT:80}
+  # 기본 3000 기준 1980 건에서 울려 상한까지 창의 3분의 1(1020건)이 남는다.
+  capacity-alert-percent: ${ITEM_QUOTA_CAPACITY_ALERT_PERCENT:66}
 
 notification:
   # 알림 보존 기간(일). 생성 후 이 기간을 넘긴 알림은 N일 자동삭제 스케줄러(NotificationCleanupScheduler)가 하드삭제한다.

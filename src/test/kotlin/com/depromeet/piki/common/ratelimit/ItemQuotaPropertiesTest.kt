@@ -54,34 +54,35 @@ class ItemQuotaPropertiesTest {
 
     @Test
     fun `경고선은 상한의 비율만큼으로 계산된다`() {
-        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+        // 운영 기본값과 같은 조합 — 3000 의 66% 는 1980 이다.
+        val properties = ItemQuotaProperties(capacityLimit = 3_000, capacityAlertPercent = 66)
 
-        assertEquals(800, properties.capacityAlertThreshold)
+        assertEquals(1_980, properties.capacityAlertThreshold)
     }
 
     @Test
     fun `경고선 계산은 내림한다`() {
-        // 정수 나눗셈이라 33 * 80 / 100 = 26.4 → 26. 경고가 한 건 앞당겨질 뿐이라 무해하다.
-        assertEquals(26, ItemQuotaProperties(capacityLimit = 33, capacityAlertPercent = 80).capacityAlertThreshold)
+        // 정수 나눗셈이라 10 * 66 / 100 = 6.6 → 6. 경고가 한 건 앞당겨질 뿐이라 무해하다.
+        assertEquals(6, ItemQuotaProperties(capacityLimit = 10, capacityAlertPercent = 66).capacityAlertThreshold)
     }
 
     @Test
     fun `경고선을 넘긴 첫 차감에서만 참이 된다`() {
-        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+        val properties = ItemQuotaProperties(capacityLimit = 3_000, capacityAlertPercent = 66)
 
-        // 799 까지는 아직 아래. 800 을 만든 이 한 건이 경계를 넘긴 건이다.
-        assertFalse(properties.crossedCapacityAlert(capacityUsed = 799, amount = 1))
-        assertTrue(properties.crossedCapacityAlert(capacityUsed = 800, amount = 1))
+        // 1979 까지는 아직 아래. 1980 을 만든 이 한 건이 경계를 넘긴 건이다.
+        assertFalse(properties.crossedCapacityAlert(capacityUsed = 1_979, amount = 1))
+        assertTrue(properties.crossedCapacityAlert(capacityUsed = 1_980, amount = 1))
         // 이미 넘긴 뒤의 차감은 거짓 — 참으로 두면 창이 끝날 때까지 매 요청이 같은 경고를 반복해 알림이 무뎌진다.
-        assertFalse(properties.crossedCapacityAlert(capacityUsed = 801, amount = 1))
+        assertFalse(properties.crossedCapacityAlert(capacityUsed = 1_981, amount = 1))
     }
 
     @Test
     fun `한 번에 경고선을 건너뛰어도 그 차감에서 참이 된다`() {
-        val properties = ItemQuotaProperties(capacityLimit = 1_000, capacityAlertPercent = 80)
+        val properties = ItemQuotaProperties(capacityLimit = 3_000, capacityAlertPercent = 66)
 
-        // 이미지 5장 등록처럼 한 요청이 여러 건을 소모하면 경고선을 정확히 밟지 않고 넘어간다(798 → 803).
+        // 이미지 5장 등록처럼 한 요청이 여러 건을 소모하면 경고선을 정확히 밟지 않고 넘어간다(1978 → 1983).
         // "누적 == 경고선" 으로 판정했다면 이 경우를 통째로 놓쳐 경고가 영영 안 울린다.
-        assertTrue(properties.crossedCapacityAlert(capacityUsed = 803, amount = 5))
+        assertTrue(properties.crossedCapacityAlert(capacityUsed = 1_983, amount = 5))
     }
 }

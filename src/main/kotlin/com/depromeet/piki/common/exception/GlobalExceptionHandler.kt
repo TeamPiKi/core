@@ -36,7 +36,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
                 log.error("[{}] {} -> {}", e.javaClass.simpleName, e.message, status.value(), e)
             // SERVER_BUSY(503) = load shedding(#927). 서버는 멀쩡하고 가용량만 찬 상태라 스택에 담길 정보가 없고,
             // 한 번 차면 창이 끝날 때까지 모든 등록 요청이 여기로 오므로 스택까지 남기면 로그량이 급증한다.
-            // 도달 자체는 이미 경고선(80%) 로그가 알렸으므로 여기서는 건수만 센다.
+            // 도달 자체는 이미 경고선 로그가 앞서 알렸으므로 여기서는 건수만 센다.
             status.is5xxServerError && category == ErrorCategory.SERVER_BUSY ->
                 log.warn("[{}] {} -> {}", e.javaClass.simpleName, e.message, status.value())
             // RETRYABLE 5xx(502) = 외부 의존성 일시 실패 → warn, cause 추적 위해 예외 동봉. 클라는 재시도로 대응 가능.

@@ -4,7 +4,7 @@ package com.depromeet.piki.common.ratelimit
 // 원인도 응답도 다르므로 타입에서 구분한다. 거부일 때만 재시도 시점을 들어, "허용인데 retryAfter 가 0" 같은
 // 무의미한 상태를 타입에서 없앤다.
 sealed interface ItemQuotaVerdict {
-    // capacityUsed — 차감 후 전역 카운터 누적값. 경고선(#927 의 80%)을 이번 요청이 처음 넘겼는지 가리는 데 쓴다.
+    // capacityUsed — 차감 후 전역 카운터 누적값. 경고선(#927)을 이번 요청이 처음 넘겼는지 가리는 데 쓴다.
     data class Allowed(
         val capacityUsed: Long,
     ) : ItemQuotaVerdict

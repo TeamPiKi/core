@@ -54,7 +54,10 @@ data class ItemQuotaProperties(
     val capacityLimit: Int = 3_000,
     // 상한의 몇 %에서 경고를 남길지. **상한에 닿으면 이미 늦으므로 이 지점이 실질 방어선이다** — 여기서
     // 손 쓸 시간을 벌기 위한 값이지, 도달 자체가 정상이라는 뜻이 아니다.
-    val capacityAlertPercent: Int = 80,
+    //
+    // 기본 3000 기준 1980 건에서 울린다. 상한까지 1020 건이 남으므로, 원인을 가르고(정상 성장인지·특정 계정의
+    // 이상 패턴인지·파싱 실패 재시도 폭증인지) 손 쓸 여유가 창의 3분의 1 남는다.
+    val capacityAlertPercent: Int = 66,
 ) {
     init {
         // 밀리초로 환산해 검사한다 — Redis PEXPIRE 가 ms 단위라, 1ms 미만(예: 500us)은 양수여도 환산 결과가 0 이 되어
