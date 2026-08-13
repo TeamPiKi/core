@@ -65,7 +65,7 @@ class ItemQuotaGuard(
     }
 
     // 전역 가용량이 경고선을 넘긴 순간 한 줄 남긴다. 상한에 닿으면 이미 사용자가 막히고 있어 늦으므로,
-    // 이 로그가 실질 방어선이다 — 알림 룰이 이 문구를 집어 Discord 로 보낸다.
+    // 이 로그가 실질 방어선이다 — Loki 알림 룰이 이 줄을 집어 Discord 로 보낸다.
     //
     // 대응은 "상한을 올린다" 가 기본이 아니다. 정상 성장인지, 특정 사용자·IP 의 이상 패턴인지, 파싱 실패로 인한
     // 재시도 폭증인지를 먼저 가르고, 정상 성장으로 확인된 뒤에만 올린다.
@@ -74,12 +74,27 @@ class ItemQuotaGuard(
         amount: Int,
     ) {
         if (!properties.crossedCapacityAlert(capacityUsed, amount)) return
+        // 알림이 매칭하는 줄이라 **사람이 읽는 문구가 아니라 기계가 읽는 형식**으로 쓴다(item.parse.result 와 같은 규약):
+        // 고정 이벤트 키 + logfmt(`키=값`). 사람이 읽을 설명은 알림 룰의 summary 가 한국어로 담는다.
+        //
+        // 한국어 산문으로 쓰면 알림이 그 문구를 검색어로 삼게 되는데, 문구를 다듬는 순간 매칭이 깨지고
+        // **알림이 조용히 죽는다** — "안 울림" 은 정상 상태와 구분되지 않아 아무도 알아채지 못한다.
+        // 값도 logfmt 여야 라벨로 추출돼 Discord 문구에 실린다("뭔가 울렸다" 가 아니라 "사용량 1980 / 한도 3000").
+        //
+        // window 는 Duration.toString(PT1H)이 아니라 초로 남긴다 — logfmt 값은 숫자여야 알림에서 비교·표시가 쉽다.
         log.warn(
-            "아이템 등록 전역 가용량 경고선 도달 — used={} threshold={} limit={} window={}",
+            "{} used={} threshold={} limit={} windowSeconds={}",
+            CAPACITY_ALERT_EVENT,
             capacityUsed,
             properties.capacityAlertThreshold,
             properties.capacityLimit,
-            properties.window,
+            properties.window.seconds,
         )
+    }
+
+    companion object {
+        // Loki 알림 룰의 매칭 앵커. **이 문자열이 곧 알림 계약이다** — 바꾸면 룰도 함께 바꿔야 하고,
+        // 안 바꾸면 알림이 조용히 죽는다. 상수로 빼 테스트가 같은 값을 참조하게 해 오타·표류를 막는다.
+        const val CAPACITY_ALERT_EVENT = "item.quota.capacity.alert"
     }
 }

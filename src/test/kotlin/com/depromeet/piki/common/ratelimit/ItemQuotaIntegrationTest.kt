@@ -1,5 +1,9 @@
 package com.depromeet.piki.common.ratelimit
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.item.domain.Item
@@ -18,6 +22,7 @@ import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.HttpHeaders
@@ -39,6 +44,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // 아이템 등록 한도(#339)의 계약 검증. 한도 자체의 산술(창 경계·잔액 판정)은 RedisItemQuotaStore 쪽 검증이
 // 맡고, 여기서는 "진입점에서 무엇이 얼마나 차감되고 넘치면 어떤 응답이 나가는가" 라는 계약만 본다.
@@ -109,6 +115,54 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
 
         // 거부된 요청은 카운터를 올리지 않는다 — 올리면 재시도할수록 창이 끝나도 한도를 넘긴 채 시작한다.
         assertEquals(properties.userLimit.toLong(), currentCount(userId))
+    }
+
+    @Test
+    fun `전역 가용량이 경고선을 넘으면 알림 룰이 매칭하는 형식으로 경고 로그를 남긴다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        // 경고선 직전까지 채운다 — 이 등록 1건이 경계를 넘긴다.
+        redisTemplate
+            .opsForValue()
+            .set(
+                RedisItemQuotaStore.CAPACITY_KEY,
+                (properties.capacityAlertThreshold - 1).toString(),
+                properties.window,
+            )
+        // Loki 가 실제로 보는 것은 렌더된 메시지 한 줄이므로, 그 줄을 그대로 받아 형식을 검사한다.
+        val logger = LoggerFactory.getLogger(ItemQuotaGuard::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+
+        try {
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://www.musinsa.com/products/13"}"""),
+                ).andExpect(status().isCreated)
+
+            val warned =
+                appender.list
+                    .filter { it.level == Level.WARN }
+                    .map { it.formattedMessage }
+                    .filter { it.startsWith(ItemQuotaGuard.CAPACITY_ALERT_EVENT) }
+            assertEquals(1, warned.size, "경고선을 넘긴 요청은 경고를 정확히 한 줄 남겨야 한다: ${appender.list.map { it.formattedMessage }}")
+
+            // 이 형식이 곧 알림 계약이다. 한국어 산문으로 되돌아가거나 필드가 logfmt(`키=값`)를 벗어나면
+            // Loki 룰이 매칭에 실패해 **알림이 조용히 죽는다** — 안 울리는 것은 정상 상태와 구분되지 않는다.
+            // windowSeconds 가 숫자가 아니게 되는 회귀(Duration.toString 의 PT1H)도 여기서 걸린다.
+            assertTrue(
+                ALERT_LINE_FORMAT.matches(warned.single()),
+                "경고 로그가 알림 룰이 매칭하는 형식이 아니다: ${warned.single()}",
+            )
+        } finally {
+            logger.detachAppender(appender)
+            // 전역 카운터는 서비스에 하나뿐이라 UUID 로 격리할 수 없다(아래 503 테스트와 같은 이유).
+            redisTemplate.delete(RedisItemQuotaStore.CAPACITY_KEY)
+        }
     }
 
     @Test
@@ -485,5 +539,12 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 .path("userId")
                 .asString()
         return UUID.fromString(userId)
+    }
+
+    companion object {
+        // Loki 룰이 `|= "item.quota.capacity.alert" | logfmt` 로 집는 형식. 고정 이벤트 키로 시작하고
+        // 나머지가 전부 `키=숫자` 여야 필드가 라벨로 추출돼 Discord 문구에 실린다.
+        private val ALERT_LINE_FORMAT =
+            Regex("""^item\.quota\.capacity\.alert used=\d+ threshold=\d+ limit=\d+ windowSeconds=\d+$""")
     }
 }
