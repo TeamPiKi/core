@@ -1,5 +1,8 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.common.exception.HttpMappable
+import com.depromeet.piki.product.service.ExtractionFailureBucket
+import com.depromeet.piki.product.service.ExtractionFailureCode
 import io.micrometer.core.instrument.MeterRegistry
 
 // 파싱 단건의 종결 결과(READY/FAILED)를 result·reason 라벨로 센다 — 추출 실패가 트래픽에서 얼마나·왜 나는지 관측한다(#506).
@@ -17,12 +20,24 @@ object ItemParsingMetrics {
     // 성공.
     const val REASON_NONE = "none"
 
-    // 워커 확정 실패 — 상품 페이지 아님·추출값 신뢰 불가(ProductSnapshotException). 클라이언트 입력 계약 위반.
+    // 워커 확정 실패 5종 — "이 숫자가 늘면 누가 무엇을 하는가"로 나눈다(#936). 값은 계약 카탈로그
+    // (shared-infra/contracts/extraction-error-codes.yaml)의 bucket 과 같은 문자열이어야 한다: 원격 code 를
+    // 우리 예외로 번역할 때 붙는 bucket 이 그대로 이 라벨이 되고, ExtractionErrorCatalogTest 가 셋을 대조한다.
+
+    // 사용자가 상품 아닌 걸 넣음. 정상 트래픽이라 할 일이 없다.
     const val REASON_NOT_PRODUCT = "not_product"
 
-    // 워커 확정 실패 — 재시도 무의미한 외부 오류(호스트 차단·4xx 접근 불가·redirect 비정상·Gemini 영구 오류).
-    // ErrorCategory 가 RETRYABLE 이 아니라 즉시 종결한 경우다. not_product(상품 아님)와 구분해 별도로 센다.
-    const val REASON_PERMANENT_ERROR = "permanent_error"
+    // 우리 구성으로 그 페이지를 못 읽음. 늘면 그 도메인의 허가 후보를 본다.
+    const val REASON_UNREADABLE = "unreadable"
+
+    // 대상이 우리를 막음. 늘면 UNSUPPORTED 정책 후보를 본다.
+    const val REASON_BLOCKED = "blocked"
+
+    // 추출은 됐는데 값을 믿을 수 없음. 늘면 모델·프롬프트·검증 규칙을 본다.
+    const val REASON_EXTRACT_QUALITY = "extract_quality"
+
+    // 우리 버그·방어 발동, 또는 매핑되지 않은 원격 code. 늘면 코드를 조사한다.
+    const val REASON_INTERNAL_ERROR = "internal_error"
 
     // 추출은 됐으나 READY 전이가 값 검증에 막힘(이름 없음 등).
     const val REASON_READY_REJECTED = "ready_rejected"
@@ -44,5 +59,23 @@ object ItemParsingMetrics {
         reason: String,
     ) {
         registry.counter(METRIC, TAG_RESULT, result, TAG_REASON, reason).increment()
+    }
+
+    // 확정 실패 예외 → reason 라벨. 분류의 정본은 예외가 참조하는 ErrorCode 의 bucket 이고(ExtractionFailureCode),
+    // 여기서는 그 bucket 을 라벨 문자열로 옮기기만 한다 — 원격 code 가 늘어도 이 함수는 그대로다.
+    // when 이 exhaustive 라, bucket 이 추가되면 라벨을 정하지 않은 채로는 컴파일되지 않는다.
+    //
+    // bucket 을 못 얻는 경우(분류 밖 예외 — 코드 버그성 NPE·JVM Error, 또는 매핑되지 않은 원격 code)는
+    // internal_error 다. 그 자리는 "우리가 이름을 아는 실패"가 아니라 조사 대상이라는 뜻이므로, 이름 없는
+    // 실패를 다른 바구니에 섞지 않는다. 링크·이미지 두 워커가 같은 함수를 쓴다(같은 메트릭 모집단).
+    fun reasonOf(e: Throwable): String {
+        val bucket = ((e as? HttpMappable)?.errorCode as? ExtractionFailureCode)?.bucket ?: return REASON_INTERNAL_ERROR
+        return when (bucket) {
+            ExtractionFailureBucket.NOT_PRODUCT -> REASON_NOT_PRODUCT
+            ExtractionFailureBucket.UNREADABLE -> REASON_UNREADABLE
+            ExtractionFailureBucket.BLOCKED -> REASON_BLOCKED
+            ExtractionFailureBucket.EXTRACT_QUALITY -> REASON_EXTRACT_QUALITY
+            ExtractionFailureBucket.INTERNAL_ERROR -> REASON_INTERNAL_ERROR
+        }
     }
 }

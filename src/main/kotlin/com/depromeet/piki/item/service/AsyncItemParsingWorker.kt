@@ -6,7 +6,6 @@ import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductLinkExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
-import com.depromeet.piki.product.service.ProductSnapshotException
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
 import io.micrometer.observation.ObservationRegistry
@@ -153,9 +152,9 @@ class AsyncItemParsingWorker(
             releaseQuietly(itemId, snapshotId, attempt)
             return
         }
-        // 확정 실패 — 상품 아님·추출값 신뢰 불가·호스트 차단·4xx 접근 불가 등. 같은 URL 을 다시 파싱해도 결과가
-        // 같으므로 즉시 FAILED 로 종결한다(사용자에게 빨리 알림). 클라이언트 입력 계약 위반이라 서버 입장에선 정상 동작(info).
-        val reason = reasonOf(e)
+        // 확정 실패 — 상품 아님·못 읽음·값 불신·대상 차단 등. 같은 URL 을 다시 파싱해도 결과가 같으므로
+        // 즉시 FAILED 로 종결한다(사용자에게 빨리 알림). 사유는 예외가 들고 온 bucket 에서 파생한다.
+        val reason = ItemParsingMetrics.reasonOf(e)
         // 전이가 실제로 적용됐을 때만 결과를 원장에 남긴다 — 좀비 폐기·전이 실패면 이 워커의 결과는 반영되지 않았다.
         if (!markFailedQuietly(itemId, snapshotId, attempt)) return
         log.info(
@@ -170,14 +169,6 @@ class AsyncItemParsingWorker(
         log.info("item.parse.error item={} reason={} cause={}", itemId, reason, e.message)
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
     }
-
-    // 확정 실패의 메트릭 reason. 상품 아님·추출값 신뢰 불가(ProductSnapshotException)는 not_product 로 따로 센다
-    // (대시보드에서 "상품 아님"을 구분). 그 외 재시도 무의미 오류(원격 422 확정 실패 — 호스트 차단·4xx 등의 원격 번역)는 permanent_error.
-    private fun reasonOf(e: Throwable): String =
-        when (e) {
-            is ProductSnapshotException -> ItemParsingMetrics.REASON_NOT_PRODUCT
-            else -> ItemParsingMetrics.REASON_PERMANENT_ERROR
-        }
 
     // 소유권 반납 — 실패해도 흡수한다. 반납은 **지연 단축 장치이지 정합성 장치가 아니다**: 반납이 안 되면 그 행은
     // 예전처럼 stale 회수(마지막 박동 + 60s)가 늦게라도 잡고, 그래도 안 되면 마감이 끊는다. 그래서 여기서 던지지 않는다.

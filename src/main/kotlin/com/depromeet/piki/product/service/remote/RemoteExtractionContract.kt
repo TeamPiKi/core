@@ -19,8 +19,35 @@ import org.springframework.web.client.RestClientResponseException
 internal object RemoteExtractionContract {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    private const val CODE_NOT_PRODUCT_PAGE = "NOT_PRODUCT_PAGE"
-    private const val CODE_UNTRUSTWORTHY_VALUE = "UNTRUSTWORTHY_VALUE"
+    // 확정 실패(422) code 전수 → 우리 예외. 계약 카탈로그(shared-infra/contracts/extraction-error-codes.yaml)의
+    // permanent code 를 빠짐없이 여기에 명시한다 — 표에 없는 code 는 아래 fallback 으로 떨어져 internal_error 로
+    // 세지므로, 매핑 누락이 "우리가 이름을 아는 실패"인 척 묻히지 않는다.
+    // 표를 when 대신 값으로 둔 이유: 카탈로그와의 전수 대조(ExtractionErrorCatalogTest)가 이 키 집합을 직접 읽는다.
+    // when 분기는 밖에서 열거할 수 없어 "누락이 else 로 조용히 흡수됐는지"를 기계가 가릴 수 없다.
+    //
+    // 어느 예외로 보내는지가 곧 메트릭 reason 이다 — 예외의 errorCode 가 bucket 을 들고 있고(ExtractionFailureCode),
+    // ItemParsingMetrics.reasonOf 가 그 bucket 을 라벨로 옮긴다. 문구는 여기서 갈리지 않는다(고정 사용자 문구).
+    internal val PERMANENT_TRANSLATIONS: Map<String, () -> BaseException> =
+        mapOf(
+            // 사용자가 상품 아닌 걸 넣었다 — 정상 트래픽.
+            "NOT_PRODUCT_PAGE" to { ProductSnapshotException.notProductPage() },
+            "INVALID_URL" to { ProductSnapshotException.notProductPage() },
+            // 우리 구성으로 못 읽었다 — 도메인 허가 후보 신호.
+            "EMPTY_SHELL" to { ProductSnapshotException.noExtractableContent() },
+            "NO_EXTRACTABLE_CONTENT" to { ProductSnapshotException.noExtractableContent() },
+            // 대상이 우리를 막았다 — UNSUPPORTED 정책 후보.
+            "FETCH_CLIENT_ERROR" to { ProductExtractorException.blockedByTarget() },
+            "PERMANENT_UPSTREAM" to { ProductExtractorException.blockedByTarget() },
+            // 추출은 됐는데 값을 믿을 수 없다 — 모델·프롬프트·검증 규칙 소관.
+            // IMAGE_UNSUPPORTED(이미지 경로 전용)도 "받은 결과를 상품 정보로 쓸 수 없다"는 같은 성격이다.
+            "UNTRUSTWORTHY_VALUE" to { ProductSnapshotException.untrustworthyValue() },
+            "LLM_INVALID_RESPONSE" to { ProductSnapshotException.untrustworthyValue() },
+            "IMAGE_UNSUPPORTED" to { ProductSnapshotException.untrustworthyValue() },
+            // 우리 방어가 발동했다 — 정상 흐름이면 애초에 우리 경계(SSRF 가드·리다이렉트 제한)가 먼저 걸렀어야 한다.
+            "BLOCKED_HOST" to { ProductExtractorException.permanentFailure() },
+            "TOO_MANY_REDIRECTS" to { ProductExtractorException.permanentFailure() },
+            "MALFORMED_REDIRECT" to { ProductExtractorException.permanentFailure() },
+        )
 
     // 원격 추출 호출 한 건의 전부 — POST 부터 3갈래(2xx 매핑 / 422+code 확정 / 그 외 일시)가 이 함수 안에서 끝난다.
     // transport catch 까지 여기 두는 이유: 클라이언트별 복제가 남으면 계약이 진화할 때(타임아웃 구분·status 취급 등)
@@ -77,10 +104,9 @@ internal object RemoteExtractionContract {
     }
 
     // 계약 3갈래 번역: 422 만 확정 실패, 그 외 status 는 전부 일시(fail-safe — recover 상한이 재시도를 바운드).
-    // NOT_PRODUCT_PAGE·UNTRUSTWORTHY_VALUE 는 기존 ProductSnapshotException 으로 되돌려, 워커 메트릭
-    // (item.parsing reason=not_product)의 실패 의미가 유지되도록 한다. 그 외 code
-    // (이미지 전용 IMAGE_UNSUPPORTED 포함)는 모르는 code 와 같은 취급이다 — 전이 판정은 status 만으로 충분하고
-    // code 는 관측용이라(계약 §1), 새 code 마다 매핑을 늘리지 않는다.
+    // **전이 판정은 여전히 status 만 본다** — code 는 그 확정 실패를 무엇이라 부르고 어떻게 셀지(bucket)만 가른다.
+    // 그래서 모르는 code 도 확정 실패라는 결론은 같고(tolerant reader, 계약 §1), 다만 internal_error 로 세어
+    // "매핑이 뒤처졌다"가 지표에 드러난다.
     private fun translate(
         e: RestClientResponseException,
         target: String,
@@ -95,12 +121,11 @@ internal object RemoteExtractionContract {
             runCatching { e.getResponseBodyAs(RemoteExtractionFailureResponse::class.java)?.code }
                 .getOrNull()
         // code 는 관측·디버깅용(계약 §1) — 응답엔 노출되지 않고 로그로만 남긴다. 확정 실패는 계약상 정상 결과라 info.
+        // 원문 code 는 이 줄에만 남는다: 메트릭은 bucket 단위라(카디널리티) 개별 code 추적은 로그가 진다.
         log.info("remote extract permanent code={} {}", code, target)
-        return when (code) {
-            CODE_NOT_PRODUCT_PAGE -> ProductSnapshotException.notProductPage()
-            CODE_UNTRUSTWORTHY_VALUE -> ProductSnapshotException.untrustworthyValue()
-            else -> ProductExtractorException.permanentFailure()
-        }
+        // 표에 없는 code — 이 바이너리보다 새 extractor 가 사유를 늘렸거나 body 가 깨진 경우. 확정 실패인 건 같다.
+        val translation = PERMANENT_TRANSLATIONS[code] ?: return ProductExtractorException.permanentFailure()
+        return translation()
     }
 }
 
@@ -125,7 +150,7 @@ internal data class RemoteExtractionResponse(
     // fromExtracted 를 반드시 경유한다 — https-only imageUrl(XSS 사다리 차단)·currency ISO 정규화·범위 검증은
     // 모든 추출 경로가 공유하는 단일 진실 원천이고, 원격 계약이 정상 값을 보장하더라도 신뢰 경계(외부 서비스)를
     // 넘어온 값은 우리 경계에서 다시 검증한다(다층 방어). 범위 위반은
-    // untrustworthyValue(→ 워커 reason=not_product)로 떨어진다.
+    // untrustworthyValue(→ 워커 reason=extract_quality)로 떨어진다.
     // link 는 이미지 추출엔 원본 URL 이 없어 null 이다 — 이미지 경로의 계약(원본 URL 없음 — extractor 계약 §2).
     fun toProductSnapshot(link: ProductLink?): ProductSnapshot =
         ProductSnapshot.fromExtracted(

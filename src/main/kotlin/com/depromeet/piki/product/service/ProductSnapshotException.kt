@@ -23,5 +23,9 @@ class ProductSnapshotException private constructor(
 
         // 추출값이 유효 범위(가격 음수, 컬럼 길이 초과 등)를 벗어남. 추출 결과를 신뢰할 수 없다.
         fun untrustworthyValue(): ProductSnapshotException = ProductSnapshotException(ProductSnapshotErrorCode.UNTRUSTWORTHY_VALUE)
+
+        // 읽어낼 본문이 없어 추출이 성립하지 않음(데이터 없는 CSR 셸·가시 텍스트 부재). 상품이 아닌 것과 구분한다 —
+        // 같은 URL 을 지금 구성으로 다시 읽어도 결과가 같으므로 재시도는 무의미하다.
+        fun noExtractableContent(): ProductSnapshotException = ProductSnapshotException(ProductSnapshotErrorCode.NO_EXTRACTABLE_CONTENT)
     }
 }
