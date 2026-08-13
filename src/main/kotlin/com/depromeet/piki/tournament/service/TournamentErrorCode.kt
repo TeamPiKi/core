@@ -53,4 +53,16 @@ enum class TournamentErrorCode(
     // 034~035 는 매치 로직 백엔드 이관(#683)에서 추가됐다. 브래킷 무결성 검증이 처음 들어오며 생긴 두 사유다.
     INVALID_MATCH_PAIR("TOURNAMENT-034", ErrorCategory.INVALID_INPUT, "지금 대결할 수 있는 조합이 아니에요."),
     MATCH_ALREADY_RECORDED("TOURNAMENT-035", ErrorCategory.CONFLICT, "이미 결과가 기록된 대결이에요."),
+
+    // 036 은 게스트 권한 정리(#339)에서 추가됐다. 토너먼트 생성은 회원 전용이 되고, 생성된 토너먼트에
+    // 아이템을 담는 것과 플레이는 게스트에게 그대로 열려 있다 — "게스트는 소비만, 생산은 회원만".
+    GUEST_CANNOT_CREATE_TOURNAMENT("TOURNAMENT-036", ErrorCategory.FORBIDDEN, "토너먼트 만들기는 회원만 이용할 수 있어요."),
+
+    // 037 도 #339. 차감 주체는 토너먼트 오너지만 이 응답은 참여자(게스트 포함) 누구나 받을 수 있으므로,
+    // 문구에 "오너의 사용량" 을 드러내지 않는다 — 남의 사용량은 요청자에게 알릴 정보가 아니다.
+    ITEM_QUOTA_EXCEEDED(
+        "TOURNAMENT-037",
+        ErrorCategory.TOO_MANY_REQUESTS,
+        "이 토너먼트에는 지금 아이템을 추가할 수 없어요. 잠시 후 다시 시도해 주세요.",
+    ),
 }

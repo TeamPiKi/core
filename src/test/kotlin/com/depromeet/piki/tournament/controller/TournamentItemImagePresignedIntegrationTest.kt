@@ -51,7 +51,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `presigned 발급하면 요청한 개수만큼 uploadUrl 을 받는다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             tournamentId = createTournament(mockMvc, ownerId)
@@ -75,9 +75,9 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `참여자가 아니면 발급이 403 으로 거부된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         val outsiderId = UUID.randomUUID()
-        insertGuest(outsiderId)
+        insertMember(outsiderId)
         var tournamentId = 0L
         try {
             tournamentId = createTournament(mockMvc, ownerId)
@@ -100,7 +100,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `발급받은 key 로 confirm 하면 200 으로 아이템이 추가된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로 깨끗한 추출 결과를 세팅해 둔다.
@@ -135,7 +135,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `업로드하지 않은 key 로 confirm 하면 400 으로 거부되고 아이템이 생기지 않는다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             // S3 에 실제로 올라오지 않은 상황 재현 — HEAD 존재확인이 false 를 돌려준다.
@@ -171,7 +171,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `지원하지 않는 content-type 으로 발급하면 400 으로 거부된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             tournamentId = createTournament(mockMvc, ownerId)
@@ -194,7 +194,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `content-type 이 6개면 개수 위반으로 400 이 반환된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             tournamentId = createTournament(mockMvc, ownerId)
@@ -216,7 +216,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     fun `발급 형식이 아닌 key 로 confirm 하면 400 으로 거부된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             tournamentId = createTournament(mockMvc, ownerId)
@@ -287,16 +287,18 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    private fun insertGuest(userId: UUID) {
+    // 토너먼트 생성이 회원 전용(#339)이 되면서 MEMBER 로 바뀌었다. 이 테스트의 관심사는 presign·confirm 흐름이지
+    // 게스트 권한이 아니라, 참여자 검증(403)을 확인하는 outsider 까지 MEMBER 로 둬도 시나리오가 그대로 성립한다.
+    private fun insertMember(userId: UUID) {
         jdbcTemplate.update(
             "INSERT INTO users (id, nickname, identity_type, created_at, updated_at) VALUES (?, ?, ?, NOW(6), NOW(6))",
             uuidToBytes(userId),
             userId.toString().take(10),
-            "GUEST",
+            "MEMBER",
         )
     }
 
-    private fun token(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.GUEST)
+    private fun token(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
     private fun cleanup(
         ownerId: UUID,

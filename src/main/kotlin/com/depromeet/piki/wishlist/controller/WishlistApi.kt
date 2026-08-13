@@ -10,6 +10,7 @@ import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -18,6 +19,13 @@ import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.MediaType
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
+
+// 아이템 등록 한도(#339) 응답 설명. 위시 등록 계열 4개 엔드포인트가 같은 문구를 쓰므로 한 곳에 둔다.
+// 세는 단위가 요청 수가 아니라 item 수라는 점이 클라이언트 계약의 핵심이라 명시한다.
+private const val RATE_LIMIT_DESCRIPTION =
+    "아이템 등록 한도 초과 (code: WISH-010). 한도는 요청 수가 아니라 등록하는 item 수로 센다 — " +
+        "이미지 5장 등록은 5 를 소모한다. 남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) " +
+        "이 응답은 몫을 이미 다 쓴 뒤부터 나온다. Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
 @Tag(name = "Wishlist", description = "위시리스트 등록/조회/복구/삭제 API")
 interface WishlistApi {
@@ -86,6 +94,23 @@ interface WishlistApi {
                 description =
                     "이미 위시리스트에 등록된 상품 (같은 상품을 다시 담음 — code: WISH-009) · " +
                         "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "429",
+                description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -423,6 +448,23 @@ interface WishlistApi {
                     ),
                 ],
             ),
+            ApiResponse(
+                responseCode = "429",
+                description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
         ],
     )
     fun refreshWishItem(
@@ -622,6 +664,23 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "429",
+                description = RATE_LIMIT_DESCRIPTION,
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "502",
                 description = "이미지 저장 실패 (원본을 S3 에 적재하는 중 스토리지 장애 — 클라이언트는 재시도) — code: STORAGE-001",
                 content = [
@@ -694,6 +753,23 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "409",
                 description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "429",
+                description = "$RATE_LIMIT_DESCRIPTION 발급 시점에 차감하므로 이어지는 confirm 은 추가로 소모하지 않는다.",
+                headers = [
+                    Header(
+                        name = "Retry-After",
+                        description = "한도가 풀리기까지 남은 시간(초). RFC 9110 delta-seconds.",
+                        schema = Schema(type = "integer", format = "int64"),
+                    ),
+                ],
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

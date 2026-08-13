@@ -103,6 +103,8 @@ class TournamentApiExamples(
                                 ),
                         )
                         unauthorized()
+                        add(TournamentException.guestCannotCreateTournament(), name = "게스트의 토너먼트 생성 거부 (회원 전용)")
+                        add(UserException.deletedUser(), name = "탈퇴한 유저")
                     }
 
                 handlerMethod.binds(TournamentController::join) ->

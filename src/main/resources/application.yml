@@ -84,6 +84,11 @@ spring:
     username: ${DB_USERNAME:piki}
     password: ${DB_PASSWORD:piki}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # JDBC 스팬의 원격 서비스명 근거 — datasource-micrometer 는 명시된 pool 이름을 1순위로 쓰고
+      # (기본 "HikariPool-*" 는 무시) 없으면 DB catalog("piki")를 써서, 트레이스에서 서비스 식별자
+      # piki-core 와 혼동됐다(#929). 이 이름은 HikariCP 메트릭의 pool 라벨로도 노출된다.
+      pool-name: piki-db
   jpa:
     hibernate:
       ddl-auto: validate
@@ -159,6 +164,21 @@ s3:
   bucket: ${S3_BUCKET:}
   region: ${S3_REGION:ap-northeast-2}
   public-base-url: ${S3_PUBLIC_BASE_URL:}
+
+# 아이템 등록 한도(#339) — 외부 비용이 드는 등록 경로에 걸리는 계정 단위 quota. 세는 단위는 요청 수가 아니라
+# 큐에 넣는 item 수다(이미지 5장 = 5). 값은 env 로 재정의해 배포 없이 조일 수 있다.
+#
+# "LLM 을 타는가" 가 아니라 "외부에 돈이 나가는가" 가 기준이다. 등록 1건은 파싱이 파서로 풀려 LLM 을 안 타더라도
+# fetch 대역, residential proxy 요청(HEADLESS_FIRST 사이트), 헤드리스 렌더러 시간, 이미지 저장, DB 행 영구 증가를
+# 소모한다. 그래서 LLM 여부로 차등하지 않고 등록 1건을 균일하게 센다 — 등록 시점엔 어느 경로로 풀릴지 알 수도 없다.
+item-quota:
+  # 한도가 잘못 잡혀 정상 사용자를 막을 때 되돌리는 스위치. 끄면 차감·판정을 통째로 건너뛴다.
+  enabled: ${ITEM_QUOTA_ENABLED:true}
+  window: ${ITEM_QUOTA_WINDOW:1h}
+  # 위시는 요청자 본인 몫 — 이미지 등록(최대 5장) 2번 또는 링크 10건.
+  wish-limit: ${ITEM_QUOTA_WISH_LIMIT:10}
+  # 토너먼트는 오너 한 명의 몫을 참여자 전원(최대 8명)이 나눠 쓰므로 위시보다 크게 둔다.
+  tournament-limit: ${ITEM_QUOTA_TOURNAMENT_LIMIT:30}
 
 notification:
   # 알림 보존 기간(일). 생성 후 이 기간을 넘긴 알림은 N일 자동삭제 스케줄러(NotificationCleanupScheduler)가 하드삭제한다.

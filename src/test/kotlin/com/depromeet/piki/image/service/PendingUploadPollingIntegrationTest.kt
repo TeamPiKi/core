@@ -227,7 +227,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
     fun `폴링이 업로드된 토너먼트 pending 을 등록해 아이템이 생긴다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             seedExtractor()
@@ -248,7 +248,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
     fun `정원이 부족하면 폴링도 confirm 처럼 배치 전량 거부하고 부분 등록하지 않는다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             seedExtractor()
@@ -274,7 +274,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
     fun `업로드된 채 만료됐으나 정원 초과면 폴링이 폐기하고 부분 등록하지 않는다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
-        insertGuest(ownerId)
+        insertMember(ownerId)
         var tournamentId = 0L
         try {
             seedExtractor()
@@ -349,7 +349,8 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
                 .perform(
                     post("/api/v1/tournaments")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${guestToken(ownerId)}")
+                        // 토너먼트 생성은 회원 전용(#339). 이 테스트의 관심사는 폴링 백스톱이지 게스트 권한이 아니다.
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(ownerId)}")
                         .content("""{"name":"폴링토너먼트"}"""),
                 ).andReturn()
                 .response
@@ -367,9 +368,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    private fun insertMember(userId: UUID) = insertUser(userId, "MEMBER")
-
-    private fun insertGuest(userId: UUID) = insertUser(userId, "GUEST")
+    private fun insertMember(userId: UUID) = insertUser(userId, IdentityType.MEMBER.name)
 
     private fun insertUser(
         userId: UUID,
@@ -383,7 +382,7 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
         )
     }
 
-    private fun guestToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.GUEST)
+    private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
     private fun wishCount(userId: UUID): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId)) ?: 0

@@ -50,8 +50,13 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
             errorCode
                 ?.let { ApiResponseBody.fail<Nothing>(it, e.message) }
                 ?: ApiResponseBody.fail(category, e.message)
+        // 재시도 시점을 아는 예외(RetryAfter)만 Retry-After 를 싣는다 — 429 한도 초과가 현재 유일한 구현체다.
+        // 모르는 예외에 0 같은 거짓 대기값을 실어 클라가 즉시 재시도하게 만들지 않도록 타입으로 가린다.
+        val headers = HttpHeaders()
+        (e as? RetryAfter)?.let { headers.set(HttpHeaders.RETRY_AFTER, it.retryAfterSeconds.toString()) }
         return ResponseEntity
             .status(status)
+            .headers(headers)
             .body(body)
     }
 
@@ -111,6 +116,9 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
             status == HttpStatus.METHOD_NOT_ALLOWED -> ErrorCategory.METHOD_NOT_ALLOWED
             status == HttpStatus.UNSUPPORTED_MEDIA_TYPE -> ErrorCategory.UNSUPPORTED_MEDIA_TYPE
             status == HttpStatus.CONFLICT -> ErrorCategory.CONFLICT
+            // is4xxClientError 보다 앞에 둔다 — 뒤에 두면 429 가 INVALID_INPUT(400 code)으로 뭉개져
+            // status 는 429 인데 code 는 COMMON-INVALID-INPUT 인 어긋난 응답이 나간다.
+            status == HttpStatus.TOO_MANY_REQUESTS -> ErrorCategory.TOO_MANY_REQUESTS
             status.is4xxClientError -> ErrorCategory.INVALID_INPUT
             status == HttpStatus.BAD_GATEWAY -> ErrorCategory.RETRYABLE
             status == HttpStatus.SERVICE_UNAVAILABLE -> ErrorCategory.SERVER_BUSY

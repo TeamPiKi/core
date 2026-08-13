@@ -52,7 +52,8 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
     fun `같은 주최자가 start 를 동시에 두 번 요청하면 하나만 200 나머지는 409 로 처리된다`() {
         val ownerId = UUID.randomUUID()
         userJpaRepository.save(
-            User(id = ownerId, nickname = "race-start", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.GUEST),
+            // 토너먼트 생성은 회원 전용(#339)이라 owner 는 MEMBER 다. 이 테스트의 관심사는 동시 start 경합이다.
+            User(id = ownerId, nickname = "race-start", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
 
         val mockMvc = MockMvcBuilders
@@ -60,7 +61,7 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.GUEST)}"
+        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
 
         // PENDING 토너먼트 + READY 아이템 2개 준비 (단일 스레드, 직렬). @Transactional 이 없어 실제 커밋되므로,
         // 만든 item/snapshot id 를 끝의 정리에서 쓰기 위해 메서드 스코프로 잡는다(다른 테스트의 item 카운트 오염 방지).

@@ -54,7 +54,8 @@ class TournamentWishAddConcurrencyIntegrationTest : IntegrationTestSupport() {
     fun `위시 아이템 담기를 동시에 두 번 요청하면 행 락으로 직렬화되어 32개 상한을 초과하지 않는다`() {
         val ownerId = UUID.randomUUID()
         userJpaRepository.save(
-            User(id = ownerId, nickname = "race-wish", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.GUEST),
+            // 토너먼트 생성은 회원 전용(#339)이라 owner 는 MEMBER 다. 위시 아이템을 담는 시나리오라 MEMBER 가 원래 자연스럽다.
+            User(id = ownerId, nickname = "race-wish", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
 
         val mockMvc = MockMvcBuilders
@@ -62,7 +63,7 @@ class TournamentWishAddConcurrencyIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.GUEST)}"
+        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
 
         // 아이템 40개 + READY 스냅샷 생성 — A 요청(1-20), B 요청(21-40) 에서 나눠 씀.
         // 합산 40개는 TOURNAMENT_MAX_ITEM_COUNT(32)를 초과해 두 요청이 직렬화되면 하나는 반드시 차단된다.
