@@ -32,6 +32,7 @@ object NotificationTemplateVariables {
             NotificationType.TOURNAMENT_PLAYED_FROM_LINK to TOURNAMENT,
             NotificationType.TOURNAMENT_COMPLETED to TOURNAMENT,
             NotificationType.TOURNAMENT_RESULT_READY to TOURNAMENT,
+            // title 만 변수를 쓴다(#913) — body 는 변수 없는 고정 문구라 백오피스가 통째로 편집한다.
             NotificationType.ITEM_PARSING_COMPLETED to listOf(TemplateVariable("itemName", "나이키 에어맥스")),
             NotificationType.ITEM_PARSING_FAILED to emptyList(),
             NotificationType.ANNOUNCEMENT to
