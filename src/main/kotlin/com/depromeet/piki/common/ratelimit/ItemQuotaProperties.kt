@@ -3,7 +3,10 @@ package com.depromeet.piki.common.ratelimit
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
-// 아이템 등록 한도 설정. @ConfigurationPropertiesScan(PikiApplication)으로 자동 등록된다.
+// 아이템 등록 한도의 **env 기본값**. @ConfigurationPropertiesScan(PikiApplication)으로 자동 등록된다.
+//
+// 판정에 쓰이는 실효값은 여기가 아니라 ItemQuotaSnapshot 이다(#934) — 백오피스 오버라이드가 이 값들 위에
+// 얹히기 때문이다. 오버라이드가 없는 노브만 여기 값이 그대로 남는다. 소비자는 ItemQuotaSettings.current() 를 읽는다.
 //
 // 축이 둘이고 서로를 대체하지 않는다. **계정별**(#339)은 한 사람이 얼마나 쓸 수 있는지를, **전역**(#927)은
 // 서비스 전체가 얼마나 감당하는지를 정한다. 전자는 남용을, 후자는 정상 사용자가 몰리는 상황을 막는다.
@@ -74,14 +77,4 @@ data class ItemQuotaProperties(
             "item-quota.capacity-alert-percent($capacityAlertPercent)는 1 에서 100 사이여야 한다."
         }
     }
-
-    // 경고선(건수). 정수 나눗셈이라 내림되지만 경고 시점이 한 건 앞당겨질 뿐이라 무해하다.
-    val capacityAlertThreshold: Int get() = capacityLimit * capacityAlertPercent / 100
-
-    // 이번 차감이 경고선을 **처음** 넘겼는지. 넘긴 뒤 매 요청마다 경고하면 창이 끝날 때까지 같은 줄이 반복돼
-    // 알림이 무뎌지므로, "직전엔 아래였는데 지금은 위" 인 한 건만 참이 된다.
-    fun crossedCapacityAlert(
-        capacityUsed: Long,
-        amount: Int,
-    ): Boolean = capacityUsed >= capacityAlertThreshold && capacityUsed - amount < capacityAlertThreshold
 }

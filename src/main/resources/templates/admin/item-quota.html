@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>등록 한도 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --ok:#15803d; --ok-soft:#dcfce7; --warn:#b45309; --warn-soft:#fef3c7; }
+    /* keep-all: 한국어가 어절 중간에서 꺾이지 않게 한다 (extraction-models 와 같은 이유). */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:720px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .ok{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+
+    .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:9px;}
+    .guide>summary::-webkit-details-marker{display:none;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:var(--accent);font-size:15px;line-height:1;transition:transform .15s;}
+    .guide[open]>summary::before{transform:rotate(90deg);}
+    .guide>summary:hover{background:var(--accent-soft);}
+    .gbody{border-top:1px solid var(--border);}
+    .gtable{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .gtable th{width:104px;text-align:left;vertical-align:top;padding:11px 15px;border-bottom:1px solid #f1f3f5;color:#384049;font-size:12px;font-weight:700;white-space:nowrap;}
+    .gtable td{padding:11px 15px 11px 0;border-bottom:1px solid #f1f3f5;color:var(--muted);line-height:1.65;}
+    .gtable tr:last-child th,.gtable tr:last-child td{border-bottom:none;}
+
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
+    .card h2{font-size:14px;font-weight:800;margin:0 0 3px;}
+    .desc{font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 14px;}
+
+    /* 현황 게이지 — 숫자만 두면 "3000 중 1240" 이 얼마나 찬 것인지 한눈에 안 들어온다. */
+    .gauge{height:8px;background:#f1f3f5;border-radius:999px;overflow:hidden;margin:10px 0 8px;}
+    .gauge span{display:block;height:100%;background:var(--accent);}
+    .gauge.warn span{background:var(--warn);}
+    .gauge.full span{background:var(--danger);}
+    .figures{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+    .figures b{color:var(--ink);font-weight:700;}
+    .over{color:var(--danger);font-weight:700;}
+
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+    @media (max-width:560px){ .grid{grid-template-columns:1fr;} }
+    .field label{display:block;font-size:12px;font-weight:700;margin-bottom:5px;}
+    .field input,.field select{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;}
+    .field .hint{display:block;font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.55;}
+    .field .hint b{color:var(--ink);}
+
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px;}
+    .actions form{display:flex;gap:8px;margin:0;}
+    .actions button{border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;}
+    .actions button.save{background:var(--accent);color:#fff;border:none;}
+    .actions button.ghost{background:none;color:var(--muted);border:1px solid var(--border);}
+    .actions button.ghost:hover{color:var(--ink);}
+    .base{display:inline-block;font-size:11.5px;font-weight:700;color:var(--muted);background:#f3f4f6;border-radius:999px;padding:2px 9px;}
+
+    .lookup{display:flex;gap:8px;flex-wrap:wrap;}
+    .lookup input{flex:1;min-width:260px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:ui-monospace,Menlo,monospace;}
+    .lookup button{border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;background:none;color:var(--muted);border:1px solid var(--border);}
+    .result{margin-top:12px;padding-top:12px;border-top:1px solid #f1f3f5;}
+    .result .who{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);margin-bottom:8px;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
+  <div class="wrap">
+    <h1>등록 한도</h1>
+    <p class="lede">아이템 등록에 걸리는 <b>사용량 한도</b>를 배포 없이 조절합니다.</p>
+
+    <details class="guide">
+      <summary>동작 방식</summary>
+      <div class="gbody">
+        <table class="gtable">
+          <tbody>
+            <tr>
+              <th>무엇을 세나</th>
+              <td>요청 수가 아니라 <b>새로 파싱하는 아이템 수</b>입니다. 이미지 5장 등록은 5를 씁니다.<br>새로고침도 파싱이 다시 도니 1을 씁니다. 위시에 있는 아이템을 토너먼트로 담는 것은 세지 않습니다.</td>
+            </tr>
+            <tr>
+              <th>계정 한도</th>
+              <td>계정 하나의 몫입니다. 위시 등록과 토너먼트 아이템 추가가 <b>같은 몫</b>을 씁니다.<br>토너먼트는 참여 게스트가 넣은 것도 <b>오너의 몫</b>에서 빠집니다.</td>
+            </tr>
+            <tr>
+              <th>전역 상한</th>
+              <td>서비스 전체가 한 시간에 처리하겠다고 정한 총량입니다. 넘으면 503으로 흘려보냅니다.<br><b>정상 운영에서는 닿지 않아야 하는 선</b>이라, 도달은 인기 신호가 아니라 이상 신호입니다.</td>
+            </tr>
+            <tr>
+              <th>경고선</th>
+              <td>전역 상한의 몇 %에서 Discord 알림을 보낼지입니다.<br>상한에 닿으면 이미 사용자가 막히고 있어 늦으므로 이 지점이 실질 방어선입니다.</td>
+            </tr>
+            <tr>
+              <th>빈 칸</th>
+              <td>비워 두면 그 항목은 <b>서버 기본값</b>으로 동작합니다. 값을 넣으면 그것이 기본값을 덮습니다.</td>
+            </tr>
+            <tr>
+              <th>반영 시점</th>
+              <td>저장 즉시 이 서버에 적용되고, 다른 서버에는 <b>최대 5분</b> 안에 퍼집니다.<br>이미 쓴 사용량은 그대로 두고 한도만 새 값으로 판정합니다. 한도를 내리면 이미 넘긴 사용자는 바로 막힙니다.</td>
+            </tr>
+            <tr>
+              <th>적용 범위</th>
+              <td>이 설정은 이 환경에만 적용됩니다. dev 에서 바꿔도 prod 는 그대로입니다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="ok" th:if="${param.updated}">저장했습니다. 이 서버에 즉시 적용됐고 다른 서버에는 최대 5분 안에 퍼집니다.</div>
+    <div class="ok" th:if="${param.reset}">기본값으로 되돌렸습니다.</div>
+    <div class="err" th:if="${error}" th:text="${error}"></div>
+
+    <div class="card">
+      <h2>지금 전역 사용량</h2>
+      <p class="desc">이번 창에 서비스 전체가 얼마나 썼는지입니다.</p>
+      <div class="gauge"
+           th:classappend="${board.capacityUsage.usedPercent >= 100} ? 'full' : (${board.capacityUsage.usedPercent >= board.effective.capacityAlertPercent} ? 'warn' : '')">
+        <span th:style="'width:' + ${board.capacityUsage.usedPercent} + '%'"></span>
+      </div>
+      <div class="figures">
+        <span>사용 <b th:text="${board.capacityUsage.used}">0</b> / <span th:text="${board.capacityUsage.limit}">0</span></span>
+        <!-- 잔액은 음수가 될 수 있다(마지막 한 번이 한도를 넘길 수 있는 구조). 0 으로 접지 않고 그대로 보인다. -->
+        <span>남은 몫
+          <b th:text="${board.capacityUsage.remaining}" th:classappend="${board.capacityUsage.remaining < 0} ? 'over' : ''">0</b>
+        </span>
+        <span th:if="${board.capacityUsage.resetInSeconds}">
+          리셋까지 <b th:text="${board.capacityUsage.resetInSeconds / 60}">0</b>분
+        </span>
+        <span th:unless="${board.capacityUsage.resetInSeconds}" class="base">이번 창에 아직 사용 없음</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>계정 사용량 조회</h2>
+      <p class="desc">특정 계정이 이번 창에 얼마나 썼는지 봅니다. 상위 사용자 목록은 두지 않습니다 - 그러려면 활성 사용자 키를 전부 훑어야 해서 로그인이 함께 느려집니다.</p>
+      <form class="lookup" method="get" th:action="@{/admin/item-quota/usage}">
+        <input name="userId" placeholder="userId (UUID)" required th:value="${draftUserId}">
+        <button type="submit">조회</button>
+      </form>
+      <div class="result" th:if="${userUsage}">
+        <div class="who" th:text="${userUsage.userId}"></div>
+        <div class="figures">
+          <span>사용 <b th:text="${userUsage.usage.used}">0</b> / <span th:text="${userUsage.usage.limit}">0</span></span>
+          <span>남은 몫
+            <b th:text="${userUsage.usage.remaining}" th:classappend="${userUsage.usage.remaining < 0} ? 'over' : ''">0</b>
+          </span>
+          <span th:if="${userUsage.usage.resetInSeconds}">
+            리셋까지 <b th:text="${userUsage.usage.resetInSeconds / 60}">0</b>분
+          </span>
+          <span th:unless="${userUsage.usage.resetInSeconds}" class="base">이번 창에 사용 없음</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>한도 조절</h2>
+      <p class="desc">비워 두면 기본값으로 동작합니다. 네 항목을 한 번에 저장하므로 이 화면이 곧 최종 상태입니다.</p>
+      <form method="post" th:action="@{/admin/item-quota}">
+        <div class="grid">
+          <div class="field">
+            <label for="enabled">사용 여부</label>
+            <!-- 빈 값이 "기본값 사용" 이라 3상태다. 체크박스는 켬/끔 2상태뿐이라 표현할 수 없어 select 를 쓴다. -->
+            <select id="enabled" name="enabled">
+              <option value="" th:selected="${board.override == null or board.override.enabled == null}">기본값 사용</option>
+              <option value="true" th:selected="${board.override != null and board.override.enabled == true}">켬</option>
+              <option value="false" th:selected="${board.override != null and board.override.enabled == false}">끔 (한도를 걸지 않음)</option>
+            </select>
+            <span class="hint">지금 <b th:text="${board.effective.enabled} ? '켬' : '끔'">켬</b> · 기본값 <span th:text="${board.defaults.enabled} ? '켬' : '끔'">켬</span></span>
+          </div>
+          <div class="field">
+            <label for="userLimit">계정 한도 (창당)</label>
+            <input id="userLimit" name="userLimit" type="number" min="1" placeholder="기본값 사용"
+                   th:value="${draftUserLimit != null} ? ${draftUserLimit} : (${board.override != null} ? ${board.override.userLimit} : null)">
+            <span class="hint">지금 <b th:text="${board.effective.userLimit}">30</b> · 기본값 <span th:text="${board.defaults.userLimit}">30</span></span>
+          </div>
+          <div class="field">
+            <label for="capacityLimit">전역 상한 (창당)</label>
+            <input id="capacityLimit" name="capacityLimit" type="number" min="1" placeholder="기본값 사용"
+                   th:value="${draftCapacityLimit != null} ? ${draftCapacityLimit} : (${board.override != null} ? ${board.override.capacityLimit} : null)">
+            <span class="hint">지금 <b th:text="${board.effective.capacityLimit}">3000</b> · 기본값 <span th:text="${board.defaults.capacityLimit}">3000</span></span>
+          </div>
+          <div class="field">
+            <label for="capacityAlertPercent">경고선 (%)</label>
+            <input id="capacityAlertPercent" name="capacityAlertPercent" type="number" min="1" max="100" placeholder="기본값 사용"
+                   th:value="${draftCapacityAlertPercent != null} ? ${draftCapacityAlertPercent} : (${board.override != null} ? ${board.override.capacityAlertPercent} : null)">
+            <span class="hint">지금 <b th:text="${board.effective.capacityAlertPercent}">66</b>% (<span th:text="${board.effective.capacityAlertThreshold}">1980</span>건) · 기본값 <span th:text="${board.defaults.capacityAlertPercent}">66</span>%</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="save">저장</button>
+        </div>
+      </form>
+      <div class="actions" style="margin-top:10px;">
+        <!-- HTML 은 폼 중첩이 안 되므로 초기화는 형제 폼으로 둔다 (extraction-models 와 같은 배치). -->
+        <form th:if="${board.override}" method="post" th:action="@{/admin/item-quota/reset}">
+          <button type="submit" class="ghost">전부 기본값으로 되돌리기</button>
+        </form>
+        <span class="base" th:if="${board.override}" th:text="'마지막 변경 ' + ${#temporals.format(board.overriddenAt, 'yyyy-MM-dd HH:mm')}"></span>
+        <span class="base" th:unless="${board.override}">전부 기본값으로 동작 중</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
