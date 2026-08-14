@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component
 // 일시 외부 오류 → 소유권 반납(release, PROCESSING→PENDING)해 다음 tick 이 다시 집게 한다.
 // 반납은 "이 실행은 결론 없이 끝났다"는 **사실 통지**일 뿐이고, 재시도할지 종결할지의 **정책은 여전히 서비스가 쥔다**
 // (실행 예산이 남았으면 PENDING 으로 되돌리고, 소진했으면 그 자리에서 FAILED).
-// 전이 호출(markReady/markFailed)은 runCatching 으로 감싸 워커 스레드로 예외가 새지 않게 한다
+// 전이 호출(markReady/markFailed)은 runCatchingException 으로 감싸 워커 스레드로 예외가 새지 않게 한다
 // (recover 와의 레이스로 이미 전이됐거나, 추출값이 도메인 불변식을 위반하는 경우).
 @Component
 class AsyncItemParsingWorker(
@@ -44,7 +44,7 @@ class AsyncItemParsingWorker(
         // fetch·structured·LLM span 은 traceparent 전파로 그 아래 이어져, 단건 파이프라인을 크로스서비스로 끝까지 펼쳐 볼 수 있다.
         // 디스패처가 @Scheduled 라 들어오는 trace 가 없어, 여기서 만들지 않으면 원격 호출 span 이 따로 떠 묶이지 않는다.
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다(ext 호출·부수효과 없음).
-        // runCatching 이 예외를 삼켜 observation 은 실패를 못 보므로, 실패 경로가 error() 로 직접 마킹해야
+        // runCatchingException 이 예외를 삼켜 observation 은 실패를 못 보므로, 실패 경로가 error() 로 직접 마킹해야
         // Tempo 에서 `status = error` 검색·실패 표시가 동작한다(#902). 그래서 참조를 잡아 핸들러에 넘긴다.
         val observation = Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry)
         observation.observe {
@@ -56,7 +56,7 @@ class AsyncItemParsingWorker(
                 },
             ) { attempt ->
                 val started = System.nanoTime()
-                runCatching { productLinkExtractor.extract(link) }
+                runCatchingException { productLinkExtractor.extract(link) }
                     .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt, observation) }
                     .onFailure { e ->
                         observation.error(e)
@@ -78,7 +78,7 @@ class AsyncItemParsingWorker(
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
             .onSuccess { applied ->
                 // 좀비 폐기(소유권 상실)면 이 워커의 결과는 반영되지 않았다 — 결과 원장(로그·메트릭)에 성공으로 세지 않는다.
                 // 폐기 사유 자체는 서비스가 남긴다.
@@ -95,7 +95,7 @@ class AsyncItemParsingWorker(
                 // 정체성 기록(#825 관측 단계) — READY 전이가 커밋된 뒤 별도 트랜잭션으로 canonical·별칭을 남긴다.
                 // 전이와 분리하는 이유·병합 시 원자화 계획은 recorder 주석 참고. 기록 실패가 파싱 결과를 해치면
                 // 안 되므로 예외를 흡수한다(관측 부가 기능).
-                runCatching { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
+                runCatchingException { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
                     .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
             }
             .onFailure { e ->
@@ -178,7 +178,7 @@ class AsyncItemParsingWorker(
         snapshotId: Long,
         attempt: Int,
     ) {
-        runCatching { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
             .onFailure { e -> log.info("item {} 소유권 반납 생략 (이미 전이됨·소유권 상실): {}", itemId, e.message) }
     }
 
@@ -189,7 +189,7 @@ class AsyncItemParsingWorker(
         snapshotId: Long,
         attempt: Int,
     ): Boolean =
-        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)
@@ -202,14 +202,15 @@ class AsyncItemParsingWorker(
         // 이미지 파싱(AsyncImageParsingWorker)도 같은 이름을 공유한다 — 대시보드 필터가 링크·이미지를 한 탭으로 본다.
         internal const val PARSE_OBSERVATION = "item.parse"
 
-        // 재시도(일시)로 볼지 판정. 치명적 JVM 오류(Error: OutOfMemory·StackOverflow 등)는 재시도해도 소용없고
-        // runCatching 이 Throwable 을 다 잡아 여기로 들어오므로 먼저 제외한다(재시도 대상 아님, 즉시 종결). 분류 가능한
-        // HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), 그 외 예상 못한 예외(NPE·IllegalStateException 등)는
-        // 일시·영구를 단정할 수 없어 보수적으로 재시도 대상으로 둔다(즉시 FAILED 면 일시 오류를 영구로 오판해 사라지므로).
+        // 재시도(일시)로 볼지 판정. 분류 가능한 HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), 그 외
+        // 예상 못한 예외(NPE·IllegalStateException 등)는 일시·영구를 단정할 수 없어 보수적으로 재시도 대상으로 둔다
+        // (즉시 FAILED 면 일시 오류를 영구로 오판해 사라지므로).
         // recover 가 상한(MAX_ATTEMPTS)까지만 재실행해 bounded 이고 #461 retry-first 기조와 맞는다. 순수 함수라 단위 테스트로 망라한다.
+        //
+        // **Error 분기는 없다** — 치명적 JVM 오류는 runCatchingException 이 잡지 않아 여기 도달하지 않는다(#941).
+        // 도달하지 않는 분기를 남기면 다음 사람이 "여기로 Error 가 온다"고 읽어, 삼키는 설계로 되돌리기 쉬워진다.
         internal fun isRetryable(e: Throwable): Boolean =
             when (e) {
-                is Error -> false
                 is HttpMappable -> e.category == ErrorCategory.RETRYABLE
                 else -> true
             }

@@ -47,7 +47,7 @@ class AsyncImageParsingWorker(
         // (부모 없는 JDBC 관측은 ObservationConfig 가 거부하므로 아예 사라진다).
         // 소유권 획득→등록→해제 뼈대는 guarded 가 쥔다. 획득에 실패하면 body 를 건너뛰고 스킵 로그만 남긴다 —
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
-        // 링크 워커와 같은 이유로 실패 경로가 observation.error() 를 직접 마킹한다 — runCatching 이 예외를 삼켜
+        // 링크 워커와 같은 이유로 실패 경로가 observation.error() 를 직접 마킹한다 — runCatchingException 이 예외를 삼켜
         // 그냥 두면 실패 span 이 정상(status 미설정)으로 남는다(#902).
         val observation = Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry)
         observation.observe {
@@ -59,7 +59,7 @@ class AsyncImageParsingWorker(
                 },
             ) { attempt ->
                 val started = System.nanoTime()
-                runCatching { imageSnapshotExtractor.extract(imageKey) }
+                runCatchingException { imageSnapshotExtractor.extract(imageKey) }
                     .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, started, attempt, observation) }
                     .onFailure { e ->
                         observation.error(e)
@@ -80,7 +80,7 @@ class AsyncImageParsingWorker(
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
             .onSuccess { applied ->
                 // 좀비 폐기(소유권 상실)면 전이가 스킵된다 — 결과를 성공으로 세지 않고, **특히 raw 를 지우지 않는다**.
                 // 재클레임된 새 시도가 바로 그 원본으로 재실행해야 하므로, 여기서 지우면 되살릴 입력을 잃는다.
@@ -169,7 +169,7 @@ class AsyncImageParsingWorker(
     // raw 원본 회수는 best-effort — 삭제 실패가 파싱 결과(이미 READY/FAILED 확정)를 되돌리지 않는다.
     // 회수 못 한 raw 와 recover 상한 FAILED·유실분은 items/raw/ S3 lifecycle 이 백업으로 만료한다.
     private fun deleteRawQuietly(imageKey: String) {
-        runCatching { imageStorage.delete(imageKey) }
+        runCatchingException { imageStorage.delete(imageKey) }
             .onFailure { e -> log.warn("raw 이미지 {} 회수 실패(lifecycle 이 만료): {}", imageKey, e.message) }
     }
 
@@ -180,7 +180,7 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         attempt: Int,
     ) {
-        runCatching { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
             .onFailure { e -> log.info("item {} 이미지 소유권 반납 생략 (이미 전이됨·소유권 상실): {}", itemId, e.message) }
     }
 
@@ -191,7 +191,7 @@ class AsyncImageParsingWorker(
         snapshotId: Long,
         attempt: Int,
     ): Boolean =
-        runCatching { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)
