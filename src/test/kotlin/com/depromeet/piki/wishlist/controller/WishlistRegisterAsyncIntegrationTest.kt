@@ -575,22 +575,23 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `URL 파싱이 영구 외부 오류(차단된 호스트·접근 불가)면 즉시 FAILED 로 종결한다`() {
+    fun `URL 파싱이 대상 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 blocked 로 센다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
             // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다. recover 는 stale(60초) 후에야 돌므로 5초 내 FAILED 면 즉시 종결이다.
-            stubProductLinkExtractor.build = { throw ProductExtractorException.permanentFailure() }
-            val permanentBefore = parseCount("failed", "permanent_error")
+            stubProductLinkExtractor.build = { throw ProductExtractorException.blockedByTarget() }
+            val blockedBefore = parseCount("failed", "blocked")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 
             await().atMost(Duration.ofSeconds(5)).until {
                 latestSnapshot(itemId)?.status == ItemStatus.FAILED
             }
-            // 결과 메트릭(#506): 재시도 무의미한 영구 외부 오류 확정 실패는 result=failed,reason=permanent_error 로 +1.
-            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "permanent_error") - permanentBefore >= 1.0 }
+            // 결과 메트릭(#506·#936): 대상이 막아 확정 실패한 건은 result=failed,reason=blocked 로 +1.
+            // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 워커→메트릭 배선까지 함께 고정한다.
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
