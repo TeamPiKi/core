@@ -33,6 +33,7 @@ enum class NotificationKind {
                 // 파싱 알림은 라우팅 출처가 곧 도메인이다. 라우팅이 없는 경우(정상 흐름에선 resolveRouting 이 항상
                 // Wish/Tournament 를 주므로 도달하지 않는다)는 위시 기본값으로 둔다 — 클라 딥링크의 기존 기본 경로와 같다.
                 NotificationType.ITEM_PARSING_COMPLETED,
+                NotificationType.ITEM_PARSING_INCOMPLETE,
                 NotificationType.ITEM_PARSING_FAILED,
                 -> routingKind ?: WISH
 

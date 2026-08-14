@@ -3,6 +3,7 @@ package com.depromeet.piki.item.service
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.HttpMappable
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductLinkExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -15,8 +16,8 @@ import org.springframework.stereotype.Component
 
 // itemParsingExecutor 스레드에서 "단건 파싱 한 번"을 수행한다. 외부 호출(extract)은 트랜잭션 바깥에서 끝내고,
 // 상태 전이 영속화만 ItemParsingService(@Transactional) 에 위임해 짧은 트랜잭션으로 묶는다.
-// 결과 처리는 셋으로 갈린다(execution at-least-once, #461): 성공 → READY, 확정 실패(상품 아님·이름 없음) → 즉시 FAILED,
-// 일시 외부 오류 → 소유권 반납(release, PROCESSING→PENDING)해 다음 tick 이 다시 집게 한다.
+// 결과 처리는 넷으로 갈린다(execution at-least-once, #461): 성공 → READY, 부분 성공(일부 필드만 채움) → INCOMPLETE(#944),
+// 확정 실패(상품 아님·값 0개) → 즉시 FAILED, 일시 외부 오류 → 소유권 반납(release, PROCESSING→PENDING)해 다음 tick 이 다시 집게 한다.
 // 반납은 "이 실행은 결론 없이 끝났다"는 **사실 통지**일 뿐이고, 재시도할지 종결할지의 **정책은 여전히 서비스가 쥔다**
 // (실행 예산이 남았으면 PENDING 으로 되돌리고, 소진했으면 그 자리에서 FAILED).
 // 전이 호출(markReady/markFailed)은 runCatching 으로 감싸 워커 스레드로 예외가 새지 않게 한다
@@ -78,25 +79,21 @@ class AsyncItemParsingWorker(
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatching { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
-            .onSuccess { applied ->
-                // 좀비 폐기(소유권 상실)면 이 워커의 결과는 반영되지 않았다 — 결과 원장(로그·메트릭)에 성공으로 세지 않는다.
+        runCatching { transitionRetry.execute { itemParsingService.markExtracted(snapshotId, snapshot, attempt) } }
+            .onSuccess { status ->
+                // 좀비 폐기(소유권 상실)면 이 워커의 결과는 반영되지 않았다 — 결과 원장(로그·메트릭)에 세지 않는다.
                 // 폐기 사유 자체는 서비스가 남긴다.
-                if (!applied) return@onSuccess
-                log.info(
-                    "item.parse.result item={} result={} reason={} latency={}ms url={}",
-                    itemId,
-                    ItemParsingMetrics.RESULT_READY,
-                    ItemParsingMetrics.REASON_NONE,
-                    elapsedMs,
-                    link.safeLogString(),
-                )
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
-                // 정체성 기록(#825 관측 단계) — READY 전이가 커밋된 뒤 별도 트랜잭션으로 canonical·별칭을 남긴다.
+                val settled = status ?: return@onSuccess
+                recordOutcome(itemId, link, snapshot, settled, elapsedMs)
+                // 정체성 기록(#825 관측 단계) — 전이가 커밋된 뒤 별도 트랜잭션으로 canonical·별칭을 남긴다.
+                // 값을 다 못 채운 INCOMPLETE 에서도 기록한다: 정체성은 "어느 상품인가"라 값 완성도와 무관하고,
+                // 사용자가 나머지를 채워 완성할 버전도 같은 상품을 가리키기 때문이다.
                 // 전이와 분리하는 이유·병합 시 원자화 계획은 recorder 주석 참고. 기록 실패가 파싱 결과를 해치면
                 // 안 되므로 예외를 흡수한다(관측 부가 기능).
-                runCatching { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
-                    .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
+                if (settled != ItemStatus.FAILED) {
+                    runCatching { itemIdentityRecorder.recordParsingIdentity(itemId, snapshot.finalUrl) }
+                        .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
+                }
             }
             .onFailure { e ->
                 // 추출은 됐으나 값을 신뢰할 수 없어 READY 로 채울 수 없는 경우 → PROCESSING 방치 대신 FAILED 로.
@@ -117,6 +114,53 @@ class AsyncItemParsingWorker(
                     ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ItemParsingMetrics.REASON_READY_REJECTED)
                 }
             }
+    }
+
+    // 종결 결과를 원장(로그·메트릭)에 남긴다. 셋 다 같은 logfmt 계약(item.parse.result)을 쓰고 result 로만 갈린다 —
+    // 알림·대시보드가 이 한 줄 == 종결 1건으로 세기 때문이다(#902).
+    // INCOMPLETE 만 missing 을 덧붙인다: "무엇을 사용자에게 물어야 하는가"가 이 결과의 핵심이라 사후에 그 분포를
+    // 로그만으로 볼 수 있어야 한다(#944). 메트릭 라벨로는 올리지 않는다 — 조합이 늘어도 운영 액션이 같다.
+    // 값을 하나도 못 얻은 FAILED 는 extract_quality 로 센다 — "모델·프롬프트·검증 규칙을 본다"는 액션이 그 바구니와 같다.
+    private fun recordOutcome(
+        itemId: Long,
+        link: ProductLink,
+        snapshot: ProductSnapshot,
+        status: ItemStatus,
+        elapsedMs: Long,
+    ) {
+        val result =
+            when (status) {
+                ItemStatus.READY -> ItemParsingMetrics.RESULT_READY
+                ItemStatus.INCOMPLETE -> ItemParsingMetrics.RESULT_INCOMPLETE
+                ItemStatus.FAILED -> ItemParsingMetrics.RESULT_FAILED
+                ItemStatus.PENDING, ItemStatus.PROCESSING -> error("추출 전이가 만들 수 없는 상태 $status")
+            }
+        val reason =
+            when (status) {
+                ItemStatus.FAILED -> ItemParsingMetrics.REASON_EXTRACT_QUALITY
+                else -> ItemParsingMetrics.REASON_NONE
+            }
+        if (status == ItemStatus.INCOMPLETE) {
+            log.info(
+                "item.parse.result item={} result={} reason={} latency={}ms url={} missing={}",
+                itemId,
+                result,
+                reason,
+                elapsedMs,
+                link.safeLogString(),
+                ItemParsingMetrics.missingFieldsOf(snapshot),
+            )
+        } else {
+            log.info(
+                "item.parse.result item={} result={} reason={} latency={}ms url={}",
+                itemId,
+                result,
+                reason,
+                elapsedMs,
+                link.safeLogString(),
+            )
+        }
+        ItemParsingMetrics.record(meterRegistry, result, reason)
     }
 
     // 파싱 실패는 두 갈래다 — 재시도해도 결정론적으로 재실패하는 영구 오류는 즉시 종결, 일시 오류는 recover 에 맡긴다.

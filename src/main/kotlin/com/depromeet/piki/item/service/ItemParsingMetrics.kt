@@ -3,6 +3,7 @@ package com.depromeet.piki.item.service
 import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.product.service.ExtractionFailureBucket
 import com.depromeet.piki.product.service.ExtractionFailureCode
+import com.depromeet.piki.product.service.ProductSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 
 // 파싱 단건의 종결 결과(READY/FAILED)를 result·reason 라벨로 센다 — 추출 실패가 트래픽에서 얼마나·왜 나는지 관측한다(#506).
@@ -15,6 +16,11 @@ object ItemParsingMetrics {
     const val TAG_REASON = "reason"
 
     const val RESULT_READY = "ready"
+
+    // 파싱은 끝났으나 일부 필드만 채워 사용자 입력을 기다리는 종결(#944). 실패가 아니므로 failed 에 섞지 않는다 —
+    // 섞으면 "우리가 못 끝낸 것"과 "사용자가 마저 채울 것"이 한 숫자가 되어 실패율이 실제보다 나쁘게 보인다.
+    const val RESULT_INCOMPLETE = "incomplete"
+
     const val RESULT_FAILED = "failed"
 
     // 성공.
@@ -59,6 +65,18 @@ object ItemParsingMetrics {
         reason: String,
     ) {
         registry.counter(METRIC, TAG_RESULT, result, TAG_REASON, reason).increment()
+    }
+
+    // INCOMPLETE 로 끝난 건이 **무엇을 못 채웠는지** 를 로그 한 필드("price" · "name+price")로 남긴다.
+    // 메트릭 라벨로 두지 않는 이유는 조합이 늘어도 운영 액션이 같아서다 — 분포는 로그로 보고, 메트릭은
+    // result=incomplete 한 줄로 센다(라벨 키 집합을 경로마다 같게 유지하는 #465 규율과도 맞다).
+    // currency 는 READY 필수가 아니라 "못 채운 것"에 세지 않는다.
+    fun missingFieldsOf(snapshot: ProductSnapshot): String {
+        val missing = mutableListOf<String>()
+        snapshot.name?.takeIf { it.isNotBlank() } ?: missing.add("name")
+        snapshot.price ?: missing.add("price")
+        snapshot.imageUrl ?: missing.add("imageUrl")
+        return missing.joinToString("+")
     }
 
     // 확정 실패 예외 → reason 라벨. 분류의 정본은 예외가 참조하는 ErrorCode 의 bucket 이고(ExtractionFailureCode),

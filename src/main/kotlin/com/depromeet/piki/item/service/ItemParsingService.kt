@@ -2,8 +2,10 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
+import com.depromeet.piki.item.event.ItemParsingIncomplete
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
@@ -29,14 +31,16 @@ class ItemParsingService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 반환값은 **이 전이가 실제로 적용됐는지** 다. false(좀비 폐기)면 호출부는 자기 결과를 반영된 것으로 세면 안 된다 —
+    // 반환값은 **이 전이로 확정된 상태** 다. null(좀비 폐기)이면 호출부는 자기 결과를 반영된 것으로 세면 안 된다 —
     // 특히 이미지 워커의 raw 원본 회수는 반드시 이 값으로 막아야 한다(소유권을 쥔 새 시도가 그 원본으로 재실행하므로).
+    // 상태가 셋으로 갈리는(READY/INCOMPLETE/FAILED) 판정은 도메인(ItemSnapshot.markExtracted)이 쥐고, 여기서는
+    // 그 결과에 맞는 도메인 사실을 발행하기만 한다(#944).
     @Transactional
-    fun markReady(
+    fun markExtracted(
         snapshotId: Long,
         snapshot: ProductSnapshot,
         expectedAttempt: Int,
-    ): Boolean {
+    ): ItemStatus? {
         // 워커가 claim 한 그 snapshot 을 id 로 직접 전이한다 — findLatestByItemId(최신)가 아니다.
         // 갱신(5단계)으로 한 item 에 여러 버전이 공존하면 "최신"이 이 워커가 추출한 행과 다를 수 있어(stale/좀비 워커가
         // 다른 버전을 오전이), claim 시점에 고정한 snapshotId 로 정확히 짚는다. 없으면 영속화 경로가 깨진 코드 버그다.
@@ -44,12 +48,25 @@ class ItemParsingService(
         val target =
             itemSnapshotRepository.findByIdForUpdate(snapshotId)
                 ?: error("파싱 대상 snapshot $snapshotId 이 없다")
-        if (isZombieResult(target, expectedAttempt)) return false
-        target.markReady(snapshot)
+        if (isZombieResult(target, expectedAttempt)) return null
+        val status = target.markExtracted(snapshot)
         // 트랜잭션 안에서 발행 → AFTER_COMMIT 리스너가 커밋 성공 후에만 알림을 보낸다 (롤백 시 발송 안 됨). itemId 는 snapshot 단일 출처.
-        eventPublisher.publishEvent(ItemParsingCompleted(target.itemId, target.getId()))
-        return true
+        eventPublisher.publishEvent(parsingFact(status, target))
+        return status
     }
+
+    // 확정된 상태에 대응하는 도메인 사실. markExtracted 는 셋 중 하나로만 끝나므로 나머지 상태는 도메인 분기가 깨진
+    // 코드 버그다(500). 사실을 상태와 1:1 로 두는 이유는 소비자(알림·SSE)가 상태를 다시 해석하지 않게 하려는 것이다.
+    private fun parsingFact(
+        status: ItemStatus,
+        target: ItemSnapshot,
+    ): Any =
+        when (status) {
+            ItemStatus.READY -> ItemParsingCompleted(target.itemId, target.getId())
+            ItemStatus.INCOMPLETE -> ItemParsingIncomplete(target.itemId, target.getId())
+            ItemStatus.FAILED -> ItemParsingFailed(target.itemId, target.getId())
+            ItemStatus.PENDING, ItemStatus.PROCESSING -> error("추출 전이가 만들 수 없는 상태 $status")
+        }
 
     // markReady 와 같이 적용 여부를 돌려준다 (false = 좀비 폐기).
     @Transactional

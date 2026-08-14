@@ -13,6 +13,9 @@ enum class NotificationType {
     // 내가 참여한 토너먼트를 주최자가 완료해 결과가 나온 사실 — 참여자에게 간다(actor=주최자).
     TOURNAMENT_RESULT_READY,
     ITEM_PARSING_COMPLETED,
+    // 파싱이 일부 필드만 채우고 끝난 사실 — 실패가 아니라 "나머지를 입력하면 완성된다"는 안내다(#944).
+    // 완료와 문구가 갈려야 해 타입을 따로 둔다 (템플릿은 타입당 하나).
+    ITEM_PARSING_INCOMPLETE,
     ITEM_PARSING_FAILED,
     // 전체 공지(#391/#250). 트리거·발행은 후속 — 지금은 분류/필터용 enum 만 선반영한다.
     ANNOUNCEMENT,

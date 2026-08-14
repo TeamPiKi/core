@@ -159,8 +159,9 @@ interface WishlistApi {
             cursor 페이지네이션: 직전 응답의 pageResponse.nextCursor 를 다음 요청 cursor 로 그대로 전달한다.
             마지막 페이지면 nextCursor 는 null, hasNext 는 false.
             size 는 미지정 시 20, 1~50 범위를 벗어나면 양 끝으로 보정된다.
-            각 항목의 item.status 로 파싱 상태(PENDING/PROCESSING/READY/FAILED)를 구분한다 —
-            등록 직후 PENDING·PROCESSING 인 항목은 SSE(`/api/v1/notifications/subscribe`)로 READY/FAILED 전이를 통보받고 이 조회로 확인한다.
+            각 항목의 item.status 로 파싱 상태(PENDING/PROCESSING/READY/INCOMPLETE/FAILED)를 구분한다 —
+            등록 직후 PENDING·PROCESSING 인 항목은 SSE(`/api/v1/notifications/subscribe`)로 READY/INCOMPLETE/FAILED 전이를 통보받고 이 조회로 확인한다.
+            INCOMPLETE 는 추출이 일부 필드만 채운 상태다 — 빈 필드를 수기 수정(PATCH)으로 채우면 READY 가 된다.
         """,
     )
     @ApiResponses(

@@ -31,6 +31,8 @@ class NotificationPushPolicySeedIntegrationTest : IntegrationTestSupport() {
             NotificationType.TOURNAMENT_COMPLETED to true,
             NotificationType.TOURNAMENT_RESULT_READY to true,
             NotificationType.ITEM_PARSING_COMPLETED to true,
+            // 사용자가 나머지를 채워야 등록이 끝나므로, 앱이 닫혀 있어도 알린다(완료·실패와 같은 결).
+            NotificationType.ITEM_PARSING_INCOMPLETE to true,
             NotificationType.ITEM_PARSING_FAILED to true,
             NotificationType.ANNOUNCEMENT to true,
         )
