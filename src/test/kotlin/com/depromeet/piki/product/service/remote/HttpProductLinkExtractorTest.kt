@@ -1,7 +1,9 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.item.service.AsyncItemParsingWorker
+import com.depromeet.piki.item.service.ItemParsingMetrics
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.ExtractionRoute
 import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
@@ -286,25 +288,49 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
+        assertEquals(ItemParsingMetrics.REASON_NOT_PRODUCT, ItemParsingMetrics.reasonOf(e))
         assertFalse(AsyncItemParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
     @Test
-    fun `422 UNTRUSTWORTHY_VALUE 도 기존 ProductSnapshotException 으로 되돌린다`() {
-        val extractor =
-            extractorWith { server ->
-                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
-                    withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("""{"code":"UNTRUSTWORTHY_VALUE"}"""),
-                )
-            }
+    fun `422 확정 실패 code 는 전이 판정은 그대로 둔 채 bucket 별 reason 으로만 갈린다`() {
+        // 원격 code 를 우리 예외로 번역하는 분기 망라(#936). code 마다 다른 건 **reason 뿐**이고, "422 = 확정 실패
+        // (비 RETRYABLE)" 라는 전이 판정은 전부 같다 — 그 두 축이 섞이지 않았음을 한 테스트에서 함께 고정한다.
+        // 카탈로그 bucket 과 이 reason 이 같은지는 ExtractionErrorCatalogTest 가 별도로 대조한다.
+        val expected =
+            mapOf(
+                "NOT_PRODUCT_PAGE" to ItemParsingMetrics.REASON_NOT_PRODUCT,
+                "INVALID_URL" to ItemParsingMetrics.REASON_NOT_PRODUCT,
+                "EMPTY_SHELL" to ItemParsingMetrics.REASON_UNREADABLE,
+                "NO_EXTRACTABLE_CONTENT" to ItemParsingMetrics.REASON_UNREADABLE,
+                "FETCH_CLIENT_ERROR" to ItemParsingMetrics.REASON_BLOCKED,
+                "PERMANENT_UPSTREAM" to ItemParsingMetrics.REASON_BLOCKED,
+                "UNTRUSTWORTHY_VALUE" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
+                "LLM_INVALID_RESPONSE" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
+                "IMAGE_UNSUPPORTED" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
+                "BLOCKED_HOST" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
+                "TOO_MANY_REDIRECTS" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
+                "MALFORMED_REDIRECT" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
+            )
 
-        assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
+        expected.forEach { (code, reason) ->
+            val extractor =
+                extractorWith { server ->
+                    server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                        withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("""{"code":"$code"}"""),
+                    )
+                }
+
+            val e = assertFailsWith<BaseException> { extractor.extract(link) }
+            assertEquals(reason, ItemParsingMetrics.reasonOf(e), "$code 의 메트릭 reason")
+            assertFalse(AsyncItemParsingWorker.isRetryable(e), "$code 는 422 라 재시도 대상이 아니어야 한다")
+        }
     }
 
     @Test
-    fun `422 의 모르는 code 도 확정 실패다 (tolerant reader) - 비 RETRYABLE 로 워커가 즉시 FAILED`() {
+    fun `422 의 모르는 code 도 확정 실패다 (tolerant reader) - internal_error 로 세어 매핑 누락이 드러난다`() {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
@@ -316,6 +342,8 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
+        // 이름을 모르는 실패를 다른 바구니에 섞지 않는다 — 조사 대상(internal_error)으로 센다.
+        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
         assertFalse(AsyncItemParsingWorker.isRetryable(e))
     }
 
@@ -331,6 +359,7 @@ class HttpProductLinkExtractorTest {
             }
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
+        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
         assertFalse(AsyncItemParsingWorker.isRetryable(e))
     }
 

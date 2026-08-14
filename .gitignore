@@ -15,6 +15,10 @@
 .claude/commands/session-close.md
 .claude/rules/testing-principles.md
 
+# infra(TeamPiKi/infra) 체크아웃 자리 — 계약 카탈로그(contracts/*.yaml)를 로컬은 install.sh 가, CI 는 ci.yml 의
+# 체크아웃 스텝이 여기 둔다. 정본은 infra 이므로 이 repo 는 사본을 추적하지 않는다.
+shared-infra/
+
 # IDE - 개인 설정 제외
 .idea/*
 !.idea/codeStyles/

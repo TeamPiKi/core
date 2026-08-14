@@ -6,7 +6,6 @@ import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
-import com.depromeet.piki.product.service.ProductSnapshotException
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
 import io.micrometer.observation.ObservationRegistry
@@ -153,7 +152,7 @@ class AsyncImageParsingWorker(
         }
         // 확정 실패 — 상품 아님·추출값 신뢰 불가 등. 다시 해도 결과가 같으니 즉시 FAILED + raw 회수.
         // 단 전이가 실제로 적용됐을 때만이다 — 좀비 폐기·전이 실패면 결과를 세지도, raw 를 지우지도 않는다.
-        val reason = reasonOf(e)
+        val reason = ItemParsingMetrics.reasonOf(e)
         if (!markFailedQuietly(itemId, snapshotId, attempt)) return
         log.info(
             "item.parse.result item={} type=image result={} reason={} latency={}ms",
@@ -166,12 +165,6 @@ class AsyncImageParsingWorker(
         ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
         deleteRawQuietly(imageKey)
     }
-
-    private fun reasonOf(e: Throwable): String =
-        when (e) {
-            is ProductSnapshotException -> ItemParsingMetrics.REASON_NOT_PRODUCT
-            else -> ItemParsingMetrics.REASON_PERMANENT_ERROR
-        }
 
     // raw 원본 회수는 best-effort — 삭제 실패가 파싱 결과(이미 READY/FAILED 확정)를 되돌리지 않는다.
     // 회수 못 한 raw 와 recover 상한 FAILED·유실분은 items/raw/ S3 lifecycle 이 백업으로 만료한다.

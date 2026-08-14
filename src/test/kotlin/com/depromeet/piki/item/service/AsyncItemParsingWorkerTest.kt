@@ -19,10 +19,13 @@ class AsyncItemParsingWorkerTest {
 
     @Test
     fun `RETRYABLE 이 아닌 HttpMappable 예외는 재시도 대상이 아니다(즉시 확정 실패)`() {
-        // 상품 아님·추출값 불신·원격 422 등 재시도해도 결정론적으로 재실패하는 것들.
+        // 원격 422 의 번역 결과 전부 — bucket 이 무엇이든(상품 아님·못 읽음·값 불신·대상 차단·조사 대상)
+        // 재시도 판정은 하나로 같다. reason 재편(#936)이 전이 판정을 건드리지 않았음을 여기서 고정한다.
         assertFalse(AsyncItemParsingWorker.isRetryable(ProductExtractorException.permanentFailure()))
+        assertFalse(AsyncItemParsingWorker.isRetryable(ProductExtractorException.blockedByTarget()))
         assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.notProductPage()))
         assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.untrustworthyValue()))
+        assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.noExtractableContent()))
     }
 
     @Test

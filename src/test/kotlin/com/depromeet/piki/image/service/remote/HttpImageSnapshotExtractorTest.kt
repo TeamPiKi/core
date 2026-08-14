@@ -3,6 +3,8 @@ package com.depromeet.piki.image.service.remote
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.item.service.AsyncImageParsingWorker
+import com.depromeet.piki.item.service.ItemParsingMetrics
+import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ExtractionModelSettings
 import com.depromeet.piki.product.service.remote.ExtractionTarget
 import com.depromeet.piki.product.service.remote.ProductExtractorException
@@ -84,8 +86,9 @@ class HttpImageSnapshotExtractorTest {
     }
 
     @Test
-    fun `이미지 전용 422 code(IMAGE_UNSUPPORTED)도 별도 매핑 없이 확정 실패다 - 워커가 즉시 FAILED`() {
-        // 미지원 이미지 형식은 다시 보내도 결과가 같다. code 는 관측용이라 새 code 마다 매핑을 늘리지 않는다(tolerant reader).
+    fun `이미지 전용 422 code(IMAGE_UNSUPPORTED)는 확정 실패이며 extract_quality 로 센다`() {
+        // 미지원 이미지 형식은 다시 보내도 결과가 같다. 확정 실패라는 판정은 status(422)가 하고, code 가 정하는 건
+        // "무엇으로 세는가"뿐이다 — 받은 결과를 상품 정보로 쓸 수 없다는 뜻이라 extract_quality 다(#936).
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(
@@ -95,8 +98,9 @@ class HttpImageSnapshotExtractorTest {
                 )
             }
 
-        val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
-        assertEquals(ErrorCategory.SERVER_ERROR, e.category)
+        val e = assertFailsWith<ProductSnapshotException> { extractor.extract(imageKey) }
+        assertEquals(ErrorCategory.INVALID_INPUT, e.category)
+        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.reasonOf(e))
         assertFalse(AsyncImageParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
