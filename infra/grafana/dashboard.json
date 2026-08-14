@@ -1239,6 +1239,100 @@
       ]
     },
     {
+      "id": 205,
+      "type": "timeseries",
+      "title": "Repository 호출률",
+      "description": "Spring Data repository 별 초당 호출 수. 트레이스(JDBC 스팬)가 단건 맥락을 보여준다면 이 패널은 추세를 본다 - 어느 조회가 갑자기 늘었는지. method 까지 쪼개지 않는 이유: repository 는 17개로 고정이라 범례가 안정적인 반면, method 단위(48개)는 topk 로 잘라도 시점마다 상위 구성이 바뀌어 범례가 계속 불어난다. 메서드 단위 상세는 트레이스로 내려가 본다.",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (repository) (rate(spring_data_repository_invocations_seconds_count{application=\"piki-core\", environment=\"$environment\"}[$__rate_interval]))",
+          "legendFormat": "{{repository}}"
+        }
+      ]
+    },
+    {
+      "id": 206,
+      "type": "timeseries",
+      "title": "Repository 평균 소요시간",
+      "description": "repository 별 평균 소요시간(sum/count). 특정 조회가 느려지는 추세를 잡는다. 단건 원인은 트레이스의 piki-db 스팬으로 내려가 확인한다.",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (repository) (rate(spring_data_repository_invocations_seconds_sum{application=\"piki-core\", environment=\"$environment\"}[$__rate_interval])) / sum by (repository) (rate(spring_data_repository_invocations_seconds_count{application=\"piki-core\", environment=\"$environment\"}[$__rate_interval]))",
+          "legendFormat": "{{repository}}"
+        }
+      ]
+    },
+    {
       "id": 105,
       "type": "row",
       "title": "리소스 (CPU · 스레드)",
@@ -1246,7 +1340,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 36
       }
     },
     {
@@ -1257,7 +1351,7 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 33
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -1314,7 +1408,7 @@
         "h": 4,
         "w": 8,
         "x": 8,
-        "y": 33
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -1360,7 +1454,7 @@
         "h": 4,
         "w": 8,
         "x": 16,
-        "y": 33
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -1408,7 +1502,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 41
       }
     },
     {
@@ -1420,7 +1514,7 @@
         "h": 4,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 42
       },
       "datasource": {
         "type": "loki",
@@ -1453,7 +1547,7 @@
         "h": 4,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 46
       },
       "datasource": {
         "type": "loki",
@@ -1486,7 +1580,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 51
       }
     },
     {
@@ -1498,7 +1592,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 52
       },
       "datasource": {
         "type": "prometheus",
@@ -1563,7 +1657,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 52
       },
       "datasource": {
         "type": "loki",
@@ -1644,7 +1738,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 52
       },
       "datasource": {
         "type": "loki",
@@ -1694,7 +1788,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 60
       },
       "datasource": {
         "type": "loki",
