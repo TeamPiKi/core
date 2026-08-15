@@ -4,6 +4,7 @@ import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
+import com.depromeet.piki.item.event.ItemParsingIncomplete
 import com.depromeet.piki.notification.controller.dto.TournamentItemParsed
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
@@ -38,6 +39,15 @@ class TournamentItemParsedSseBroadcaster(
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun on(event: ItemParsingCompleted) {
         broadcast(event.snapshotId, ItemStatus.READY)
+    }
+
+    // 일부만 채워 끝난 경우도 카드 갱신 대상이다 — 참여자 화면의 로딩바를 멈추게 해야 하는 건 완료·실패와 같고,
+    // 카드가 "나머지를 채워 주세요" 상태로 바뀌어야 하기 때문이다(#944). status 를 그대로 실어 보내므로
+    // 클라이언트는 이미 쓰던 필드로 새 값 하나를 더 받는다.
+    @Async(AsyncConfig.NOTIFICATION_EXECUTOR)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    fun on(event: ItemParsingIncomplete) {
+        broadcast(event.snapshotId, ItemStatus.INCOMPLETE)
     }
 
     @Async(AsyncConfig.NOTIFICATION_EXECUTOR)

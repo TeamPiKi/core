@@ -62,7 +62,7 @@ class ItemSnapshot(
     var currency: String? = currency
         protected set
 
-    // 이 버전의 추출 생애주기. PENDING(대기)→PROCESSING(추출 중)→READY(완료)/FAILED(실패).
+    // 이 버전의 추출 생애주기. PENDING(대기)→PROCESSING(추출 중)→READY(완료)/INCOMPLETE(일부만 채움)/FAILED(실패).
     // 상태는 되돌리지 않는다 — 수기 수정은 이 행을 고치지 않고 MANUAL 새 버전을 쌓는다(#825 결정 4).
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
@@ -140,11 +140,18 @@ class ItemSnapshot(
         status = ItemStatus.FAILED
     }
 
-    // PROCESSING → READY. 백그라운드 파싱이 성공해 추출 결과(snapshot)를 채우며 전이한다.
+    // PROCESSING → READY / INCOMPLETE / FAILED. 백그라운드 파싱이 끝나 추출 결과(snapshot)를 채우며 전이한다.
     // 전이 가능 상태가 아닌데 호출되면 워커가 잘못된 버전을 집은 코드 버그이므로 check(500).
     // extractedAt 은 전이 시점의 now() — Wish.delete() 등 도메인이 시간을 만드는 프로젝트 관례를 따른다.
-    fun markReady(snapshot: ProductSnapshot) {
-        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 READY 로 전이할 수 없다" }
+    //
+    // 결과는 **추출이 무엇을 건졌는지**로만 갈린다 (#944):
+    //   - 세 필드(name·price·imageUrl)를 다 얻음 → READY
+    //   - 일부만 얻음 → INCOMPLETE. 사용자가 나머지를 채워 완성한다. 사진에 가격이 없는 것은 정상 입력이라,
+    //     여기서 실패로 끝내면 "쇼핑몰 화면을 캡처한 것"만 통과하는 계약이 된다.
+    //   - 하나도 못 얻음 → FAILED. 사용자에게 무엇을 채우라 할 근거조차 없다.
+    // 반환값은 확정된 상태다 — 호출부(서비스)가 이 값으로 발행할 이벤트를, 워커가 로그·메트릭을 가른다.
+    fun markExtracted(snapshot: ProductSnapshot): ItemStatus {
+        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
         apply(
             name = snapshot.name,
             price = snapshot.price,
@@ -153,12 +160,22 @@ class ItemSnapshot(
         )
         // 출처(#825 결정 4) — 어느 기계가 뽑았는지를 버전에 박는다. 구버전 extractor 응답(method 없음)은 null(미기록).
         this.source = ItemSnapshotSource.fromWireMethod(snapshot.extractionMethod)
-        // 추출 결과와 추출시각을 채운 뒤 불변식을 검사한다 — READY 가 보장하는 네 필드(name·price·imageUrl·extractedAt)를
-        // 한 자리에서 확정하려고 set 을 검사 앞에 둔다. 추출이 이름을 못 얻었으면 READY 부적격 —
-        // 워커가 이 예외를 받아 FAILED 로 흡수한다(PROCESSING 방치 방지).
+        // 건진 값이 없으면 추출시각도 남기지 않는다 — 추출한 값이 없는데 "언제 추출했나"는 의미가 없다.
+        if (hasNoExtractedValue()) {
+            status = ItemStatus.FAILED
+            return status
+        }
+        // 추출 결과와 추출시각을 채운 뒤 불변식을 검사한다 — 각 상태가 보장하는 필드를 한 자리에서 확정하려고
+        // set 을 검사 앞에 둔다.
         this.extractedAt = LocalDateTime.now()
+        if (!hasAllReadyFields()) {
+            requireIncompleteInvariant()
+            status = ItemStatus.INCOMPLETE
+            return status
+        }
         requireReadyInvariant()
         status = ItemStatus.READY
+        return status
     }
 
     // PROCESSING → FAILED. 파싱 실패(상품 아님·신뢰 불가·타임아웃)를 동기 400 대신 상태로 남긴다.
@@ -169,7 +186,11 @@ class ItemSnapshot(
 
     // 파싱이 끝나 추출 결과가 채워진 버전인지. 토너먼트 출전·목록 노출처럼 "완성된 버전만" 요구하는 게이트에서 쓴다.
     // PROCESSING(파싱 중)·FAILED(실패)는 false — 이름·가격이 비어 출전에 부적합하다.
+    // INCOMPLETE 도 false 다 — 사용자가 나머지를 채우기 전까지는 같은 이유로 부적합하다(#944).
     fun isReady(): Boolean = status == ItemStatus.READY
+
+    // 파싱은 끝났으나 사용자 입력을 기다리는 버전인지. 클라이언트가 "나머지를 채워 주세요" 화면으로 유도하는 근거다.
+    fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
 
     // 추출이 실패로 종결된 버전인지. 새로고침의 FAILED 차단(수기 수정 유도) 등 상태 분기에서 쓴다.
     fun isFailed(): Boolean = status == ItemStatus.FAILED
@@ -188,6 +209,28 @@ class ItemSnapshot(
         requireNotNull(price) { "READY snapshot 은 price 가 있어야 한다" }
         requireNotNull(imageUrl) { "READY snapshot 은 imageUrl 이 있어야 한다" }
         requireNotNull(extractedAt) { "READY snapshot 은 extractedAt 이 있어야 한다" }
+    }
+
+    // INCOMPLETE 불변식 — 사용자가 나머지를 채워 완성할 수 있는 버전이라, 추출이 최소 하나는 건졌고 그 시각이 남아 있어야
+    // 한다. 하나도 못 건졌으면 FAILED 로 끝냈어야 하는 행이므로 여기 닿으면 markExtracted 의 분기가 깨진 코드 버그다.
+    private fun requireIncompleteInvariant() {
+        require(!hasNoExtractedValue()) { "INCOMPLETE snapshot 은 추출값이 최소 하나 있어야 한다" }
+        requireNotNull(extractedAt) { "INCOMPLETE snapshot 은 extractedAt 이 있어야 한다" }
+    }
+
+    // READY 세 필드를 다 채웠는지 (extractedAt 은 전이가 직접 채우므로 여기서 보지 않는다).
+    private fun hasAllReadyFields(): Boolean {
+        if (name.isNullOrBlank()) return false
+        price ?: return false
+        imageUrl ?: return false
+        return true
+    }
+
+    // 추출값을 하나도 못 얻었는지 — 사용자에게 무엇을 채우라 할 근거조차 없는 상태. currency 는 READY 필수가 아니라
+    // 단독으로는 "건졌다"의 근거가 되지 못하므로 세지 않는다.
+    private fun hasNoExtractedValue(): Boolean {
+        val extracted = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
+        return extracted.isEmpty()
     }
 
     private fun validate(

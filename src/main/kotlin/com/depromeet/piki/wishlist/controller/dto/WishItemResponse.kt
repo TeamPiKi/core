@@ -78,9 +78,11 @@ data class WishItemResponse(
         @field:Schema(description = "상품 ID", example = "512")
         val id: Long,
         @field:Schema(
-            description = "파싱 상태 — PENDING(URL 등록 접수, 파싱 대기)/PROCESSING(파싱 중)/READY(완료)/FAILED(파싱 실패). " +
-                "URL 등록은 PENDING 으로 시작해 디스패처가 집어 PROCESSING→READY/FAILED 로 전이하고, 이미지 등록은 PROCESSING 으로 시작한다. " +
-                "PENDING·PROCESSING 동안은 name·price·imageUrl 이 비어 있다.",
+            description = "파싱 상태 — PENDING(URL 등록 접수, 파싱 대기)/PROCESSING(파싱 중)/READY(완료)/" +
+                "INCOMPLETE(일부만 채움, 사용자 입력 필요)/FAILED(파싱 실패). " +
+                "URL 등록은 PENDING 으로 시작해 디스패처가 집어 PROCESSING→READY/INCOMPLETE/FAILED 로 전이하고, 이미지 등록은 PROCESSING 으로 시작한다. " +
+                "PENDING·PROCESSING 동안은 name·price·imageUrl 이 비어 있다. " +
+                "INCOMPLETE 는 셋 중 채운 것만 있고 나머지가 비어 있다 — 수기 수정으로 빈 필드를 채우면 READY 가 된다.",
             example = "READY",
         )
         val status: ItemStatus,

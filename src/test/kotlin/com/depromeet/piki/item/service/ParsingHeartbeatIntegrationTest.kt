@@ -55,7 +55,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
     @Test
-    fun `claim attempt 와 어긋난 결과는 markReady 가 전이하지 않고 폐기한다`() {
+    fun `claim attempt 와 어긋난 결과는 markExtracted 가 전이하지 않고 폐기한다`() {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/fence-${UUID.randomUUID()}")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
         val snapshotId = snapshot.getId()
@@ -63,16 +63,16 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             // 소유권이 다른 시도로 넘어가 attempt 2 가 된 상황을 DB 에 반영. updated_at=now 라 배경 recover 가 안 건드린다.
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
-            // 옛 시도(attempt 1)의 결과로 markReady → fencing 으로 전이 없이 폐기(좀비 결과).
-            val applied =
-                itemParsingService.markReady(
+            // 옛 시도(attempt 1)의 결과로 markExtracted → fencing 으로 전이 없이 폐기(좀비 결과).
+            val settled =
+                itemParsingService.markExtracted(
                     snapshotId,
                     ProductSnapshot(link = item.link, name = "좀비결과", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
                     expectedAttempt = 1,
                 )
 
             // 반환값이 계약이다 — 호출부(특히 이미지 워커의 raw 회수)가 이 값으로 갈리므로, DB 상태와 함께 고정한다.
-            assertFalse(applied, "좀비 결과는 '적용되지 않음'(false)으로 보고돼야 한다")
+            assertNull(settled, "좀비 결과는 '적용되지 않음'(null)으로 보고돼야 한다")
             val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.PROCESSING, reloaded.status, "좀비 결과는 READY 로 전이하면 안 된다")
             assertNull(reloaded.name, "좀비 결과의 추출값이 반영되면 안 된다")
@@ -83,7 +83,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `소유권 attempt 가 일치하면 markReady 가 정상 전이한다`() {
+    fun `소유권 attempt 가 일치하면 markExtracted 가 정상 전이한다`() {
         // fencing 대조군 — 어긋날 때만 막고, 일치하면 그대로 전이함을 함께 고정한다. 워커를 태우지 않으므로 stub 세팅은 불필요하다.
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/match-${UUID.randomUUID()}")))
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
@@ -91,14 +91,14 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         try {
             // 실제 흐름대로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
             val attempt = parsingOwnership.acquire(snapshotId, 0) ?: error("소유권 획득 실패")
-            val applied =
-                itemParsingService.markReady(
+            val settled =
+                itemParsingService.markExtracted(
                     snapshotId,
                     ProductSnapshot(link = item.link, name = "정상결과", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
                     expectedAttempt = attempt,
                 )
 
-            assertTrue(applied, "소유권이 일치하면 '적용됨'(true)으로 보고돼야 한다")
+            assertEquals(ItemStatus.READY, settled, "소유권이 일치하면 확정된 상태(READY)로 보고돼야 한다")
             val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.READY, reloaded.status)
             assertEquals("정상결과", reloaded.name)
