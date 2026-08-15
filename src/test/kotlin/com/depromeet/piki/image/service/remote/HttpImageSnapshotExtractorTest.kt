@@ -86,6 +86,28 @@ class HttpImageSnapshotExtractorTest {
     }
 
     @Test
+    fun `가격이 없는 사진의 부분값 200 도 그대로 매핑된다 - 이 경로의 정상 입력이다`() {
+        // 사진에 가격이 박혀 있지 않은 것은 정상 입력이라, 이걸 경계에서 막으면 "쇼핑몰 화면 캡처"만 통과하는
+        // 계약이 된다(#944 의 동인, prod 이미지 등록 18건 중 16건 실패). 부분값 수용의 분기 망라는 공유 함수를
+        // 쓰는 HttpProductLinkExtractorTest 가 고정하고, 여기서는 이미지 고유 조합(link=null + 부분값)만 본다.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(
+                    withSuccess(
+                        """{"name":"핸드 워시","imageUrl":"https://img.test/items/out.png","currentPrice":null}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val snapshot = extractor.extract(imageKey)
+
+        assertNull(snapshot.link)
+        assertNull(snapshot.price, "사진에 가격이 없으면 사용자가 채운다 (INCOMPLETE)")
+        assertEquals("핸드 워시", snapshot.name)
+    }
+
+    @Test
     fun `이미지 전용 422 code(IMAGE_UNSUPPORTED)는 확정 실패이며 extract_quality 로 센다`() {
         // 미지원 이미지 형식은 다시 보내도 결과가 같다. 확정 실패라는 판정은 status(422)가 하고, code 가 정하는 건
         // "무엇으로 세는가"뿐이다 — 받은 결과를 상품 정보로 쓸 수 없다는 뜻이라 extract_quality 다(#936).
