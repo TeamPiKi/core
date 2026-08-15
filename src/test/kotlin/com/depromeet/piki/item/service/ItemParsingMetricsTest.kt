@@ -40,13 +40,13 @@ class ItemParsingMetricsTest {
 
     @Test
     fun `분류 밖 예외는 internal_error 로 집계된다`() {
-        // 코드 버그성 예외(HttpMappable 아님)·치명적 JVM 오류도 확정 실패 경로로 들어올 수 있다. 이름 없는 실패를
-        // 다른 바구니에 섞지 않고 "조사 대상"으로 몰아, 다른 reason 의 추세를 오염시키지 않는다.
+        // 코드 버그성 예외(HttpMappable 아님)가 확정 실패 경로로 들어올 수 있다. 이름 없는 실패를 다른 바구니에
+        // 섞지 않고 "조사 대상"으로 몰아, 다른 reason 의 추세를 오염시키지 않는다.
+        // 치명적 JVM 오류(Error)는 여기 표본에 없다 — 워커가 잡지 않고 전파하므로 집계 자체에 닿지 않는다(#941).
         val internalError = ItemParsingMetrics.REASON_INTERNAL_ERROR
 
         assertEquals(internalError, ItemParsingMetrics.reasonOf(IllegalStateException("boom")))
         assertEquals(internalError, ItemParsingMetrics.reasonOf(NullPointerException()))
-        assertEquals(internalError, ItemParsingMetrics.reasonOf(OutOfMemoryError()))
     }
 
     @Test
