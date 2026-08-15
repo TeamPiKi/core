@@ -69,7 +69,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     private lateinit var redisTemplate: StringRedisTemplate
 
     @Autowired
-    private lateinit var properties: ItemQuotaProperties
+    private lateinit var settings: ItemQuotaSettings
 
     @Autowired
     private lateinit var objectMapper: ObjectMapper
@@ -98,7 +98,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
         // 한도를 정확히 소진한 상태 — 다음 1건이 넘긴다.
-        fillQuota(userId, properties.userLimit)
+        fillQuota(userId, settings.current().userLimit)
 
         mockMvc
             .perform(
@@ -114,7 +114,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
 
         // 거부된 요청은 카운터를 올리지 않는다 — 올리면 재시도할수록 창이 끝나도 한도를 넘긴 채 시작한다.
-        assertEquals(properties.userLimit.toLong(), currentCount(userId))
+        assertEquals(settings.current().userLimit.toLong(), currentCount(userId))
     }
 
     @Test
@@ -127,8 +127,8 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             .opsForValue()
             .set(
                 RedisItemQuotaStore.CAPACITY_KEY,
-                (properties.capacityAlertThreshold - 1).toString(),
-                properties.window,
+                (settings.current().capacityAlertThreshold - 1).toString(),
+                settings.current().window,
             )
         // Loki 가 실제로 보는 것은 렌더된 메시지 한 줄이므로, 그 줄을 그대로 받아 형식을 검사한다.
         val logger = LoggerFactory.getLogger(ItemQuotaGuard::class.java) as Logger
@@ -262,7 +262,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
         // 잔액을 1 만 남긴다 — 5장 요청은 그보다 크다.
-        fillQuota(userId, properties.userLimit - 1)
+        fillQuota(userId, settings.current().userLimit - 1)
 
         // 요청량은 판정에 쓰지 않으므로 통째로 통과한다. "2장만 남아서 안 됩니다" 로 막으면 사용자는 자기 잔액을
         // 모르는 채 몇 장으로 줄여야 할지도 알 수 없다 — 마지막 한 번은 성공시키고 그 다음부터 막는다.
@@ -275,7 +275,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
 
         // 한도를 넘겨 잔액이 음수가 됐다.
-        assertEquals((properties.userLimit + 4).toLong(), currentCount(userId))
+        assertEquals((settings.current().userLimit + 4).toLong(), currentCount(userId))
 
         // 이제부터는 크기와 무관하게 거부다.
         mockMvc
@@ -321,7 +321,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        fillQuota(ownerId, properties.userLimit)
+        fillQuota(ownerId, settings.current().userLimit)
         stubItemParsingWorker.enabled = false
 
         try {
@@ -408,7 +408,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         try {
             val (tournamentId, inviteCode) = createTournament(mockMvc, ownerId)
             val guestId = joinAsGuest(mockMvc, tournamentId, inviteCode)
-            fillQuota(ownerId, properties.userLimit)
+            fillQuota(ownerId, settings.current().userLimit)
 
             mockMvc
                 .perform(
@@ -464,7 +464,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     ) {
         redisTemplate
             .opsForValue()
-            .set(RedisItemQuotaStore.USER_KEY_PREFIX + userId, amount.toString(), properties.window)
+            .set(RedisItemQuotaStore.USER_KEY_PREFIX + userId, amount.toString(), settings.current().window)
     }
 
     private fun currentCount(userId: UUID): Long? =
@@ -491,9 +491,10 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
 
     // 전역 카운터를 상한까지 채워 "서비스가 꽉 찬" 상태를 만든다. 부르는 테스트가 끝에서 반드시 키를 지운다.
     private fun fillCapacity() {
+        val quota = settings.current()
         redisTemplate
             .opsForValue()
-            .set(RedisItemQuotaStore.CAPACITY_KEY, properties.capacityLimit.toString(), properties.window)
+            .set(RedisItemQuotaStore.CAPACITY_KEY, quota.capacityLimit.toString(), quota.window)
     }
 
     private fun createTournament(

@@ -13,7 +13,7 @@ import java.util.UUID
 @Component
 class ItemQuotaGuard(
     private val store: RedisItemQuotaStore,
-    private val properties: ItemQuotaProperties,
+    private val settings: ItemQuotaSettings,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -30,7 +30,9 @@ class ItemQuotaGuard(
         amount: Int,
         errorCode: ErrorCode,
     ) {
-        if (!properties.enabled) return
+        // 값 한 벌을 한 번만 읽는다 — 판정 도중 백오피스 저장이 끼어들어도 이 요청은 끝까지 같은 값으로 판단한다.
+        val quota = settings.current()
+        if (!quota.enabled) return
 
         val verdict =
             try {
@@ -38,9 +40,9 @@ class ItemQuotaGuard(
                     ownerKey = RedisItemQuotaStore.USER_KEY_PREFIX + ownerId,
                     capacityKey = RedisItemQuotaStore.CAPACITY_KEY,
                     amount = amount,
-                    ownerLimit = properties.userLimit,
-                    capacityLimit = properties.capacityLimit,
-                    windowMillis = properties.window.toMillis(),
+                    ownerLimit = quota.userLimit,
+                    capacityLimit = quota.capacityLimit,
+                    windowMillis = quota.window.toMillis(),
                 )
             } catch (e: Exception) {
                 // fail-open — Redis 장애로 등록 기능 전체가 멈추는 것보다, 한도가 잠시 안 걸리는 쪽이 낫다.
@@ -55,7 +57,7 @@ class ItemQuotaGuard(
             }
 
         when (verdict) {
-            is ItemQuotaVerdict.Allowed -> warnIfCapacityAlertCrossed(verdict.capacityUsed, amount)
+            is ItemQuotaVerdict.Allowed -> warnIfCapacityAlertCrossed(quota, verdict.capacityUsed, amount)
             // 429 는 클라이언트 계약 위반이라 GlobalExceptionHandler 가 info 로 남긴다 — 여기서 또 찍지 않는다.
             is ItemQuotaVerdict.OwnerExceeded -> throw ItemQuotaException.exceeded(errorCode, verdict.retryAfterSeconds)
             // 503 도 핸들러가 warn 으로 남긴다. 한 번 차면 창이 끝날 때까지 모든 요청이 여기로 오므로,
@@ -70,10 +72,11 @@ class ItemQuotaGuard(
     // 대응은 "상한을 올린다" 가 기본이 아니다. 정상 성장인지, 특정 사용자·IP 의 이상 패턴인지, 파싱 실패로 인한
     // 재시도 폭증인지를 먼저 가르고, 정상 성장으로 확인된 뒤에만 올린다.
     private fun warnIfCapacityAlertCrossed(
+        quota: ItemQuotaSnapshot,
         capacityUsed: Long,
         amount: Int,
     ) {
-        if (!properties.crossedCapacityAlert(capacityUsed, amount)) return
+        if (!quota.crossedCapacityAlert(capacityUsed, amount)) return
         // 알림이 매칭하는 줄이라 **사람이 읽는 문구가 아니라 기계가 읽는 형식**으로 쓴다(item.parse.result 와 같은 규약):
         // 고정 이벤트 키 + logfmt(`키=값`). 사람이 읽을 설명은 알림 룰의 summary 가 한국어로 담는다.
         //
@@ -86,9 +89,9 @@ class ItemQuotaGuard(
             "{} used={} threshold={} limit={} windowSeconds={}",
             CAPACITY_ALERT_EVENT,
             capacityUsed,
-            properties.capacityAlertThreshold,
-            properties.capacityLimit,
-            properties.window.seconds,
+            quota.capacityAlertThreshold,
+            quota.capacityLimit,
+            quota.window.seconds,
         )
     }
 
