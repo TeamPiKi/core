@@ -343,7 +343,7 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
     ): Long {
         val result = wishPersistenceService.persistPendingImages(userId, listOf("items/raw/${UUID.randomUUID()}.png")).first()
         itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
-        itemParsingService.markReady(
+        itemParsingService.markExtracted(
             result.snapshot.getId(),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,

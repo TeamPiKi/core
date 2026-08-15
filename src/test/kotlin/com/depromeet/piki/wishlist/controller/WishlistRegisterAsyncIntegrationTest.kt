@@ -47,6 +47,7 @@ import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -184,26 +185,28 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `추출은 됐으나 이름이 비어 있으면 READY 부적격으로 item 이 FAILED 로 전이한다`() {
+    fun `추출이 이름을 못 얻으면 item 이 INCOMPLETE 로 전이하고 얻은 값은 남는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. READY 불변식(name 필수)에 걸려
-            // markReady 가 거부하고, 워커가 이를 받아 PROCESSING 방치 대신 FAILED 로 떨어뜨린다.
+            // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. 예전에는 READY 불변식(name 필수)에 걸려
+            // FAILED 로 떨어졌지만, 이제는 채운 만큼을 남기고 INCOMPLETE 로 안착해 사용자가 나머지를 채운다(#944).
             stubProductLinkExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
-            val rejectedBefore = parseCount("failed", "ready_rejected")
+            val incompleteBefore = parseCount("incomplete", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
 
             await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
+                latestSnapshot(itemId)?.status == ItemStatus.INCOMPLETE
             }
-            // 결과 메트릭(#506): 추출됐으나 READY 부적격(이름 없음)은 result=failed,reason=ready_rejected 로 +1.
-            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "ready_rejected") - rejectedBefore >= 1.0 }
+            // 결과 메트릭(#506): 부분 성공은 실패에 섞지 않고 result=incomplete,reason=none 으로 +1 한다.
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("incomplete", "none") - incompleteBefore >= 1.0 }
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(ItemStatus.FAILED, snapshot.status)
-            assertNull(snapshot.name)
+            assertEquals(ItemStatus.INCOMPLETE, snapshot.status)
+            assertNull(snapshot.name, "못 얻은 필드는 비어 있어 사용자가 채운다")
+            assertEquals(99_000, snapshot.price, "얻은 값은 버려지지 않는다")
+            assertNotNull(snapshot.extractedAt)
         } finally {
             cleanup(userId)
         }

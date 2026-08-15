@@ -62,6 +62,9 @@ class NotificationKindTest {
                 // 라우팅 출처가 없으면 위시 기본값. 정상 흐름에선 resolveRouting 이 항상 출처를 주므로 도달하지 않지만,
                 // 기본값을 바꿔도 아무 테스트가 안 깨지던 구멍이라 계약으로 고정한다.
                 Arguments.of(NotificationType.ITEM_PARSING_COMPLETED, null, NotificationKind.WISH),
+                Arguments.of(NotificationType.ITEM_PARSING_INCOMPLETE, NotificationKind.WISH, NotificationKind.WISH),
+                Arguments.of(NotificationType.ITEM_PARSING_INCOMPLETE, NotificationKind.TOURNAMENT, NotificationKind.TOURNAMENT),
+                Arguments.of(NotificationType.ITEM_PARSING_INCOMPLETE, null, NotificationKind.WISH),
                 Arguments.of(NotificationType.ITEM_PARSING_FAILED, NotificationKind.WISH, NotificationKind.WISH),
                 Arguments.of(NotificationType.ITEM_PARSING_FAILED, NotificationKind.TOURNAMENT, NotificationKind.TOURNAMENT),
                 Arguments.of(NotificationType.ITEM_PARSING_FAILED, null, NotificationKind.WISH),

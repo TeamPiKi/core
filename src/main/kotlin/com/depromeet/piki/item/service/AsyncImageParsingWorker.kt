@@ -5,6 +5,7 @@ import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.service.ProductSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
@@ -19,9 +20,10 @@ import org.springframework.stereotype.Component
 // 위임하고, 이 워커는 상태 전이·재시도 정책·raw 회수만 진다.
 // 외부 호출은 트랜잭션 바깥에서 끝내고, 상태 전이 영속화만 ItemParsingService(@Transactional)에 위임한다.
 //
-// 결과는 셋으로 갈린다(AsyncItemParsingWorker 와 동일한 execution at-least-once 정책, #461):
+// 결과는 넷으로 갈린다(AsyncItemParsingWorker 와 동일한 execution at-least-once 정책, #461):
 //   - 성공 → READY. 파싱이 끝났으니 raw 원본을 회수(delete)한다.
-//   - 확정 실패(상품 아님·추출값 신뢰 불가·READY 전이 거부) → 즉시 FAILED + raw 회수. 다시 해도 결과가 같다.
+//   - 부분 성공(일부 필드만 채움) → INCOMPLETE + raw 회수. 사용자가 나머지를 채워 완성한다(#944).
+//   - 확정 실패(상품 아님·추출값 신뢰 불가·값 0개) → 즉시 FAILED + raw 회수. 다시 해도 결과가 같다.
 //   - 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등 RETRYABLE) → 소유권 반납(release, PROCESSING→PENDING). raw 는 보존하고 다음 tick 이 다시 집는다.
 @Component
 class AsyncImageParsingWorker(
@@ -80,23 +82,18 @@ class AsyncImageParsingWorker(
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatchingException { transitionRetry.execute { itemParsingService.markReady(snapshotId, snapshot, attempt) } }
-            .onSuccess { applied ->
-                // 좀비 폐기(소유권 상실)면 전이가 스킵된다 — 결과를 성공으로 세지 않고, **특히 raw 를 지우지 않는다**.
+        runCatchingException { transitionRetry.execute { itemParsingService.markExtracted(snapshotId, snapshot, attempt) } }
+            .onSuccess { status ->
+                // 좀비 폐기(소유권 상실)면 전이가 스킵된다 — 결과를 세지 않고, **특히 raw 를 지우지 않는다**.
                 // 재클레임된 새 시도가 바로 그 원본으로 재실행해야 하므로, 여기서 지우면 되살릴 입력을 잃는다.
-                if (!applied) {
-                    log.info("item {} 이미지 좀비 결과 — 전이·raw 회수 생략 (attempt={})", itemId, attempt)
-                    return@onSuccess
-                }
-                // 링크 워커와 같은 구조화 결과 라인 — 로그 기반 결과 분포·알림이 이미지 경로도 같은 모집단으로 세게 한다(#902).
-                log.info(
-                    "item.parse.result item={} type=image result={} reason={} latency={}ms",
-                    itemId,
-                    ItemParsingMetrics.RESULT_READY,
-                    ItemParsingMetrics.REASON_NONE,
-                    elapsedMs,
-                )
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_READY, ItemParsingMetrics.REASON_NONE)
+                val settled =
+                    status ?: run {
+                        log.info("item {} 이미지 좀비 결과 — 전이·raw 회수 생략 (attempt={})", itemId, attempt)
+                        return@onSuccess
+                    }
+                recordOutcome(itemId, snapshot, settled, elapsedMs)
+                // 셋 다 종결이라 raw 를 회수한다 — INCOMPLETE 도 재파싱하지 않는다(파싱 기회는 단번). 사용자가 채울
+                // 화면이 쓰는 이미지는 추출이 올린 결과물(imageUrl)이지 raw 원본이 아니다.
                 deleteRawQuietly(imageKey)
             }
             .onFailure { e ->
@@ -118,6 +115,47 @@ class AsyncImageParsingWorker(
                     deleteRawQuietly(imageKey)
                 }
             }
+    }
+
+    // 종결 결과를 원장(로그·메트릭)에 남긴다. 링크 워커와 같은 구조화 결과 라인이라 이미지 경로도 같은 모집단으로
+    // 세어진다(#902). INCOMPLETE 만 missing 을 덧붙이는 이유는 링크 워커 recordOutcome 주석과 같다(#944).
+    private fun recordOutcome(
+        itemId: Long,
+        snapshot: ProductSnapshot,
+        status: ItemStatus,
+        elapsedMs: Long,
+    ) {
+        val result =
+            when (status) {
+                ItemStatus.READY -> ItemParsingMetrics.RESULT_READY
+                ItemStatus.INCOMPLETE -> ItemParsingMetrics.RESULT_INCOMPLETE
+                ItemStatus.FAILED -> ItemParsingMetrics.RESULT_FAILED
+                ItemStatus.PENDING, ItemStatus.PROCESSING -> error("추출 전이가 만들 수 없는 상태 $status")
+            }
+        val reason =
+            when (status) {
+                ItemStatus.FAILED -> ItemParsingMetrics.REASON_EXTRACT_QUALITY
+                else -> ItemParsingMetrics.REASON_NONE
+            }
+        if (status == ItemStatus.INCOMPLETE) {
+            log.info(
+                "item.parse.result item={} type=image result={} reason={} latency={}ms missing={}",
+                itemId,
+                result,
+                reason,
+                elapsedMs,
+                ItemParsingMetrics.missingFieldsOf(snapshot),
+            )
+        } else {
+            log.info(
+                "item.parse.result item={} type=image result={} reason={} latency={}ms",
+                itemId,
+                result,
+                reason,
+                elapsedMs,
+            )
+        }
+        ItemParsingMetrics.record(meterRegistry, result, reason)
     }
 
     // 파싱 실패는 두 갈래다 — 일시 오류는 소유권을 반납해 다시 집히게 하고, 확정 실패만 즉시 종결한다.

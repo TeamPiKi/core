@@ -329,7 +329,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `markReady 는 claim 한 snapshot 만 전이하고 같은 item 의 다른 진행 중 버전은 건드리지 않는다`() {
+    fun `markExtracted 는 claim 한 snapshot 만 전이하고 같은 item 의 다른 진행 중 버전은 건드리지 않는다`() {
         // F2 회귀 — 갱신은 한 item 에 여러 진행 중 snapshot 을 만든다. 전이가 findLatestByItemId(최신)가 아니라
         // claim 한 snapshotId 를 짚어야, stale·좀비 워커가 다른(새) 버전을 오전이하지 않는다.
         val userId = UUID.randomUUID()
@@ -342,7 +342,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
             // 집기는 attempt 를 안 올리므로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
             val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
-            itemParsingService.markReady(
+            itemParsingService.markExtracted(
                 v1.getId(),
                 ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
                 expectedAttempt = attempt,
