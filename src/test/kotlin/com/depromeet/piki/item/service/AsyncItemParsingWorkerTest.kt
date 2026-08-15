@@ -35,10 +35,6 @@ class AsyncItemParsingWorkerTest {
         assertTrue(AsyncItemParsingWorker.isRetryable(NullPointerException()))
     }
 
-    @Test
-    fun `치명적 JVM 오류(Error)는 재시도 대상이 아니다`() {
-        // runCatching 이 Throwable 을 다 잡아 Error 도 여기로 온다. 재시도해도 소용없으므로 제외한다.
-        assertFalse(AsyncItemParsingWorker.isRetryable(OutOfMemoryError()))
-        assertFalse(AsyncItemParsingWorker.isRetryable(StackOverflowError()))
-    }
+    // 치명적 JVM 오류(Error)에 대한 판정은 여기서 다루지 않는다 — 워커가 runCatchingException 으로 잡아
+    // Error 를 통과시키므로 이 함수에 도달하지 않는다(#941). 포획 범위 자체는 RunCatchingExceptionTest 가 고정한다.
 }

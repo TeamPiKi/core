@@ -83,9 +83,13 @@ object ItemParsingMetrics {
     // 여기서는 그 bucket 을 라벨 문자열로 옮기기만 한다 — 원격 code 가 늘어도 이 함수는 그대로다.
     // when 이 exhaustive 라, bucket 이 추가되면 라벨을 정하지 않은 채로는 컴파일되지 않는다.
     //
-    // bucket 을 못 얻는 경우(분류 밖 예외 — 코드 버그성 NPE·JVM Error, 또는 매핑되지 않은 원격 code)는
-    // internal_error 다. 그 자리는 "우리가 이름을 아는 실패"가 아니라 조사 대상이라는 뜻이므로, 이름 없는
-    // 실패를 다른 바구니에 섞지 않는다. 링크·이미지 두 워커가 같은 함수를 쓴다(같은 메트릭 모집단).
+    // bucket 을 못 얻는 경우(분류 밖 예외 — 코드 버그성 NPE, 또는 매핑되지 않은 원격 code)는 internal_error 다.
+    // 그 자리는 "우리가 이름을 아는 실패"가 아니라 조사 대상이라는 뜻이므로, 이름 없는 실패를 다른 바구니에
+    // 섞지 않는다. 링크·이미지 두 워커가 같은 함수를 쓴다(같은 메트릭 모집단).
+    //
+    // **JVM Error 는 여기 오지 않는다** — 워커가 runCatchingException 으로 잡아 Error 를 통과시키므로, 치명 오류는
+    // 집계 대상이 아니라 바깥 층(JVM 종료·컨테이너 재시작)이 처리할 신호다(#941). 파라미터 타입이 Throwable 인 것은
+    // Result.onFailure 의 시그니처를 그대로 받기 위함이지, Error 를 세겠다는 뜻이 아니다.
     fun reasonOf(e: Throwable): String {
         val bucket = ((e as? HttpMappable)?.errorCode as? ExtractionFailureCode)?.bucket ?: return REASON_INTERNAL_ERROR
         return when (bucket) {
