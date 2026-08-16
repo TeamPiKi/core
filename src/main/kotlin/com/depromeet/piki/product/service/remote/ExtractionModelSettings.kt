@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
-// 추출 경로별 LLM 모델 지정의 단일 조회 지점. 인터페이스/구현 분리는 ExtractionRoutingPolicy 와 같은 구조 —
+// 추출 경로별 LLM 모델 지정의 단일 조회 지점. 인터페이스/구현 분리는 DomainAccessPolicy 와 같은 구조 —
 // 소비자(원격 클라이언트)의 단위 테스트가 DB 없이 지정값을 대체할 수 있게 한다.
 interface ExtractionModelSettings {
     // 지정된 모델. 행이 없으면 null 이고, 그 경우 호출자는 요청에 모델을 싣지 않아 extractor 기본값으로 동작한다.
@@ -14,7 +14,7 @@ interface ExtractionModelSettings {
 
 // DB(extraction_models) 기반 구현. 백오피스가 배포 없이 모델을 바꾼다 — 판정은 잦으므로(파싱마다) 매번 DB 를
 // 치지 않고 메모리 캐시로 읽고, 백오피스 수정(afterCommit)과 주기 재적재가 reload() 로 갱신한다
-// (DbExtractionRoutingPolicy 와 같은 패턴).
+// (DbDomainAccessPolicy 와 같은 패턴).
 @Component
 class DbExtractionModelSettings(
     private val repository: ExtractionModelJpaRepository,
@@ -50,7 +50,7 @@ class DbExtractionModelSettings(
     // 파싱이 죽지 않는다 (DB 는 forward-only 라 행이 남는다).
     //
     // 인터페이스에 두지 않는 이유는 reload 와 같다 — 파싱 경로가 쓰지 않는 관리 기능이라 admin 이 구현을
-    // 직접 주입받는다 (AdminExtractionPolicyService 가 DbExtractionRoutingPolicy 를 직접 받는 것과 같다).
+    // 직접 주입받는다 (AdminExtractionPolicyService 가 DbDomainAccessPolicy 를 직접 받는 것과 같다).
     fun findAll(): Map<ExtractionTarget, ExtractionModelEntity> =
         repository
             .findAll()
@@ -65,7 +65,7 @@ class DbExtractionModelSettings(
 
     companion object {
         // stale 상한. 모델 변경은 사람 손의 백오피스 조작이라 분 단위 전파면 충분하다
-        // (DbExtractionRoutingPolicy 와 같은 값·같은 이유).
+        // (DbDomainAccessPolicy 와 같은 값·같은 이유).
         private const val RELOAD_INTERVAL_MS = 300_000L
     }
 }

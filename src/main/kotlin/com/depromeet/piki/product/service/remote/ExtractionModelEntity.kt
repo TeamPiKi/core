@@ -11,7 +11,7 @@ import java.time.LocalDateTime
 @Entity
 @Table(name = "extraction_models")
 class ExtractionModelEntity(
-    // ExtractionTarget 의 이름 문자열. @Enumerated 로 두지 않는 이유는 ExtractionPlatformPolicyEntity.route 와
+    // ExtractionTarget 의 이름 문자열. @Enumerated 로 두지 않는 이유는 DomainAccessPolicyEntity.access 와
     // 같다 — 구버전 바이너리가 모르는 target 행 하나가 findAll 하이드레이션을 깨 부팅(@PostConstruct)을 죽인다.
     // enum 변환은 읽는 쪽(ExtractionModelSettings)이 tolerant 하게 진다.
     @Id

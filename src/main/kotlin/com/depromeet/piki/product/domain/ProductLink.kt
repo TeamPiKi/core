@@ -11,7 +11,7 @@ class ProductLink private constructor(
     fun safeLogString(): String = "${value.host ?: "?"}${value.rawPath ?: ""}"
 
     // host 가 주어진 도메인 목록의 항목과 같거나 그 서브도메인이면 true 인 도메인 단위 매칭의 단일 술어.
-    // 플랫폼 라우팅 정책 판정(ExtractionRoutingPolicy)이 쓰는 도메인 매칭 술어다 —
+    // 도메인 접근 정책 판정(DomainAccessPolicy)이 쓰는 도메인 매칭 술어다 —
     // 정규화 규칙(trailing dot 제거, lowercase, 부분 문자열이 아닌 도메인 단위)이 바뀔 때 사본들이 갈라지지 않게
     // 도메인이 규칙의 주인을 맡는다. host 가 없으면(형식 이상은 parse 가 이미 처리) 어느 목록과도 매칭되지 않는다.
     // trailing dot(절대 도메인 표기, 예: "naver.com.")은 제거해 우회를 막는다. Kotlin lowercase() 는 locale 무관(invariant).

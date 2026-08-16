@@ -12,7 +12,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.routing.ExtractionRoutingPolicy
+import com.depromeet.piki.product.routing.DomainAccessPolicy
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -32,7 +32,7 @@ import java.util.UUID
 @Service
 class WishlistService(
     private val wishPersistenceService: WishPersistenceService,
-    private val extractionRoutingPolicy: ExtractionRoutingPolicy,
+    private val accessPolicy: DomainAccessPolicy,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
@@ -64,10 +64,10 @@ class WishlistService(
         requireMember(userId)
         val link = ProductLink.parse(rawUrl)
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
-        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — ExtractionRoutingPolicy 참고.
-        extractionRoutingPolicy.verifyRegistrable(link)
+        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
+        accessPolicy.verifyRegistrable(link)
         // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
-        // 파서로 풀려 LLM 을 안 타도 fetch·프록시·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
+        // 파서로 풀려 LLM 을 안 타도 fetch·추출 모듈 시간·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
         itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
         return wishPersistenceService.persist(userId, Item(link))
     }

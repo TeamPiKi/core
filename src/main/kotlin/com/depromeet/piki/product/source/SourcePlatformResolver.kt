@@ -7,14 +7,14 @@ import org.springframework.stereotype.Component
 
 // 출처 커머스몰 표시명(sourcePlatform)의 단일 결정 지점 (#766). 응답 시점에 URL 에서 유도한다 — items 에 저장하지
 // 않으므로 백오피스 수정·신규 등록이 과거 item 에도 즉시 소급된다.
-// 인터페이스/구현 분리는 ExtractionRoutingPolicy 와 같은 구조 — 소비자의 단위 테스트가 DB 없이 대체할 수 있게 한다.
+// 인터페이스/구현 분리는 DomainAccessPolicy 와 같은 구조 — 소비자의 단위 테스트가 DB 없이 대체할 수 있게 한다.
 interface SourcePlatformResolver {
     // 이 링크의 출처 몰 표시명. 백오피스 등록값(도메인 최장 일치)이 우선하고, 없으면 host 에서 유도한 임시값
     // (SourcePlatformFallback). 링크가 없거나(이미지 등록 item) host 가 없으면 null — 유도할 재료 자체가 없다.
     fun resolve(link: ProductLink?): String?
 }
 
-// DB(source_platforms) 기반 구현. 백오피스가 배포 없이 표시명을 바꾼다(DbExtractionRoutingPolicy 와 같은 패턴):
+// DB(source_platforms) 기반 구현. 백오피스가 배포 없이 표시명을 바꾼다(DbDomainAccessPolicy 와 같은 패턴):
 // 판정은 잦으므로(위시 목록 항목마다) 매번 DB 를 치지 않고 메모리 캐시로 읽고, 백오피스 수정(afterCommit)과
 // 주기 재적재가 reload() 로 캐시를 갱신한다. 매칭 규칙(서브도메인 포함 도메인 단위, 정규형)은
 // ProductLink.matchesAnyDomain 단일 술어가 진다.
@@ -37,7 +37,7 @@ class DbSourcePlatformResolver(
     }
 
     // 백오피스 수정 직후(afterCommit)와 주기 재적재가 함께 부른다. 주기 재적재는 다른 인스턴스에서 바뀐 등록을
-    // 이 인스턴스가 따라잡는 유일한 경로다 (DbExtractionRoutingPolicy.reload 와 같은 이유·같은 stale 상한).
+    // 이 인스턴스가 따라잡는 유일한 경로다 (DbDomainAccessPolicy.reload 와 같은 이유·같은 stale 상한).
     @Scheduled(fixedDelay = RELOAD_INTERVAL_MS)
     fun reload() = load()
 

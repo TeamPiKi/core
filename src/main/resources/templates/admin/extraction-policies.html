@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <title>추출 라우팅 정책 · PiKi 백오피스</title>
+  <title>도메인 접근 정책 · PiKi 백오피스</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --violet:#6d28d9; --violet-soft:#ede9fe; --ok:#15803d; --ok-soft:#dcfce7; --warn:#92400e; --warn-soft:#fffbeb; --warn-border:#fde68a; }
@@ -32,21 +32,19 @@
       border-left:1px solid var(--border);white-space:nowrap;cursor:pointer;transition:background .12s,color .12s;}
     .segopt:first-child span{border-left:none;}
     .segopt span:hover{background:#f7f8fa;}
-    .segopt input:checked + span.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
-    .segopt input:checked + span.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
-    .segopt input:checked + span.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+        .segopt input:checked + span.ALLOWED{background:var(--violet-soft);color:var(--violet);}
+    .segopt input:checked + span.BLOCKED{background:var(--danger-soft);color:var(--danger);}
     .segopt input:focus-visible + span{outline:2px solid var(--accent);outline-offset:-2px;}
 
     .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
-    .badge.SUPPORTED{background:var(--ok-soft);color:var(--ok);}
-    .badge.HEADLESS_FIRST{background:var(--violet-soft);color:var(--violet);}
-    .badge.UNSUPPORTED{background:var(--danger-soft);color:var(--danger);}
+        .badge.ALLOWED{background:var(--violet-soft);color:var(--violet);}
+    .badge.BLOCKED{background:var(--danger-soft);color:var(--danger);}
     /* 정책 행이 없는 도메인. 목록에 나타날 수 없으므로 범례에서만 쓰는 배지. 점선으로 "행이 없음"을 드러낸다. */
     .badge.none{background:#fff;color:#9aa1aa;border:1px dashed #ccd2d9;}
     .badge.unk{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border);}
 
     /* 정책 종류 설명. 늘 펼쳐 두면 정작 보러 온 목록이 아래로 밀리므로 접어 둔다(details 라 JS 없이 동작).
-       내용은 개조식 - 각 항목의 "라우팅 / 언제 / 주의" 라벨을 세로로 정렬해 갈래 사이를 눈으로 비교하게 한다. */
+       내용은 개조식 - 한 항목이 한 사실을 져야 갈래 사이를 세로로 훑어 비교할 수 있다(문장이면 눈이 문장 안을 훑는다). */
     .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
     /* 제목·화살표를 accent 로 둔다. 이 화면의 규약(파랑 = 누를 수 있음: 필터 링크, 상세의 설명 링크)에 맞춰
        "눌러서 펼치는 것"임이 접힌 상태에서도 보이게 한다. 회색이면 정적인 카드 제목으로 읽혀 지나친다. */
@@ -65,16 +63,15 @@
       padding:9px 15px;border-bottom:1px solid var(--border);white-space:nowrap;}
     .gtable td{padding:11px 15px;border-bottom:1px solid #f1f3f5;vertical-align:top;color:var(--muted);line-height:1.65;}
     .gtable tr:last-child td{border-bottom:none;}
-    /* 세로 구분선. 첫 칸에는 긋지 않으므로 인접 형제 선택자를 쓴다. 병합된 칸도 자기 왼쪽 선을 그대로 가진다. */
+    /* 세로 구분선. 첫 칸에는 긋지 않으므로 인접 형제 선택자를 쓴다. */
     .gtable th + th,.gtable td + td{border-left:1px solid #f1f3f5;}
-    /* 열 폭·스타일을 nth-child 로 잡지 않는다. 아래 rowspan 병합 때문에 둘째 행은 셀이 하나 적어
-       nth-child(2) 가 다른 열을 가리킨다. */
+    /* 열 폭·스타일은 클래스로 잡는다 — nth-child 는 열이 늘거나 줄 때 조용히 다른 칸을 가리킨다. */
     .gtable .c-policy{width:148px;}
-    .gtable .c-how{width:214px;color:#384049;font-weight:600;}
-    /* "정책 없음"과 SUPPORTED 는 추출 방법이 같아 한 칸으로 묶는다. 같다는 사실을 문장으로 반복하지 않고
-       표 구조로 드러낸다. 병합 칸은 두 행에 걸치므로 가운데 정렬이 자연스럽다. */
-    .gtable td[rowspan]{vertical-align:middle;}
-    .gtable .same{display:block;margin-top:6px;font-weight:500;font-size:11.5px;color:var(--muted);}
+    .gtable .c-how{width:196px;color:#384049;font-weight:600;}
+    /* 개조식 항목. 불릿 들여쓰기만 주고 나머지는 td 의 line-height 를 그대로 물려받는다. */
+    .gtable ul{margin:0;padding-left:16px;}
+    .gtable li{margin-bottom:4px;}
+    .gtable li:last-child{margin-bottom:0;}
     .gtable .cau{color:var(--warn);}
 
     .filterbar{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);margin-bottom:12px;}
@@ -101,7 +98,7 @@
     .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
     .row .d{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;color:#384049;}
     .row .u{white-space:nowrap;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
-    /* 헤드리스 허가 표시. 배지들과 같은 알약 모양이되 열 헤더의 정책 배지보다 작게 둔다 — 정책이 주, 허가가 부.
+    /* 허락 근거가 남아 있음을 알리는 표시. 배지들과 같은 알약 모양이되 열 헤더의 정책 배지보다 작게 둔다 — 정책이 주, 근거가 부.
        설명(lede)과 목록 행이 같은 모양을 써야 "이 표시가 그 표시"임이 설명 없이 전달된다. */
     .allowed{white-space:nowrap;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;
       background:var(--violet-soft);color:var(--violet);}
@@ -112,7 +109,7 @@
     @media (hover:none){.row .go{opacity:1;}}
     .empty{padding:13px 14px;font-size:12.5px;color:var(--muted);}
 
-    /* 이 서버가 모르는 route 값의 열. 별도 경고 박스로 화면을 압도하지 않고 다른 갈래와 같은 모양의 열로 붙인다.
+    /* 이 서버가 모르는 정책 값의 열. 별도 경고 박스로 화면을 압도하지 않고 다른 갈래와 같은 모양의 열로 붙인다.
        세 갈래 어디에도 속하지 않아 열에서 빠뜨리면 백오피스에서 보이지도 지워지지도 않는 유령 행이 되므로,
        조용하되 반드시 보이게 둔다. route 로 필터할 수 없으므로 헤더는 링크가 아니다. */
     .col.unk{border-color:var(--warn-border);}
@@ -124,52 +121,59 @@
 <body>
   <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
   <div class="wrap">
-    <h1>추출 라우팅 정책</h1>
+    <h1>도메인 접근 정책</h1>
     <!-- 한 줄이 한 주제에 답한다: 무엇을 하나 / 교체·수정 규칙 / 사유 작성 규칙. -->
     <p class="lede">배포 없이 <b>플랫폼(도메인)별 추출 처리</b>를 바꿉니다. 서브도메인은 자동 포함됩니다 (coupang.com 은 www·m 포함).<br>
       <b>같은 도메인을 다시 추가하면 정책이 교체</b>되고, 수정·삭제는 항목을 눌러 상세에서 합니다.<br>
-      브라우저(헤드리스)로 여는 것은 <b>허가받은 도메인만</b> 됩니다 (기본은 거부). 허가는 상세에서 근거와 함께 켜고, 목록에는 <span class="allowed">허가</span> 로 표시됩니다.<br>
+      <b>정책이 없는 도메인이 기본</b>입니다 — 등록을 받고, 기본 수단으로 추출합니다.<br>
       사유에는 <b>날짜를 적지 말고 관찰한 내용만</b> 남깁니다. 언제 바뀌었는지는 수정일이 자동으로 기록합니다.</p>
 
     <!-- ?guide=1 로 오면 펼친 채 연다. 상세 화면이 "정책 종류 설명" 링크로 이 자리로 보낸다
          (설명을 두 화면에 복사해 두면 한쪽만 고쳐져 어긋난다). -->
     <details class="guide" id="guide" th:attr="open=${guideOpen} ? 'open' : null">
-      <summary>정책 종류 설명 <span class="sub">정책 없음 · SUPPORTED · HEADLESS_FIRST · UNSUPPORTED</span></summary>
+      <summary>정책 종류 설명 <span class="sub">정책 없음 · ALLOWED · BLOCKED</span></summary>
       <div class="gbody">
         <table class="gtable">
           <thead>
-            <tr><th>정책</th><th>추출을 어떻게 하나</th><th>언제 이 정책을 쓰나</th></tr>
+            <tr><th>정책</th><th>무엇을 하나</th><th>언제 이 정책을 쓰나</th></tr>
           </thead>
           <tbody>
             <tr>
               <td class="c-policy"><span class="badge none">정책 없음</span></td>
-              <td class="c-how" rowspan="2">기본 추출<br>(정적 fetch → 구조화/LLM)
-                <span class="same">두 정책의 추출 방법은 완전히 같습니다.</span></td>
-              <td>아직 확인하지 않은 도메인. 목록에 없는 모든 도메인이 여기 해당합니다.</td>
+              <td class="c-how">기본 수단으로 추출</td>
+              <td><ul>
+                <li>대부분의 도메인이 여기에 속합니다</li>
+                <li>막히면 막힌 대로 <b>실패로 기록</b>합니다</li>
+              </ul></td>
             </tr>
             <tr>
-              <td class="c-policy"><span class="badge SUPPORTED">SUPPORTED</span></td>
-              <td>기본 추출로 잘 된다고 <b>실측으로 확인한 기록</b>입니다. 추출 방법을 바꾸지 않고 사실만 남깁니다.</td>
+              <td class="c-policy"><span class="badge ALLOWED">ALLOWED</span></td>
+              <td class="c-how">적극적인 수단까지 허용</td>
+              <td><ul>
+                <li>플랫폼에서 <b>명시적으로 허락을 받은</b> 도메인</li>
+                <li>기본 수단으로 막히던 곳도 가져올 수 있게 됩니다 (무엇을 쓸지는 추출 모듈이 정합니다)</li>
+                <li class="cau">지정하려면 <b>근거가 필요합니다</b> — 메일 스레드·수신일·담당자</li>
+              </ul></td>
             </tr>
             <tr>
-              <td class="c-policy"><span class="badge HEADLESS_FIRST">HEADLESS_FIRST</span></td>
-              <td class="c-how">정적 fetch 를 건너뛰고<br>브라우저로 페이지를 열어 추출</td>
-              <td>정적 fetch 가 늘 차단되는 곳. 실패할 것이 뻔한 시도를 기다리지 않습니다.
-                <span class="cau"><b>플랫폼의 헤드리스 허가를 받은 도메인만</b> 지정할 수 있습니다 — 허가는 상세 화면에서 근거와 함께 켭니다.
-                  원격 추출(extractor) 경로에서만 유효하며, extractor 의 헤드리스 스위치가 꺼진 환경에서는 지정해도 효과가 없습니다.</span></td>
-            </tr>
-            <tr>
-              <td class="c-policy"><span class="badge UNSUPPORTED">UNSUPPORTED</span></td>
-              <td class="c-how">추출하지 않음<br>(등록 요청을 400 으로 거절)</td>
-              <td>봇 차단 등으로 어떤 방법으로도 상품 정보를 가져올 수 없는 곳.</td>
+              <td class="c-policy"><span class="badge BLOCKED">BLOCKED</span></td>
+              <td class="c-how">요청하지 않음</td>
+              <td><ul>
+                <li>가져올 수 없다고 판단한 도메인</li>
+                <li>새 등록은 <b>400 으로 거절</b>합니다</li>
+                <li>이미 담긴 아이템도 <b>다시 요청하지 않습니다</b> — 거부 의사를 확인한 곳에 반복해 두드리지 않습니다</li>
+              </ul></td>
             </tr>
             <!-- 모르는 정책이 실제로 있을 때만 설명한다. 평소에는 존재하지 않는 상태라 늘 적어 두면 혼란만 준다. -->
             <tr th:if="${!#lists.isEmpty(board.unknown)}">
               <td class="c-policy"><span class="badge unk">알 수 없음</span></td>
-              <td class="c-how">기본 추출<br>(모르는 정책이라 정책 없음처럼 처리)</td>
-              <td>이 서버가 <b>모르는 정책</b>이 저장된 도메인입니다. 새 정책 종류를 추가한 버전에서 만든 뒤 서버를 그 이전 버전으로
-                되돌리면 생깁니다 (서버 코드는 되돌아가도 DB 의 행은 남습니다). 사용자 등록이 막히지는 않습니다.
-                항목을 눌러 아는 정책으로 바꾸거나 삭제하세요.</td>
+              <td class="c-how">정책 없음처럼 처리</td>
+              <td><ul>
+                <li>이 서버가 <b>모르는 정책</b>이 저장된 도메인</li>
+                <li>새 정책 종류를 추가한 버전에서 만든 뒤 서버를 그 이전 버전으로 되돌리면 생깁니다 (코드는 되돌아가도 DB 행은 남습니다)</li>
+                <li>사용자 등록이 막히지는 않습니다</li>
+                <li>항목을 눌러 <b>아는 정책으로 바꾸거나 삭제</b>하세요</li>
+              </ul></td>
             </tr>
           </tbody>
         </table>
@@ -185,8 +189,8 @@
       <form class="add" method="post" th:action="@{/admin/extraction-policies}">
         <input name="domain" placeholder="도메인 (예: coupang.com)" th:value="${draftDomain}" maxlength="255" required>
         <div class="seg" role="radiogroup" aria-label="정책">
-          <label class="segopt" th:each="r : ${routes}">
-            <input type="radio" name="route" th:value="${r}" th:checked="${r.name() == selectedRoute}" required>
+          <label class="segopt" th:each="r : ${accesses}">
+            <input type="radio" name="access" th:value="${r}" th:checked="${r.name() == selectedAccess}" required>
             <span th:classappend="${r}" th:text="${r}"></span>
           </label>
         </div>
@@ -202,9 +206,9 @@
 
     <div class="board">
       <div class="col" th:each="c : ${board.columns}">
-        <a class="colhead" th:href="@{/admin/extraction-policies(route=${c.route})}"
-           th:title="|${c.route} 만 보기|">
-          <span class="badge" th:classappend="${c.route}" th:text="${c.route}"></span>
+        <a class="colhead" th:href="@{/admin/extraction-policies(access=${c.access})}"
+           th:title="|${c.access} 만 보기|">
+          <span class="badge" th:classappend="${c.access}" th:text="${c.access}"></span>
           <span class="cnt" th:text="${#lists.size(c.policies)}">0</span>
         </a>
         <a class="row" th:each="p : ${c.policies}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}"
@@ -212,14 +216,14 @@
           <span class="d" th:text="${p.domain}"></span>
           <!-- 허가받은 도메인만 표시한다. 대부분은 허가 없음(기본 거부)이라 그쪽에 배지를 달면 목록이 배지로 덮이고
                정작 드문 사실(허가)이 묻힌다. 여기가 화이트리스트가 한눈에 보이는 자리다. -->
-          <span class="allowed" th:if="${p.headlessAllowed}" title="헤드리스 허가">허가</span>
+          <span class="allowed" th:if="${p.permissionRef}" th:title="${p.permissionRef}">근거</span>
           <span class="u" th:text="${#temporals.format(p.updatedAt, 'yyyy-MM-dd')}"></span>
           <span class="go" aria-hidden="true">→</span>
         </a>
         <div class="empty" th:if="${#lists.isEmpty(c.policies)}">없음</div>
       </div>
 
-      <!-- 이 서버가 모르는 route 값의 행. 세 갈래 어디에도 속하지 않지만 열에서 빼면 보이지도 지워지지도 않는
+      <!-- 이 서버가 모르는 정책 값의 행. 두 갈래 어디에도 속하지 않지만 열에서 빼면 보이지도 지워지지도 않는
            유령 행이 되므로, 값이 있을 때만 열 하나로 조용히 붙인다. 설명은 위 범례 표의 마지막 행이 진다. -->
       <div class="col unk" th:if="${!#lists.isEmpty(board.unknown)}">
         <div class="colhead static">
@@ -229,7 +233,7 @@
         <a class="row" th:each="p : ${board.unknown}" th:href="@{/admin/extraction-policies/{d}(d=${p.domain})}"
            th:title="${p.domain}">
           <span class="d" th:text="${p.domain}"></span>
-          <span class="rt" th:text="${p.route}"></span>
+          <span class="rt" th:text="${p.access}"></span>
           <span class="go" aria-hidden="true">→</span>
         </a>
       </div>

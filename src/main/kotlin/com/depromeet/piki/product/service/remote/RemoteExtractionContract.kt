@@ -35,7 +35,7 @@ internal object RemoteExtractionContract {
             // 우리 구성으로 못 읽었다 — 도메인 허가 후보 신호.
             "EMPTY_SHELL" to { ProductSnapshotException.noExtractableContent() },
             "NO_EXTRACTABLE_CONTENT" to { ProductSnapshotException.noExtractableContent() },
-            // 대상이 우리를 막았다 — UNSUPPORTED 정책 후보.
+            // 대상이 우리를 막았다 — BLOCKED 정책 후보.
             "FETCH_CLIENT_ERROR" to { ProductExtractorException.blockedByTarget() },
             "PERMANENT_UPSTREAM" to { ProductExtractorException.blockedByTarget() },
             // 추출은 됐는데 값을 믿을 수 없다 — 모델·프롬프트·검증 규칙 소관.
