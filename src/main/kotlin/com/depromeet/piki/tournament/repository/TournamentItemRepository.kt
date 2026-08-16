@@ -19,6 +19,8 @@ interface TournamentItemRepository {
     // 이 아이템의 토너먼트 출전 좌표(어느 토너먼트 / 그 안 어느 tournament_item). 파싱 알림 딥링크 라우팅 역조회(#408).
     fun findRoutingBySnapshotId(snapshotId: Long): List<TournamentItemRoutingView>
 
+    fun findRoutingsWithUserBySnapshotId(snapshotId: Long): List<TournamentItemUserRoutingView>
+
     fun findAllByTournamentId(tournamentId: Long): List<TournamentItem>
 
     fun findAllByTournamentIds(ids: List<Long>): List<TournamentItem>

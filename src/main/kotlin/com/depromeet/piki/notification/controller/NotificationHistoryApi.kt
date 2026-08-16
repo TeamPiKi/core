@@ -46,7 +46,7 @@ interface NotificationHistoryApi {
                 "| `TOURNAMENT_PLAYED_FROM_LINK` | 플레이링크로 플레이 시작 | `TOURNAMENT` | ROOT 토너먼트 id | {플레이어}님이 회원님 토너먼트를 플레이했어요 |\n" +
                 "| `TOURNAMENT_COMPLETED` | 멤버가 클론 완료 | `TOURNAMENT` | ROOT 토너먼트 id | {멤버}님이 회원님 토너먼트를 완료했어요 |\n" +
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
-                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 파싱이 완료되었어요) |\n" +
+                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 수신자별 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"아이템이 등록됐어요\") |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
                 "> `ITEM_PARSING_COMPLETED` 의 `body` 는 `kind` 와 무관하게 하나다 — 위시로 담았든 토너먼트로 올렸든 같은 문구가 온다. " +

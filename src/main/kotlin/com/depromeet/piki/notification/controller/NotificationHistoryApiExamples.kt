@@ -14,6 +14,7 @@ import com.depromeet.piki.notification.controller.dto.NotificationReadResponse
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.domain.NotificationException
 import com.depromeet.piki.notification.domain.NotificationKind
+import com.depromeet.piki.notification.handler.ItemParsingCompletedHandler
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -155,7 +156,7 @@ class NotificationHistoryApiExamples(
             // 파싱 완료만 title=이름 / body=상태 로 나뉜다(#913). 두 값 다 템플릿이 렌더한 실제 모양으로 둔다 —
             // body 문구는 DB 템플릿(V20260811010101)이 소유하므로 referenceItem 의 title 과 같이 리터럴로 적는다.
             title = "에어 조던 1 미드",
-            body = PARSING_COMPLETED_BODY,
+            body = ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE,
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
@@ -170,7 +171,7 @@ class NotificationHistoryApiExamples(
             type = NotificationType.ITEM_PARSING_COMPLETED,
             kind = NotificationKind.of(NotificationType.ITEM_PARSING_COMPLETED, NotificationKind.TOURNAMENT),
             title = "나이키 덩크 로우",
-            body = PARSING_COMPLETED_BODY,
+            body = ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE,
             refId = 513,
             isRead = false,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 0, 0),
@@ -179,9 +180,4 @@ class NotificationHistoryApiExamples(
         )
 
     private val sampleItems = listOf(referenceItem, wishParsingItem, tournamentParsingItem)
-
-    companion object {
-        // 파싱 완료 body — 출처(위시/토너먼트)와 무관하게 하나다. 두 example 이 같은 값을 쓰는 게 계약이라 상수로 묶는다.
-        private const val PARSING_COMPLETED_BODY = "파싱이 완료되었어요"
-    }
 }
