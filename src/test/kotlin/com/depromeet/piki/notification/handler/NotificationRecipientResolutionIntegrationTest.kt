@@ -481,6 +481,31 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         assertTrue(contexts.getValue(wishOwner).variables.isEmpty())
     }
 
+    @Test
+    fun `dispatch 가 한 파싱 완료 이벤트를 위시 주인·토너먼트 등록자에게 각자의 딥링크·문구·wishId 로 저장한다 - end-to-end`() {
+        // 이슈가 지정한 dispatch 레벨 negative control — 이벤트 단위 1회 해석이던 이전 구조에선 둘 중 하나가
+        // 남의 딥링크·문구를 저장받아 이 단언이 반드시 깨진다.
+        val itemId = 3100L
+        val tournamentId = 1200L
+        val wishOwner = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
+        val wishId = wishRepository.save(Wish(wishOwner, snapshotId)).getId()
+        val tournamentItemId =
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
+
+        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
+
+        val ownerNoti = notificationRepository.findPage(wishOwner, cursor = null, limit = 10).first()
+        assertEquals(NotificationRouting.Wish(wishId), ownerNoti.routing())
+        assertEquals(wishId, ownerNoti.wishId)
+        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, ownerNoti.body)
+
+        val adderNoti = notificationRepository.findPage(adder, cursor = null, limit = 10).first()
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), adderNoti.routing())
+        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE, adderNoti.body)
+    }
+
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────
 
     @Test
