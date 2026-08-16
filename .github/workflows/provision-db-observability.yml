@@ -71,8 +71,12 @@ jobs:
           INFRA_REF: ${{ inputs.infra_ref }}
         run: |
           set -euo pipefail
+          # 원격은 POSIX sh 로 돈다 - AWS-RunShellScript 가 commands 를 /bin/sh(Ubuntu 에선 dash)로
+          # 실행하므로 bash 전용 문법을 쓰면 안 된다. pipefail 이 그 함정이라 set -eu 만 쓴다
+          # (실측: set -euo pipefail 은 "Illegal option -o pipefail" 로 실패). 이 스크립트엔 파이프가
+          # 없어 pipefail 이 필요 없고, 실제 작업을 하는 공용 블록은 아래에서 bash 로 명시 실행한다.
           cat > /tmp/remote.sh <<REMOTE
-          set -euo pipefail
+          set -eu
           WORK=/tmp/piki-obs
           mkdir -p "\$WORK"
           BASE="https://raw.githubusercontent.com/TeamPiKi/infra/${INFRA_REF}/blocks/alloy"
