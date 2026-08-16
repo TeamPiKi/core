@@ -37,7 +37,7 @@ interface NotificationSseApi {
                 responseCode = "200",
                 description =
                     "SSE 스트림 시작 (`text/event-stream`). `notification` 이벤트 data payload 는 공통 필드(`id`·`type`·`kind`·`title`·`body`·" +
-                        "`refId`·`isRead`·`createdAt`) 위에 알림 종류별로 아이템 좌표(`tournamentId`·`tournamentItemId`)가 더 붙어 셰입이 갈리고," +
+                        "`refId`·`isRead`·`createdAt`) 위에 알림 종류별로 딥링크 좌표(토너먼트 `tournamentId`·`tournamentItemId` / 위시 `wishId`)가 더 붙어 셰입이 갈리고," +
                         " 스트림·다형 구조라 OpenAPI 로 표현이 어려워 `notification-sse-spec.md` 로 문서화한다.",
             ),
             ApiResponse(
