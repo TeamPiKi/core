@@ -77,3 +77,8 @@ output "github_ecr_push_role_arn" {
   description = "GitHub Actions 가 OIDC 로 assume 할 ECR push 역할 ARN (deploy.yml 에 배선)"
   value       = aws_iam_role.github_ecr_push.arn
 }
+
+output "github_db_provision_role_arn" {
+  description = "db 박스 Alloy 갱신 워크플로가 assume 할 역할 ARN (GitHub vars AWS_DB_PROVISION_ROLE_ARN 에 넣는다)"
+  value       = aws_iam_role.github_db_provision.arn
+}

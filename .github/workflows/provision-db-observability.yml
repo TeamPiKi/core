@@ -1,0 +1,116 @@
+# db 박스(piki-prod-db)의 관측 수집기(Alloy)를 공용 config 로 갱신한다. (#954)
+#
+# 다른 박스는 앱을 배포하는 김에 Alloy 도 갱신하는데(core deploy 의 provision-runtime.sh,
+# extractor·renderer 의 provision-observability.sh), 이 박스는 배포할 앱이 없어 그 트리거가 없다.
+# 그래서 TeamPiKi/infra 의 공용 config 를 고쳐도 여기만 옛 상태로 남았다(실측: 다른 박스 collector
+# 12개, db 41개). 이 워크플로가 그 갱신 경로다.
+#
+# **SSH 가 아니라 SSM Run Command 를 쓴다.** 이 박스는 키페어가 없어 접속하려면 EC2 Instance
+# Connect 로 공개키를 먼저 밀어 넣어야 하는데, SSM 은 그 절차와 SG 22 개방·IP 관리를 전부 없앤다
+# (박스에 SSM agent 가 이미 있다 - /snap/amazon-ssm-agent 실측).
+#
+# **자동이 아니라 수동 실행이다.** 데이터가 있는 박스라 배포마다 자동으로 손대는 것보다, config 를
+# 바꾼 뒤 필요할 때 돌리는 편이 안전하다. 실행 이력은 Actions 에 남는다.
+#
+# 전제: terraform apply 로 전용 role 이 만들어져 있어야 하고(수동 apply - 단일 state 라 로컬 apply 가
+# prod 전체에 영향), 그 ARN 이 vars.AWS_DB_PROVISION_ROLE_ARN 에, environment 는 prod-db 로 있어야 한다.
+# role 의 assume 조건이 environment:prod-db 라, 다른 워크플로는 이 role 을 쓸 수 없다.
+name: Provision DB observability
+
+on:
+  workflow_dispatch:
+    inputs:
+      infra_ref:
+        description: "공용 블록을 가져올 TeamPiKi/infra ref (기본 main). 머지 전 브랜치로 선검증할 때만 바꾼다."
+        required: false
+        default: main
+        type: string
+
+concurrency:
+  group: provision-db-observability
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC 토큰 발급 (AWS assume)
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    # 이 값이 곧 role 의 assume 조건(sub 클레임)이다. 바꾸면 자격 발급이 실패한다.
+    environment: prod-db
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DB_PROVISION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 인스턴스 ID 를 태그로 찾는다 - 워크플로에 ID 를 박으면 인스턴스가 교체될 때 조용히 어긋난다.
+      # 실행 중(running)만 대상으로 해, 교체 과도기에 죽은 인스턴스를 집지 않는다.
+      - name: Resolve DB instance id
+        id: target
+        run: |
+          set -euo pipefail
+          ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=piki-prod-db" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          COUNT=$(printf '%s\n' "$ID" | wc -w | tr -d ' ')
+          if [ "$COUNT" != "1" ]; then
+            echo "::error::piki-prod-db 태그의 running 인스턴스가 1개가 아니다 (found=$COUNT). 교체 중이거나 태그가 어긋났는지 확인."
+            exit 1
+          fi
+          echo "instance_id=$ID" >> "$GITHUB_OUTPUT"
+          echo "대상 인스턴스: $ID"
+
+      # 공용 블록만 실행한다 - provision-db.sh 전체(MySQL 기동·백업 cron)를 돌리지 않는다.
+      # 관측만 갱신하므로 데이터에 손대지 않는다.
+      - name: Send SSM command (Alloy 갱신)
+        id: send
+        env:
+          INFRA_REF: ${{ inputs.infra_ref }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/remote.sh <<REMOTE
+          set -euo pipefail
+          WORK=/tmp/piki-obs
+          mkdir -p "\$WORK"
+          BASE="https://raw.githubusercontent.com/TeamPiKi/infra/${INFRA_REF}/blocks/alloy"
+          # provision-alloy-ssm.sh 가 형제 경로의 provision-alloy.sh 를 호출하므로 셋을 같은 곳에 받는다.
+          for f in config.alloy provision-alloy.sh provision-alloy-ssm.sh; do
+            curl -fsSL "\$BASE/\$f" -o "\$WORK/\$f" || { echo "\$f fetch 실패 (ref=${INFRA_REF})"; exit 1; }
+          done
+          bash "\$WORK/provision-alloy-ssm.sh" \
+            --config "\$WORK/config.alloy" \
+            --name piki-alloy \
+            --environment prod \
+            --box piki-db
+          REMOTE
+
+          # 셸 인용 사고를 피하려고 jq 로 JSON 을 만든다(-Rs: 파일 전체를 문자열 하나로).
+          PARAMS=$(jq -Rs '{commands: [.]}' /tmp/remote.sh)
+          CID=$(aws ssm send-command \
+            --instance-ids "${{ steps.target.outputs.instance_id }}" \
+            --document-name AWS-RunShellScript \
+            --comment "Alloy provision (GHA #${{ github.run_number }})" \
+            --parameters "$PARAMS" \
+            --query 'Command.CommandId' --output text)
+          echo "command_id=$CID" >> "$GITHUB_OUTPUT"
+          echo "SSM CommandId: $CID"
+
+      # wait 는 실패해도 멈추지 않는다 - 원격 출력을 반드시 로그에 남긴 뒤 성공/실패를 판정하기 위해서다.
+      - name: Wait and report
+        run: |
+          set -uo pipefail
+          CID="${{ steps.send.outputs.command_id }}"
+          ID="${{ steps.target.outputs.instance_id }}"
+          aws ssm wait command-executed --command-id "$CID" --instance-id "$ID" || true
+          STATUS=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$ID" --query Status --output text)
+          echo "----- stdout -----"
+          aws ssm get-command-invocation --command-id "$CID" --instance-id "$ID" --query StandardOutputContent --output text
+          echo "----- stderr -----"
+          aws ssm get-command-invocation --command-id "$CID" --instance-id "$ID" --query StandardErrorContent --output text
+          echo "------------------"
+          echo "상태: $STATUS"
+          [ "$STATUS" = "Success" ] || { echo "::error::SSM 실행 실패 (status=$STATUS)"; exit 1; }
+          echo "확인: Grafana 에서 count by (box) (last_over_time(node_scrape_collector_success[90s])) 의 piki-db 가 12 인지 본다."
