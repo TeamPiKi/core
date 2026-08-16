@@ -134,6 +134,20 @@ resource "aws_iam_role_policy" "db_instance" {
   policy = data.aws_iam_policy_document.db_instance.json
 }
 
+# SSM Run Command 로 이 박스를 원격 관리하기 위한 등록 권한 (#954).
+#
+# agent 설치만으로는 관리 대상이 되지 않는다 — agent 가 Systems Manager 에 자기를 등록하려면
+# ssm:UpdateInstanceInformation 등이 필요하고, 그 묶음이 이 AWS 관리형 정책이다. 이게 없으면
+# describe-instance-information 에 인스턴스가 뜨지 않고 SendCommand 가 InvalidInstanceId 로
+# 실패한다(2026-08-16 실측 - agent 는 깔려 있는데 이 권한이 없어 db 박스만 미등록이었다).
+#
+# 앱 박스 role 에는 같은 정책이 콘솔에서 수동으로 붙어 있어 terraform 코드에 흔적이 없다.
+# 여기서는 코드로 명시해, 인스턴스를 재생성해도 SSM 관리가 따라오게 한다.
+resource "aws_iam_role_policy_attachment" "db_ssm_core" {
+  role       = aws_iam_role.db.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "db" {
   name = "piki-prod-db-profile"
   role = aws_iam_role.db.name
