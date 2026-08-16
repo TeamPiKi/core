@@ -84,7 +84,7 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
         val otherUserId = UUID.randomUUID()
         val oldest = seed(userId, isRead = true)
         val middle = seed(userId, isRead = false, routing = NotificationRouting.Tournament(99L, 555L))
-        val newest = seed(userId, isRead = false, routing = NotificationRouting.Wish)
+        val newest = seed(userId, isRead = false, routing = NotificationRouting.Wish(null))
         seed(otherUserId, isRead = false) // 타인 알림 — 결과에 섞이면 안 됨
 
         buildMockMvc()

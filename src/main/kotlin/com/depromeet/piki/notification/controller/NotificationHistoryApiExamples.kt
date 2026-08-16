@@ -159,6 +159,8 @@ class NotificationHistoryApiExamples(
             refId = 512,
             isRead = true,
             createdAt = LocalDateTime.of(2026, 6, 8, 10, 5, 0),
+            // 위시 상세 딥링크 대상(#933). 클라는 이 wishId 로 GET /api/v1/wishlists/{wishId} 로 이동한다.
+            wishId = 812,
         )
 
     // 토너먼트 출처 파싱 완료 알림 (라우팅 출처 TOURNAMENT + 두 식별자) — 안읽음.

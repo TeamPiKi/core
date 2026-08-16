@@ -237,7 +237,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
                     "상품 정보가 저장됐어요",
                     "",
                     11L,
-                    NotificationRouting.Wish,
+                    NotificationRouting.Wish(null),
                 ),
             )
 

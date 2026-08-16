@@ -104,7 +104,7 @@ class FirebaseMessageSenderTest {
     @Test
     fun `위시 파싱 알림은 kind=WISH 만 더 싣고 토너먼트 키는 생략한다`() {
         val notification =
-            Notification(UUID.randomUUID(), NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 11L, NotificationRouting.Wish)
+            Notification(UUID.randomUUID(), NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 11L, NotificationRouting.Wish(null))
                 .withId(43L)
 
         val data = FirebaseMessageSender.toFcmData(NotificationSsePayload.from(notification))

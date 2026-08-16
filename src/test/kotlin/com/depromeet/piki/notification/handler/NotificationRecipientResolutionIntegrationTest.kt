@@ -397,7 +397,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
         val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId, snapshotId))
 
-        assertEquals(NotificationRouting.Wish, routing)
+        assertEquals(NotificationRouting.Wish(null), routing)
     }
 
     @Test
@@ -434,7 +434,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
         val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId, snapshotId))
 
-        assertEquals(NotificationRouting.Wish, routing)
+        assertEquals(NotificationRouting.Wish(null), routing)
     }
 
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────

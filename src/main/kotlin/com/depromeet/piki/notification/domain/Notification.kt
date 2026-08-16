@@ -48,7 +48,8 @@ class Notification(
     }
 
     // routing 을 평탄화한 라우팅 컬럼 — 채널(SSE/FCM)이 엔티티만 받아 클라에 식별자를 내려보내고,
-    // 목록/badge 조회(#246)도 과거 알림의 딥링크를 이 컬럼들로 복원한다. WISH 는 식별자가 없어 tournament_* 가 null 이다.
+    // 목록/badge 조회(#246)도 과거 알림의 딥링크를 이 컬럼들로 복원한다. 출처별로 자기 식별자만 채운다 —
+    // WISH 는 wish_id(#933), TOURNAMENT 는 tournament_id·tournament_item_id, 나머지 컬럼은 null 이다.
     // (noarg JPA 생성자는 이 초기화를 우회하고 DB 값을 필드에 직접 주입한다.)
     // 컬럼명 `kind` 는 라우팅 출처이며 응답의 `kind`(도메인 축, domainKind())와 다른 값일 수 있다.
     // (예: TOURNAMENT_JOINED 은 이 컬럼이 NULL 이지만 응답 kind 는 TOURNAMENT)
@@ -62,6 +63,11 @@ class Notification(
 
     @Column(name = "tournament_item_id")
     val tournamentItemId: Long? = (routing as? NotificationRouting.Tournament)?.tournamentItemId
+
+    // WISH 라우팅의 위시 상세 딥링크 대상(#933). 수신자별로 다르며, 컬럼 도입 전 과거 행은 null 이다
+    // (그 경우 클라가 refId(itemId)로 역추적하는 기존 폴백을 쓴다).
+    @Column(name = "wish_id")
+    val wishId: Long? = (routing as? NotificationRouting.Wish)?.wishId
 
     @Column(name = "is_read", nullable = false)
     var isRead: Boolean = false
@@ -77,7 +83,8 @@ class Notification(
     fun routing(): NotificationRouting? =
         routingKind?.let { k ->
             when (k) {
-                NotificationKind.WISH -> NotificationRouting.Wish
+                // wishId 는 컬럼 도입 전 과거 행에서 null 일 수 있다(nullable) — Wish 가 그대로 실어 클라 폴백에 맡긴다.
+                NotificationKind.WISH -> NotificationRouting.Wish(wishId)
                 // kind=TOURNAMENT 면 두 식별자가 반드시 있다(엔티티 생성 시 sealed 에서 원자적으로 채워짐). 없으면 데이터 정합성
                 // 위반이라 불변식(checkNotNull → IllegalStateException → 500)으로 다룬다 — 클라 입력 오류(400)가 아니다.
                 NotificationKind.TOURNAMENT ->

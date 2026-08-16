@@ -35,6 +35,8 @@ class ItemParsingRecipientResolver(
         tournamentItemRepository.findRoutingBySnapshotId(snapshotId).firstOrNull()?.let {
             return NotificationRouting.Tournament(it.tournamentId, it.tournamentItemId)
         }
-        return NotificationRouting.Wish
+        // wishId 는 수신자별이라 이 이벤트-단위 해석에선 채우지 못한다(null). 수신자별 라우팅(#933, resolveRecipientContexts)이
+        // 이 메서드를 대체하며 각 수신자의 wishId 를 채운다 — 이 메서드는 그 전환의 과도기 형태다.
+        return NotificationRouting.Wish(null)
     }
 }
