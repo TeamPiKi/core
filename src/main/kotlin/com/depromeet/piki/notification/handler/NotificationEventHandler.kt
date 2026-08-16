@@ -35,6 +35,19 @@ abstract class NotificationEventHandler<E : Any>(
     // 기본값 null 을 그대로 쓰고, 그러면 Notification 의 라우팅 컬럼이 비워진다(채널에서 키가 생략된다).
     open fun resolveRouting(event: E): NotificationRouting? = null
 
+    // 수신자별 라우팅 + 추가 템플릿 변수(#933). 기본값은 전 수신자가 resolveRouting(event) 을 공유하고 추가 변수는 없다 —
+    // 대부분의 알림은 한 이벤트의 전 수신자가 같은 화면으로 가므로 이대로 충분하다(기존 핸들러 불변).
+    // 파싱 알림처럼 한 snapshot 에 위시 주인·토너먼트 등록자가 함께 붙어(공유 #825 의 "진행 중 합류") 수신자마다
+    // 딥링크(자기 위시/자기 토너먼트)와 body 문구(출처별)가 갈리는 경우만 override 한다.
+    // 배치(전 수신자 한 번)로 받는 이유: 수신자 수만큼 조회가 늘지 않게 핸들러가 한 번에 해석하게 한다(N+1 방지).
+    open fun resolveRecipientContexts(
+        event: E,
+        recipients: Set<UUID>,
+    ): Map<UUID, RecipientContext> {
+        val shared = resolveRouting(event)
+        return recipients.associateWith { RecipientContext(routing = shared) }
+    }
+
     // 행위자(actor) 표시 컨텍스트 — 템플릿 변수(actorName)와 발송 시점 프사 snapshot 을 한 번에 해석한다(#473).
     // 변수와 프사를 따로 hook 으로 두면 같은 actor 에 findById 가 두 번 나가므로, 한 조회로 합쳐 돌려준다.
     // actor 가 있는 알림(TOURNAMENT_* 등 "OO님이 …")만 override 한다. actor 없는 시스템 알림(파싱·공지)은
@@ -59,4 +72,12 @@ abstract class NotificationEventHandler<E : Any>(
 data class ActorContext(
     val variables: Map<String, String> = emptyMap(),
     val imageUrl: String? = null,
+)
+
+// 수신자별 딥링크 라우팅 + 추가 템플릿 변수(#933). 파싱 알림이 수신자마다 다른 딥링크(자기 위시 wishId / 자기 토너먼트
+// 좌표)와 출처별 body 문구를 갖도록, dispatcher 가 이 컨텍스트를 수신자별로 받아 알림을 렌더·저장한다.
+// variables 는 actor 공유 변수(예: itemName)에 더해지는 수신자별 변수다 — 파싱은 completionMessage(출처별 완료 문구).
+data class RecipientContext(
+    val routing: NotificationRouting? = null,
+    val variables: Map<String, String> = emptyMap(),
 )
