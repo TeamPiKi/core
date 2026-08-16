@@ -59,6 +59,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired
+    private lateinit var accessPolicyRepository: com.depromeet.piki.product.routing.DomainAccessPolicyJpaRepository
+
+    @Autowired
+    private lateinit var accessPolicy: com.depromeet.piki.product.routing.DbDomainAccessPolicy
+
+    @Autowired
     private lateinit var objectMapper: ObjectMapper
 
     @Autowired
@@ -605,12 +611,21 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `미지원 플랫폼(KREAM) URL 을 등록하면 등록 시점에 400 으로 거부되고 위시가 생기지 않는다`() {
+    fun `차단 도메인 URL 을 등록하면 등록 시점에 400 으로 거부되고 위시가 생기지 않는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 미지원 플랫폼은 비동기 파싱(FAILED)이 아니라 등록 입력 시점에 동기 400 으로 막는다 — 담기 전에 빠르게 안내한다.
+            // 차단 도메인은 비동기 파싱(FAILED)이 아니라 등록 입력 시점에 동기 400 으로 막는다 — 담기 전에 빠르게 안내한다.
+            // 정책 테이블은 비어서 시작하므로(판단하지 않은 것을 미리 채우지 않는다) 이 테스트가 자기 행을 만든다.
+            accessPolicyRepository.save(
+                com.depromeet.piki.product.routing.DomainAccessPolicyEntity(
+                    domain = "kream.co.kr",
+                    access = com.depromeet.piki.product.routing.DomainAccess.BLOCKED.name,
+                    reason = "테스트: 차단 도메인",
+                ),
+            )
+            accessPolicy.reload()
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://kream.co.kr/products/950123"))
 
             mockMvc
