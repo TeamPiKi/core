@@ -36,7 +36,7 @@ object ItemParsingMetrics {
     // 우리 구성으로 그 페이지를 못 읽음. 늘면 그 도메인의 허가 후보를 본다.
     const val REASON_UNREADABLE = "unreadable"
 
-    // 대상이 우리를 막음. 늘면 UNSUPPORTED 정책 후보를 본다.
+    // 대상이 우리를 막음. 늘면 BLOCKED 정책 후보를 본다.
     const val REASON_BLOCKED = "blocked"
 
     // 추출은 됐는데 값을 믿을 수 없음. 늘면 모델·프롬프트·검증 규칙을 본다.

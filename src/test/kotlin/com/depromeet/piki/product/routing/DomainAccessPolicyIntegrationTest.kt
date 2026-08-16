@@ -25,7 +25,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// 추출 라우팅 정책(#9 디스패처)이 DB + 캐시 reload 로 배포 없이 등록 판정을 바꾸는지 검증한다.
+// 도메인 접근 정책(#9 디스패처)이 DB + 캐시 reload 로 배포 없이 등록 판정을 바꾸는지 검증한다.
 // @Transactional 자동 롤백을 쓰지 않는다 — 정책 캐시(@Volatile)는 롤백으로 되돌아가지 않아 다른 테스트로 누수되므로,
 // 각 테스트가 자기 행을 명시적으로 정리하고 reload() 로 캐시를 시드 상태로 복원한다(finally).
 class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {

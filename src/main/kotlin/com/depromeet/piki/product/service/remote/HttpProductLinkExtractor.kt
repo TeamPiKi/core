@@ -19,8 +19,8 @@ import org.springframework.web.client.RestClient
 //
 // authorized: "이 대상이 플랫폼의 명시적 허락을 받았는가"의 판정. 원장(domain_access_policies)은 이쪽 DB 에만
 // 있고 extractor·renderer 는 무상태라, 요청 단위로 실어 보낸다. 기본은 거부라 정책 행이 없는 대부분의 도메인은
-// false 로 나간다. 이 값이 여는 것은 렌더 서비스의 우회 수단(지문 보정·프록시)뿐이고, 브라우저를 여는 것 자체는
-// 허락과 무관하다 — 신원을 밝히고 우리 IP 로 가는 일이라 전제가 필요 없다.
+// false 로 나간다. 이 값이 여는 것은 추출 모듈이 쓸 수 있는 수단의 범위이고, 그 수단이 무엇인지는 모듈이
+// 정한다 — 여기서 알면 저쪽 구현이 바뀔 때 이 서술만 조용히 낡는다. 기본 수단으로 가는 데는 허락이 필요 없다.
 //
 // model 도 같은 이유로 요청에 싣는다(#875). extractor 박스 하나를 여러 환경이 공유하므로 저쪽 환경변수로
 // 모델을 잡으면 dev 실험이 prod 를 덮는다 — 요청 단위로 주면 환경마다 다른 이쪽 DB 가 그대로 경계가 된다.
@@ -45,7 +45,7 @@ class HttpProductLinkExtractor(
             request =
                 RemoteLinkExtractionRequest(
                     url = link.value.toString(),
-                    // 허락 판정의 원장은 core 다. extractor·renderer 는 이 값을 받아 우회 수단을 열 뿐,
+                    // 허락 판정의 원장은 core 다. extractor·renderer 는 이 값만큼 수단을 열 뿐,
                     // 무엇이 허락됐는지 스스로 알지 않는다(무상태).
                     authorized = accessPolicy.authorizedFor(link),
                     model = modelSettings.modelOf(ExtractionTarget.LINK),

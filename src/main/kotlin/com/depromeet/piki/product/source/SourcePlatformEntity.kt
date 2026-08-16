@@ -7,7 +7,7 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 
 // 출처 커머스몰 표시명 행 (#766). domain(정규형: 소문자·trailing dot 없음)이 자연키(PK)라 같은 도메인 문자열의
-// 표시명은 정확히 하나다. 백오피스가 배포 없이 추가·교체·삭제하고(ExtractionPlatformPolicyEntity 와 같은 동적 설정
+// 표시명은 정확히 하나다. 백오피스가 배포 없이 추가·교체·삭제하고(DomainAccessPolicyEntity 와 같은 동적 설정
 // 패턴), display_name 은 클라이언트 응답(sourcePlatform)에 그대로 나가는 사용자 대면 표기다.
 @Entity
 @Table(name = "source_platforms")

@@ -20,7 +20,7 @@ import java.util.UUID
 @Service
 class TournamentItemService(
     private val tournamentItemPersistenceService: TournamentItemPersistenceService,
-    private val extractionRoutingPolicy: DomainAccessPolicy,
+    private val accessPolicy: DomainAccessPolicy,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
@@ -54,7 +54,7 @@ class TournamentItemService(
         val link = ProductLink.parse(url)
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다(400).
         // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
-        extractionRoutingPolicy.verifyRegistrable(link)
+        accessPolicy.verifyRegistrable(link)
         // 권한·상태를 차감 전에 확인한다(이미지 경로와 같은 이유) — 참여자도 아닌 요청이 오너의 몫을 깎으면 안 된다.
         // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)

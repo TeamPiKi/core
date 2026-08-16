@@ -7,7 +7,7 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 
 // 도메인별 접근 정책 행. domain(정규형: 소문자·trailing dot 없음)이 자연키(PK)라 같은 도메인 문자열의 정책은
-// 정확히 하나다 — 옛 스키마에서 route 와 허가 boolean 이 갈라져 "브라우저로 가라 + 안 된다" 같은 모순을
+// 정확히 하나다 — 옛 스키마에서 route 와 허가 boolean 이 갈라져 "이렇게 가져와라 + 받지 마라" 같은 모순을
 // 저장할 수 있던 것을 축 하나로 합쳐 원천 차단한다.
 @Entity
 @Table(name = "domain_access_policies")
@@ -31,7 +31,7 @@ class DomainAccessPolicyEntity(
         // 경로가 정규화를 빠뜨리는 코드 버그를 잡는 층이다.
         require(domain.isNotBlank()) { "domain 이 비어 있습니다." }
         require(domain == domain.trim().trimEnd('.').lowercase()) { "domain 은 정규형(소문자·trailing dot 없음)이어야 합니다." }
-        // 허락은 근거가 있어야 허락이다. 근거 없는 ALLOWED 는 우회 수단을 여는 값이 아무 흔적 없이 켜진 상태라,
+        // 허락은 근거가 있어야 허락이다. 근거 없는 ALLOWED 는 적극적인 수단을 여는 값이 아무 흔적 없이 켜진 상태라,
         // 몇 달 뒤 "왜 켰지"를 되짚을 수 없고 지워도 되는지도 판단할 수 없다.
         require(access != DomainAccess.ALLOWED.name || !permissionRef.isNullOrBlank()) {
             "허락 근거(permissionRef) 없이 ALLOWED 정책을 만들 수 없습니다."

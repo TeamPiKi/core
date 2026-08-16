@@ -23,7 +23,7 @@ class DomainAccessPolicyEntityTest {
 
     @Test
     fun `근거 없이 허락 정책 행은 만들 수 없다`() {
-        // 이 값은 우회 수단을 여는 값이라, 근거 없이 켜지면 원장이 "왜 열려 있나"에 답하지 못한다.
+        // 이 값은 적극적인 수단을 여는 값이라, 근거 없이 켜지면 원장이 "왜 열려 있나"에 답하지 못한다.
         assertFailsWith<IllegalArgumentException> {
             DomainAccessPolicyEntity(
                 domain = "example.com",

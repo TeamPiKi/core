@@ -146,7 +146,7 @@ class AdminExtractionPolicyService(
         permissionRef: String?,
     ) {
         // 허락은 사람이 플랫폼에서 받아 오는 것이라, 켜는 순간 근거를 함께 남기게 강제한다. 근거 없는 허락이
-        // 쌓이면 원장이 "왜 열려 있나"에 답하지 못해 원장 구실을 못 한다 — 이 값은 우회 수단을 여는 값이라 특히 그렇다.
+        // 쌓이면 원장이 "왜 열려 있나"에 답하지 못해 원장 구실을 못 한다 — 이 값은 적극적인 수단을 여는 값이라 특히 그렇다.
         require(access != DomainAccess.ALLOWED || !permissionRef.isNullOrBlank()) {
             "허락(ALLOWED)을 지정하려면 근거를 함께 남겨 주세요 (예: 메일 스레드·담당자)."
         }

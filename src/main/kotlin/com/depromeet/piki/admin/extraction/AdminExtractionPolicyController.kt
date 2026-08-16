@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 
-// 추출 라우팅 정책 관리 화면(#9 디스패처). 갈래별 3열 보드(목록·필터)와 상세(수정·삭제) 두 화면의 SSR —
+// 도메인 접근 정책 관리 화면(#9 디스패처). 갈래별 보드(목록·필터)와 상세(수정·삭제) 두 화면의 SSR —
 // AdminTemplateController 의 목록 → 편집 진입과 같은 토대 (게이트는 슬랙-세션 #526,
 // actor 폴백은 AdminSession.actorName(request)).
 // 파괴적 액션(삭제)은 보드에 두지 않는다. 상세로 들어와 도메인·정책·사유를 확인한 뒤 실행한다 —
@@ -34,7 +34,7 @@ class AdminExtractionPolicyController(
         model: Model,
     ): String = boardView(access, model, guideOpen = !guide.isNullOrBlank())
 
-    // 추가 폼은 헤드리스 허가를 켜지 않는다(save 의 기본값 = 거부). 허가는 "메일로 받아 원장에 남기는" 조작이라
+    // 추가 폼은 허락 근거를 받지 않는다(save 의 기본값 = null). 허락은 "메일로 받아 원장에 남기는" 조작이라
     // 근거 입력·현재 상태 확인이 있는 상세 화면의 몫이다 — 목록의 한 줄짜리 폼에서 지나가듯 켤 일이 아니다.
     // 그래서 여기서 ALLOWED 를 고르면 근거 필수 가드에 걸려 "상세에서 근거를 남겨라"는 안내가 뜬다.
     @PostMapping
@@ -68,10 +68,9 @@ class AdminExtractionPolicyController(
             "redirect:/admin/extraction-policies?missing"
         }
 
-    // 상세의 정책·사유·헤드리스 허가 수정. save 가 upsert 라 추가 폼과 같은 경로를 탄다 (도메인은 PK 라 상세에서
-    // 바꾸지 않는다). 정책과 사유를 한 폼으로 받는 이유: 정책이 바뀌는 순간이 곧 근거가 새로 필요한 순간이라, 둘이
-    // 따로 저장되면 "403 봇 차단" 사유가 SUPPORTED 행에 남는 식으로 근거가 정책과 어긋난다. 허가도 같은 폼에 둔다 —
-    //
+    // 상세의 정책·사유·허락 근거 수정. save 가 upsert 라 추가 폼과 같은 경로를 탄다 (도메인은 PK 라 상세에서
+    // 바꾸지 않는다). 셋을 한 폼으로 받는 이유: 정책이 바뀌는 순간이 곧 근거가 새로 필요한 순간이라, 따로
+    // 저장되면 "403 봇 차단" 사유가 ALLOWED 행에 남는 식으로 근거가 정책과 어긋난다.
     @PostMapping("/{domain}")
     fun update(
         @PathVariable domain: String,
@@ -118,8 +117,9 @@ class AdminExtractionPolicyController(
 
     // 보드 화면의 모델 채우기 단일 지점 — 정상 목록과 두 에러 재표시 경로가 공유한다
     // (한쪽만 갱신돼 에러 화면에서 모델이 비는 함정 방지).
-    // selectedAccess 기본값이 SUPPORTED 인 이유: 추가 폼의 기본 선택이 곧 오조작 시 저장되는 값이라,
-    // 라우팅을 바꾸지 않는 값(기록용)을 기본에 둔다. UNSUPPORTED 가 기본이면 실수 한 번이 등록 차단이 된다.
+    // selectedAccess 기본값이 BLOCKED 인 이유: 값이 둘뿐이라 "아무것도 안 바꾸는 값"이 없다. ALLOWED 를 기본에
+    // 두면 도메인만 치고 엔터한 오조작이 허락으로 저장될 수 있으므로, 되돌리기 쉬운 쪽(행 삭제 = 즉시 등록 재개)을
+    // 기본에 둔다. ALLOWED 는 근거 필수 가드가 한 번 더 막아 어느 쪽으로도 지나가듯 켜지지 않는다.
     // guideOpen 은 모델로 넘긴다. 템플릿의 th:attr 안에서는 요청 파라미터(param) 접근이 막혀 있다.
     private fun boardView(
         filter: String?,
@@ -137,8 +137,8 @@ class AdminExtractionPolicyController(
     // knownAccess: 저장된 access 문자열이 이 바이너리의 enum 에 있는가. 없으면(신버전이 만든 값 → 구버전 롤백)
     // select 에 고를 항목이 없으므로 화면이 경고를 띄우고 운영자가 알려진 정책으로 교체하거나 삭제하게 한다.
     //
-    // 허가 입력값은 selectedAccess 와 같은 방식으로 컨트롤러가 확정해 넘긴다 — 에러 재표시에서는 방금 제출한
-    // 값을, 평소에는 저장된 값을 보여준다(체크 해제는 draft 가 false 라 그대로 유지된다).
+    // 허락 근거도 selectedAccess 와 같은 방식으로 컨트롤러가 확정해 넘긴다 — 에러 재표시에서는 방금 제출한
+    // 값을, 평소에는 저장된 값을 보여준다.
     private fun detailView(
         policy: ExtractionPolicyView,
         model: Model,

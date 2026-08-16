@@ -26,7 +26,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// 백오피스 추출 라우팅 정책 화면(3열 보드 · 상세)의 시나리오·렌더 contract.
+// 백오피스 도메인 접근 정책 화면(갈래별 보드 · 상세)의 시나리오·렌더 contract.
 // @Transactional 자동 롤백을 쓰지 않는다 — 저장·삭제가 afterCommit 에 캐시 reload 를 걸고(롤백되면 타지 않는다),
 // 정책 캐시(@Volatile)는 롤백으로 되돌아가지 않아 다른 테스트로 누수된다. 각 테스트가 자기 행을 정리하고 reload 한다.
 // 단언에 한글을 쓰지 않는다 — 렌더된 HTML 을 문자열로 훑으므로 응답 charset 에 결과가 좌우되지 않게 ASCII 로 고정한다.
@@ -224,7 +224,7 @@ class AdminExtractionPolicyIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `이 서버가 모르는 정책 값 행도 보드에 노출되고 상세에서 지울 수 있다`() {
-        // 신버전이 만든 정책을 구버전으로 롤백하면 생긴다(DB 는 forward-only). 라우팅은 tolerant 하게 기본 체인으로
+        // 신버전이 만든 정책을 구버전으로 롤백하면 생긴다(DB 는 forward-only). 판정은 tolerant 하게 기본 흐름으로
         // 떨어지지만, 화면이 이 행을 어느 열에도 안 넣으면 백오피스에서 보이지도 지워지지도 않는 유령 행이 된다.
         val mockMvc = mockMvc()
         val domain = "unknown-${UUID.randomUUID()}.example.com"

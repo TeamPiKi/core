@@ -98,7 +98,7 @@ class HttpProductLinkExtractorTest {
 
     @Test
     fun `허락받은 도메인은 authorized=true 를 실어 보낸다`() {
-        // 허락 판정의 원장은 이쪽(DB·백오피스) — extractor·renderer 는 이 값으로 우회 수단을 열 뿐 스스로 알지 않는다.
+        // 허락 판정의 원장은 이쪽(DB·백오피스) — extractor·renderer 는 이 값만큼 수단을 열 뿐 스스로 알지 않는다.
         val extractor =
             extractorWith(access = DomainAccess.ALLOWED) { server ->
                 server
@@ -139,7 +139,7 @@ class HttpProductLinkExtractorTest {
 
     @Test
     fun `허락받은 도메인은 authorized=true 를 실어 보낸다 - 원장은 이쪽에 있다`() {
-        // 허가 원장(extraction_platform_policies.headless_allowed)의 단일 진실은 이쪽 DB 이고, 무상태인 extractor 는
+        // 허가 원장(domain_access_policies.access)의 단일 진실은 이쪽 DB 이고, 무상태인 extractor 는
         // 요청 단위로만 받는다 — 이 필드가 빠지면 저쪽은 허가 여부를 알 길이 없다.
         val extractor =
             extractorWith(access = DomainAccess.ALLOWED) { server ->

@@ -8,15 +8,15 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
 // 도메인별 접근 정책의 단일 결정 지점. "이 도메인을 어떻게 대하나"의 판정이 전부 여기로 모인다 —
-// 등록 거절(BLOCKED)과 우회 허락(ALLOWED) 둘 뿐이고, 정책 행이 없는 도메인은 기본 흐름을 그대로 탄다.
+// 등록 거절(BLOCKED)과 허락(ALLOWED) 둘 뿐이고, 정책 행이 없는 도메인은 기본 흐름을 그대로 탄다.
 //
 // 인터페이스/구현 분리는 알림의 NotificationTemplateProvider 와 같은 구조 — 소비자(등록 경계·원격 클라이언트)의
 // 단위 테스트가 DB 없이 정책을 대체할 수 있게 한다.
 interface DomainAccessPolicy {
-    // 이 링크의 host 에 지정된 접근 정책. 행이 없으면 null — 등록을 받고, 우회 없이 기본 흐름을 탄다.
+    // 이 링크의 host 에 지정된 접근 정책. 행이 없으면 null — 등록을 받고, 기본 수단만 쓰는 흐름을 탄다.
     fun accessOf(link: ProductLink): DomainAccess?
 
-    // 이 host 를 어떻게든 뚫어도 되는가 — 플랫폼에서 받은 명시적 허락의 판정. 기본은 거부다:
+    // 이 host 에 적극적인 수단까지 써도 되는가 — 플랫폼에서 받은 명시적 허락의 판정. 기본은 거부다:
     // 정책 행이 없으면(= 대부분의 도메인) false 다. 인터페이스 기본 구현을 false 로 두는 이유는 그 default-deny 를
     // 시그니처에 박기 위해서다 — 원장을 아는 구현만 true 를 낼 수 있고, 모르는 대체 구현은 거부로 수렴한다.
     fun authorizedFor(link: ProductLink): Boolean = false

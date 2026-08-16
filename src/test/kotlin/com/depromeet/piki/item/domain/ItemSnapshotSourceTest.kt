@@ -22,7 +22,7 @@ class ItemSnapshotSourceTest {
     @Test
     fun `모르는 값과 null 은 출처 미기록으로 둔다 - tolerant reader`() {
         assertNull(ItemSnapshotSource.fromWireMethod(null))
-        assertNull(ItemSnapshotSource.fromWireMethod("HEADLESS_V2"))
+        assertNull(ItemSnapshotSource.fromWireMethod("SOME_NEW_METHOD"))
         assertNull(ItemSnapshotSource.fromWireMethod("structured"))
     }
 }
