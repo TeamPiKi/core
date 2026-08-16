@@ -327,14 +327,36 @@ class HttpProductLinkExtractorTest {
     }
 
     @Test
-    fun `2xx 이어도 필수 필드가 빠진 계약 위반 응답은 일시 실패로 걸러진다`() {
-        // extractor 는 자기 쪽에서 필수 필드를 강제하지만, 버그로 2xx + null 필드가 오면
-        // 불완전 스냅샷이 조용히 READY 로 새면 안 된다 — boundary 에서 일시 실패로 걸러 재시도 후 FAILED 로 종결.
+    fun `2xx 부분값은 막지 않고 통과시킨다 - 채운 값을 보존해 도메인이 INCOMPLETE 로 판정하게 둔다`() {
+        // extractor 는 값이 하나라도 있으면 200 으로 내려보낸다(extractor#37). 경계가 세 필드를 다 요구하면
+        // 그 200 이 계약 위반으로 튕겨 재시도 후 FAILED 가 되고, INCOMPLETE 로 가는 길이 닫힌다(#950 의 prod 사고).
+        // 여기서 통과시켜야 markExtracted 가 "일부만 얻음 → INCOMPLETE" 를 판정할 수 있다.
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
                     withSuccess(
-                        """{"name":"나이키","imageUrl":null,"currentPrice":99000,"currency":"KRW"}""",
+                        """{"name":"핸드 워시","imageUrl":"https://cdn.example.com/i.png","currentPrice":null,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val snapshot = extractor.extract(link)
+
+        assertEquals("핸드 워시", snapshot.name)
+        assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
+        assertNull(snapshot.price, "못 건진 필드는 null 로 남아 사용자가 채운다")
+    }
+
+    @Test
+    fun `2xx 인데 값이 하나도 없으면 계약 위반이라 일시 실패로 걸러진다`() {
+        // 하나도 못 건진 경우는 extractor 가 422(UNTRUSTWORTHY_VALUE)로 닫는 계약이라, 그게 200 으로 오면
+        // 저쪽 버그다 — 빈 스냅샷이 조용히 흘러 들어가지 않게 경계에서 일시 실패로 걸러 재시도한다.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":null,"imageUrl":null,"currentPrice":null,"currency":"KRW"}""",
                         MediaType.APPLICATION_JSON,
                     ),
                 )
@@ -343,6 +365,25 @@ class HttpProductLinkExtractorTest {
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
         assertTrue(AsyncItemParsingWorker.isRetryable(e))
+    }
+
+    @Test
+    fun `blank name 만 담긴 2xx 도 값이 없는 것으로 본다 - 경계 정규화가 어차피 떨군다`() {
+        // currency 도 단독으로는 "건졌다"의 근거가 되지 못한다(READY 필수가 아니다). 이 판정 기준은
+        // 도메인(ItemSnapshot.hasNoExtractedValue)과 같아야 한다 — 어긋나면 경계를 통과한 응답이
+        // 곧바로 FAILED 로 떨어져 재시도 예산만 태운다.
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"   ","imageUrl":null,"currentPrice":null,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
+        assertEquals(ErrorCategory.RETRYABLE, e.category)
     }
 
     @Test

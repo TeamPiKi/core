@@ -78,28 +78,29 @@ internal object RemoteExtractionContract {
         return toSnapshot(response, link, target)
     }
 
-    // 2xx 응답 → ProductSnapshot. extractor 는 2xx 로 name·imageUrl·currentPrice 를 non-null 로 보장한다
-    // (자기 쪽 ExtractionResponse.from 이 강제). 신뢰 경계를 넘어온 값이라, 계약이 깨진 2xx(extractor
-    // 버그 등: raw 필드가 null)를 여기서 일시 실패로 걸러 불완전 스냅샷이 조용히 READY 로 새는 걸 막는다 —
-    // 원인이 "원격 계약 위반"으로 boundary 로그에 또렷이 남는다.
+    // 2xx 응답 → ProductSnapshot. extractor 는 2xx 로 name·imageUrl·currentPrice 중 **하나 이상**을 보장한다
+    // (자기 쪽 ExtractionResponse.from 이 하나도 못 건졌을 때만 422 UNTRUSTWORTHY_VALUE 로 닫는다, extractor#37).
+    // 그래서 부분값 2xx 는 계약 위반이 아니라 정상 결과이고, 그것을 READY/INCOMPLETE/FAILED 로 가르는 판정은
+    // 경계가 아니라 도메인(ItemSnapshot.markExtracted, #944)이 쥔다 — 여기서 세 필드를 다 요구하면 부분값이
+    // INCOMPLETE 로 가는 길 자체가 닫혀 재시도 후 FAILED 로 끝난다(#950 이 고친 것이 정확히 그 상태다).
+    // 남은 가드는 "계약이 깨진 2xx" 하나다: 셋 다 빈 응답은 extractor 가 422 로 닫았어야 할 것이라 일시 실패로
+    // 걸러 재시도한다 — 원인이 "원격 계약 위반"으로 boundary 로그에 또렷이 남는다.
     // raw 응답 필드를 본다: "값은 있으나 우리가 정규화로 떨구는" 경우(non-https imageUrl 등)는 여기가 아니라
-    // fromExtracted 소관이라, 그건 스냅샷에 null 로 흘러 엔티티 requireReadyInvariant 가 최종 판정한다.
-    // (이미지 경로에선 그 귀결이 READY 거부 → FAILED + raw 회수다. 현재 extractor 는 결과 URL 을 https 로 하드코딩
-    // 생성하므로 non-https 2xx 는 구성 불가능하다 — extractor 가 CDN 등 결과 URL 출처를 바꾸면 이 가드를 재검토한다.)
+    // fromExtracted 소관이라, 그건 스냅샷에 null 로 흘러 markExtracted 가 최종 판정한다(정규화가 남긴 값이
+    // 일부면 INCOMPLETE, 전부 떨구면 FAILED). 현재 extractor 는 결과 URL 을 https 로 하드코딩 생성하므로
+    // non-https 2xx 는 구성 불가능하다 — extractor 가 CDN 등 결과 URL 출처를 바꾸면 이 가드를 재검토한다.
     private fun toSnapshot(
         response: RemoteExtractionResponse?,
         link: ProductLink?,
         target: String,
     ): ProductSnapshot {
         response ?: throw ProductExtractorException.transientFailure(null)
-        response.name?.takeIf { it.isNotBlank() } ?: throw contractViolation(target)
-        response.imageUrl ?: throw contractViolation(target)
-        response.currentPrice ?: throw contractViolation(target)
+        if (response.hasNoExtractedValue()) throw contractViolation(target)
         return response.toProductSnapshot(link)
     }
 
     private fun contractViolation(target: String): ProductExtractorException {
-        log.warn("remote extract contract violation: missing required field {}", target)
+        log.warn("remote extract contract violation: no extracted value in 2xx {}", target)
         return ProductExtractorException.transientFailure(null)
     }
 
@@ -136,8 +137,9 @@ internal data class RemoteExtractionResponse(
     val name: String? = null,
     val imageUrl: String? = null,
     // extractor 가 내려주는 wire 필드명이라 우리 쪽 개명(currentPrice → price, #870)에서 홀로 제외됐다.
-    // 여기만 바꾸면 Jackson 매핑이 끊겨 2xx 의 가격이 조용히 null 이 되고, toSnapshot 의 계약 위반 가드에
-    // 걸려 모든 추출이 일시 실패로 떨어진다. 개명하려면 extractor 와 동시 배포가 필요하다.
+    // 여기만 바꾸면 Jackson 매핑이 끊겨 2xx 의 가격이 조용히 null 이 된다. 부분값을 받아들이게 된 뒤로는
+    // 그 귀결이 "전부 일시 실패"(눈에 띔)가 아니라 **모든 추출이 가격 없는 INCOMPLETE 로 조용히 성공**이라
+    // 더 늦게 발견된다 — 개명하려면 extractor 와 동시 배포가 필요하다.
     val currentPrice: Int? = null,
     val currency: String? = null,
     // additive 확장(계약 §2, extractor#17): 리다이렉트 귀결점. 구버전 extractor 는 안 내려주며(null),
@@ -146,6 +148,13 @@ internal data class RemoteExtractionResponse(
     // additive 확장: 추출 경로(STRUCTURED|LLM). 출처(SERVER/SERVER_LLM) 기록의 근거이며 모르는 값은 미기록으로 둔다.
     val method: String? = null,
 ) {
+    // 성공 응답이 값을 하나도 담지 않았는지 — extractor 의 성공 계약과 대칭인 판정이라 이름도 맞춘다
+    // (extractor#37 의 ProductSnapshot.hasNoExtractedValue). 이 응답이 2xx 로 온 것 자체가 계약 위반이다.
+    // 판정 기준은 도메인(ItemSnapshot.hasNoExtractedValue)과 같다: currency 는 READY 필수가 아니라 단독으로
+    // "건졌다"의 근거가 되지 못하므로 세지 않고, blank name 은 정규화가 어차피 떨구므로 없는 것으로 본다.
+    fun hasNoExtractedValue(): Boolean =
+        listOfNotNull(name?.takeIf { it.isNotBlank() }, imageUrl, currentPrice).isEmpty()
+
     // 외부 응답 → 도메인 매핑은 DTO 자신이 진다 (CLAUDE.md).
     // fromExtracted 를 반드시 경유한다 — https-only imageUrl(XSS 사다리 차단)·currency ISO 정규화·범위 검증은
     // 모든 추출 경로가 공유하는 단일 진실 원천이고, 원격 계약이 정상 값을 보장하더라도 신뢰 경계(외부 서비스)를
