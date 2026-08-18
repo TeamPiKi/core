@@ -36,8 +36,10 @@ import kotlin.test.assertTrue
 
 // 신규 토너먼트 알림(#473)의 전체 flow 통합 검증:
 // 유저 진입(회원·게스트 생성) → FCM 토큰 등록 → 토너먼트 결과 발송(dispatch) → 수신자 히스토리 조회 → 읽음 처리.
-// @Transactional 테스트는 AFTER_COMMIT 리스너가 안 뜨므로, 발송은 dispatcher 로 직접 구동한다
-// (recordMatch/createFromPlayLink → 이벤트 발행은 TournamentServiceTest 가 단위로 커버).
+// @Transactional 테스트는 AFTER_COMMIT 리스너가 안 뜨므로, 발송은 dispatcher 로 직접 구동한다 —
+// 여기서 보는 건 디스패치 **이후** (수신자 해석 · 저장 · 히스토리 · 읽음)다.
+// 그 앞 구간(이벤트 발행 → 리스너 → 디스패처)은 NotificationEventSubscriptionIntegrationTest 가 실제 발행으로 검증한다.
+// 두 파일이 함께 있어야 경로가 끝까지 닫힌다 — 예전엔 앞 구간을 아무도 안 봐서 리스너가 통째로 빠진 채 초록불이었다(#961).
 @Transactional
 class NotificationTournamentFlowIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
