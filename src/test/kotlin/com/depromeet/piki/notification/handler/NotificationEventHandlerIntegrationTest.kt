@@ -109,4 +109,23 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         assertEquals(setOf("itemName"), context.variables.keys)
         assertEquals("나이키 에어맥스", context.variables["itemName"])
     }
+
+    // 파싱 실패 알림도 완료·미완과 동일하게 title 변수 itemName 을 그 버전 이름에서 채운다(#959).
+    // 실패 템플릿 문구는 현재 고정이라 렌더엔 안 쓰이지만, 어드민이 실패 문구에 이름을 넣어 편집할 수 있게 dispatch 가 채워 둔다.
+    @Test
+    fun `파싱 실패 핸들러는 그 버전의 아이템 이름을 itemName 변수로 담는다`() {
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 9111L, name = "나이키 에어맥스")).getId()
+
+        val context = itemParsingFailedHandler.resolveActorContext(ItemParsingFailed(itemId = 9111L, snapshotId = snapshotId))
+
+        assertEquals("나이키 에어맥스", context.variables["itemName"])
+    }
+
+    // 추출 자체가 실패해 이름이 비는 게 오히려 흔한 경로 — 그때도 이름 하나 때문에 알림을 떨구지 않고 기본값을 담는다.
+    @Test
+    fun `파싱 실패 핸들러는 버전을 못 찾으면 itemName 을 기본값으로 담는다`() {
+        val context = itemParsingFailedHandler.resolveActorContext(ItemParsingFailed(itemId = 9112L, snapshotId = 9_999_998L))
+
+        assertEquals("상품", context.variables["itemName"])
+    }
 }
