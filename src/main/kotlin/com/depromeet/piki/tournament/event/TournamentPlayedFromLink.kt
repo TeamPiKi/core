@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.event
 
+import com.depromeet.piki.common.event.NotificationEvent
 import java.util.UUID
 
 // 플레이링크로 누군가 내 토너먼트를 플레이하기 시작한 사실 — 도메인 사실. createFromPlayLink 의 신규 클론 생성 시점이다.
@@ -8,4 +9,4 @@ import java.util.UUID
 data class TournamentPlayedFromLink(
     val rootTournamentId: Long,
     val actorId: UUID,
-)
+) : NotificationEvent

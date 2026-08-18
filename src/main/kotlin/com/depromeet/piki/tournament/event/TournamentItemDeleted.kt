@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.event
 
+import com.depromeet.piki.common.event.NotificationEvent
 import java.util.UUID
 
 // 토너먼트 아이템 삭제 — 도메인 사실. actorId 는 삭제한 사용자(아이템 등록자 본인 또는 토너먼트 주최자).
@@ -11,4 +12,4 @@ data class TournamentItemDeleted(
     val tournamentItemId: Long,
     val snapshotId: Long,
     val actorId: UUID,
-)
+) : NotificationEvent

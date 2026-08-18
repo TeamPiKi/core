@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.event
 
+import com.depromeet.piki.common.event.NotificationEvent
 import java.util.UUID
 
 // 멤버/게스트가 자기 클론(=내 토너먼트의 클론)을 끝까지 플레이해 완료한 사실 — 도메인 사실. recordMatch 결승 → complete() 시점이며,
@@ -8,4 +9,4 @@ import java.util.UUID
 data class TournamentCompleted(
     val rootTournamentId: Long,
     val actorId: UUID,
-)
+) : NotificationEvent
