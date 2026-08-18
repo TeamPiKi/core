@@ -226,8 +226,42 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         }
     }
 
+    // 토너먼트 좌표와 같은 결로 위시 딥링크 키(#933)도 실제 와이어까지 확인한다 — payload 필드만 보면
+    // 직렬화 단계가 wishId 를 흘려도 통과하고, 클라는 그 사실을 모른 채 refId 역추적으로 떨어진다.
     @Test
-    fun `위시 파싱 알림 payload 는 kind=WISH 이고 토너먼트 식별자가 비어 있다`() {
+    fun `위시 파싱 알림은 kind=WISH 이고 prod 직렬화로 wishId 가 실린다`() {
+        val userId = UUID.randomUUID()
+        val notification =
+            notificationRepository.save(
+                Notification(
+                    userId,
+                    NotificationType.ITEM_PARSING_COMPLETED,
+                    "상품 정보가 저장됐어요",
+                    "",
+                    11L,
+                    NotificationRouting.Wish(777L),
+                ),
+            )
+
+        val payload = NotificationSsePayload.from(notification)
+        val wish = assertIs<NotificationSsePayload.WishParsing>(payload)
+        assertEquals(NotificationKind.WISH, wish.kind)
+        assertEquals(11L, wish.refId)
+        assertEquals(777L, wish.wishId)
+
+        val node = objectMapper.readTree(objectMapper.writeValueAsString(payload))
+        assertEquals("WISH", node.get("kind").asString())
+        assertEquals(777L, node.get("wishId").asLong())
+        // 위시 셰입엔 토너먼트 좌표가 아예 없다 — kind 만 보고 좌표를 단정하지 못하게 하는 계약(#408).
+        assertFalse(node.has("tournamentId"))
+        assertFalse(node.has("tournamentItemId"))
+    }
+
+    // 컬럼 도입(#933) 이전에 발송된 과거 알림 — SSE·히스토리 JSON 은 wishId 키를 남기고 값만 null 로 내린다.
+    // FCM data 는 Map<String,String> 이라 같은 상황에서 키 자체를 생략한다(FirebaseMessageSenderTest 가 그쪽을 고정).
+    // 두 채널의 모양이 다르므로 양쪽 다 못 박아 둔다 — 클라는 "키 없음"과 "값 null" 을 모두 폴백으로 처리해야 한다.
+    @Test
+    fun `wishId 없는 과거 위시 알림은 와이어에 null 로 실린다`() {
         val userId = UUID.randomUUID()
         val notification =
             notificationRepository.save(
@@ -241,10 +275,11 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
                 ),
             )
 
-        val payload = NotificationSsePayload.from(notification)
-        val wish = assertIs<NotificationSsePayload.WishParsing>(payload)
-        assertEquals(NotificationKind.WISH, wish.kind)
-        assertEquals(11L, wish.refId)
+        val node = objectMapper.readTree(objectMapper.writeValueAsString(NotificationSsePayload.from(notification)))
+
+        assertEquals("WISH", node.get("kind").asString())
+        assertTrue(node.has("wishId"))
+        assertTrue(node.get("wishId").isNull)
     }
 
     @Test

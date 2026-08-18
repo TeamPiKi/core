@@ -57,7 +57,9 @@ interface NotificationHistoryApi {
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> **딥링크 좌표는 `kind` 별로 다른 키를 쓴다.** `kind`=WISH 인 파싱 알림은 `wishId` 로 위시 상세(`GET /api/v1/wishlists/{wishId}`)로 간다 — " +
                 "`refId`(itemId)로는 그 화면에 갈 수 없으므로 `wishId` 가 있으면 그것을 쓴다. `wishId` 는 **수신자별로 다르고**, 컬럼 도입(#933) 이전에 발송된 " +
-                "과거 알림은 `null` 이다. `null` 인 알림만 종전처럼 `refId` 로 역추적한다.\n\n" +
+                "과거 알림에는 값이 없다. 값이 없을 때만 종전처럼 `refId` 로 역추적한다. " +
+                "값 없음의 모양은 채널마다 다르다 — 이 API 와 SSE payload 는 `wishId` 키를 남기고 `null` 로 내리고, FCM data 는 그 키를 아예 생략한다. " +
+                "클라는 **키 없음과 `null` 을 모두 폴백으로** 처리한다.\n\n" +
                 "> 아이템 좌표(`tournamentId`·`tournamentItemId`)가 추가로 실리는 타입: 토너먼트 출처 파싱 알림(`ITEM_PARSING_*` + `kind`=TOURNAMENT)과 " +
                 "아이템 삭제(`TOURNAMENT_ITEM_DELETED`). 후자는 클라가 재조회 없이 그 항목만 제거하게 한다. 나머지 타입엔 그 키가 없다. " +
                 "**좌표 유무는 `kind` 가 아니라 `type` 이 가른다** — 토너먼트 소셜 알림도 `kind`=TOURNAMENT 지만 좌표가 없으므로, `kind` 만 보고 좌표를 단정하지 말 것. " +
