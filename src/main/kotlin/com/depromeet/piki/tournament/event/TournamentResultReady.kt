@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.event
 
+import com.depromeet.piki.common.event.NotificationEvent
 import java.util.UUID
 
 // 주최자가 자기 토너먼트(ROOT)를 완료해 결과가 나온 사실 — 도메인 사실. recordMatch 결승 → complete() 시점이며,
@@ -8,4 +9,4 @@ import java.util.UUID
 data class TournamentResultReady(
     val rootTournamentId: Long,
     val actorId: UUID,
-)
+) : NotificationEvent

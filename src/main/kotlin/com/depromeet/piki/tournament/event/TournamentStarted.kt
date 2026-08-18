@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.event
 
+import com.depromeet.piki.common.event.NotificationEvent
 import java.util.UUID
 
 // 토너먼트 시작 — 도메인 사실. 주최자가 PENDING→IN_PROGRESS 로 전이시킨 순간이다. actorId 는 시작시킨 주최자.
@@ -8,4 +9,4 @@ import java.util.UUID
 data class TournamentStarted(
     val tournamentId: Long,
     val actorId: UUID,
-)
+) : NotificationEvent
