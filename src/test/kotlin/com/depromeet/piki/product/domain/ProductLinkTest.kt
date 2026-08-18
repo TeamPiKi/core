@@ -110,7 +110,7 @@ class ProductLinkTest {
 
     @Test
     fun `도메인 목록 매칭은 host 가 항목과 같거나 그 서브도메인일 때만 참이다`() {
-        // 미지원 판정의 도메인 목록 자체는 DB 정책(extraction_platform_policies)으로 옮겨졌다 — 여기서는
+        // 미지원 판정의 도메인 목록 자체는 DB 정책(domain_access_policies)으로 옮겨졌다 — 여기서는
         // 판정의 술어(matchesAnyDomain)가 우회를 막는 정규화·도메인 단위 매칭을 지키는지를 시드와 같은 목록으로 망라한다.
         val domains = setOf("kream.co.kr", "coupang.com", "naver.com", "naver.me", "oliveyoung.co.kr", "oy.run", "a-bly.com")
         val matched =
@@ -151,7 +151,7 @@ class ProductLinkTest {
 
     @Test
     fun `미지원 플랫폼 URL 도 parse 자체는 성공한다 - 저장된 행 읽기가 깨지지 않도록`() {
-        // 미지원 판정(ExtractionRoutingPolicy)은 등록 입력 경계 전용이고, parse(형식 불변식)는 컨버터·redirect 와 공유된다.
+        // 미지원 판정(DomainAccessPolicy)은 등록 입력 경계 전용이고, parse(형식 불변식)는 컨버터·redirect 와 공유된다.
         // 미지원 검증을 parse 에 넣으면 이미 저장된 미지원 URL 읽기가 깨지므로, parse 는 미지원이어도 통과해야 한다.
         val link = ProductLink.parse("https://kream.co.kr/products/950123")
         assertEquals("kream.co.kr", link.value.host)

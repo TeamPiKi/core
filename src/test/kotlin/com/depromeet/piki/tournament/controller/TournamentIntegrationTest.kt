@@ -73,6 +73,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var objectMapper: ObjectMapper
 
+    @Autowired private lateinit var accessPolicyRepository: com.depromeet.piki.product.routing.DomainAccessPolicyJpaRepository
+
+    @Autowired private lateinit var accessPolicy: com.depromeet.piki.product.routing.DbDomainAccessPolicy
+
     @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
 
     @Autowired private lateinit var tournamentJpaRepository: TournamentJpaRepository
@@ -2244,11 +2248,20 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-link 에서 미지원 플랫폼(KREAM) URL 이면 400 을 반환한다`() {
+    fun `POST tournaments-id-items-link 에서 차단 도메인 URL 이면 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
 
-        // 미지원 플랫폼(봇 차단으로 fetch 불가)은 등록 입력 시점에 동기 400 으로 막는다 — 위시 등록과 같은 메커니즘.
+        // 차단 도메인은 등록 입력 시점에 동기 400 으로 막는다 — 위시 등록과 같은 메커니즘.
+        // 정책 테이블은 비어서 시작하므로(판단하지 않은 것을 미리 채우지 않는다) 이 테스트가 자기 행을 만든다.
+        accessPolicyRepository.save(
+            com.depromeet.piki.product.routing.DomainAccessPolicyEntity(
+                domain = "kream.co.kr",
+                access = com.depromeet.piki.product.routing.DomainAccess.BLOCKED.name,
+                reason = "테스트: 차단 도메인",
+            ),
+        )
+        accessPolicy.reload()
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/items/link")
@@ -2262,7 +2275,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         // 등록 입력 경계에서 차단되므로 tournament item 이 생성되면 안 된다(검증 위치가 뒤로 밀려 일부라도 영속화되는 회귀 방지).
         assertTrue(
             tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).isEmpty(),
-            "미지원 플랫폼은 등록 입력 경계에서 차단되어 tournament item 이 생성되면 안 됩니다.",
+            "차단 도메인은 등록 입력 경계에서 걸러져 tournament item 이 생성되면 안 됩니다.",
         )
     }
 
