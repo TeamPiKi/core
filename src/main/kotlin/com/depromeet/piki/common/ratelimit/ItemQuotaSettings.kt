@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
-// 지금 적용 중인 한도 값의 단일 조회 지점. 인터페이스/구현 분리는 ExtractionRoutingPolicy·ExtractionModelSettings 와
+// 지금 적용 중인 한도 값의 단일 조회 지점. 인터페이스/구현 분리는 DomainAccessPolicy·ExtractionModelSettings 와
 // 같은 구조 — 소비자(한도 게이트)의 단위 테스트가 DB 없이 값을 대체할 수 있게 한다.
 interface ItemQuotaSettings {
     fun current(): ItemQuotaSnapshot

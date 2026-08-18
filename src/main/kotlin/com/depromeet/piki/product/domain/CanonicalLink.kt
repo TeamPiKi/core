@@ -59,7 +59,7 @@ class CanonicalLink private constructor(
 
         // fragment 는 여기서 별도 처리하지 않는다 — 재조립이 rawPath·rawQuery 만 쓰므로 구조적으로 탈락한다.
         // fragment 는 HTTP 요청에 실리지 않아 서버 렌더 몰에선 상품을 바꿀 수 없고(원리), prod 582건 중 의미 있는
-        // fragment 는 0건(실측). 예외는 해시 라우팅 SPA 를 헤드리스로 렌더하는 경우뿐 — 그런 몰이 나타나면
+        // fragment 는 0건(실측). 예외는 해시로 화면을 가르는 SPA 를 실제로 렌더해 읽는 경우뿐 — 그런 몰이 나타나면
         // 몰별 예외로 보존 규칙을 더한다.
         fun of(link: ProductLink): CanonicalLink {
             val host = requireNotNull(link.normalizedHost()) { "host 없는 링크는 canonical 을 만들 수 없다" }

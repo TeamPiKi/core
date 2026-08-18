@@ -41,7 +41,7 @@ enum class ProductExtractorErrorCode(
     ),
 
     // 대상이 우리를 막아 확정 실패. 우리 버그도 사용자 잘못도 아니라 따로 센다 — 늘면 그 도메인의
-    // UNSUPPORTED 정책(백오피스) 후보가 된다.
+    // BLOCKED 정책(백오피스) 후보가 된다.
     BLOCKED_BY_TARGET(
         "EXTRACTOR-003",
         ErrorCategory.SERVER_ERROR,

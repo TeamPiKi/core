@@ -31,7 +31,7 @@ class ProductExtractorException private constructor(
         fun permanentFailure(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.PERMANENT_FAILURE)
 
         // 원격이 422 로 답했고, 그 사유가 "대상이 우리를 막았다"인 경우(4xx 접근 거부·영구 upstream 거절).
-        // 재시도 무의미인 건 같고, 메트릭에서 blocked 로 따로 세어 정책(UNSUPPORTED) 판단의 입력이 된다.
+        // 재시도 무의미인 건 같고, 메트릭에서 blocked 로 따로 세어 정책(BLOCKED) 판단의 입력이 된다.
         fun blockedByTarget(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.BLOCKED_BY_TARGET)
     }
 }

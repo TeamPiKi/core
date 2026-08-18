@@ -4,7 +4,7 @@ package com.depromeet.piki.admin.audit
 enum class AdminAuditAction {
     TEMPLATE_UPDATE,
 
-    // 추출 라우팅 정책(#9 디스패처) — 누가 어느 도메인을 어떤 정책으로 추가/삭제했는지.
+    // 도메인 접근 정책(#9 디스패처) — 누가 어느 도메인을 어떤 정책으로 추가/삭제했는지.
     EXTRACTION_POLICY_UPDATE,
 
     // 출처 몰 표시명(#766) — 누가 어느 도메인의 표시명을 추가/교체/삭제했는지.

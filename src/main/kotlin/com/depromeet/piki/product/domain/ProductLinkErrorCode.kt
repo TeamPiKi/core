@@ -8,7 +8,7 @@ import com.depromeet.piki.common.exception.ErrorCode
 // 응답 detail·로그·OpenAPI 카탈로그는 message 로 파생된다.
 //
 // 3개 전부 공개 JSON API 도달이라 ErrorCodeRegistry 에 등록한다. 링크 등록 경계(ProductLink.of ·
-// ExtractionRoutingPolicy)가 위시 등록(POST /wishlists)·토너먼트 아이템 등록(POST /tournaments/{id}/items)
+// DomainAccessPolicy)가 위시 등록(POST /wishlists)·토너먼트 아이템 등록(POST /tournaments/{id}/items)
 // 양쪽에서 GlobalExceptionHandler 를 거쳐 wire code 로 나간다(WishlistApiExamples·TournamentItemApiExamples 문서화).
 //
 // 빈 링크에는 code 를 배정하지 않는다 — 두 등록 DTO 가 @field:NotBlank 로 막아 컨트롤러 진입 전에
