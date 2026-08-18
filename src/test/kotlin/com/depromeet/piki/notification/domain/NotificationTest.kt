@@ -19,7 +19,7 @@ class NotificationTest {
 
     @Test
     fun `위시 출처 파싱 알림의 도메인 축은 WISH 다`() {
-        val notification = notification(NotificationType.ITEM_PARSING_COMPLETED, NotificationRouting.Wish)
+        val notification = notification(NotificationType.ITEM_PARSING_COMPLETED, NotificationRouting.Wish(null))
         assertEquals(NotificationKind.WISH, notification.domainKind())
     }
 

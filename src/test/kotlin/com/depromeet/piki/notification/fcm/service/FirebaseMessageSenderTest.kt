@@ -99,12 +99,35 @@ class FirebaseMessageSenderTest {
         )
     }
 
+    // 위시 파싱 알림의 딥링크 키(#933) — 클라는 이 wishId 로 위시 상세로 간다. exact map 으로 둬 키가 빠지면 깨지게 한다.
+    // 아래 null 케이스만 있으면 mapper·encoder 가 wishId 를 통째로 흘려도 통과해, 클라가 조용히 refId 역추적으로 떨어진다.
+    @Test
+    fun `위시 파싱 알림은 wishId 를 함께 싣는다`() {
+        val notification =
+            Notification(UUID.randomUUID(), NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 11L, NotificationRouting.Wish(777L))
+                .withId(43L)
+
+        val data = FirebaseMessageSender.toFcmData(NotificationSsePayload.from(notification))
+
+        assertEquals(
+            mapOf(
+                "id" to "43",
+                "type" to "ITEM_PARSING_COMPLETED",
+                "kind" to "WISH",
+                "refId" to "11",
+                "wishId" to "777",
+            ),
+            data,
+        )
+    }
+
     // 엔티티 → payload → data 왕복 하나 — kind 가 from() 의 파생(type + routingKind)에서 오고 toFcmData 가 그걸 그대로
     // 읽는다는 연결을 지킨다. id 는 항상 실린다(#246) — 미영속 엔티티엔 withId 로 부여한다.
+    // wishId 가 null 인 건 컬럼 도입(#933) 이전에 발송된 과거 알림이다 — 그땐 키 자체를 생략해 클라가 refId 로 폴백한다.
     @Test
-    fun `위시 파싱 알림은 kind=WISH 만 더 싣고 토너먼트 키는 생략한다`() {
+    fun `wishId 없는 과거 위시 알림은 그 키를 생략한다`() {
         val notification =
-            Notification(UUID.randomUUID(), NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 11L, NotificationRouting.Wish)
+            Notification(UUID.randomUUID(), NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 11L, NotificationRouting.Wish(null))
                 .withId(43L)
 
         val data = FirebaseMessageSender.toFcmData(NotificationSsePayload.from(notification))

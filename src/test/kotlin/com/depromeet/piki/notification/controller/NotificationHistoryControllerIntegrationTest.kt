@@ -84,7 +84,7 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
         val otherUserId = UUID.randomUUID()
         val oldest = seed(userId, isRead = true)
         val middle = seed(userId, isRead = false, routing = NotificationRouting.Tournament(99L, 555L))
-        val newest = seed(userId, isRead = false, routing = NotificationRouting.Wish)
+        val newest = seed(userId, isRead = false, routing = NotificationRouting.Wish(777L))
         seed(otherUserId, isRead = false) // 타인 알림 — 결과에 섞이면 안 됨
 
         buildMockMvc()
@@ -94,6 +94,8 @@ class NotificationHistoryControllerIntegrationTest : IntegrationTestSupport() {
             // 최신순(id desc): newest → middle → oldest
             .andExpect(jsonPath("$.data.items[0].id").value(newest))
             .andExpect(jsonPath("$.data.items[0].kind").value("WISH"))
+            // 위시 딥링크 키(#933) — 클라가 이 값으로 위시 상세로 간다. 응답 JSON 까지 실려 나가는지 여기서 못 박는다.
+            .andExpect(jsonPath("$.data.items[0].wishId").value(777))
             .andExpect(jsonPath("$.data.items[1].id").value(middle))
             .andExpect(jsonPath("$.data.items[1].kind").value("TOURNAMENT"))
             .andExpect(jsonPath("$.data.items[1].tournamentId").value(99))

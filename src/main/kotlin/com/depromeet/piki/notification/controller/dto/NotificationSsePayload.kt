@@ -35,7 +35,9 @@ sealed interface NotificationSsePayload {
         override val createdAt: LocalDateTime,
     ) : NotificationSsePayload
 
-    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH. 토너먼트 식별자는 셰입에 아예 없다(클라는 /archive/wish 로).
+    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH + wishId(#933). 클라는 wishId 로 위시 상세
+    // (GET /api/v1/wishlists/{wishId})로 딥링크한다. wishId 는 수신자별로 다르며, 컬럼 도입 전 과거 행은 null 이라
+    // 그 경우 클라가 refId(itemId)로 역추적하는 기존 폴백을 쓴다.
     data class WishParsing(
         override val id: Long,
         override val type: NotificationType,
@@ -45,6 +47,7 @@ sealed interface NotificationSsePayload {
         override val refId: Long,
         override val isRead: Boolean,
         override val createdAt: LocalDateTime,
+        val wishId: Long?,
     ) : NotificationSsePayload
 
     // 토너먼트 아이템을 지목하는 알림. 입장(tournamentId)·아이템 지목(tournamentItemId) 좌표를 싣는다.
@@ -82,7 +85,7 @@ sealed interface NotificationSsePayload {
                         createdAt = notification.createdAt,
                     )
 
-                NotificationRouting.Wish ->
+                is NotificationRouting.Wish ->
                     WishParsing(
                         id = id,
                         type = notification.type,
@@ -92,6 +95,7 @@ sealed interface NotificationSsePayload {
                         refId = notification.refId,
                         isRead = notification.isRead,
                         createdAt = notification.createdAt,
+                        wishId = routing.wishId,
                     )
 
                 is NotificationRouting.Tournament ->

@@ -390,51 +390,120 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `파싱 완료 라우팅 - 위시로 담긴 아이템은 WISH 다 (토너먼트 식별자 없음)`() {
+    fun `파싱 완료 라우팅 - 위시 주인은 자기 wishId 를 실은 WISH 와 위시 완료 문구를 받는다`() {
         val itemId = 3001L
+        val owner = UUID.randomUUID()
         val snapshotId = snapshotIdFor(itemId)
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotId))
+        val wishId = wishRepository.save(Wish(owner, snapshotId)).getId()
 
-        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId, snapshotId))
+        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(owner))
 
-        assertEquals(NotificationRouting.Wish, routing)
+        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(owner).routing)
+        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, contexts.getValue(owner).variables["completionMessage"])
     }
 
     @Test
-    fun `파싱 완료 라우팅 - 토너먼트로 담긴 아이템은 TOURNAMENT 와 그 출전 좌표(tournamentId·tournamentItemId)다`() {
+    fun `파싱 완료 라우팅 - 토너먼트 등록자는 자기 출전 좌표 TOURNAMENT 와 토너먼트 완료 문구를 받는다`() {
         val itemId = 3002L
         val tournamentId = 1100L
+        val adder = UUID.randomUUID()
         val snapshotId = snapshotIdFor(itemId)
-        val tournamentItem =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotId))).first()
+        val tournamentItemId =
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
 
-        val routing = parsingCompletedHandler.resolveRouting(ItemParsingCompleted(itemId, snapshotId))
+        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(adder))
 
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItem.getId()), routing)
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
+        assertEquals(
+            ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE,
+            contexts.getValue(adder).variables["completionMessage"],
+        )
     }
 
     @Test
-    fun `파싱 실패 라우팅도 완료와 동일 규칙으로 토너먼트 출전 좌표를 싣는다`() {
+    fun `파싱 완료 - 위시 주인과 토너먼트 등록자가 한 버전을 공유하면 각자 자기 라우팅·문구를 받는다 (수신자별 negative control)`() {
+        // 이벤트 단위로 라우팅·문구를 한 번만 해석하던 이전 구조에선 둘 중 하나가 남의 딥링크·문구를 받아 이 단언이 반드시 깨진다.
+        val itemId = 3005L
+        val tournamentId = 1102L
+        val wishOwner = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val snapshotId = snapshotIdFor(itemId)
+        val wishId = wishRepository.save(Wish(wishOwner, snapshotId)).getId()
+        val tournamentItemId =
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
+
+        val contexts =
+            parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(wishOwner, adder))
+
+        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
+        assertEquals(
+            ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE,
+            contexts.getValue(wishOwner).variables["completionMessage"],
+        )
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
+        assertEquals(
+            ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE,
+            contexts.getValue(adder).variables["completionMessage"],
+        )
+    }
+
+    @Test
+    fun `파싱 완료 - 한 사람이 위시 주인이면서 그 버전을 토너먼트에도 올렸으면 WISH 가 우선이다`() {
+        val itemId = 3006L
+        val tournamentId = 1103L
+        val user = UUID.randomUUID()
+        val snapshotId = snapshotIdFor(itemId)
+        val wishId = wishRepository.save(Wish(user, snapshotId)).getId()
+        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, user, snapshotId)))
+
+        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(user))
+
+        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(user).routing)
+    }
+
+    @Test
+    fun `파싱 실패 라우팅 - 위시 주인은 WISH(wishId), 토너먼트 등록자는 TOURNAMENT 좌표를 수신자별로 받는다 (문구는 단일)`() {
         val itemId = 3003L
         val tournamentId = 1101L
+        val wishOwner = UUID.randomUUID()
+        val adder = UUID.randomUUID()
         val snapshotId = snapshotIdFor(itemId)
-        val tournamentItem =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, UUID.randomUUID(), snapshotId))).first()
+        val wishId = wishRepository.save(Wish(wishOwner, snapshotId)).getId()
+        val tournamentItemId =
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
 
-        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId, snapshotId))
+        val contexts =
+            parsingFailedHandler.resolveRecipientContexts(ItemParsingFailed(itemId, snapshotId), setOf(wishOwner, adder))
 
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItem.getId()), routing)
+        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
+        // 실패 알림은 출처별 문구가 없다 — completionMessage 변수를 싣지 않는다(단일 문구는 템플릿이 소유).
+        assertTrue(contexts.getValue(wishOwner).variables.isEmpty())
     }
 
     @Test
-    fun `파싱 실패 라우팅 - 위시로 담긴 아이템은 WISH 다`() {
-        val itemId = 3004L
-        val snapshotId = snapshotIdFor(itemId)
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotId))
+    fun `dispatch 가 한 파싱 완료 이벤트를 위시 주인·토너먼트 등록자에게 각자의 딥링크·문구·wishId 로 저장한다 - end-to-end`() {
+        // 이슈가 지정한 dispatch 레벨 negative control — 이벤트 단위 1회 해석이던 이전 구조에선 둘 중 하나가
+        // 남의 딥링크·문구를 저장받아 이 단언이 반드시 깨진다.
+        val itemId = 3100L
+        val tournamentId = 1200L
+        val wishOwner = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
+        val wishId = wishRepository.save(Wish(wishOwner, snapshotId)).getId()
+        val tournamentItemId =
+            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
 
-        val routing = parsingFailedHandler.resolveRouting(ItemParsingFailed(itemId, snapshotId))
+        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
 
-        assertEquals(NotificationRouting.Wish, routing)
+        val ownerNoti = notificationRepository.findPage(wishOwner, cursor = null, limit = 10).first()
+        assertEquals(NotificationRouting.Wish(wishId), ownerNoti.routing())
+        assertEquals(wishId, ownerNoti.wishId)
+        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, ownerNoti.body)
+
+        val adderNoti = notificationRepository.findPage(adder, cursor = null, limit = 10).first()
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), adderNoti.routing())
+        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE, adderNoti.body)
     }
 
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────

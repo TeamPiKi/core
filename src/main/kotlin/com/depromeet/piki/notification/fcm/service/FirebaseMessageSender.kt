@@ -240,6 +240,7 @@ class FirebaseMessageSender(
         private const val DATA_KEY_KIND = "kind"
         private const val DATA_KEY_TOURNAMENT_ID = "tournamentId"
         private const val DATA_KEY_TOURNAMENT_ITEM_ID = "tournamentItemId"
+        private const val DATA_KEY_WISH_ID = "wishId"
 
         // silent badge 동기화 data 키(#487) — 표시 알림이 아니라 badge 갱신 신호임을 type=badge_sync 로 구분한다.
         // 이 값은 NotificationType 의 어떤 값과도 겹치지 않는 예약 디스크리미네이터다 — 클라는 type=badge_sync 면
@@ -261,6 +262,10 @@ class FirebaseMessageSender(
                 if (payload is NotificationSsePayload.TournamentRouted) {
                     put(DATA_KEY_TOURNAMENT_ID, payload.tournamentId.toString())
                     put(DATA_KEY_TOURNAMENT_ITEM_ID, payload.tournamentItemId.toString())
+                }
+                // wishId 는 WISH 파싱 알림에만, 값이 있을 때만 싣는다(과거 행은 null → 키 생략, 클라 폴백).
+                if (payload is NotificationSsePayload.WishParsing) {
+                    payload.wishId?.let { put(DATA_KEY_WISH_ID, it.toString()) }
                 }
             }
 

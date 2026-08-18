@@ -21,6 +21,16 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("snapshotId") snapshotId: Long,
     ): List<UUID>
 
+    // 이 버전을 담은 위시의 (주인, 위시 id). 파싱 알림의 수신자별 wishId 딥링크 역조회(#933) — 각 위시 주인에게
+    // 자기 위시 상세로 가는 wishId 를 실어주려면 userId 와 함께 위시 id 가 필요하다.
+    @Query(
+        "SELECT w.userId AS userId, w.id AS wishId FROM Wish w " +
+            "WHERE w.snapshotId = :snapshotId AND w.deletedAt IS NULL",
+    )
+    fun findOwnerWishIdsBySnapshotId(
+        @Param("snapshotId") snapshotId: Long,
+    ): List<WishOwnerView>
+
     fun countByIdInAndUserId(
         ids: Collection<Long>,
         userId: UUID,

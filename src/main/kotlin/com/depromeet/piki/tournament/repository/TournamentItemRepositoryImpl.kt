@@ -25,6 +25,9 @@ class TournamentItemRepositoryImpl(
     override fun findRoutingBySnapshotId(snapshotId: Long): List<TournamentItemRoutingView> =
         tournamentItemJpaRepository.findRoutingBySnapshotId(snapshotId)
 
+    override fun findRoutingsWithUserBySnapshotId(snapshotId: Long): List<TournamentItemUserRoutingView> =
+        tournamentItemJpaRepository.findRoutingsWithUserBySnapshotId(snapshotId)
+
     override fun findAllByTournamentId(tournamentId: Long): List<TournamentItem> =
         tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
 

@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.domain.Notification
 import com.depromeet.piki.notification.handler.NotificationEventHandler
+import com.depromeet.piki.notification.handler.RecipientContext
 import com.depromeet.piki.notification.service.dto.NotificationReadCommand
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -45,20 +46,27 @@ class NotificationDispatcher(
         if (recipients.isEmpty()) return
 
         val refId = handler.resolveRefId(event)
-        val routing = handler.resolveRouting(event)
-        // actor 는 한 이벤트에 한 명이라 수신자 루프 밖에서 한 번만 해석해(actorId 조회 1회) 모든 수신자 알림에 같은 값을 박는다(#473).
-        // 변수(actorName)와 프사 snapshot 을 한 컨텍스트로 함께 받는다.
+        // actor 는 한 이벤트에 한 명이라 수신자 루프 밖에서 한 번만 해석해(actorId 조회 1회) 모든 수신자에 공유한다(#473).
+        // 변수(actorName·itemName)와 프사 snapshot 을 한 컨텍스트로 함께 받는다.
         val actorContext = handler.resolveActorContext(event)
         val actorImageUrl = actorContext.imageUrl
         val template = templateProvider.find(handler.notificationType)
-        val variables = actorContext.variables
-        val title = renderer.render(template.title, variables)
-        val body = renderer.render(template.body, variables)
+        val sharedVariables = actorContext.variables
+        // 수신자별 라우팅·추가 변수(#933) — 배치 1회로 해석한다. 파싱 알림은 한 snapshot 에 위시 주인·토너먼트 등록자가
+        // 함께 붙어 수신자마다 딥링크(자기 위시/자기 토너먼트)와 body 문구(출처별)가 갈리므로, 라우팅·문구 렌더를
+        // 수신자 루프 **안**에서 한다(기존엔 루프 밖 1회 공유라 위시 주인이 남의 토너먼트 딥링크·문구를 받았다).
+        // 나머지 알림은 default 로 전원 동일 라우팅·변수를 받아 동작이 그대로다.
+        val recipientContexts = handler.resolveRecipientContexts(event, recipients)
 
         var delivered = 0
         recipients.forEach { userId ->
             // 한 수신자의 저장 실패가 나머지 수신자 fan-out 을 막지 않게 수신자 단위로 격리한다 (외부 전달은 트랜잭션 밖).
             runCatching {
+                val context = recipientContexts[userId] ?: RecipientContext()
+                // 공유 변수(itemName 등) + 수신자별 변수(completionMessage 등)를 합쳐 이 수신자용 title/body 를 렌더한다.
+                val variables = sharedVariables + context.variables
+                val title = renderer.render(template.title, variables)
+                val body = renderer.render(template.body, variables)
                 // 항상 안읽음으로 저장한다. 읽음 전환은 실제 전달에 성공한 뒤에만 일어난다(아래).
                 val saved =
                     persistence.save(
@@ -68,7 +76,7 @@ class NotificationDispatcher(
                             title = title,
                             body = body,
                             refId = refId,
-                            routing = routing,
+                            routing = context.routing,
                             actorImageUrl = actorImageUrl,
                         ),
                     )

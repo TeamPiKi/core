@@ -49,6 +49,15 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     )
     fun findRoutingBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemRoutingView>
 
+    // 위와 같되 등록자(userId)를 함께 싣는다 — 파싱 알림의 수신자별 토너먼트 딥링크 역조회(#933).
+    // 한 유저가 같은 버전을 여러 토너먼트에 올렸으면 여러 행이라, id 오름차순으로 결정성만 확보하고
+    // 수신자별 해석에서 유저당 첫 좌표를 고른다.
+    @Query(
+        "SELECT t.userId AS userId, t.tournamentId AS tournamentId, t.id AS tournamentItemId FROM TournamentItem t " +
+            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL ORDER BY t.id ASC",
+    )
+    fun findRoutingsWithUserBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemUserRoutingView>
+
     @Modifying
     @Query(
         "UPDATE TournamentItem t SET t.deletedAt = :now WHERE t.id = :id AND t.tournamentId = :tournamentId " +

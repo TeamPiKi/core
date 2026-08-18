@@ -30,7 +30,8 @@ interface NotificationHistoryApi {
                 "- 응답 `data` 의 `unreadCount`(앱 badge)로 안읽음 수를 함께 내려준다 (별도 카운트 API 없음). " +
                 "페이지 범위가 아니라 항상 본인 전체 안읽음 수다.\n" +
                 "- 각 항목 셰입은 SSE `notification` 이벤트 payload 와 동일하다 — `type` 으로 화면을, `kind` 로 라벨·아이콘(위시/토너먼트/시스템)과 딥링크 출처를, " +
-                "`refId` 로 이동 대상을 정하고, `id` 로 단건 읽음 처리(`POST /read`)를 한다.\n\n" +
+                "`refId` 로 이동 대상을 정하고, `id` 로 단건 읽음 처리(`POST /read`)를 한다. " +
+                "다만 이동 대상이 `refId` 가 아닌 경우가 있다 — 아래 딥링크 좌표 설명을 함께 본다.\n\n" +
                 "**알림 타입 카탈로그 (전 10종)**\n\n" +
                 "`type` 으로 화면을 분기하고 `refId` 로 이동 대상을 정한다. `kind` 는 **전 알림 공통 필드**로 항상 실리며 카드 라벨·아이콘(위시/토너먼트/시스템)이 된다. " +
                 "`body` 는 **`ITEM_PARSING_COMPLETED` 와 `ANNOUNCEMENT` 만 값이 있고 나머지 타입은 빈 문자열(`\"\"`)** 이다. " +
@@ -46,13 +47,19 @@ interface NotificationHistoryApi {
                 "| `TOURNAMENT_PLAYED_FROM_LINK` | 플레이링크로 플레이 시작 | `TOURNAMENT` | ROOT 토너먼트 id | {플레이어}님이 회원님 토너먼트를 플레이했어요 |\n" +
                 "| `TOURNAMENT_COMPLETED` | 멤버가 클론 완료 | `TOURNAMENT` | ROOT 토너먼트 id | {멤버}님이 회원님 토너먼트를 완료했어요 |\n" +
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
-                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 파싱이 완료되었어요) |\n" +
+                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 수신자별 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"아이템이 등록됐어요\") |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
-                "> `ITEM_PARSING_COMPLETED` 의 `body` 는 `kind` 와 무관하게 하나다 — 위시로 담았든 토너먼트로 올렸든 같은 문구가 온다. " +
-                "화면 분기는 `kind` 로 하고 `body` 문구에 기대지 않는다.\n\n" +
+                "> `ITEM_PARSING_COMPLETED` 의 `body` 는 **수신자별 등록 출처로 갈린다** — 위시에 담은 사람은 \"위시 저장이 성공했어요\", " +
+                "토너먼트에 올린 사람은 \"아이템이 등록됐어요\" 를 받는다. 한 상품을 두 사람이 각각 위시·토너먼트로 등록하면 같은 파싱 한 번에 " +
+                "수신자마다 다른 `body` 가 나간다(#933). 화면 분기는 `body` 문구가 아니라 `type`·`kind` 로 한다.\n\n" +
                 "> 파싱 알림(`ITEM_PARSING_*`)만 `kind` 가 발행 출처(위시 등록 / 토너먼트 추가)에 따라 갈린다 — 같은 `type` 이 두 플로우에서 발행되기 때문. " +
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
+                "> **딥링크 좌표는 `kind` 별로 다른 키를 쓴다.** `kind`=WISH 인 파싱 알림은 `wishId` 로 위시 상세(`GET /api/v1/wishlists/{wishId}`)로 간다 — " +
+                "`refId`(itemId)로는 그 화면에 갈 수 없으므로 `wishId` 가 있으면 그것을 쓴다. `wishId` 는 **수신자별로 다르고**, 컬럼 도입(#933) 이전에 발송된 " +
+                "과거 알림에는 값이 없다. 값이 없을 때만 종전처럼 `refId` 로 역추적한다. " +
+                "값 없음의 모양은 채널마다 다르다 — 이 API 와 SSE payload 는 `wishId` 키를 남기고 `null` 로 내리고, FCM data 는 그 키를 아예 생략한다. " +
+                "클라는 **키 없음과 `null` 을 모두 폴백으로** 처리한다.\n\n" +
                 "> 아이템 좌표(`tournamentId`·`tournamentItemId`)가 추가로 실리는 타입: 토너먼트 출처 파싱 알림(`ITEM_PARSING_*` + `kind`=TOURNAMENT)과 " +
                 "아이템 삭제(`TOURNAMENT_ITEM_DELETED`). 후자는 클라가 재조회 없이 그 항목만 제거하게 한다. 나머지 타입엔 그 키가 없다. " +
                 "**좌표 유무는 `kind` 가 아니라 `type` 이 가른다** — 토너먼트 소셜 알림도 `kind`=TOURNAMENT 지만 좌표가 없으므로, `kind` 만 보고 좌표를 단정하지 말 것. " +
