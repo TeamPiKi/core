@@ -32,6 +32,10 @@ jobs:
       jvm_opts: ${{ steps.r.outputs.jvm_opts }}
     steps:
       - id: r
+        env:
+          # 부하테스트 브랜치(#911). 이 브랜치로 workflow_dispatch 할 때만 loadtest 환경으로 간다 —
+          # 브랜치명을 조건에 직접 박지 않고 여기 한 곳에 둬서 환경 분기와 메모리 분기가 어긋나지 않게 한다.
+          LOADTEST_BRANCH: infra/911-dev-loadtest
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           REF="${{ github.event.workflow_run.head_sha || github.sha }}"
@@ -39,6 +43,16 @@ jobs:
             echo "environment=prod" >> "$GITHUB_OUTPUT"
             echo "domain=api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=api.piki.day.conf" >> "$GITHUB_OUTPUT"
+          elif [ "$BRANCH" = "$LOADTEST_BRANCH" ]; then
+            # 부하테스트 전용 환경(#911) — 앱·DB 를 따로 세운 prod 미러다(terraform/loadtest).
+            # dev 를 건드리지 않으므로 윈도우 중에도 dev 는 평소대로 동작한다.
+            # environment=loadtest 의 파급: SSM 을 /piki-core/loadtest/* 에서 읽고,
+            # provision-runtime.sh 가 mysql 을 안 띄운다(dev 일 때만 띄운다 = prod 앱 박스와 같은 구성).
+            # 프로파일은 아래 SPRING_PROFILES_ACTIVE 규칙상 dev 가 되어 /api/v1/dev/** 토큰 발급이
+            # 살아 있다 — k6 가 이 경로로 부하 유저 토큰을 받으므로 prod 프로파일이면 시나리오가 못 돈다.
+            echo "environment=loadtest" >> "$GITHUB_OUTPUT"
+            echo "domain=lt.api.piki.day" >> "$GITHUB_OUTPUT"
+            echo "nginx_conf=lt.api.piki.day.conf" >> "$GITHUB_OUTPUT"
           else
             echo "environment=dev" >> "$GITHUB_OUTPUT"
             echo "domain=dev.api.piki.day" >> "$GITHUB_OUTPUT"
@@ -56,7 +70,9 @@ jobs:
           #   선택 기준(2 CPU + 1792MB)에 못 미쳐 Serial GC 로 떨어진다(prod 256m 실측 확인 — Copy + MarkSweepCompact).
           #   Serial Full GC 는 단일 스레드 stop-the-world 라 힙이 클수록 1회 pause 가 길어져(prod 실측 평균 18s/회) 힙만
           #   키우면 오히려 악화된다. G1 으로 병렬·증분 회수를 강제해 STW 를 짧게 가져간다.
-          if [ "$BRANCH" = "main" ]; then
+          # 부하테스트 박스는 prod 앱 박스와 같은 t4g.small 에 mysql 동거가 없으므로 prod 값을 그대로 쓴다.
+          # dev 값(576m)을 쓰면 측정 한계가 prod 보다 낮게 나와 결과를 이전할 수 없다.
+          if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "$LOADTEST_BRANCH" ]; then
             echo "mem_limit=768m" >> "$GITHUB_OUTPUT"
             echo "mem_swap=1536m" >> "$GITHUB_OUTPUT"
             echo "jvm_opts=-Xmx512m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
