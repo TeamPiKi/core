@@ -1,4 +1,12 @@
 server:
+  tomcat:
+    threads:
+      # 요청 스레드를 커넥션 풀에 정렬 (#911): DB 조회 중심 서비스라 스레드가 풀보다 크게 남으면
+      # 포화 시 잉여 스레드가 전부 getConnection 대기에 쌓여 느린 적체로 무너진다. 기본 200 을
+      # 풀 5 × (요청 전체 대비 트랜잭션 구간 비율 약 5배) = 25 로 명시하고, 초과 유입은 스레드
+      # 적체 대신 Tomcat 대기열·nginx 가 받게 한다(보수적 용량 설계). SSE 구독은 async 라 스레드를
+      # 상시 점유하지 않아 이 값과 무관하다.
+      max: 25
   # 응답 gzip 압축 — example 로 비대한 /v3/api-docs OpenAPI JSON 의 전송 시간을 크게 줄인다(문서 로딩 DX, #788).
   # 앱 전역 응답에 적용된다(모바일 API JSON 도 함께 축소되는 이득). min-response-size 미만의 작은 응답은 압축 생략.
   compression:
@@ -89,6 +97,12 @@ spring:
       # (기본 "HikariPool-*" 는 무시) 없으면 DB catalog("piki")를 써서, 트레이스에서 서비스 식별자
       # piki-core 와 혼동됐다(#929). 이 이름은 HikariCP 메트릭의 pool 라벨로도 노출된다.
       pool-name: piki-db
+      # 풀 산정 (#911): DB 박스가 2 vCPU(t4g.micro)라 HikariCP 공식(코어×2 + 스핀들)이 약 5.
+      # 트랜잭션이 짧아(외부 호출은 트랜잭션 밖 규약 + open-in-view: false) Little's law 로도 필요량은
+      # 한 자릿수다 — 2코어 DB 에 풀을 더 키우면 처리량이 아니라 경합이 는다. 기본값 10 을 5 로 명시.
+      # blue-green overlap 순간 2×5=10 으로 MySQL max-connections 60 대비 여유. minimum-idle 은
+      # 미지정(=max, 고정 풀) — HikariCP 권장.
+      maximum-pool-size: 5
   jpa:
     hibernate:
       ddl-auto: validate
