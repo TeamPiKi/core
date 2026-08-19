@@ -1,0 +1,9 @@
+# 부하테스트 스택 변수 — 실제 값은 terraform.tfvars 로 복사해 채운다(gitignore 대상).
+#
+# backend.hcl 은 메인 terraform/backend.hcl 을 그대로 복사해 쓴다(bucket 한 줄, 계정번호 포함).
+#   cp ../backend.hcl .
+
+# DB 박스에 SSH(EC2 Instance Connect)로 붙을 본인 공인 IP/32.
+# 확인: curl -s ifconfig.me
+# 주의: 앱 박스 22 는 이 값을 쓰지 않는다(GitHub Actions 러너가 붙어야 해서 0.0.0.0/0 고정).
+ssh_ingress_cidr = "203.0.113.1/32"
