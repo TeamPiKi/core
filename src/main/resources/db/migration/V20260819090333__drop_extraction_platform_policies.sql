@@ -1,0 +1,12 @@
+-- 옛 정책 테이블을 제거한다. 단계 배포(add -> 양쪽 공존 -> drop)의 마지막 단계다.
+--
+-- 앞 단계에서 새 테이블(domain_access_policies)을 만들고 코드의 참조를 전부 끊었지만, 이 테이블은
+-- 그때 일부러 남겼다. blue-green 공존 구간에서는 구버전 인스턴스가 아직 이 테이블을 읽어(@PostConstruct
+-- findAll) 부팅하기 때문이다. 그 배포가 dev·prod 를 한 바퀴 돌아 구버전 인스턴스가 사라졌으므로 이제 지운다.
+--
+-- 행을 옮기지 않는 것은 앞 단계와 같은 이유의 의도된 결정이다. 옛 route 3값은 새 축으로 기계적 매핑이
+-- 성립하지 않아(같은 HEADLESS_FIRST 라도 kream 은 차단, store.kakao 는 차단이 아니다) 새 테이블을 비운 채
+-- 시작했고, 여기서 되살릴 근거도 없다. 판단이 선 도메인만 백오피스에서 다시 넣는다.
+--
+-- forward-only 라 되돌리려면 새 timestamp 의 보정 마이그레이션으로 테이블을 다시 만든다.
+DROP TABLE IF EXISTS extraction_platform_policies;
