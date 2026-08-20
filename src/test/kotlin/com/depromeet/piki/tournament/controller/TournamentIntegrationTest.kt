@@ -135,7 +135,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments 는 게스트가 요청하면 403 과 GUEST_CANNOT_CREATE_TOURNAMENT code 를 반환한다`() {
+    fun `POST tournaments 는 게스트가 요청해도 생성된다 (회원 전용 게이트 임시 해제)`() {
+        // 회원 전용 게이트(#339)는 클라이언트가 403(TOURNAMENT-036)을 처리할 때까지 임시로 걷어 뒀다(#965).
+        // 그전까지의 계약("게스트는 403")을 뒤집은 단언이라, 게이트를 되살리면 이 테스트가 정확히 깨져
+        // 되돌릴 자리를 알려 준다. code·예외 팩토리는 그때 그대로 쓰려고 남겨 뒀다.
         val mockMvc = buildMockMvc()
         val guestId = UUID.randomUUID()
         userJpaRepository.save(
@@ -149,13 +152,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${jwtProvider.generateAccessToken(guestId, IdentityType.GUEST)}")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"name":"게스트 토너먼트"}"""),
-            ).andExpect(status().isForbidden)
-            .andExpect(jsonPath("$.code").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.code))
-            .andExpect(jsonPath("$.detail").value(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT.message))
-            .andExpect(jsonPath("$.data").value(nullValue()))
+            ).andExpect(status().isCreated)
+            .andExpect(jsonPath("$.data.tournamentId").isNumber)
+            .andExpect(jsonPath("$.data.inviteCode").isString)
 
-        // 거부가 응답으로만 끝나지 않고 실제로 아무것도 만들지 않았는지 확인한다 — 게이트가 saveTournament 앞에 선다.
-        assertEquals(tournamentsBefore, tournamentJpaRepository.count())
+        // 응답만 201 이고 실제로는 안 만들어지는 경우를 배제한다.
+        assertEquals(tournamentsBefore + 1, tournamentJpaRepository.count())
     }
 
     @Test
