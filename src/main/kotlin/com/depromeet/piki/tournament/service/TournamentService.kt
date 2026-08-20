@@ -38,7 +38,6 @@ import com.depromeet.piki.tournament.service.dto.TournamentItemDetail
 import com.depromeet.piki.tournament.service.dto.StartResult
 import com.depromeet.piki.tournament.service.dto.TournamentStartResult
 import com.depromeet.piki.tournament.service.dto.TournamentSummary
-import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
@@ -60,22 +59,21 @@ class TournamentService(
     private val wishRepository: WishRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
-    // 토너먼트 만들기는 회원 전용(#339). 게스트는 이미 만들어진 토너먼트에 참여·아이템 추가·플레이만 한다.
-    // 게스트 계정은 입력 없이 무한 발급되므로(POST /auth/guest), 비용이 드는 행위의 소유자는 항상 회원이어야
-    // 계정을 갈아타며 한도를 리셋하는 우회가 성립하지 않는다 — 소셜 계정 생성 비용이 그 우회를 막는다.
-    // 인증 principal 은 userId 뿐이라 identityType 은 조회로 확인한다.
+    // 탈퇴(tombstone) 계정의 토너먼트 생성을 막는다. anonymize 는 닉네임·프로필만 비우고 행은 남기므로,
+    // 탈퇴 시 토큰 무효화가 부분 실패한 창에서 죽은 계정이 토너먼트를 만들 수 있다
+    // (위시가 findActiveById 로 막는 것과 같은 사유, #691).
     //
     // users 행 존재는 강제하지 않는다(findActiveById 가 아니라 findById + Elvis) — 인증만 되면 행 없이도 호출되던
-    // 기존 계약을 이 게이트가 404 로 바꾸지 않기 위해서다(FCM 토큰 등록의 rejectIfWithdrawnForUpdate 와 같은 결).
-    // 게이트에 구멍을 내지 않는다: 게스트는 발급이 곧 users 행 생성이라(UserService.createGuest) 반드시 행이 있고,
-    // 토큰은 우리가 서명하므로 "행 없는 유효 토큰" 은 정상 경로에서 만들어지지 않는다.
-    // 탈퇴(tombstone) 계정도 막는다 — anonymize 는 닉네임·프로필만 비우고 identityType 은 MEMBER 로 남기므로,
-    // identityType 만 보면 죽은 계정이 토너먼트를 만든다. 탈퇴 시 토큰 무효화가 부분 실패한 창에서 실제로 닿을 수 있다
-    // (위시가 findActiveById 로 막는 것과 같은 사유, #691).
-    private fun requireMember(userId: UUID) {
+    // 기존 계약을 이 가드가 404 로 바꾸지 않기 위해서다(FCM 토큰 등록의 rejectIfWithdrawnForUpdate 와 같은 결).
+    //
+    // 회원 전용 게이트(#339)가 여기 함께 있었으나 클라이언트 대응 전까지 임시로 걷어냈다(#965). 그래서 게스트도
+    // 다시 토너먼트를 만들 수 있고, 그 토너먼트의 아이템 등록은 오너인 게스트 몫에서 깎인다. 게스트 계정은
+    // 무한 발급되므로(POST /auth/guest) 계정별 한도(ItemQuotaGuard)는 이 창 동안 게스트에 대해 실효가 없고,
+    // 남는 방어선은 전역 가용량 상한 하나다. 재적용은 아래 한 줄을 되살리면 된다(code·예외는 남겨 뒀다):
+    //   if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
+    private fun rejectIfDeleted(userId: UUID) {
         val user = userRepository.findById(userId) ?: return
         user.deletedAt?.let { throw UserException.deletedUser() }
-        if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
     }
 
     @Transactional
@@ -83,7 +81,7 @@ class TournamentService(
         userId: UUID,
         command: CreateTournament,
     ): CreateTournamentResult {
-        requireMember(userId)
+        rejectIfDeleted(userId)
         val inviteCode = generateUniqueInviteCode()
         val inviteExpiresAt = LocalDateTime
             .now()

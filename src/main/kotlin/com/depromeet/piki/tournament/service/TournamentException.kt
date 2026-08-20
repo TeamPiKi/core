@@ -102,6 +102,8 @@ class TournamentException private constructor(
         // 토너먼트 만들기는 회원 전용(#339) — 게스트(인증은 됐으나 회원 아님)가 정상 요청으로 닿을 수 있는 계약 응답이라 커스텀 예외(403).
         // Security 에서 MEMBER 만 허용하면 detail 없는 권한 없음 403 으로 떨어져 "회원 전용" 사유를 못 전달하므로,
         // authenticated() 로 통과시킨 뒤 서비스가 이 예외로 막는다(WishException.guestCannotUseWishlist 와 같은 패턴).
+        //
+        // 현재 호출부가 없다. 클라이언트 대응 전까지 게이트를 임시로 걷은 상태다(#965). 되살릴 때 그대로 쓴다.
         fun guestCannotCreateTournament(): TournamentException = TournamentException(TournamentErrorCode.GUEST_CANNOT_CREATE_TOURNAMENT)
     }
 }

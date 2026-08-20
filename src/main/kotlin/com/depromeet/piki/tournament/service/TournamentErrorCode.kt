@@ -56,6 +56,10 @@ enum class TournamentErrorCode(
 
     // 036 은 게스트 권한 정리(#339)에서 추가됐다. 토너먼트 생성은 회원 전용이 되고, 생성된 토너먼트에
     // 아이템을 담는 것과 플레이는 게스트에게 그대로 열려 있다 — "게스트는 소비만, 생산은 회원만".
+    //
+    // 지금은 아무도 던지지 않는다. 클라이언트가 이 code 를 처리할 때까지 게이트를 임시로 걷었다(#965).
+    // 엔트리를 남겨 두는 것은 곧 되살릴 것이기 때문이고, 번호는 append-only 라 어차피 재사용하지 않는다.
+    // 게이트를 되살리는 자리는 TournamentService.rejectIfDeleted 주석에 적혀 있다.
     GUEST_CANNOT_CREATE_TOURNAMENT("TOURNAMENT-036", ErrorCategory.FORBIDDEN, "토너먼트 만들기는 회원만 이용할 수 있어요."),
 
     // 037 도 #339. 차감 주체는 토너먼트 오너지만 이 응답은 참여자(게스트 포함) 누구나 받을 수 있으므로,
