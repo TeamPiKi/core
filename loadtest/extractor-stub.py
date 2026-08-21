@@ -48,9 +48,38 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {})
 
-    def do_POST(self):
+    # 요청 본문을 **반드시 끝까지** 읽는다. Content-Length 만 처리하면 chunked 요청에서 본문이
+    # 소켓에 남고, keep-alive 라 그 잔여 바이트가 다음 요청의 request line 으로 파싱된다
+    # (실측: 청크 크기 "56" 이 요청 라인으로 읽혀 400). BaseHTTPRequestHandler 는 chunked 를
+    # 스스로 풀지 않으므로 여기서 직접 조립한다.
+    #
+    # 이 누락이 연결 시도 1(2026-08-11)에서 "앱 컨테이너 → stub 일시 실패"로 남았던 미해결 증상의
+    # 원인이다. 당시 재현을 curl 로 했는데 curl 은 Content-Length 를 붙여 통과했고, Spring
+    # 클라이언트는 chunked 로 보내 깨졌다 — 그래서 "호스트에서는 200" 이라는 모순된 관찰이 나왔다.
+    def _read_body(self):
+        encoding = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in encoding:
+            parts = []
+            while True:
+                line = self.rfile.readline().strip()
+                if not line:
+                    break
+                try:
+                    size = int(line.split(b";")[0], 16)
+                except ValueError:
+                    break
+                if size == 0:
+                    self.rfile.readline()  # 종료 청크 뒤 CRLF
+                    break
+                parts.append(self.rfile.read(size))
+                self.rfile.readline()  # 각 청크 뒤 CRLF
+            return b"".join(parts)
+
         length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length) if length else b"{}"
+        return self.rfile.read(length) if length else b""
+
+    def do_POST(self):
+        raw = self._read_body()
         try:
             req = json.loads(raw or b"{}")
         except json.JSONDecodeError:
