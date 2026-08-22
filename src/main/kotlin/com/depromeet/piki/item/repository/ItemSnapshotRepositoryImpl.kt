@@ -20,8 +20,14 @@ class ItemSnapshotRepositoryImpl(
 
     override fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestMachineReadyByItemId(itemId)
 
-    override fun findLatestMachineReadyByItemIds(itemIds: Collection<Long>): List<ItemSnapshot> =
-        itemIds.takeIf { it.isNotEmpty() }?.let { itemSnapshotJpaRepository.findLatestMachineReadyByItemIds(it) }.orEmpty()
+    // 두 문장으로 나눠 실행한다(#911) — 한 문장으로 합치면 MySQL 이 바깥 테이블을 전량 스캔한다.
+    // 자세한 이유는 ItemSnapshotJpaRepository.findLatestMachineReadyIdsByItemIds 주석 참조.
+    override fun findLatestMachineReadyByItemIds(itemIds: Collection<Long>): List<ItemSnapshot> {
+        if (itemIds.isEmpty()) return emptyList()
+        val snapshotIds = itemSnapshotJpaRepository.findLatestMachineReadyIdsByItemIds(itemIds)
+        if (snapshotIds.isEmpty()) return emptyList()
+        return itemSnapshotJpaRepository.findAllById(snapshotIds)
+    }
 
     override fun reparentAll(
         fromItemId: Long,
