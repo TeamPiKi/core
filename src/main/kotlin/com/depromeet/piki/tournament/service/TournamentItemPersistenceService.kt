@@ -94,15 +94,7 @@ class TournamentItemPersistenceService(
         return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
     }
 
-    // v1(multipart) 이미지 아이템 추가 — 서버가 바이트를 받아 올린 뒤 pending 매핑 없이 바로 적재한다.
-    @Transactional
-    fun persistPendingImageItems(
-        userId: UUID,
-        tournamentId: Long,
-        imageKeys: List<String>,
-    ): List<PersistedTournamentItem> = persistImageItemsInternal(userId, tournamentId, imageKeys)
-
-    // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
+    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
     // 잠가 삭제(claim)하고, claim 에 성공한 TOURNAMENT 매핑(해당 user·tournament)만 적재한다 — confirm·폴링이 같은 key 를
     // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 맥락 매핑은 걸러낸다.
     @Transactional

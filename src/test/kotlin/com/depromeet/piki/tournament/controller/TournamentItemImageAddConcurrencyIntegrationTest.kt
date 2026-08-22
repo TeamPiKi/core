@@ -8,7 +8,6 @@ import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageParsingWorker
-import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
@@ -20,9 +19,8 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
+import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
@@ -43,8 +41,8 @@ import kotlin.test.assertTrue
 // 통과해 합산 37개가 들어간다. FOR UPDATE 로 직렬화하면 두 번째 요청이 첫 번째 커밋 후 existing=32 를 보고 32+5>32 로
 // 400 처리된다. "정확히 1개 200, 1개 400" 이 그 직렬화의 시그니처다(TournamentWishAddConcurrencyIntegrationTest 와 동결).
 //
-// 더해, 이미지 경로는 raw 를 persist 전에 S3 에 올리므로 거부된 요청의 raw 가 orphan 으로 남는다 — 서비스가 persist 실패 시
-// 즉시 회수하는지(addItemsFromImages 의 deleteRawsQuietly)를 deletedKeys 로 함께 검증한다.
+// 이미지 경로는 발급(presigned)과 확정(confirm)이 나뉘어 있고, 정원 판정은 아이템이 실제로 생기는 confirm 이 쥔다.
+// 그래서 발급은 미리 각자 끝내 두고 confirm 만 동시에 쏴, 이 테스트의 관심사인 저장 시점 경합만 남긴다.
 //
 // 일반 통합 테스트와 달리 @Transactional 을 쓰지 않는다 — 별도 트랜잭션 동시 진행이 race 시뮬레이션의 본질이다.
 // 데이터 격리는 새 UUID 를 쓰고 finally 에서 직접 정리한다.
@@ -57,13 +55,11 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
     @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
-    @Autowired private lateinit var stubImageStorage: StubImageStorage
     @Autowired private lateinit var stubImageParsingWorker: StubImageParsingWorker
 
     @Test
-    fun `이미지 담기를 동시에 두 번 요청하면 FOR UPDATE 로 직렬화되어 32개 상한을 넘지 않고 거부된 요청의 raw 가 회수된다`() {
-        // 디스패처(@Scheduled)가 성공 요청의 PENDING raw 를 워커로 회수하면 deletedKeys 단언이 흔들린다 — 워커를 꺼
-        // 성공분 raw 는 PENDING 으로 보존하고, 거부분 raw 회수(서비스 cleanup)만 결정적으로 관찰한다.
+    fun `이미지 담기를 동시에 두 번 확정하면 FOR UPDATE 로 직렬화되어 32개 상한을 넘지 않는다`() {
+        // 디스패처(@Scheduled)가 성공분 PENDING 을 집어 상태를 바꾸면 정리와 간섭하므로 워커를 꺼 둔다.
         // enabled 는 컨텍스트 공유 전역 상태라, try 진입 전 setup 이 실패해 끈 채 새면 다른 테스트가 연쇄 실패한다.
         // 끄기는 try 안으로 미루고 원래 값을 보관해, finally 가 항상 원복하도록 한다.
         val previousWorkerEnabled = stubImageParsingWorker.enabled
@@ -84,9 +80,6 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
         // 이 테스트가 새로 만드는 item/snapshot 의 하한 — finally 에서 이보다 큰 id 만 지워 추가분(사전 27 + 성공 5)까지 정리한다.
         val maxItemIdBefore = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(id), 0) FROM items", Long::class.java) ?: 0L
-        // deletedKeys 는 컨텍스트 캐싱으로 모든 통합 테스트가 공유하는 stub 누적 상태다 — 앞선 테스트의 raw 삭제가 섞이므로
-        // 절대값이 아니라 이 테스트가 만든 증가분(delta)만 본다.
-        val rawDeletedBefore = stubImageStorage.deletedKeys.count { it.startsWith("items/raw/") }
 
         var tournamentId = 0L
         try {
@@ -125,6 +118,8 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             // else 없는 when 이 제3 상태의 정체를 삼켜 원인 추적이 불가능했다. 작업 큐 claim 스캔이 대기 에지로
             // 끼는 InnoDB 교착이 실측됐고 SKIP LOCKED 로 제거됐다. 만에 하나 재발하면 이 증거가 정체를 밝힌다.
             val unexpectedResponses = CopyOnWriteArrayList<String>()
+            // 발급은 사전 권한만 보므로 둘 다 통과한다 — 경합은 정원을 판정하는 confirm 에서만 일어나야 하므로 여기서 미리 끝낸다.
+            val keysByRequest = (0 until 2).map { presignKeys(mockMvc, tournamentId, ownerAuth, count = 5) }
             val executor = Executors.newFixedThreadPool(2)
             val ready = CountDownLatch(2)
             val start = CountDownLatch(1)
@@ -135,11 +130,13 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
                     ready.countDown()
                     start.await()
                     try {
-                        val builder = multipart("/api/v1/tournaments/$tournamentId/items/images")
-                        repeat(5) { i ->
-                            builder.file(MockMultipartFile("images", "req$req-$i.jpg", "image/jpeg", ByteArray(10) { 1 }))
-                        }
-                        val res = mockMvc.perform(builder.header(HttpHeaders.AUTHORIZATION, ownerAuth)).andReturn()
+                        val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keysByRequest[req]))
+                        val res = mockMvc.perform(
+                            post("/api/v1/tournaments/$tournamentId/items/images/confirm")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .header(HttpHeaders.AUTHORIZATION, ownerAuth)
+                                .content(body),
+                        ).andReturn()
                         when (res.response.status) {
                             200, 201 -> status200.incrementAndGet()
                             400 -> status400.incrementAndGet()
@@ -167,21 +164,22 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             assertEquals(1, status200.get(), "정확히 하나만 성공이어야 한다 (5장 담기 성공)")
             assertEquals(1, status400.get(), "나머지 하나는 락 대기 후 32개 초과로 400 이어야 한다")
 
-            // 두 요청 모두 persist 전에 5장씩 raw 를 올리지만(합 10장), 거부된 요청의 5장만 서비스가 즉시 회수해야 한다.
-            // 성공분 5장은 PENDING item 의 입력이라 보존된다(워커를 꺼 둬 회수되지 않음). lifecycle 백업이 아닌 즉시 회수를 단언.
-            val rawDeleted = stubImageStorage.deletedKeys.count { it.startsWith("items/raw/") } - rawDeletedBefore
-            assertEquals(5, rawDeleted, "거부된 요청이 올린 raw 5장이 즉시 회수되어야 한다")
+            // 상한을 넘겨 저장된 것이 없어야 한다 — 성공한 5장까지만 반영되어 정확히 32개다.
+            assertEquals(32, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
+
+            // 거부된 요청은 트랜잭션이 통째로 롤백돼 claim(pending_uploads 삭제)도 되살아난다 — 그 5장은 폴링이
+            // 다시 집을 수 있도록 매핑이 남아 있어야 하고, 성공분 5장만 소비돼 사라진다.
+            val remainingPending = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pending_uploads WHERE tournament_id = ?",
+                Int::class.java,
+                tournamentId,
+            )
+            assertEquals(5, remainingPending, "거부된 요청의 pending 매핑은 롤백으로 남아야 한다")
         } finally {
             stubImageParsingWorker.enabled = previousWorkerEnabled
-            // 워커를 꺼 둔 탓에 성공분 raw 는 stub 에 orphan 으로 남는다(정상 흐름이면 워커가 회수). 동시성 테스트는 자기가 만든 것을
-            // 직접 정리하므로, DB 행을 지우기 전에 이 테스트가 올린 raw 도 stub 에서 회수한다(공유 stub 누적 방지).
-            jdbcTemplate.queryForList(
-                "SELECT source_image_key FROM items WHERE id > ? AND source_image_key IS NOT NULL",
-                String::class.java,
-                maxItemIdBefore,
-            ).filterNotNull().forEach { key -> runCatching { stubImageStorage.delete(key) } }
             // @Transactional 자동 롤백이 없으므로 직접 지운다. 추가된 item/snapshot 은 id 하한으로 일괄 정리한다.
             if (tournamentId != 0L) {
+                jdbcTemplate.update("DELETE FROM pending_uploads WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
@@ -190,5 +188,26 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             jdbcTemplate.update("DELETE FROM items WHERE id > ?", maxItemIdBefore)
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
         }
+    }
+
+    // 이미지 등록 1단계 — presigned 를 발급받아 imageKey 들을 돌려준다. 업로드는 클라가 S3 에 직접 하므로
+    // 테스트에서 재현하지 않는다(StubImageStorage.exists 기본값이 "올라왔다"라 확정 단계가 그대로 통과한다).
+    private fun presignKeys(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        auth: String,
+        count: Int,
+    ): List<String> {
+        val response = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/images/presigned")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.AUTHORIZATION, auth)
+                    .content(objectMapper.writeValueAsString(mapOf("contentTypes" to List(count) { "image/jpeg" }))),
+            ).andReturn()
+            .response
+            .getContentAsString(Charsets.UTF_8)
+        val uploads = objectMapper.readTree(response).path("data").path("uploads")
+        return (0 until uploads.size()).map { uploads.path(it).path("imageKey").asText() }
     }
 }

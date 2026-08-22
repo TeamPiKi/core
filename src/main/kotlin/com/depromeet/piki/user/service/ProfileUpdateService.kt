@@ -39,7 +39,7 @@ class ProfileUpdateService(
         // 사이에 탈퇴가 커밋되면 탈퇴 cascade 의 prefix 파기가 이미 지나간 뒤라 프로필 사진(얼굴 등 PII)이 계속 남는다.
         // upload 가 던진 경우도 포함한다 — 응답 유실·timeout 이면 S3 에는 객체가 올라갔을 수 있다. key 는 우리가
         // 만든 값이라 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
-        // (registerFromImages 의 raw 회수와 같은 패턴.)
+        // (서버가 올린 객체는 서버가 회수한다는 원칙 — 등록 이미지는 클라가 올리므로 lifecycle 에 맡긴다.)
         return runCatching {
             val url = imageStorage.upload(profileImage.bytes, key, profileImage.mimeType) // 트랜잭션 밖, 실패 시 502
             log.info("프로필 이미지 업로드 완료: userId={}, key={}", userId, key)
