@@ -85,19 +85,23 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         @Param("itemId") itemId: Long,
     ): ItemSnapshot?
 
-    // 카드 표시값 파생(#857)의 배치 조회 — item 별 마지막 기계(SERVER/SERVER_LLM) READY 하나씩.
-    // 서브쿼리로 item 별 max(id)만 골라, 이력이 긴 item 이 섞여도 행 수가 item 수를 넘지 않는다.
+    // 카드 표시값 파생(#857)의 배치 조회 1단계 — item 별 마지막 기계(SERVER/SERVER_LLM) READY 의 **id 만** 고른다.
     // 출처 null(도입 전 행)은 기계 여부를 모르므로 제외한다 — 그 item 은 호출부가 포인터 버전으로 fallback 한다.
+    //
+    // 엔티티 조회(2단계)를 한 문장에 합치지 않는다. 합치면(`where s.id in (select max(s2.id) ...)`) MySQL 이
+    // 서브쿼리를 임시 테이블로 materialize 한 뒤 **바깥 테이블 전체를 훑으며 매 행을 대조**하는 계획을 고른다
+    // (부하테스트 #911 실측: 서브쿼리는 19행/76ms 로 정확한데 바깥이 10만 행 스캔, 합계 483ms).
+    // id 목록을 앱으로 받아 2단계에서 상수 IN 으로 넘기면 양쪽 모두 인덱스를 탄다. 왕복이 하나 늘지만
+    // 1단계가 0.24ms 라 그 비용을 크게 밑돈다.
     @Query(
-        "select s from ItemSnapshot s where s.id in (" +
-            "select max(s2.id) from ItemSnapshot s2 where s2.itemId in :itemIds " +
+        "select max(s2.id) from ItemSnapshot s2 where s2.itemId in :itemIds " +
             "and s2.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
             "and s2.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) " +
-            "and s2.deletedAt is null group by s2.itemId)",
+            "and s2.deletedAt is null group by s2.itemId",
     )
-    fun findLatestMachineReadyByItemIds(
+    fun findLatestMachineReadyIdsByItemIds(
         @Param("itemIds") itemIds: Collection<Long>,
-    ): List<ItemSnapshot>
+    ): List<Long>
 
     // 병합(#825) — 진(임시) item 의 모든 버전을 이긴 item 소속으로 재부모화한다. wish·tournament_item 은 snapshot 만
     // 참조하므로 이 한 문장으로 참조가 자동 추종된다. native bulk 라 auditing 을 우회해 updated_at 을 직접 갱신한다.
