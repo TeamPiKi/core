@@ -279,10 +279,14 @@ jobs:
           script: |
             SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
-            # api conf 가 include 하는 team3-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
-            # blue-green 전환 전이라도 include 대상이 존재하도록 기본값(8080)으로 초기화한다.
+            # api conf 가 include 하는 piki-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
+            # blue-green 전환 전이라도 include 대상이 존재하도록 초기화한다.
             # 실제 active 포트 전환은 blue-green(Health check)이 담당하므로 이미 있으면 건드리지 않는다.
-            [ -f /etc/nginx/team3-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/team3-upstream.conf
+            # 옛 이름(team3-upstream.conf)이 있으면 그 내용을 승계한다 - 기본값(8080)으로 새로 만들면 현재 활성이
+            # green(8081)일 때 아래 reload 가 트래픽을 죽은 포트로 넘긴다. 옛 파일은 지우지 않는다(아래 nginx -t
+            # 실패 시 롤백하는 .bak conf 가 아직 옛 경로를 include 한다). 정리는 전 박스 이행 후 별건.
+            [ -f /etc/nginx/piki-upstream.conf ] || sudo cp /etc/nginx/piki-upstream.conf /etc/nginx/piki-upstream.conf 2>/dev/null \
+              || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
             # 새 인스턴스(cloud-init nginx)는 stock default 사이트가 켜져 있어 catch-all 로 충돌 → 제거.
             sudo rm -f /etc/nginx/sites-enabled/default
             # 환경당 conf 는 $DOMAIN 하나만 enabled 여야 한다. 도메인 rename(#488 depromeet retire 등) 후
@@ -487,8 +491,9 @@ jobs:
             # 이름·포트)은 이 호출부가 소유한다. 상태 파일이 없으면 초기 상태(8080 서빙 가정)로 먼저
             # 초기화한다 (Apply nginx config 의 부트스트랩과 같은 기본값 - 종전 인라인 판정과 동작 등가).
             # "할당 후 eval" 2단계는 블록 헤더가 정한 소비 계약이다 (치환 실패 은폐 방지).
-            [ -f /etc/nginx/team3-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/team3-upstream.conf
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/team3-upstream.conf \
+            [ -f /etc/nginx/piki-upstream.conf ] || sudo cp /etc/nginx/piki-upstream.conf /etc/nginx/piki-upstream.conf 2>/dev/null \
+              || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
+            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
               --slot-a blue:8080 --slot-b green:8081)
             eval "$DECIDED"
             echo "================================================"
@@ -496,10 +501,12 @@ jobs:
             echo "  DEPLOY  : $INACTIVE (port $INACTIVE_PORT) [new version]"
             echo "================================================"
 
-            # 로그 백업 후 비활성 슬롯 정리 (디렉토리명은 컨테이너명 개편(#743)과 무관한 박스 로컬 경로라 유지)
-            mkdir -p /var/log/team3
-            docker logs "piki-core-$INACTIVE" > /var/log/team3/piki-core-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
-            find /var/log/team3 -name "*.log" -mtime +7 -delete || true
+            # 로그 백업 후 비활성 슬롯 정리
+            mkdir -p /var/log/piki
+            docker logs "piki-core-$INACTIVE" > /var/log/piki/piki-core-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
+            find /var/log/piki -name "*.log" -mtime +7 -delete || true
+            # 옛 경로(team3) 잔여 로그도 같은 보존기간으로 배수한다 - 비면 이 줄과 함께 제거 가능.
+            find /var/log/team3 -name "*.log" -mtime +7 -delete 2>/dev/null || true
             # 직전 배포의 구버전 teardown 이 timeout 으로 끊겨 이 슬롯 컨테이너가 살아있을 수 있다.
             # 아래 docker run 의 name/port 충돌을 막으려 force 로 지우고, 데몬 지연에 대비해 timeout 으로 상한을 건다.
             timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
@@ -576,7 +583,7 @@ jobs:
           envs: DOMAIN
           script: |
             # 슬롯 재판정 - 배포 스텝과 같은 공용 블록·같은 값으로 읽는다 (상태 파일이 source of truth)
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/team3-upstream.conf \
+            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
               --slot-a blue:8080 --slot-b green:8081)
             eval "$DECIDED"
 
@@ -600,7 +607,7 @@ jobs:
               # (폴링·재시도·TLS 우회 -k·Host 헤더)은 extractor 와 같은 공용 블록(healthcheck.sh)이 진다 -
               # 값(URL·간격·도메인)만 여기서 준다. 짧은 재시도(2s x 5)는 reload 직후 워커 교체 흔들림 흡수.
               if ! bash /tmp/piki-deploy/slot_switch.sh \
-                --state-file /etc/nginx/team3-upstream.conf --server "localhost:$INACTIVE_PORT" \
+                --state-file /etc/nginx/piki-upstream.conf --server "localhost:$INACTIVE_PORT" \
                 --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN"; then
                 echo "슬롯 전환 실패(이전 upstream 원복됨) - 새 슬롯 정리 후 중단"
                 timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
@@ -638,7 +645,7 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key && chmod 600 /tmp/ec2_key
           ACTIVE_PORT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'grep -oP "\\d+" /etc/nginx/team3-upstream.conf 2>/dev/null | head -1' 2>/dev/null || echo "")
+            'grep -oP "\\d+" /etc/nginx/piki-upstream.conf 2>/dev/null | head -1' 2>/dev/null || echo "")
           rm -f /tmp/ec2_key
 
           if [ "$ACTIVE_PORT" = "8080" ]; then
