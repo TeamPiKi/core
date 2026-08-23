@@ -135,7 +135,8 @@ interface TournamentApi {
                 - pending.inviteCode, pending.inviteExpiresAt 은 null (초대 기간 종료)
             - COMPLETED: completed 필드
               - result: 1위부터 최대 4위까지 순위 아이템 목록
-              - hasGroupResult: 참여자 2명 이상이면 true. 클라이언트는 이 값으로 친구 토너먼트 결과 보기 버튼을 제어한다.
+              - isGroupTournament: 소셜(그룹) 토너먼트 여부. 참여자 2명 이상이면 true(완료 무관). 클라이언트는 이 값으로 "전체 결과 보기" 배너를 노출한다 - 첫 완주자가 누구든 새로고침 없이 배너가 보인다.
+              - hasGroupResult: 그룹 결과 조회 가능 여부. 완료한 플레이어가 2명 이상이면 true. 클라이언트는 이 값으로 배너 활성/비활성(다른 사람 결과가 아직 없으면 empty state)을 가른다.
               - canAddItem: 결과 화면에서 아이템 담기(위시/링크/이미지)가 가능하면 true. ROOT 소유자·소셜 초대 CLONE 소유자는 true, 플레이링크 CLONE 소유자는 false.
             나머지 필드는 응답에 포함되지 않는다.
         """,
@@ -615,7 +616,7 @@ interface TournamentApi {
             이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
             결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
             소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
-            다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있으며, 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
+            다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있다. 소셜 토너먼트면 완주 즉시 isGroupTournament=true 로 "전체 결과 보기" 배너가 노출되고(새로고침 불필요), 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
         """,
     )
     @ApiResponses(

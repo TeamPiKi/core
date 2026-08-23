@@ -37,7 +37,10 @@ sealed class TournamentDetail {
         val tournamentId: Long,
         val name: String,
         val result: List<RankedItem>,
+        // 그룹 결과 "조회 가능" 여부 — 완료 플레이어 수 >= 2 (progressive gate).
         val hasGroupResult: Boolean,
+        // 소셜(그룹) 토너먼트 여부 — 참여자 수 >= 2 (완료 무관). 결과 화면 배너 "노출" 을 이 값으로 가른다(#975).
+        val isGroupTournament: Boolean,
         val isOwner: Boolean,
         val isRoot: Boolean,
         // true: ROOT 소유자 또는 소셜 초대로 참여한 CLONE 소유자 — 결과 화면에서 아이템 담기 허용(위시/링크/이미지).
