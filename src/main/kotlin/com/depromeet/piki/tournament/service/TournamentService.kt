@@ -505,7 +505,10 @@ class TournamentService(
             ?: throw TournamentException.forbiddenTournament()
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId)
             ?: throw TournamentException.notFoundTournamentItem()
-        if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
+        // 클론은 DB 아이템 행이 없어 원본(source) 아이템을 이어받아 조회한다(목록·시작과 동일). 스코프는 자기 id 가 아니라
+        // effective(원본) 기준으로 검사해야 목록에서 받은 id 로 단건 조회가 통과한다(#977). ROOT 는 source 가 없어 자기 id.
+        val effectiveTournamentId = tournament.sourceTournamentId ?: tournamentId
+        if (tournamentItem.tournamentId != effectiveTournamentId) throw TournamentException.notFoundTournamentItem()
         // 표시값: 대기실(PENDING)은 파생(#857), 시작 후는 start 가 박제한 포인터 그대로(겨룬 값 고정).
         // sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
         val pointer = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
@@ -1160,6 +1163,8 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
+        // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — 삭제 시 원본을 건드리므로 막는다(#977, 추가 금지 032 와 같은 결).
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)

@@ -697,7 +697,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님 · 플레이 링크로 만든 클론 토너먼트에서는 아이템 수정 불가)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -787,7 +787,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님)",
+                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님 · 플레이 링크로 만든 클론 토너먼트에서는 아이템 삭제 불가)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
