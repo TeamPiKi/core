@@ -264,6 +264,52 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
     }
 
+    // #975(CodeRabbit): 참여자·완료자는 record 가 아니라 userId 로 센다. 주최자가 자기 플레이링크로 self-clone 을
+    // 만들 수 있는데(createFromPlayLink 에 가드 없음), ROOT·CLONE 을 모두 완주해도 실제 사용자는 1명이므로 solo 여야 한다.
+    // record 로 세던 옛 로직은 이 경우 2로 잡아 solo 를 그룹으로 오인했다(isGroupTournament·hasGroupResult 둘 다 true).
+    @Test
+    fun `주최자가 자기 플레이링크로 self-clone 을 만들어 둘 다 완주해도 solo 라 두 그룹 플래그가 false 다`() {
+        val mockMvc = buildMockMvc()
+        // 주최자가 ROOT 를 완주한다.
+        val tournamentId = startTournament(mockMvc, itemCount = 2)
+        val rootItems = tournamentItemIdsOf(tournamentId)
+        mockMvc
+            .perform(recordMatch(tournamentId, rootItems[0], rootItems[1], winner = rootItems[0], round = 2))
+            .andExpect(status().isOk)
+
+        // 자기 토너먼트의 플레이링크를 만들고, 그 링크로 self-clone 을 생성한다(주최자 self-clone 가드 없음).
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isOk)
+        val cloneResult =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/from-play-link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+                ).andExpect(status().isOk)
+                .andReturn()
+        val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
+
+        // self-clone 을 시작해 완주한다.
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$cloneId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+        val cloneMatch = currentMatchOf(mockMvc, cloneId)
+
+        mockMvc
+            .perform(recordMatch(cloneId, cloneMatch.first, cloneMatch.second, winner = cloneMatch.first, round = 2))
+            .andExpect(status().isOk)
+            // ROOT·CLONE 두 record 지만 같은 사용자 1명 → solo. 배너 미노출·비활성.
+            .andExpect(jsonPath("$.data.completed.isGroupTournament").value(false))
+            .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
+    }
+
     private fun createTournamentWithInviteCode(mockMvc: MockMvc): Pair<Long, String> {
         val result =
             mockMvc

@@ -753,19 +753,31 @@ class TournamentService(
         val isGroupTournament: Boolean,
     )
 
-    // 그룹 결과 관련 두 플래그를 한 번에 구한다 — 루트 기준 클론 목록·참여자 수·완료 수를 공유해 조회를 중복하지 않는다.
-    //   hasGroupResult    : 완료 플레이어(완료 TU + 완료 클론) 수 >= 2 → 그룹 결과 "조회 가능"(progressive gate, core#456).
-    //   isGroupTournament : 참여자(전체 TU + 전체 클론) 수 >= 2 → "소셜(그룹) 토너먼트 여부"(완료 무관, core#370 원래 정의).
+    // 그룹 결과 관련 두 플래그를 한 번에 구한다 — 루트 기준 클론 목록·전체 TU 를 공유해 조회를 중복하지 않는다.
+    //   hasGroupResult    : 완료한 고유 사용자 수 >= 2 → 그룹 결과 "조회 가능"(progressive gate, core#456).
+    //   isGroupTournament : 참여한 고유 사용자 수 >= 2 → "소셜(그룹) 토너먼트 여부"(완료 무관, core#370 원래 정의).
     // 배너 "노출"은 isGroupTournament 로, "활성/비활성"은 hasGroupResult 로 가른다 — 첫 완주자가 누구든 새로고침 없이
-    // 배너를 본다(#975). 솔로는 참여자가 항상 정확히 1이라 false. (소셜 멤버가 root TU·clone 에 중복 잡혀도 >=2 boolean 엔 무해)
+    // 배너를 본다(#975). 솔로는 참여자가 항상 정확히 1이라 false.
+    // record 가 아니라 userId 로 센다 — 같은 사용자가 ROOT TU 와 자기 CLONE 을 모두 가질 수 있어서다(주최자가 자기
+    // 플레이링크로 self-clone 을 만드는 경로에 가드가 없다). 그대로 record 를 세면 1명이 2로 잡혀 solo 가 그룹으로 오인된다.
     private fun computeGroupFlags(tournament: Tournament): GroupFlags {
         val rootId = tournament.sourceTournamentId ?: tournament.getId()
         val clones = tournamentRepository.findBySourceTournamentId(rootId)
-        val completedInRoot = tournamentUserRepository.countCompletedByTournamentId(rootId)
-        val participantsInRoot = tournamentUserRepository.countByTournamentId(rootId)
+        val rootUsers = tournamentUserRepository.findByTournamentId(rootId)
+        val cloneOwnerById = tournamentUserRepository
+            .findByIds(clones.map { it.ownerTournamentUserId }.toSet())
+            .associateBy { it.getId() }
+        val participantUserIds = buildSet {
+            rootUsers.forEach { add(it.userId) }
+            clones.forEach { clone -> cloneOwnerById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
+        val completedUserIds = buildSet {
+            rootUsers.filter { it.isCompleted() }.forEach { add(it.userId) }
+            clones.filter { it.isCompleted() }.forEach { clone -> cloneOwnerById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
         return GroupFlags(
-            hasGroupResult = completedInRoot + clones.count { it.isCompleted() } >= 2,
-            isGroupTournament = participantsInRoot + clones.size >= 2,
+            hasGroupResult = completedUserIds.size >= 2,
+            isGroupTournament = participantUserIds.size >= 2,
         )
     }
 
@@ -1027,11 +1039,16 @@ class TournamentService(
             requesterOwnedClone?.isCompleted() ?: false
         }
         // completedRootTUs·completedClones 는 아래 plays 빌드에도 쓰이므로 미리 구해 게이트와 공유한다.
-        // computeHasGroupResult 를 별도 호출하면 findBySourceTournamentId 와 countCompletedByTournamentId 를
-        // 중복 조회하게 되므로 인라인으로 처리한다.
+        // computeGroupFlags 를 별도 호출하면 findBySourceTournamentId 등을 중복 조회하게 되므로 인라인으로 처리한다.
         val completedRootTUs = tournamentUserRepository.findCompletedByTournamentId(tournamentId)
         val completedClones = allClones.filter { it.isCompleted() }
-        if (!requesterHasCompleted || completedRootTUs.size + completedClones.size < 2) {
+        // 완료자는 record 가 아니라 userId 로 센다 — 주최자가 자기 self-clone 을 완주하면 ROOT·CLONE 두 record 가
+        // 같은 사용자다(computeGroupFlags 와 동일 기준). record 로 세면 solo 가 게이트를 통과해버린다.
+        val completedUserIds = buildSet {
+            completedRootTUs.forEach { add(it.userId) }
+            completedClones.forEach { clone -> cloneOwnerTUById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
+        if (!requesterHasCompleted || completedUserIds.size < 2) {
             throw TournamentException.groupResultNotAvailable()
         }
 
@@ -1046,7 +1063,7 @@ class TournamentService(
                 val ownerTU = cloneOwnerTUById[clone.ownerTournamentUserId] ?: return@forEach
                 add(Play(clone.getId(), ownerTU.getId(), ownerTU.userId))
             }
-        }
+        }.distinctBy { it.userUUID } // 같은 사용자의 ROOT·self-clone 플레이가 결과에 두 번 실리지 않게 dedup (ROOT 플레이 우선).
 
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
