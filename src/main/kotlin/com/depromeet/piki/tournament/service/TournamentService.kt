@@ -376,7 +376,7 @@ class TournamentService(
                     val userHistories = tournamentRepository.findHistoriesByTournamentIdAndTournamentUserId(
                         tournamentId, currentUser.getId(),
                     )
-                    return buildCompleted(tournament, userHistories, computeHasGroupResult(tournament), isOwner, canAddItemForTournament(tournament, userId))
+                    return buildCompleted(tournament, userHistories, computeGroupFlags(tournament), isOwner, canAddItemForTournament(tournament, userId))
                 }
 
                 // 본인 history만 사용 — 다른 참여자의 매치는 본인 진행 상태에 영향을 주지 않는다.
@@ -452,9 +452,9 @@ class TournamentService(
                     val cloneHistories = tournamentRepository.findHistoriesByTournamentIdAndTournamentUserId(
                         myClone.getId(), myCloneOwnerTU.getId(),
                     )
-                    return buildCompleted(myClone, cloneHistories, computeHasGroupResult(tournament), false, true)
+                    return buildCompleted(myClone, cloneHistories, computeGroupFlags(tournament), false, true)
                 }
-                buildCompleted(tournament, histories, computeHasGroupResult(tournament), isOwner, canAddItemForTournament(tournament, userId))
+                buildCompleted(tournament, histories, computeGroupFlags(tournament), isOwner, canAddItemForTournament(tournament, userId))
             }
         }
     }
@@ -672,7 +672,7 @@ class TournamentService(
                     return RecordMatchResult(
                         nextMatch = null,
                         completed = buildCompleted(
-                            tournament, histories, computeHasGroupResult(tournament),
+                            tournament, histories, computeGroupFlags(tournament),
                             tournamentUser.getId() == tournament.ownerTournamentUserId,
                             canAddItemForTournament(tournament, userId),
                         ),
@@ -742,18 +742,31 @@ class TournamentService(
         return RecordMatchResult(
             nextMatch = null,
             completed = buildCompleted(
-                tournament, histories + newHistory, computeHasGroupResult(tournament), isOwner,
+                tournament, histories + newHistory, computeGroupFlags(tournament), isOwner,
                 canAddItemForTournament(tournament, userId),
             ),
         )
     }
 
-    private fun computeHasGroupResult(tournament: Tournament): Boolean {
+    private data class GroupFlags(
+        val hasGroupResult: Boolean,
+        val isGroupTournament: Boolean,
+    )
+
+    // 그룹 결과 관련 두 플래그를 한 번에 구한다 — 루트 기준 클론 목록·참여자 수·완료 수를 공유해 조회를 중복하지 않는다.
+    //   hasGroupResult    : 완료 플레이어(완료 TU + 완료 클론) 수 >= 2 → 그룹 결과 "조회 가능"(progressive gate, core#456).
+    //   isGroupTournament : 참여자(전체 TU + 전체 클론) 수 >= 2 → "소셜(그룹) 토너먼트 여부"(완료 무관, core#370 원래 정의).
+    // 배너 "노출"은 isGroupTournament 로, "활성/비활성"은 hasGroupResult 로 가른다 — 첫 완주자가 누구든 새로고침 없이
+    // 배너를 본다(#975). 솔로는 참여자가 항상 정확히 1이라 false. (소셜 멤버가 root TU·clone 에 중복 잡혀도 >=2 boolean 엔 무해)
+    private fun computeGroupFlags(tournament: Tournament): GroupFlags {
         val rootId = tournament.sourceTournamentId ?: tournament.getId()
-        // 루트 토너먼트 내 완료 참여자(TU) + 완료된 클론 토너먼트 수의 합이 2 이상이면 그룹 결과를 조회할 수 있다.
+        val clones = tournamentRepository.findBySourceTournamentId(rootId)
         val completedInRoot = tournamentUserRepository.countCompletedByTournamentId(rootId)
-        val completedClones = tournamentRepository.findBySourceTournamentId(rootId).count { it.isCompleted() }
-        return completedInRoot + completedClones >= 2
+        val participantsInRoot = tournamentUserRepository.countByTournamentId(rootId)
+        return GroupFlags(
+            hasGroupResult = completedInRoot + clones.count { it.isCompleted() } >= 2,
+            isGroupTournament = participantsInRoot + clones.size >= 2,
+        )
     }
 
     // ROOT 는 항상 아이템 담기 가능. CLONE 은 소셜 초대로 ROOT 에 TournamentUser 가 있으면 true,
@@ -768,7 +781,7 @@ class TournamentService(
     private fun buildCompleted(
         tournament: Tournament,
         histories: List<TournamentHistory>,
-        hasGroupResult: Boolean,
+        groupFlags: GroupFlags,
         isOwner: Boolean,
         canAddItem: Boolean,
     ): TournamentDetail.Completed {
@@ -794,7 +807,8 @@ class TournamentService(
                     imageUrl = snapshot.imageUrl,
                 )
             },
-            hasGroupResult = hasGroupResult,
+            hasGroupResult = groupFlags.hasGroupResult,
+            isGroupTournament = groupFlags.isGroupTournament,
             isOwner = isOwner,
             isRoot = isRoot,
             canAddItem = canAddItem,

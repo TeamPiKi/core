@@ -104,7 +104,12 @@ data class TournamentDetailResponse(
     @JsonInclude(JsonInclude.Include.NON_NULL)
     data class CompletedData(
         val result: List<RankedItemResponse>,
+        // 그룹 결과 "조회 가능" 여부 — 완료 플레이어 수가 2명 이상이면 true. 클라는 이 값으로 배너 활성/비활성(다른
+        // 사람 결과가 아직 없으면 empty state)을 가른다.
         val hasGroupResult: Boolean,
+        // 소셜(그룹) 토너먼트 여부 — 참여자 수가 2명 이상이면 true(완료 무관). 클라는 이 값으로 "전체 결과 보기" 배너
+        // 노출을 가른다 — 첫 완주자가 누구든 새로고침 없이 배너를 본다(#975).
+        val isGroupTournament: Boolean,
         // true: ROOT 소유자 또는 소셜 초대 CLONE 소유자 — 아이템 담기 허용(위시/링크/이미지).
         // false: 플레이링크 CLONE 소유자 — 아이템 담기 불가.
         val canAddItem: Boolean,
@@ -115,6 +120,7 @@ data class TournamentDetailResponse(
                 CompletedData(
                     result = completed.result.map { RankedItemResponse.from(it) },
                     hasGroupResult = completed.hasGroupResult,
+                    isGroupTournament = completed.isGroupTournament,
                     canAddItem = completed.canAddItem,
                     playLinkExpiresAt = completed.playLinkExpiresAt,
                 )
