@@ -1718,6 +1718,71 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending.items.length()").value(2))
     }
 
+    // #977: CLONE 은 DB 아이템 행이 없어 원본 아이템을 이어받아 조회한다. 목록에서 받은 tournamentItemId 로 단건 조회가
+    // 통과해야 한다 — 예전엔 "직접 소속"(item.tournamentId != cloneId) 체크로 무조건 404 였다.
+    @Test
+    fun `GET tournaments-id-items-itemId 는 CLONE 에서 원본 아이템을 해소해 200 을 준다`() {
+        val mockMvc = buildMockMvc()
+        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.code").doesNotExist())
+            .andExpect(jsonPath("$.data.tournamentItemId").value(rootTi))
+            .andExpect(jsonPath("$.data.name").isString)
+    }
+
+    // #977: 조회는 이어받되(위), 수정은 원본을 건드리므로 막는다 — 혼란스러운 404 대신 의도된 정책 403(TOURNAMENT-038).
+    @Test
+    fun `PATCH tournaments-id-items-itemId 는 CLONE 이면 403 TOURNAMENT-038 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .param("name", "수정 시도")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+    }
+
+    @Test
+    fun `DELETE tournaments-id-items-itemId 는 CLONE 이면 403 TOURNAMENT-038 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+    }
+
+    // 완료된 ROOT + 그 플레이링크로 만든 CLONE(otherUserId 소유)을 만들어 (cloneId, 원본 tournamentItemId, cloneOwnerId) 를 준다.
+    private fun cloneFromCompletedRoot(mockMvc: MockMvc): Triple<Long, Long, UUID> {
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, rootTi, _) = completeTournamentWith2Items(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootId/play-link")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"),
+        )
+        val cloneResult =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$rootId/from-play-link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+                ).andReturn()
+        val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
+        return Triple(cloneId, rootTi, otherUserId)
+    }
+
     @Test
     fun `GET tournaments-id 는 ROOT 가 COMPLETED 여도 아직 시작 안 한 참여자에게 403 대신 시작 가능 상태를 준다`() {
         val mockMvc = buildMockMvc()
