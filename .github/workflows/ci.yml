@@ -135,12 +135,12 @@ jobs:
             sed -e 's/listen 443 ssl[^;]*;/listen 8443;/' \
                 -e '/ssl_certificate/d' -e '/ssl_dhparam/d' -e '/include \/etc\/letsencrypt/d' \
                 "$conf" > "$work/site.conf"
-            echo 'server 127.0.0.1:8080;' > "$work/team3-upstream.conf"
+            echo 'server 127.0.0.1:8080;' > "$work/piki-upstream.conf"
             printf 'events {}\nhttp {\n  include /work/site.conf;\n}\n' > "$work/nginx.conf"
             docker run --rm \
               -v "$work/nginx.conf:/work/nginx.conf:ro" \
               -v "$work/site.conf:/work/site.conf:ro" \
-              -v "$work/team3-upstream.conf:/etc/nginx/team3-upstream.conf:ro" \
+              -v "$work/piki-upstream.conf:/etc/nginx/piki-upstream.conf:ro" \
               nginx:alpine nginx -t -c /work/nginx.conf
             echo "::endgroup::"
           done
