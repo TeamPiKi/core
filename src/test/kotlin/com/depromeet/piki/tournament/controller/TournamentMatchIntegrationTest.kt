@@ -9,6 +9,8 @@ import com.depromeet.piki.tournament.repository.TournamentHistoryJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.domain.User
+import com.depromeet.piki.user.repository.UserJpaRepository
 import com.depromeet.piki.wishlist.service.WishPersistenceService
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -50,7 +52,11 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var jwtProvider: JwtProvider
 
+    @Autowired private lateinit var userJpaRepository: UserJpaRepository
+
     private val userId: UUID = UUID.fromString("11111111-2222-3333-4444-555555555555")
+
+    private val memberId: UUID = UUID.fromString("99999999-8888-7777-6666-555555555555")
 
     @Test
     fun `GET tournaments-id 는 서버가 브래킷에서 파생한 currentMatch 를 아이템 정보까지 담아 내려준다`() {
@@ -212,7 +218,73 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.completed.result[1].rank").value(2))
             .andExpect(jsonPath("$.data.completed.result[1].tournamentItemId").value(items[1]))
             .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
+            // 솔로(참여자 1명)라 소셜 토너먼트가 아니다 → "전체 결과 보기" 배너 미노출.
+            .andExpect(jsonPath("$.data.completed.isGroupTournament").value(false))
     }
+
+    // #975 회귀: 참여자가 2명 이상이면(소셜) 주최자가 혼자 먼저 완주해도 isGroupTournament=true 로 배너가 노출되고,
+    // 아직 완료 플레이어가 1명뿐이라 hasGroupResult=false(비활성·empty state)로 내려온다. 예전엔 노출을 hasGroupResult
+    // 하나로 제어해 이 시점에 배너가 아예 안 보였고, 다른 참여자 완주 후 새로고침해야 나타났다.
+    @Test
+    fun `소셜 토너먼트는 주최자 혼자 먼저 완주해도 isGroupTournament=true 이고 완료자 부족이라 hasGroupResult=false 다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        // 멤버 1명이 초대로 참여 → 루트 참여자 2명(주최자 + 멤버). 멤버는 아직 완주하지 않는다.
+        saveUser(memberId, "https://cdn.example.com/member.jpg", "멤버")
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(memberId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode"}"""),
+            ).andExpect(status().isOk)
+
+        // 주최자가 아이템을 담고 시작해 혼자 먼저 완주한다.
+        val itemIds = (1..2).map { saveWishItem(name = "아이템$it", price = it * 10_000) }
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/items/wish")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"itemIds":${itemIds.joinToString(",", "[", "]")}}"""),
+        )
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+        val items = tournamentItemIdsOf(tournamentId)
+
+        mockMvc
+            .perform(recordMatch(tournamentId, items[0], items[1], winner = items[0], round = 2))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.completed.result[0].rank").value(1))
+            // 참여자 2명이라 소셜 토너먼트로 인식 → 배너 노출.
+            .andExpect(jsonPath("$.data.completed.isGroupTournament").value(true))
+            // 아직 주최자 혼자만 완주 → 그룹 결과 조회 불가(비활성·empty state).
+            .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
+    }
+
+    private fun createTournamentWithInviteCode(mockMvc: MockMvc): Pair<Long, String> {
+        val result =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"name":"매치 테스트 토너먼트"}"""),
+                ).andReturn()
+        val data = objectMapper.readTree(result.response.contentAsString)["data"]
+        return data["tournamentId"].asLong() to data["inviteCode"].asText()
+    }
+
+    private fun saveUser(
+        id: UUID,
+        profileImage: String,
+        nickname: String,
+    ): User =
+        userJpaRepository.save(
+            User(id = id, nickname = nickname, profileImage = profileImage, identityType = IdentityType.MEMBER),
+        )
 
     @Test
     fun `결승을 재전송하면 COMPLETED 여도 409 가 아니라 같은 순위 결과를 다시 받는다`() {
