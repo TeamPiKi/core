@@ -7,9 +7,8 @@ import com.depromeet.piki.metrics.report.DiscordMessageSender
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
-// 누적 가입자 수가 interval 의 배수(기본 1000 → 1000·2000·3000…)를 넘을 때마다 Discord 로 알림을 1회 보낸다.
-// 임계값은 코드(interval)로 두되, 게시 문구는 설정(AdminProperties, 환경변수)에서 읽는다 — 문구가 비면 기능 off.
-// 채널은 주간 리포트와 같은 metrics 채널을 재사용한다(별도 채널 설정 없이 켤 수 있게).
+// 누적 가입자 수가 interval 의 배수(기본 1000 → 1000·2000·3000…)를 넘을 때마다 Discord 로 축하 알림을 1회 보낸다.
+// 채널은 주간 리포트와 같은 metrics 채널을 재사용한다(채널 미설정이면 off).
 // @ConditionalOnAdminEnabled: Discord 발송 경계가 뜨는 운영 백오피스 환경에서만 로드된다.
 @Component
 @ConditionalOnAdminEnabled
@@ -22,11 +21,10 @@ class UserMilestoneAnnouncer(
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun announce() {
-        val message = adminProperties.userMilestoneMessage
         val channelId = adminProperties.discordMetricsChannelId
         val interval = adminProperties.userMilestoneInterval
-        // 문구·채널 미설정, 또는 interval 이 비정상이면 조용히 skip — 켜지지 않은 환경에서 매 가입마다 카운트 쿼리를 돌리지 않게 먼저 거른다.
-        if (message.isBlank() || channelId.isBlank() || interval <= 0) return
+        // 채널 미설정 또는 interval 이 비정상이면 조용히 skip.
+        if (channelId.isBlank() || interval <= 0) return
 
         // 가입자 기준(탈퇴 포함, 회원·게스트) 누적, 개발진 제외.
         val count = metricsRepository.countAllUsers(exclude = true)
@@ -50,14 +48,19 @@ class UserMilestoneAnnouncer(
         }
     }
 
-    // 도달한 배수를 문구의 {count} 자리에 넣는다. 문구 원문은 설정(코드 밖)에 있어 repo 엔 자리표시자 키만 남는다.
+    // 도달한 배수를 축하 문구의 {count} 자리에 넣는다.
     private fun embedOf(milestone: Long): List<Map<String, Any>> {
-        val description = adminProperties.userMilestoneMessage.replace(PLACEHOLDER_COUNT, milestone.toString())
+        val description = MESSAGE.replace(PLACEHOLDER_COUNT, milestone.toString())
         return listOf(mapOf("description" to description, "color" to EMBED_COLOR))
     }
 
     companion object {
         private const val PLACEHOLDER_COUNT = "{count}"
         private const val EMBED_COLOR = 0x5865F2 // Discord blurple
+
+        // 마일스톤 축하 문구. {count} 에 도달한 배수가 들어간다.
+        internal const val MESSAGE =
+            "🎉 PiKi 누적 가입자 {count}명 달성! 🎉\n" +
+                "의연 · 예빈 · 선아 · 하은 · 소영 · 영찬 · 재중 · 세빈 — 다들 고생했어요 👏🥳🚀"
     }
 }

@@ -35,7 +35,6 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
             AdminProperties(
                 discordMetricsChannelId = "metrics-channel",
                 userMilestoneInterval = interval,
-                userMilestoneMessage = "달성 {count}",
             ),
         )
 
@@ -74,7 +73,9 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
         assertEquals(1, stubSender.sent.size)
         val sent = stubSender.sent.first()
         assertEquals("metrics-channel", sent.channelId)
-        assertEquals("달성 $expectedMilestone", sent.embeds.first()["description"])
+        // 문구는 하드코딩 상수({count} 치환) — 도달 배수와 PiKi 가 담겼는지 확인한다.
+        val description = sent.embeds.first()["description"] as String
+        assertEquals(UserMilestoneAnnouncer.MESSAGE.replace("{count}", expectedMilestone.toString()), description)
 
         announcer(1).announce()
         assertEquals(1, stubSender.sent.size) // 이미 발송한 배수라 재발송 없음
