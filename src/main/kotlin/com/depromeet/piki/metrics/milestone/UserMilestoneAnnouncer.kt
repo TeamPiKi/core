@@ -21,6 +21,8 @@ class UserMilestoneAnnouncer(
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun announce() {
+        // 축하 알림은 prod 만 — metrics 채널은 팀 공용이라 dev 가 테스트 데이터로 발송하면 안 된다(주간 리포트 스케줄러와 같은 게이트).
+        if (adminProperties.environment != "prod") return
         val channelId = adminProperties.discordMetricsChannelId
         val interval = adminProperties.userMilestoneInterval
         // 채널 미설정 또는 interval 이 비정상이면 조용히 skip.

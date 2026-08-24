@@ -27,16 +27,19 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
-    private fun announcer(interval: Long) =
-        UserMilestoneAnnouncer(
-            metricsRepository,
-            milestoneRepository,
-            stubSender,
-            AdminProperties(
-                discordMetricsChannelId = "metrics-channel",
-                userMilestoneInterval = interval,
-            ),
-        )
+    private fun announcer(
+        interval: Long,
+        environment: String = "prod",
+    ) = UserMilestoneAnnouncer(
+        metricsRepository,
+        milestoneRepository,
+        stubSender,
+        AdminProperties(
+            environment = environment,
+            discordMetricsChannelId = "metrics-channel",
+            userMilestoneInterval = interval,
+        ),
+    )
 
     private fun insertUser(
         identityType: String = "MEMBER",
@@ -101,6 +104,17 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
         stubSender.result = true
 
         announcer(Long.MAX_VALUE).announce() // 현재 카운트로는 절대 못 넘는 interval
+
+        assertEquals(0, stubSender.sent.size)
+    }
+
+    @Test
+    fun `announce 는 prod 가 아니면(dev 등) 발송하지 않는다`() {
+        insertUser()
+        stubSender.sent.clear()
+        stubSender.result = true
+
+        announcer(interval = 1, environment = "dev").announce() // 배수 도달해도 dev 라 skip
 
         assertEquals(0, stubSender.sent.size)
     }
