@@ -78,6 +78,29 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `announce 는 마일스톤 채널이 비면 metrics 채널로 폴백한다`() {
+        insertUser()
+        stubSender.sent.clear()
+        val fallback =
+            UserMilestoneAnnouncer(
+                metricsRepository,
+                milestoneRepository,
+                stubSender,
+                AdminProperties(
+                    userMilestoneThresholds = listOf(1),
+                    userMilestoneChannelId = "", // 미지정 → metrics 채널로 폴백
+                    userMilestoneMessage = "달성 {threshold}",
+                    discordMetricsChannelId = "metrics-channel",
+                ),
+            )
+
+        fallback.announce()
+
+        assertEquals(1, stubSender.sent.size)
+        assertEquals("metrics-channel", stubSender.sent.first().channelId)
+    }
+
+    @Test
     fun `announce 는 도달하지 않은 임계값은 발송하지 않는다`() {
         stubSender.sent.clear()
 

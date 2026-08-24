@@ -23,9 +23,11 @@ class UserMilestoneAnnouncer(
 
     fun announce() {
         val thresholds = adminProperties.userMilestoneThresholds
-        val channelId = adminProperties.userMilestoneChannelId
-        // 미설정이면 조용히 skip — 이 기능이 켜지지 않은 환경(설정 없음)에서 매 가입마다 카운트 쿼리를 돌리지 않게 먼저 거른다.
-        if (thresholds.isEmpty() || channelId.isBlank()) return
+        // 마일스톤 채널을 따로 안 주면 주간 리포트와 같은 metrics 채널로 폴백한다 — 이미 설정된 채널을 재사용해
+        // 별도 env(채널 id) 설정 없이 임계값·문구만으로 켤 수 있게 한다.
+        val channelId = adminProperties.userMilestoneChannelId.ifBlank { adminProperties.discordMetricsChannelId }
+        // 미설정(임계값 없음·채널 없음·문구 없음)이면 조용히 skip — 켜지지 않은 환경에서 매 가입마다 카운트 쿼리를 돌리지 않게 먼저 거른다.
+        if (thresholds.isEmpty() || channelId.isBlank() || adminProperties.userMilestoneMessage.isBlank()) return
 
         // 가입자 기준(탈퇴 포함, 회원·게스트) 누적, 개발진 제외.
         val count = metricsRepository.countAllUsers(exclude = true)

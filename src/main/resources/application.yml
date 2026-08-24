@@ -46,8 +46,9 @@ admin:
   discord-metrics-channel-id: ${DISCORD_METRICS_CHANNEL_ID:}
   # Discord Bot API 인증 토큰(민감 — GitHub secret). 주간 리포트 채널 게시에 사용. 비면 게시 skip.
   discord-bot-token: ${DISCORD_BOT_TOKEN:}
-  # 사용자 수 마일스톤 알림 — 도달 임계값(콤마 구분)·게시 채널·문구를 설정으로 둔다. 비면 기능 off.
+  # 사용자 수 마일스톤 알림 — 도달 임계값(콤마 구분)·문구를 설정으로 둔다. 임계값 또는 문구가 비면 기능 off.
   # 문구엔 {threshold}·{count} 자리표시자를 쓸 수 있다.
+  # 채널은 비워두면 위 discord-metrics-channel-id(주간 리포트 채널)로 폴백한다 — 별도 채널로 보내고 싶을 때만 지정.
   user-milestone-thresholds: ${USER_MILESTONE_THRESHOLDS:}
   user-milestone-channel-id: ${USER_MILESTONE_CHANNEL_ID:}
   user-milestone-message: ${USER_MILESTONE_MESSAGE:}
