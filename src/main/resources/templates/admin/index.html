@@ -21,7 +21,8 @@
     .wrap { max-width:880px; margin:0 auto; padding:32px 24px; }
     h1 { font-size:22px; font-weight:800; letter-spacing:-.02em; margin:0 0 6px; }
     .lede { color:var(--muted); font-size:14px; margin:0 0 26px; }
-    .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    /* auto-rows:1fr — 설명 길이가 달라도 행 높이를 맞춰 카드가 들쭉날쭉해지지 않게. */
+    .grid { display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:1fr; gap:14px; }
     .card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:18px 18px 16px; }
     .card.soon { opacity:.6; }
     .card .t { font-weight:800; font-size:15px; margin-bottom:4px; }
@@ -35,12 +36,12 @@
 
   <div class="wrap">
     <h1>운영 백오피스</h1>
-    <p class="lede">배포 없이 운영 설정(알림 문구 · 공지 · 추출 정책 · 출처 몰 표시명)을 관리하고 운영 지표를 봅니다.</p>
+    <p class="lede">배포 없이 운영 설정을 관리하고 운영 지표를 봅니다.</p>
 
     <div class="grid">
       <a class="card" th:href="@{/admin/templates}" style="text-decoration:none;color:inherit">
         <div class="t">알림 템플릿 관리 →</div>
-        <div class="d">타입별 title/body 수정 · 변수 라이브 미리보기 · 푸시 미리보기</div>
+        <div class="d">타입별 title/body 수정 · 변수·푸시 미리보기</div>
       </a>
       <a class="card" th:href="@{/admin/announcements}" style="text-decoration:none;color:inherit">
         <div class="t">공지 발송 →</div>
@@ -48,23 +49,23 @@
       </a>
       <a class="card" th:href="@{/admin/metrics}" style="text-decoration:none;color:inherit">
         <div class="t">운영 통계 대시보드 →</div>
-        <div class="d">가입·위시·토너먼트·리텐션·푸시 지표를 기간별로 · 직전 동기간 대비</div>
+        <div class="d">가입·위시·토너먼트·리텐션·푸시 지표를 기간별로</div>
       </a>
       <a class="card" th:href="@{/admin/extraction-policies}" style="text-decoration:none;color:inherit">
         <div class="t">도메인 접근 정책 →</div>
-        <div class="d">도메인별 허락(ALLOWED) · 차단(BLOCKED)을 배포 없이 변경</div>
+        <div class="d">도메인별 허락(ALLOWED) · 차단(BLOCKED)을 변경</div>
       </a>
       <a class="card" th:href="@{/admin/source-platforms}" style="text-decoration:none;color:inherit">
         <div class="t">출처 몰 표시명 →</div>
-        <div class="d">위시 응답의 출처 커머스몰 표시명을 도메인별로 배포 없이 관리</div>
+        <div class="d">위시 응답의 출처 커머스몰 표시명을 도메인별로 관리</div>
       </a>
       <a class="card" th:href="@{/admin/extraction-models}" style="text-decoration:none;color:inherit">
         <div class="t">추출 모델 →</div>
-        <div class="d">링크 · 이미지 추출에 쓰는 LLM 모델을 배포 없이 지정 (저장 시 실호출로 확인)</div>
+        <div class="d">링크 · 이미지 추출에 쓰는 LLM 모델을 지정</div>
       </a>
       <a class="card" th:href="@{/admin/item-quota}" style="text-decoration:none;color:inherit">
         <div class="t">등록 한도 →</div>
-        <div class="d">계정별 · 전역 사용량을 보고 한도를 배포 없이 조절 (비용이 튀면 조이고, 정상 사용자가 막히면 푼다)</div>
+        <div class="d">계정별 · 전역 사용량을 보고 한도를 조절</div>
       </a>
     </div>
   </div>
