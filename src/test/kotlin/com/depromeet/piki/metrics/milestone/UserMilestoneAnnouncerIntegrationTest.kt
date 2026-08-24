@@ -14,8 +14,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// 사용자 수 마일스톤 알림. announcer 는 임계값·채널·문구를 설정에서 읽으므로, 테스트는 명시 설정으로 announcer 를
-// 직접 구성해(실제 repo + stub Discord) 오케스트레이션을 검증한다. (Spring 빈 announcer 는 test 설정 임계값이 비어 inert)
+// 사용자 수 마일스톤 알림. announcer 는 interval·문구를 설정에서 읽으므로, 테스트는 명시 설정으로 announcer 를 직접
+// 구성해(실제 repo + stub Discord) 오케스트레이션을 검증한다. 실제 interval(1000)은 테스트에서 채우기 어려우므로
+// interval 을 작게 준다. (Spring 빈 announcer 는 test 설정 문구가 비어 inert)
 @Transactional
 class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var metricsRepository: MetricsRepository
@@ -26,15 +27,15 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
-    private fun announcer(vararg thresholds: Long) =
+    private fun announcer(interval: Long) =
         UserMilestoneAnnouncer(
             metricsRepository,
             milestoneRepository,
             stubSender,
             AdminProperties(
-                userMilestoneThresholds = thresholds.toList(),
-                userMilestoneChannelId = "test-channel",
-                userMilestoneMessage = "달성 {threshold}",
+                discordMetricsChannelId = "metrics-channel",
+                userMilestoneInterval = interval,
+                userMilestoneMessage = "달성 {count}",
             ),
         )
 
@@ -56,50 +57,27 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `tryClaim 은 같은 임계값에 처음만 true 이고 이후 false 다`() {
-        val threshold = 987_654_321L
-        assertTrue(milestoneRepository.tryClaim(threshold))
-        assertFalse(milestoneRepository.tryClaim(threshold))
+    fun `tryClaim 은 같은 배수에 처음만 true 이고 이후 false 다`() {
+        val milestone = 987_654_000L
+        assertTrue(milestoneRepository.tryClaim(milestone))
+        assertFalse(milestoneRepository.tryClaim(milestone))
     }
 
     @Test
-    fun `announce 는 도달한 임계값에 1회 발송하고 재호출해도 다시 보내지 않는다`() {
-        insertUser() // 사용자 최소 1명 이상 보장 (임계값 1 도달)
+    fun `announce 는 interval 배수 도달 시 metrics 채널로 1회 발송하고 재호출해도 다시 보내지 않는다`() {
+        insertUser() // 사용자 최소 1명 이상 보장 (interval 1 배수 도달)
         stubSender.sent.clear()
         stubSender.result = true
+        val expectedMilestone = metricsRepository.countAllUsers(exclude = true) // interval=1 이라 배수 = 현재 카운트
 
         announcer(1).announce()
         assertEquals(1, stubSender.sent.size)
         val sent = stubSender.sent.first()
-        assertEquals("test-channel", sent.channelId)
-        assertEquals("달성 1", sent.embeds.first()["description"])
+        assertEquals("metrics-channel", sent.channelId)
+        assertEquals("달성 $expectedMilestone", sent.embeds.first()["description"])
 
         announcer(1).announce()
-        assertEquals(1, stubSender.sent.size) // 이미 발송한 임계값이라 재발송 없음
-    }
-
-    @Test
-    fun `announce 는 마일스톤 채널이 비면 metrics 채널로 폴백한다`() {
-        insertUser()
-        stubSender.sent.clear()
-        stubSender.result = true
-        val fallback =
-            UserMilestoneAnnouncer(
-                metricsRepository,
-                milestoneRepository,
-                stubSender,
-                AdminProperties(
-                    userMilestoneThresholds = listOf(1),
-                    userMilestoneChannelId = "", // 미지정 → metrics 채널로 폴백
-                    userMilestoneMessage = "달성 {threshold}",
-                    discordMetricsChannelId = "metrics-channel",
-                ),
-            )
-
-        fallback.announce()
-
-        assertEquals(1, stubSender.sent.size)
-        assertEquals("metrics-channel", stubSender.sent.first().channelId)
+        assertEquals(1, stubSender.sent.size) // 이미 발송한 배수라 재발송 없음
     }
 
     @Test
@@ -107,24 +85,23 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
         insertUser()
         stubSender.sent.clear()
         stubSender.result = false // 발송 실패 시나리오
+        val milestone = metricsRepository.countAllUsers(exclude = true)
 
         announcer(1).announce()
 
         assertEquals(1, stubSender.sent.size) // 발송은 시도됨
         // 실패했으니 claim 이 해제돼야 한다 — 지금 claim 하면 true(비어 있어 최초 claim).
-        assertTrue(milestoneRepository.tryClaim(1))
+        assertTrue(milestoneRepository.tryClaim(milestone))
     }
 
     @Test
-    fun `announce 는 도달하지 않은 임계값은 발송하지 않는다`() {
+    fun `announce 는 첫 배수(interval)에 못 미치면 발송하지 않는다`() {
         stubSender.sent.clear()
         stubSender.result = true
 
-        announcer(Long.MAX_VALUE).announce()
+        announcer(Long.MAX_VALUE).announce() // 현재 카운트로는 절대 못 넘는 interval
 
         assertEquals(0, stubSender.sent.size)
-        // 발송 안 됐으니 claim 도 안 됐다 — 내가 처음 claim 하면 true 여야 한다.
-        assertTrue(milestoneRepository.tryClaim(Long.MAX_VALUE))
     }
 
     @Test
