@@ -1720,11 +1720,26 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     // #977: CLONE 은 DB 아이템 행이 없어 원본 아이템을 이어받아 조회한다. 목록에서 받은 tournamentItemId 로 단건 조회가
     // 통과해야 한다 — 예전엔 "직접 소속"(item.tournamentId != cloneId) 체크로 무조건 404 였다.
+    // 개인정보 격리도 함께 검증: memo 는 요청자 본인 wish 로만 조회되므로, 원본 소유자의 memo 는 클론 조회자에게 안 나간다.
     @Test
-    fun `GET tournaments-id-items-itemId 는 CLONE 에서 원본 아이템을 해소해 200 을 준다`() {
+    fun `GET tournaments-id-items-itemId 는 CLONE 에서 원본 아이템을 200 으로 주되 원본 소유자 memo 는 노출하지 않는다`() {
         val mockMvc = buildMockMvc()
-        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+        val (rootId, cloneId, rootTi) = cloneFromCompletedRoot(mockMvc)
+        // 원본 소유자(userId)의 wish 에 memo 를 심는다.
+        val snapshotId = tournamentItemJpaRepository.findById(rootTi).get().snapshotId
+        val itemId = itemSnapshotJpaRepository.findById(snapshotId).get().itemId
+        val wishId = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first().getId()
+        wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = "원본 메모")
 
+        // 원본 조회(소유자)에는 memo 가 보인다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/items/$rootTi")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("원본 메모"))
+
+        // 클론 조회(다른 유저)는 200 이되, 원본 소유자의 memo 는 노출되지 않는다(NON_NULL 이라 키 생략).
         mockMvc
             .perform(
                 get("/api/v1/tournaments/$cloneId/items/$rootTi")
@@ -1733,13 +1748,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.code").doesNotExist())
             .andExpect(jsonPath("$.data.tournamentItemId").value(rootTi))
             .andExpect(jsonPath("$.data.name").isString)
+            .andExpect(jsonPath("$.data.memo").doesNotExist())
     }
 
     // #977: 조회는 이어받되(위), 수정은 원본을 건드리므로 막는다 — 혼란스러운 404 대신 의도된 정책 403(TOURNAMENT-038).
     @Test
     fun `PATCH tournaments-id-items-itemId 는 CLONE 이면 403 TOURNAMENT-038 을 반환한다`() {
         val mockMvc = buildMockMvc()
-        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+        val (_, cloneId, rootTi) = cloneFromCompletedRoot(mockMvc)
 
         mockMvc
             .perform(
@@ -1753,7 +1769,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `DELETE tournaments-id-items-itemId 는 CLONE 이면 403 TOURNAMENT-038 을 반환한다`() {
         val mockMvc = buildMockMvc()
-        val (cloneId, rootTi, otherUserId) = cloneFromCompletedRoot(mockMvc)
+        val (_, cloneId, rootTi) = cloneFromCompletedRoot(mockMvc)
 
         mockMvc
             .perform(
@@ -1763,8 +1779,36 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
     }
 
-    // 완료된 ROOT + 그 플레이링크로 만든 CLONE(otherUserId 소유)을 만들어 (cloneId, 원본 tournamentItemId, cloneOwnerId) 를 준다.
-    private fun cloneFromCompletedRoot(mockMvc: MockMvc): Triple<Long, Long, UUID> {
+    // #977(CodeRabbit): 클론 가드는 상태 검사(isPending)보다 앞서므로, 시작된 클론도 409(notPending)가 아니라
+    // 403 TOURNAMENT-038 이어야 한다. 상태와 무관하게 클론은 아이템 수정·삭제가 막힌다.
+    @Test
+    fun `시작된 CLONE 도 아이템 PATCH·DELETE 는 403 TOURNAMENT-038 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (_, cloneId, rootTi) = cloneFromCompletedRoot(mockMvc)
+        // 클론을 시작해 PENDING 이 아니게 만든다.
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$cloneId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .param("name", "수정 시도")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+    }
+
+    // 완료된 ROOT + 그 플레이링크로 만든 CLONE(otherUserId 소유)을 만들어 (rootId, cloneId, 원본 tournamentItemId) 를 준다.
+    private fun cloneFromCompletedRoot(mockMvc: MockMvc): Triple<Long, Long, Long> {
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
         val (rootId, rootTi, _) = completeTournamentWith2Items(mockMvc)
         mockMvc.perform(
@@ -1780,7 +1824,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
                 ).andReturn()
         val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
-        return Triple(cloneId, rootTi, otherUserId)
+        return Triple(rootId, cloneId, rootTi)
     }
 
     @Test
