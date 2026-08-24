@@ -66,6 +66,7 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     fun `announce 는 도달한 임계값에 1회 발송하고 재호출해도 다시 보내지 않는다`() {
         insertUser() // 사용자 최소 1명 이상 보장 (임계값 1 도달)
         stubSender.sent.clear()
+        stubSender.result = true
 
         announcer(1).announce()
         assertEquals(1, stubSender.sent.size)
@@ -81,6 +82,7 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     fun `announce 는 마일스톤 채널이 비면 metrics 채널로 폴백한다`() {
         insertUser()
         stubSender.sent.clear()
+        stubSender.result = true
         val fallback =
             UserMilestoneAnnouncer(
                 metricsRepository,
@@ -101,8 +103,22 @@ class UserMilestoneAnnouncerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `announce 는 Discord 발송 실패 시 claim 을 해제해 다음 가입에서 재시도한다`() {
+        insertUser()
+        stubSender.sent.clear()
+        stubSender.result = false // 발송 실패 시나리오
+
+        announcer(1).announce()
+
+        assertEquals(1, stubSender.sent.size) // 발송은 시도됨
+        // 실패했으니 claim 이 해제돼야 한다 — 지금 claim 하면 true(비어 있어 최초 claim).
+        assertTrue(milestoneRepository.tryClaim(1))
+    }
+
+    @Test
     fun `announce 는 도달하지 않은 임계값은 발송하지 않는다`() {
         stubSender.sent.clear()
+        stubSender.result = true
 
         announcer(Long.MAX_VALUE).announce()
 

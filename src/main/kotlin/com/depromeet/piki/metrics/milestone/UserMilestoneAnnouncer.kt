@@ -29,16 +29,30 @@ class UserMilestoneAnnouncer(
         // 미설정(임계값 없음·채널 없음·문구 없음)이면 조용히 skip — 켜지지 않은 환경에서 매 가입마다 카운트 쿼리를 돌리지 않게 먼저 거른다.
         if (thresholds.isEmpty() || channelId.isBlank() || adminProperties.userMilestoneMessage.isBlank()) return
 
+        // 이미 발송된 임계값을 먼저 걸러, 남은 게 없으면 COUNT(*) 자체를 돌리지 않는다 — 모든 마일스톤이 발송된 뒤로는
+        // 매 가입마다 전체 집계를 반복하지 않게 한다(작은 테이블 PK 조회로 단락).
+        val pending = thresholds - milestoneRepository.claimedAmong(thresholds)
+        if (pending.isEmpty()) return
+
         // 가입자 기준(탈퇴 포함, 회원·게스트) 누적, 개발진 제외.
         val count = metricsRepository.countAllUsers(exclude = true)
-        thresholds
+        pending
             .filter { count >= it }
             .sorted()
             .forEach { threshold ->
-                // 최초 claim 에 성공한 호출만 발송한다(중복 발송 방지). 발송은 트랜잭션 밖 외부 호출이다.
+                // 최초 claim 에 성공한 호출만 발송한다(중복 발송 방지, INSERT IGNORE 원자성). 발송은 트랜잭션 밖 외부 호출이다.
                 if (milestoneRepository.tryClaim(threshold)) {
-                    val sent = discordMessageSender.send(channelId, embedOf(threshold, count))
-                    log.info("user milestone reached: threshold={} count={} sent={}", threshold, count, sent)
+                    val sent =
+                        runCatching { discordMessageSender.send(channelId, embedOf(threshold, count)) }
+                            .onFailure { log.warn("user milestone {} Discord 발송 예외", threshold, it) }
+                            .getOrDefault(false)
+                    if (sent) {
+                        log.info("user milestone reached: threshold={} count={}", threshold, count)
+                    } else {
+                        // 발송 실패 시 claim 을 해제해 다음 가입에서 재시도되게 한다 — 발송 안 된 마일스톤이 영구 유실되지 않도록.
+                        log.warn("user milestone {} 발송 실패 — claim 해제(다음 가입에서 재시도)", threshold)
+                        milestoneRepository.release(threshold)
+                    }
                 }
             }
     }
