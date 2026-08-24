@@ -35,6 +35,10 @@ class MetricsRepository(
             ts(to),
         )
 
+    // 가입자 기준 누적 사용자 수 — 활성(deleted_at) 필터·기간 필터 없이 지금까지 생성된 모든 users 행을 센다
+    // (탈퇴 소프트삭제 포함, 회원·게스트 포함). exclude=true 면 개발진(developers) 제외. 사용자 수 마일스톤 판정용.
+    fun countAllUsers(exclude: Boolean): Long = count("SELECT COUNT(*) FROM users WHERE 1 = 1${notInternal(exclude, "id")}")
+
     fun countWithinByIdentityType(
         from: LocalDateTime,
         to: LocalDateTime,

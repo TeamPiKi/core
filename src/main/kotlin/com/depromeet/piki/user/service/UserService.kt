@@ -3,11 +3,13 @@ package com.depromeet.piki.user.service
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.user.event.UserCreated
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.dto.UserProfile
 import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -19,6 +21,7 @@ class UserService(
     private val userRepository: UserRepository,
     private val userDetailRepository: UserDetailRepository,
     private val defaultProfileImages: DefaultProfileImages,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -211,7 +214,7 @@ class UserService(
                         profileImage = defaultProfileImages.random(),
                         identityType = IdentityType.GUEST,
                     ),
-                )
+                ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
             } catch (e: DataIntegrityViolationException) {
                 if (!isNicknameUniqueViolation(e)) throw e
                 // 닉네임 unique 충돌(race) → 닉네임을 다시 뽑아 재시도
@@ -246,7 +249,7 @@ class UserService(
                 profileImage = profileImage ?: defaultProfileImages.random(),
                 identityType = IdentityType.MEMBER,
             ),
-        )
+        ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
 
     // 신규 user 영속화 공통 경로. 닉네임 unique 충돌(uq_users_nickname)만 duplicateNickname 으로 변환하고,
     // 그 외 DB 제약 위반(NOT NULL·길이 등)은 원본 예외를 그대로 던져 500 으로 드러나게 한다.
@@ -261,7 +264,7 @@ class UserService(
             // 메서드 안에서 제약 위반을 끌어올려, 닉네임 충돌을 여기서 잡아 duplicateNickname(409)으로 변환한다.
             userRepository.saveAndFlush(
                 User(id = UUID.randomUUID(), nickname = nickname, profileImage = profileImage, identityType = identityType),
-            )
+            ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
         } catch (e: DataIntegrityViolationException) {
             if (isNicknameUniqueViolation(e)) throw UserException.duplicateNickname()
             throw e
