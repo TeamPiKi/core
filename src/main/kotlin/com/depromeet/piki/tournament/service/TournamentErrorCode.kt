@@ -69,4 +69,13 @@ enum class TournamentErrorCode(
         ErrorCategory.TOO_MANY_REQUESTS,
         "이 토너먼트에는 지금 아이템을 추가할 수 없어요. 잠시 후 다시 시도해 주세요.",
     ),
+
+    // 038 은 플레이 링크 클론의 아이템 단건 조회 정합(#977)에서 추가됐다. 클론은 원본 아이템을 이어받아 조회는 되지만,
+    // 수정·삭제하면 원본을 건드리게 되므로 아이템 추가 금지(032)와 같은 결로 막는다 — 옛 "직접 소속" 스코프 체크의
+    // 혼란스러운 404 를 의도된 정책 403 으로 대체한다.
+    CLONED_TOURNAMENT_CANNOT_MODIFY_ITEMS(
+        "TOURNAMENT-038",
+        ErrorCategory.FORBIDDEN,
+        "플레이 링크로 만든 토너먼트에서는 아이템을 수정하거나 삭제할 수 없어요.",
+    ),
 }
