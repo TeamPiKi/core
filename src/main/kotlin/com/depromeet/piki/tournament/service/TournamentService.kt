@@ -505,7 +505,11 @@ class TournamentService(
             ?: throw TournamentException.forbiddenTournament()
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId)
             ?: throw TournamentException.notFoundTournamentItem()
-        if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
+        // 스코프 검사는 **effective 토너먼트** 기준이다(#977). CLONE 은 자기 아이템 행이 없고 원본 것을 이어받아
+        // 목록·시작에 내려주므로(getEffectiveTournamentItems), 단건만 "직접 소속" 을 요구하면 목록에서 받은 id 로
+        // 상세를 못 열어 딥링크가 깨진다. 요청자 권한은 바로 위에서 이 토너먼트(CLONE)의 참여자로 이미 확인했다.
+        val effectiveTournamentId = tournament.sourceTournamentId ?: tournamentId
+        if (tournamentItem.tournamentId != effectiveTournamentId) throw TournamentException.notFoundTournamentItem()
         // 표시값: 대기실(PENDING)은 파생(#857), 시작 후는 start 가 박제한 포인터 그대로(겨룬 값 고정).
         // sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
         val pointer = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
@@ -1161,6 +1165,8 @@ class TournamentService(
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
+        // 수정과 같은 이유로 삭제도 막는다(#977) — 복제본의 아이템은 원본 것이라 여기서 지우면 원본이 지워진다.
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()

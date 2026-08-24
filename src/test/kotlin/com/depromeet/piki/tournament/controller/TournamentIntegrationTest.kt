@@ -508,6 +508,98 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isForbidden)
     }
 
+    // 복제 토너먼트는 자기 아이템 행이 없고 원본 것을 이어받아 목록에 내려준다. 단건 조회만 "직접 소속" 을
+    // 요구하면 목록에서 받은 id 로 상세를 못 열어 딥링크가 깨진다(#977). 원본과 같은 값이 내려가야 한다.
+    @Test
+    fun `GET tournaments-id-items-itemId 는 복제 토너먼트에서도 원본 아이템을 그대로 내려준다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, rootItemId, _) = completeTournamentWith2Items(mockMvc)
+        val cloneId = createPlayLinkClone(mockMvc, rootId, otherUserId)
+
+        val rootBody = mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andReturn().response.contentAsString
+
+        // 복제본 id 로 같은 tournamentItemId 를 조회한다 — 종전에는 여기서 404(TOURNAMENT-010)가 났다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$cloneId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.tournamentItemId").value(rootItemId))
+            .andExpect(jsonPath("$.data.name").value(objectMapper.readTree(rootBody)["data"]["name"].asText()))
+            // memo 는 요청자 본인 위시 기준이라, 원본 주인의 메모가 복제본 조회자에게 새면 안 된다.
+            .andExpect(jsonPath("$.data.memo").doesNotExist())
+    }
+
+    // 조회를 원본 기준으로 뚫었으므로(위 테스트) 수정까지 뚫리면 남의 원본 아이템을 고치게 된다. 명시적으로 막는다.
+    @Test
+    fun `PATCH tournaments-id-items-itemId 는 복제 토너먼트이면 403 TOURNAMENT-038 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, rootItemId, _) = completeTournamentWith2Items(mockMvc)
+        val cloneId = createPlayLinkClone(mockMvc, rootId, otherUserId)
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/tournaments/$cloneId/items/$rootItemId")
+                    .param("name", "이름 바꿔보기")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+    }
+
+    // 삭제도 수정과 같은 이유로 막힌다 — 복제본의 아이템은 원본 것이라 여기서 지우면 원본이 지워진다.
+    @Test
+    fun `DELETE tournaments-id-items-itemId 는 복제 토너먼트이면 403 TOURNAMENT-038 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, rootItemId, _) = completeTournamentWith2Items(mockMvc)
+        val cloneId = createPlayLinkClone(mockMvc, rootId, otherUserId)
+
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$cloneId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+
+        // 원본 아이템이 살아 있어야 한다 — 막지 않았다면 여기가 깨진다.
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+    }
+
+    // 원본 경로가 이 변경으로 느슨해지지 않았는지 — 남의 토너먼트 아이템 id 는 여전히 404 여야 한다.
+    @Test
+    fun `GET tournaments-id-items-itemId 는 다른 토너먼트의 아이템 id 이면 404 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, rootItemId, _) = completeTournamentWith2Items(mockMvc)
+        val otherTournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$otherTournamentId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-010"))
+        // 원본 조회는 그대로 200 (회귀 가드)
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/items/$rootItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+    }
+
     @Test
     fun `POST tournaments-id-start 는 아이템이 있는 PENDING 토너먼트를 시작하고 가격 오름차순 정렬된 아이템 목록을 반환한다`() {
         val mockMvc = buildMockMvc()
@@ -3807,6 +3899,25 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .content("""{"currentRound":2,"firstTournamentItemId":$ti1,"secondTournamentItemId":$ti2,"selectedTournamentItemId":$ti1}"""),
         )
         return TournamentStart(tournamentId = tournamentId, item1Id = ti1, item2Id = ti2)
+    }
+
+    // 완료된 ROOT 에 플레이 링크를 열고, 다른 유저가 그 링크로 들어와 만든 복제본 id 를 돌려준다.
+    private fun createPlayLinkClone(
+        mockMvc: MockMvc,
+        rootTournamentId: Long,
+        cloneOwnerId: UUID,
+    ): Long {
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/play-link")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"),
+        )
+        val result = mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/from-play-link")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(cloneOwnerId)),
+        ).andReturn()
+        return objectMapper.readTree(result.response.contentAsString)["data"].asLong()
     }
 
     // Design B: ROOT(owner) + CLONE(member) 각 1명이 완료한 소셜 토너먼트 준비.

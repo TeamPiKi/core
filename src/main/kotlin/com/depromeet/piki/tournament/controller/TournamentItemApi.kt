@@ -58,6 +58,9 @@ interface TournamentItemApi {
             추가했는지와 무관하게 본인 위시 기준으로 판정하며, 본인 메모만 내려간다(타인 메모는 어떤 경우에도 없음).
             위시에 없거나 메모를 안 적었거나 게스트면 필드 자체가 생략된다.
             토너먼트 참여자만 조회할 수 있다.
+            **복제 토너먼트(플레이 링크·소셜 초대로 만들어진 판, `sourceTournamentId` 가 실려 오는 경우)도 그대로 조회된다.**
+            복제본은 자기 아이템 행을 갖지 않고 원본 것을 이어받으므로, 목록에서 받은 `tournamentItemId` 를
+            복제본 id 로 그대로 조회하면 원본과 같은 값이 내려간다. 다만 **수정은 막혀 있다**(`PATCH` 참조).
         """,
     )
     @ApiResponses(
@@ -94,7 +97,8 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "404",
-                description = "토너먼트를 찾을 수 없음 · 토너먼트 아이템을 찾을 수 없음 · 아이템이 해당 토너먼트에 속하지 않음",
+                description = "토너먼트를 찾을 수 없음 · 토너먼트 아이템을 찾을 수 없음 · " +
+                    "아이템이 해당 토너먼트(복제본이면 그 원본)에 속하지 않음",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -697,7 +701,8 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님 · " +
+                    "복제 토너먼트에서는 아이템을 수정할 수 없음 — code: TOURNAMENT-038)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -787,7 +792,8 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님)",
+                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님 · " +
+                    "복제 토너먼트에서는 아이템을 삭제할 수 없음 — code: TOURNAMENT-038)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

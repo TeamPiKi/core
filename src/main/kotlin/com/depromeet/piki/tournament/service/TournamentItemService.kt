@@ -154,6 +154,10 @@ class TournamentItemService(
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
+        // 복제 토너먼트는 원본 아이템을 이어받아 보여줄 뿐 자기 것이 아니다 — 여기서 수정하면 남의 원본을 고치게 된다.
+        // 단건 조회는 원본 기준으로 뚫었지만(#977) 수정은 명시적으로 막는다. 아이템 추가 금지와 같은 결이고,
+        // 이미지 업로드 이전에 걸러 orphan raw 를 남기지 않는다.
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()

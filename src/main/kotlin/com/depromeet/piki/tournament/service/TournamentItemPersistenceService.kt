@@ -164,6 +164,9 @@ class TournamentItemPersistenceService(
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
+        // 복제 토너먼트 차단(#977) — 호출부(updateItem)가 이미 걸러 정상 흐름에선 여기 닿지 않지만, 이 빈이
+        // 영속화 경계의 최후 판정이라 같은 검증을 둔다. 다른 호출 경로가 생겨도 원본 아이템이 복제 쪽에서 수정되지 않는다.
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         // 행 락 — 동시 수기 수정 두 건이 같은 pin 을 읽고 나중 커밋이 먼저 만든 MANUAL 버전을 덮는(유령 버전) 경합을 직렬화한다.
         val tournamentItem =
             tournamentItemRepository.findByIdForUpdate(tournamentItemId)
