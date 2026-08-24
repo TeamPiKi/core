@@ -1739,10 +1739,24 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.memo").value("원본 메모"))
 
+        // 클론 목록 API 가 실제로 내려준 tournamentItemId 로 단건 조회한다 — 목록·단건 두 API 의 계약을 함께 고정한다
+        // (#977 의 본질: 목록에서 받은 id 로 단건 조회가 통과해야 한다). 목록이 원본 id 를 이어받아 내리는지도 함께 단언.
+        val listedItemId =
+            objectMapper
+                .readTree(
+                    mockMvc
+                        .perform(
+                            get("/api/v1/tournaments/$cloneId")
+                                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+                        ).andReturn()
+                        .response.contentAsString,
+                )["data"]["pending"]["items"][0]["tournamentItemId"].asLong()
+        assertEquals(rootTi, listedItemId)
+
         // 클론 조회(다른 유저)는 200 이되, 원본 소유자의 memo 는 노출되지 않는다(NON_NULL 이라 키 생략).
         mockMvc
             .perform(
-                get("/api/v1/tournaments/$cloneId/items/$rootTi")
+                get("/api/v1/tournaments/$cloneId/items/$listedItemId")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.code").doesNotExist())
