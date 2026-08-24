@@ -43,6 +43,7 @@ data class AdminProperties(
     val schedulerAutoDispatch: Boolean = true,
     val discordBotToken: String = "",
     val discordMetricsChannelId: String = "",
+    val userMilestoneInterval: Long = 1000,
 ) {
     // 공개키·채널·호스트는 민감치 않아 노출하되 userId 는 개수만. grantSigningKey·discordBotToken 은 크리덴셜이라 set 여부만 마스킹한다.
     override fun toString(): String =
@@ -52,5 +53,6 @@ data class AdminProperties(
             "discordMetricsChannelId=$discordMetricsChannelId, " +
             "discordBotToken=${if (discordBotToken.isBlank()) "<none>" else "<set>"}, " +
             "grantSigningKey=${if (grantSigningKey.isBlank()) "<none>" else "<set>"}, " +
+            "userMilestoneInterval=$userMilestoneInterval, " +
             "allowlistTtl=$allowlistTtl, grantTokenTtl=$grantTokenTtl, localBypass=$localBypass)"
 }
