@@ -27,6 +27,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.PLAY_LINK_DURATION_DAYS
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -60,7 +61,6 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.time.LocalDateTime
-import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -3415,6 +3415,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         tournament.expirePlayLink()
         tournamentJpaRepository.save(tournament)
 
+        val requestedAt = LocalDateTime.now()
         val renewed = mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/play-link")
@@ -3423,14 +3424,23 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .content("{}"),
             ).andExpect(status().isOk)
             .andReturn()
-        // 응답은 오프셋이 붙은 형식으로 직렬화된다(예: 2026-09-08T17:58:51.498+09:00).
-        val renewedExpiresAt = OffsetDateTime.parse(objectMapper.readTree(renewed.response.contentAsString)["data"].asText())
-        assertTrue(renewedExpiresAt.isAfter(OffsetDateTime.now()))
 
-        // GET play-link-info 도 더 이상 만료로 막히지 않고 갱신된 값을 준다.
-        mockMvc
+        // 규정 기간만큼 나왔는지는 저장된 값으로 본다. "미래이기만 하면 통과" 로 두면 재발급 기간이 하루로
+        // 줄어도 안 깨진다. 응답 문자열이 아니라 DB 값을 쓰는 이유: LocalDateTime 응답은 Jackson 이 UTC 로
+        // 간주해 시스템 존으로 변환하며 오프셋을 붙이므로, 와이어 값의 시각이 서버가 저장한 값과 다르다.
+        val storedExpiresAt = requireNotNull(tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt)
+        assertTrue(storedExpiresAt.isAfter(requestedAt.plusDays(PLAY_LINK_DURATION_DAYS).minusSeconds(10)))
+        assertTrue(storedExpiresAt.isBefore(LocalDateTime.now().plusDays(PLAY_LINK_DURATION_DAYS).plusSeconds(10)))
+
+        // GET play-link-info 도 더 이상 만료로 막히지 않고, 재발급된 것과 같은 값을 준다 — 200 만 보면
+        // 조회가 엉뚱한 시각을 주는 회귀를 놓친다. 두 응답은 같은 직렬화를 거치므로 원문 비교로 충분하다.
+        val renewedRaw = objectMapper.readTree(renewed.response.contentAsString)["data"].asText()
+        val info = mockMvc
             .perform(get("/api/v1/tournaments/$tournamentId/play-link-info"))
             .andExpect(status().isOk)
+            .andReturn()
+        val infoRaw = objectMapper.readTree(info.response.contentAsString)["data"]["playLinkExpiresAt"].asText()
+        assertEquals(renewedRaw, infoRaw)
     }
 
     // 주최자가 완료된 토너먼트를 나가면(DELETE) 주최자의 참여 행이 지워지고 플레이 링크가 무효화된다.
@@ -3451,6 +3461,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 delete("/api/v1/tournaments/$tournamentId")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
+        val invalidatedExpiresAt = tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt
 
         mockMvc
             .perform(
@@ -3459,6 +3470,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{}"),
             ).andExpect(status().isForbidden)
+
+        // 403 만 보면 "거부는 했는데 그 전에 값은 갱신해 버린" 회귀를 못 잡는다. 무효화 시각이 그대로여야
+        // 주최자가 의도적으로 끊은 링크가 되살아나지 않았다고 말할 수 있다.
+        assertEquals(invalidatedExpiresAt, tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt)
     }
 
     // 복제 토너먼트에서는 공유 자체가 불가하다 — 아이템 추가 금지(TOURNAMENT-032)와 같은 결로,
