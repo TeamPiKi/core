@@ -937,7 +937,13 @@ class TournamentService(
                 ?: throw TournamentException.forbiddenTournament()
         if (tournamentUser.getId() != tournament.ownerTournamentUserId) throw TournamentException.forbiddenTournament()
         if (!tournament.isRoot()) throw TournamentException.clonedTournamentCannotSharePlayLink()
-        tournament.playLinkExpiresAt?.let { throw TournamentException.playLinkAlreadyCreated() }
+        // 멱등(#980) — 유효한 링크가 있으면 그 값을 그대로 돌려준다(연장하지 않는다: 공유 버튼을 다시 누른
+        // 것만으로 노출 기간이 늘면 주최자가 의도하지 않은 노출이 생긴다). 없거나(최초) 만료됐으면 새로 발급한다.
+        // 종전엔 "값이 있으면 무조건 거부" 라 만료된 뒤에는 영구히 재발급이 안 됐다 — 유효기간이 링크를 죽이는
+        // 데만 쓰이고 되살리는 데는 안 쓰였다. 주최자 탈퇴로 무효화된 경우는 이 지점에 닿지 않는다: softDelete
+        // 가 주최자 TournamentUser 행을 지우므로 위 findByTournamentIdAndUserId 가 못 찾아 forbiddenTournament
+        // 로 먼저 걸린다(findByTournamentIdAndUserIdAndDeletedAtIsNull 위임, 실측 확인).
+        if (tournament.isPlayLinkValid()) return requireNotNull(tournament.playLinkExpiresAt)
         val expiresAt = LocalDateTime
             .now()
             .plusDays(PLAY_LINK_DURATION_DAYS)

@@ -40,6 +40,9 @@ enum class TournamentErrorCode(
     ALREADY_PARTICIPANT("TOURNAMENT-022", ErrorCategory.CONFLICT, "이미 참여 중인 토너먼트예요."),
     NOT_COMPLETED_TOURNAMENT("TOURNAMENT-023", ErrorCategory.CONFLICT, "완료된 토너먼트에서만 할 수 있어요."),
     CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK("TOURNAMENT-024", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트는 공유 링크를 만들 수 없어요."),
+    // 025 는 #980 에서 발생을 멈췄다. createPlayLink 가 멱등해지며(유효하면 기존 값 반환, 만료됐으면 재발급)
+    // "이미 있으면 무조건 거부" 하던 이 사유가 사라졌다 — 그 거부가 만료 후 영구 재발급 불가로 이어졌었다.
+    // 번호는 재사용하지 않고 결번으로 남긴다(코드가 클라 계약). GUEST_CANNOT_CREATE_TOURNAMENT(036)와 같은 결.
     PLAY_LINK_ALREADY_CREATED("TOURNAMENT-025", ErrorCategory.CONFLICT, "이미 플레이 링크가 만들어진 토너먼트예요."),
     PLAY_LINK_NOT_CREATED("TOURNAMENT-026", ErrorCategory.NOT_FOUND, "아직 플레이 링크가 만들어지지 않은 토너먼트예요."),
     PLAY_LINK_EXPIRED("TOURNAMENT-027", ErrorCategory.CONFLICT, "플레이 링크가 만료됐어요."),
