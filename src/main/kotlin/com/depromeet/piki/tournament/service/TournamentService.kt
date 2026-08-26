@@ -168,6 +168,9 @@ class TournamentService(
                 .findByIds(wishRepository.findByItemIdsAndUserId(command.itemIds, userId).map { it.snapshotId })
                 .associateBy { it.itemId }
         // 파싱 대기·진행 중(PENDING·PROCESSING)이거나 실패(FAILED)한 상품은 이름·가격이 비어 출전에 부적합하다. 활성 snapshot 이 READY 인 것만 허용.
+        // 미완성(INCOMPLETE)은 그 앞에서 먼저 가른다 — 기다리면 풀리는 파싱 중과 달리 사용자가 빈 값을 채워야 풀려,
+        // "잠시 후 추가해 주세요" 가 사실이 아니게 된다. 둘이 섞였을 땐 행동이 필요한 쪽을 알린다.
+        if (activeSnapshotByItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncomplete()
         if (activeSnapshotByItemId.size != command.itemIds.size || activeSnapshotByItemId.values.any { !it.isReady() }) {
             throw TournamentException.itemNotReady()
         }
@@ -239,6 +242,9 @@ class TournamentService(
                 .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
                 .associate { it.getId() to it }
         if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
+        // 담기 게이트와 같은 이유로 미완성을 먼저 본다. 아이템별 루프가 아니라 전체를 한 번 훑는 이유는, 루프에
+        // 맡기면 앞선 아이템이 파싱 중이기만 해도 "모두 준비되면" 안내가 나가 뒤쪽 미완성이 가려지기 때문이다.
+        if (pinnedByTournamentItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncompleteToStart()
         for (tournamentItem in tournamentItems) {
             val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
             if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()

@@ -42,11 +42,18 @@ class TournamentException private constructor(
         fun notFoundItems(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_ITEMS)
 
         // 비동기 파싱이 끝나지 않은(PENDING·PROCESSING) 또는 실패한(FAILED) 상품을 위시에서 토너먼트에 추가하려 한 경우.
-        // 곧 READY 가 되거나 영구 실패라 현재 상태와 충돌 → 409.
+        // 곧 READY 가 되거나 영구 실패라 현재 상태와 충돌 → 409. 미완성(INCOMPLETE)은 itemIncomplete 가 따로 진다.
         fun itemNotReady(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_READY)
+
+        // 추출이 일부 필드만 채운(INCOMPLETE) 상품을 담으려 한 경우. itemNotReady 와 가르는 이유는 해법이 달라서다 —
+        // 파싱 중은 기다리면 풀리지만 미완성은 사용자가 빈 값을 채워야 풀린다.
+        fun itemIncomplete(): TournamentException = TournamentException(TournamentErrorCode.ITEM_INCOMPLETE)
 
         // 토너먼트 시작 시 PENDING·PROCESSING·FAILED 아이템이 포함된 경우.
         fun itemNotReadyToStart(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_READY_TO_START)
+
+        // 토너먼트 시작 시 미완성(INCOMPLETE) 아이템이 포함된 경우. 담기 경로의 itemIncomplete 와 같은 이유로 가른다.
+        fun itemIncompleteToStart(): TournamentException = TournamentException(TournamentErrorCode.ITEM_INCOMPLETE_TO_START)
 
         // 토너먼트 시작 시 가격 정보가 없는 아이템이 포함된 경우.
         // 가격 기준 정렬이 불가능하고 클라이언트가 아이템 추가 시점에 해당 상태를 유발할 수 있어 → 409.

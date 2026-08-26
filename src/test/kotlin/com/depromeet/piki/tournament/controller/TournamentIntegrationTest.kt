@@ -603,6 +603,44 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments-id-items-wish 에서 INCOMPLETE 아이템은 409 와 미완성 전용 code 를 반환한다`() {
+        // 파싱 중(ITEM_NOT_READY)과 code 를 가른다 — 기다리면 풀리는 쪽과 사용자가 값을 채워야 풀리는 쪽은 안내가 달라야 한다.
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveIncompleteWishItem()
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_INCOMPLETE.code))
+    }
+
+    @Test
+    fun `POST tournaments-id-start 에서 INCOMPLETE 아이템이 있으면 409 와 미완성 전용 code 를 반환한다`() {
+        // 토너먼트에 직접 추가한 아이템의 파싱이 미완성으로 끝난 경우 — 담기 게이트를 거치지 않아 여기서 걸린다.
+        // 가격만 채워진 조합이라, 가격 부재(ITEM_PRICE_REQUIRED)가 아니라 미완성으로 갈리는 것까지 함께 본다.
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        addItemsToTournament(mockMvc, tournamentId, userId, saveWishItem(name = "완성 아이템"))
+        val incompleteItem = itemJpaRepository.save(Item())
+        val snapshot = saveSnapshot(incompleteItem.getId(), status = ItemStatus.INCOMPLETE, price = 10_000)
+        tournamentItemJpaRepository.save(
+            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
+        )
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_INCOMPLETE_TO_START.code))
+    }
+
+    @Test
     fun `POST tournaments-id-matches 는 IN_PROGRESS 토너먼트에 매치를 기록하고 200 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, item1Id, item2Id) = startTournamentWith2Items(mockMvc)
@@ -2824,7 +2862,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 currency = currency,
                 imageUrl = imageUrl,
                 status = status,
-                extractedAt = if (status == ItemStatus.READY) LocalDateTime.now() else null,
+                // READY·INCOMPLETE 는 추출이 값을 남긴 상태라 추출시각이 있다(ItemSnapshot 의 두 불변식).
+                extractedAt = if (status == ItemStatus.READY || status == ItemStatus.INCOMPLETE) LocalDateTime.now() else null,
             ),
         )
 
@@ -2839,6 +2878,18 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         itemParsingService.markExtracted(
             result.snapshot.getId(),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            expectedAttempt = 0,
+        )
+        return result.item.getId()
+    }
+
+    // 위시의 활성 snapshot 이 미완성(INCOMPLETE)인 아이템 — 가격만 빠진 부분 추출이라 markExtracted 가 그렇게 판정한다(#944).
+    private fun saveIncompleteWishItem(owner: UUID = userId, name: String = "가격 없는 아이템"): Long {
+        val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
+        itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        itemParsingService.markExtracted(
+            result.snapshot.getId(),
+            ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
         return result.item.getId()

@@ -238,6 +238,7 @@ class TournamentApiExamples(
                         add(TournamentException.notFoundItems(), name = "존재하지 않는 아이템 포함")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(TournamentException.itemNotReadyToStart(), name = "아직 준비 중인 상품 포함")
+                        add(TournamentException.itemIncompleteToStart(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                         add(TournamentException.itemPriceRequired(), name = "가격 정보 없는 상품 포함")
                         // 아래 둘은 멤버 시작 경로(startAsMember) — 주최자가 ROOT 를 시작해야 멤버가 본인 클론을 만들 수 있다.
                         add(TournamentException.notInProgressTournament(), name = "주최자가 아직 시작하지 않음 (멤버 시작)")

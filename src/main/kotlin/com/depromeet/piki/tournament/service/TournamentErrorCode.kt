@@ -78,4 +78,15 @@ enum class TournamentErrorCode(
         ErrorCategory.FORBIDDEN,
         "플레이 링크로 만든 토너먼트에서는 아이템을 수정하거나 삭제할 수 없어요.",
     ),
+
+    // 039~040 은 미완성(INCOMPLETE) 안내를 012·013 에서 갈라낸 것이다(#944 후속). 두 문구는 "잠시 후"·"모두
+    // 준비되면" 이라 기다리면 풀린다는 뜻인데, 미완성은 사용자가 빈 값을 채우지 않는 한 영원히 풀리지 않아
+    // 안내가 사실과 어긋났다. code 까지 나누는 이유는 클라이언트도 같은 이유로 화면을 갈라야 하기 때문이다 —
+    // 한 code 로 묶여 있으면 "기다리라" 와 "채우라" 를 구분할 근거가 응답에 없다.
+    ITEM_INCOMPLETE("TOURNAMENT-039", ErrorCategory.CONFLICT, "정보가 비어 있는 상품이에요. 내용을 채운 뒤 담아 주세요."),
+    ITEM_INCOMPLETE_TO_START(
+        "TOURNAMENT-040",
+        ErrorCategory.CONFLICT,
+        "정보가 비어 있는 상품이 있어요. 모두 채워야 시작할 수 있어요.",
+    ),
 }
