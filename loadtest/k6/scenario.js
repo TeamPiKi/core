@@ -110,26 +110,41 @@ function authParams(token, name, extraHeaders) {
 }
 
 // 시드 유저(lt 프리픽스)의 토큰을 미리 발급해 전 시나리오가 공유한다.
+//
+// 토큰 발급은 두 단계다. SecurityConfig 가 `/api/v1/dev/users` GET 만 permitAll 로 두고
+// 나머지 `/api/v1/dev/**` 는 인증을 요구하므로(GUEST·MEMBER 모두 통과), 게스트 토큰을 한 번
+// 받아 그것으로 시드 유저의 MEMBER 토큰을 발급한다. 게스트 토큰은 재사용한다.
 export function setup() {
+    const guestRes = http.post(`${BASE}/api/v1/auth/guest`, null, {
+        headers: { 'X-Client-Type': 'app' },
+        tags: { name: 'setup guest token' },
+    });
+    if (guestRes.status !== 200 && guestRes.status !== 201) {
+        throw new Error(`guest token failed: ${guestRes.status}`);
+    }
+    const guestToken = guestRes.json('data.accessToken');
+    if (!guestToken) throw new Error('guest token missing (X-Client-Type: app 없으면 쿠키로만 나간다)');
+
     const ids = [];
     let cursor = null;
     for (let page = 0; page < 20 && ids.length < TOKEN_USERS; page++) {
         const url = `${BASE}/api/v1/dev/users?size=200${cursor ? `&cursor=${cursor}` : ''}`;
         const r = http.get(url, { tags: { name: 'setup dev users list' } });
         if (r.status !== 200) throw new Error(`dev users list failed: ${r.status}`);
+        // 응답 필드는 id 가 아니라 userId 다.
         for (const u of r.json('data') || []) {
-            if (u.nickname && u.nickname.startsWith('lt')) ids.push(u.id);
+            if (u.nickname && u.nickname.startsWith('lt')) ids.push(u.userId);
         }
         if (!r.json('pageResponse.hasNext')) break;
         cursor = r.json('pageResponse.nextCursor');
     }
     const users = [];
     for (const id of ids.slice(0, TOKEN_USERS)) {
-        const r = http.get(`${BASE}/api/v1/dev/users/${id}`, {
-            headers: { 'X-Client-Type': 'app' },
+        const r = http.post(`${BASE}/api/v1/dev/${id}/token`, null, {
+            headers: { 'X-Client-Type': 'app', Authorization: `Bearer ${guestToken}` },
             tags: { name: 'setup token issue' },
         });
-        if (r.status !== 200) continue;
+        if (r.status !== 200 && r.status !== 201) continue;
         const token = r.json('data.accessToken');
         if (token) users.push({ id, token });
     }
