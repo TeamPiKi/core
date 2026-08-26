@@ -63,6 +63,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(TournamentException.duplicateTournamentItem(), name = "이미 등록된/중복 아이템")
                         add(TournamentException.itemNotReady(), name = "PENDING/PROCESSING/FAILED 등 미완료 상품 포함")
+                        add(TournamentException.itemIncomplete(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                     }
 
                 handlerMethod.binds(TournamentItemController::addItemFromLink) ->
