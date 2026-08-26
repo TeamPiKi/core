@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>발송 결과 · PiKi 백오피스</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
   <style>
     :root{--accent:#0EA5E9;--accent-soft:#E0F2FE;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;}
     *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
@@ -93,12 +93,25 @@
           tr.appendChild(td); codesEl.appendChild(tr);
         }
       }
+      // 무한 폴링을 막는 두 장치(#988). 없으면 삭제된 공지(400)나 fan-out 스레드가 죽어 SENDING 에 갇힌 공지에서
+      // 탭 하나가 시간당 약 1200 요청을 영구히 보낸다 — 매 건이 DB 왕복이고 서버 로그도 같이 쌓인다.
+      //  - 비 2xx 는 영구 오류로 보고 즉시 멈춘다(대상이 사라진 경우라 재시도해도 같은 답이다).
+      //  - 진행이 끝나지 않아도 상한(MAX_POLLS)에서 멈추고 새로고침을 안내한다.
+      var MAX_POLLS = 400; // 1.5s 간격 기준 약 10분
+      var polls = 0;
+      function stopPolling(message) {
+        document.getElementById('state').textContent = message;
+      }
       function poll() {
+        if (++polls > MAX_POLLS) return stopPolling('진행 확인 중단 - 새로고침하세요');
         fetch(url, { headers: { 'Accept': 'application/json' } })
-          .then(function (res) { return res.json(); })
+          .then(function (res) {
+            if (!res.ok) throw new Error('gone'); // 삭제됐거나 조회 불가 — 재시도해도 같은 답이라 멈춘다.
+            return res.json();
+          })
           // 공통 래퍼(ApiResponseBody) 라 실제 결과는 .data 에 있다.
           .then(function (body) { var r = body.data; render(r); if (!r.done) setTimeout(poll, 1500); })
-          .catch(function () { setTimeout(poll, 3000); });
+          .catch(function () { stopPolling('진행 상황을 불러오지 못했습니다 - 새로고침하세요'); });
       }
       // 서버 렌더가 이미 done 이면 폴링 불필요.
       if (document.getElementById('state').textContent.indexOf('완료') === -1) setTimeout(poll, 1500);

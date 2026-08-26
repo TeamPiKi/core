@@ -5,8 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>공지 발송 확인 · PiKi 백오피스</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+  <!-- flatpickr 는 버전을 고정한다(#988) — 무버전 URL 은 jsDelivr 의 latest 로 해석돼, breaking 릴리즈가 나면
+       dateFormat 계약이 조용히 바뀌어 예약 시각이 서버가 못 읽는 모양으로 제출된다. 4.6.13 은 고정 시점 최신이고
+       무버전 URL 이 해석하던 파일과 내용이 같음을 해시로 확인했다. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
+        integrity="sha384-RkASv+6KfBMW9eknReJIJ6b3UnjKOKC5bOUaNgIY778NFbQ8MtWq9Lr/khUgqtTt" crossorigin="anonymous">
+  <!-- TODO(#988): uicdn.toast.com 은 CORS 헤더가 없어 SRI 불가(crossorigin 을 붙이면 차단된다). -->
   <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/toastui-editor-viewer.min.css">
   <style>
     :root{--accent:#0EA5E9;--accent-soft:#E0F2FE;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;}
@@ -141,8 +146,10 @@
       toastui.Editor.factory({ el: el, viewer: true, initialValue: body });
     })();
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
+          integrity="sha384-5JqMv4L/Xa0hfvtF06qboNdhvuYXUku9ZrhZh3bSk8VXF0A/RuSLHpLsSV9Zqhl6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/ko.js"
+          integrity="sha384-GyzlITcjwPgjvsKMq6Pws/ETSXr/1Za1ieVBHZnkws6Pkyn7rc13MTLI8gFJvjuY" crossorigin="anonymous"></script>
   <script>
     // 발송 시각 — flatpickr 달력(PiKi 하늘 테마, 한국어) + 빠른 선택 칩. 고른 시각을 한국어로 요약한다.
     // 서버에 보내는 값(name=scheduledAt)은 ISO "Y-m-dTH:i"(LocalDateTime.parse 형식), 화면 표시는 altInput 의 친화적 포맷.

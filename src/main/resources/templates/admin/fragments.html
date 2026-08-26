@@ -62,8 +62,15 @@
     </span>
     <a class="pkhome" th:if="${backHref}" th:href="@{${backHref}}" th:text="${backLabel}">←</a>
   </div>
-  <script>
+  <script th:inline="javascript">
     (function () {
+      // 연장은 상태를 바꾸는 POST 라 CSRF 토큰을 싣는다(#988) — 제외 목록에 두면 제3자 페이지의 cross-origin
+      // 폼 자동 제출로 TTL 이 무기한 늘어나 "명시적 버튼으로만 연장" 이 무력화된다. 이 fragment 는 head 가 아니라
+      // 상단바라 meta 태그 대신 th:inline 으로 값을 직접 심는다(다른 화면은 head 의 _csrf meta 를 읽는다).
+      // safe navigation 으로 읽는다 — 이 fragment 는 모든 admin 화면이 include 하므로, CsrfFilter 가 돌지 않는
+      // 구성(필터를 직접 조립하는 테스트 등)에서 직접 접근하면 상단바 렌더가 깨져 페이지 전체가 500 이 된다.
+      var csrfHeader = /*[[${_csrf?.headerName}]]*/ '';
+      var csrfToken = /*[[${_csrf?.token}]]*/ '';
       var box = document.getElementById('pk-session');
       var out = document.getElementById('pk-session-remaining');
       var btn = document.getElementById('pk-session-extend');
@@ -95,16 +102,19 @@
         timer = setInterval(tick, 1000);
       }
       function load() {
+        // 공통 래퍼(ApiResponseBody) 라 실제 값은 .data 에 있다.
         fetch('/admin/session/ttl').then(function (r) { return r.json(); })
-          .then(function (d) { start(d.remainingSeconds); })
+          .then(function (b) { start(b.data.remainingSeconds); })
           .catch(function () { out.textContent = '-'; });
       }
       btn.addEventListener('click', function () {
         btn.disabled = true;
+        var headers = {};
+        if (csrfHeader) headers[csrfHeader] = csrfToken;
         // 실패(비 2xx·네트워크)면 기존 카운트다운을 유지한다 — 응답 실패를 "만료됨"으로 오표시하지 않는다.
-        fetch('/admin/session/extend', { method: 'POST' })
+        fetch('/admin/session/extend', { method: 'POST', headers: headers })
           .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-          .then(function (d) { start(d.remainingSeconds); })
+          .then(function (b) { start(b.data.remainingSeconds); })
           .catch(function () {})
           .finally(function () { btn.disabled = false; });
       });

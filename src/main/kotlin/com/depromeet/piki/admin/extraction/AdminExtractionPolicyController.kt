@@ -91,14 +91,15 @@ class AdminExtractionPolicyController(
             )
             "redirect:/admin/extraction-policies?updated"
         } catch (e: IllegalArgumentException) {
-            model.addAttribute("error", e.message)
-            model.addAttribute("draftReason", reason)
-            detailView(
-                adminExtractionPolicyService.find(domain),
-                model,
-                selectedAccess = access.name,
-                draftPermissionRef = permissionRef,
-            )
+            // find 가 다시 던질 수 있다 — 그 사이 다른 운영자가 행을 지웠거나, 애초에 domain 이 정규화를 통과 못 하는
+            // 값(경로에 공백 등)이라 save 가 막힌 경우다. 복구 경로에서 새 예외가 새면 GlobalExceptionHandler 가
+            // 화면을 raw JSON 400 으로 갈아치워, 에러 메시지도 제출값도 함께 잃는다(#988). 그 땐 목록으로 돌린다.
+            runCatching { adminExtractionPolicyService.find(domain) }
+                .map { policy ->
+                    model.addAttribute("error", e.message)
+                    model.addAttribute("draftReason", reason)
+                    detailView(policy, model, selectedAccess = access.name, draftPermissionRef = permissionRef)
+                }.getOrElse { "redirect:/admin/extraction-policies?missing" }
         }
 
     @PostMapping("/{domain}/delete")

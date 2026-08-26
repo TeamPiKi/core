@@ -1,5 +1,6 @@
 package com.depromeet.piki.admin.announcement
 
+import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.announcement.domain.AnnouncementImageException
 import org.slf4j.LoggerFactory
 import org.springframework.http.client.SimpleClientHttpRequestFactory
@@ -26,6 +27,7 @@ interface AnnouncementImageFetcher {
 }
 
 @Component
+@ConditionalOnAdminEnabled
 class DefaultAnnouncementImageFetcher : AnnouncementImageFetcher {
     private val log = LoggerFactory.getLogger(javaClass)
 

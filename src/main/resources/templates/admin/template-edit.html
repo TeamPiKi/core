@@ -7,7 +7,7 @@
   <title th:text="${template.type} + ' · 템플릿 편집'">템플릿 편집</title>
   <meta name="_csrf" th:content="${_csrf.token}">
   <meta name="_csrf_header" th:content="${_csrf.headerName}">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
   <style>
     :root{--accent:#0EA5E9;--accent-soft:#E0F2FE;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;}
     *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
@@ -73,8 +73,11 @@
 
         <label>사용 가능한 변수 (클릭하면 삽입)</label>
         <div class="vars" th:if="${!template.variables.isEmpty()}">
-          <button type="button" class="chip" th:each="v : ${template.variables}"
-                  th:attr="data-var=${v.name}" th:utext="'${' + ${v.name} + '}' + '<span class=\'s\'>= ' + ${v.sample} + '</span>'">var</button>
+          <!-- 이스케이프되는 th:text 두 개로 나눈다(#988). 예전엔 th:utext 로 문자열을 결합해 마크업을 조립했는데,
+               sample 에 <·&·따옴표가 들어가면 버튼이 깨지고, 변수 카탈로그가 DB 로 옮겨가는 순간 그대로 저장형
+               XSS 경로가 된다. 출력 결과는 같고 unescaped sink 만 사라진다. -->
+          <button type="button" class="chip" th:each="v : ${template.variables}" th:attr="data-var=${v.name}"
+          ><span th:text="'${' + ${v.name} + '}'">${var}</span><span class="s" th:text="'= ' + ${v.sample}">= 샘플</span></button>
         </div>
         <div class="none" th:if="${template.variables.isEmpty()}">이 타입은 변수가 없습니다 (고정 문구).</div>
 

@@ -21,7 +21,10 @@ import org.springframework.web.util.UrlPathHelper
 // 게이트를 통과한다 — "내부 직결" 판정은 ClientIp.isInBoxDirect 가 소유한다(#872).
 @Component
 @ConditionalOnAdminEnabled
-@Order(Ordered.HIGHEST_PRECEDENCE + 3)
+// AccessLogFilter(HIGHEST+3) 바로 안쪽에 둔다(#988) — 같은 값이면 두 필터의 상대 순서가 빈 이름·등록 순서 같은
+// 비명세 규칙으로 갈려, 이 게이트가 바깥으로 정렬되는 순간 게이트가 낸 404 가 access log 도 traceId 도 없이 사라진다.
+// dev 문서 표면을 훑는 시도가 관측에서 통째로 실명하므로 값을 한 칸 안으로 내려 순서를 확정한다.
+@Order(Ordered.HIGHEST_PRECEDENCE + 4)
 class EnvironmentAccessFilter(
     private val allowlistService: AdminAllowlistService,
     private val adminProperties: AdminProperties,

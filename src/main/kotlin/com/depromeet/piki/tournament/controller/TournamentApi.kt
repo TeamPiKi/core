@@ -690,19 +690,31 @@ interface TournamentApi {
     ): ApiResponseBody<RecordMatchResponse>
 
     @Operation(
-        summary = "플레이 링크 생성",
+        summary = "플레이 링크 생성 (멱등)",
         description = """
-            완료된 토너먼트의 플레이 링크를 생성한다. 토너먼트 소유자만 호출 가능.
-            플레이 링크를 통해 친구들이 동일한 아이템 구성으로 토너먼트를 진행할 수 있다.
-            만료 기간은 생성 시점 + 14일로 고정이며 변경 불가.
-            이미 링크가 생성된 경우 409.
+            완료된 토너먼트의 플레이 링크를 만들거나 갱신한다. 토너먼트 소유자만 호출 가능.
+            플레이 링크를 통해 친구들이 동일한 아이템 구성으로 각자 자기 토너먼트를 진행할 수 있다
+            (친구마다 원본을 복제한 새 토너먼트가 생긴다 - `POST /{sourceTournamentId}/from-play-link`).
+
+            **호출 시점의 링크 상태에 따라 동작이 갈리고, 항상 200을 반환한다.**
+            - 아직 만든 적 없으면: 새로 만든다 (생성 시점 + 14일).
+            - 유효한 링크가 있으면: **연장하지 않고** 기존 만료시각을 그대로 돌려준다. 공유 버튼을 다시 누른 것만으로
+              노출 기간이 늘어나는 것을 막기 위함이다.
+            - 만료된 링크가 있으면: 새 14일로 갱신한다.
+
+            플레이 링크는 **토너먼트당 하나**이고 주소가 `tournamentId` 로 결정된다(별도 토큰 없음) - 같은
+            토너먼트에 여러 개를 만들 수 없다. 링크를 통해 들어오는 인원 제한은 없고, 들어온 사람마다 자기
+            클론이 하나씩 생긴다.
+
+            초대 코드(시작 전, 참여자로 합류)와는 다른 기능이며 동시에 열리는 구간이 없다 - 초대 코드는
+            PENDING 상태에서만, 플레이 링크는 COMPLETED 상태에서만 쓸 수 있다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "플레이 링크 생성 성공 (playLinkExpiresAt 반환)",
+                description = "플레이 링크 생성 또는 갱신 성공 (playLinkExpiresAt 반환) - 매 호출이 이 응답이다",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -722,7 +734,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (COMPLETED가 아닌 토너먼트 · 플레이 링크가 이미 생성됨)",
+                description = "상태 충돌 (COMPLETED가 아닌 토너먼트)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],

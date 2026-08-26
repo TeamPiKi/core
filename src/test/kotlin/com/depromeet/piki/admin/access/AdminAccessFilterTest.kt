@@ -3,7 +3,9 @@ package com.depromeet.piki.admin.access
 import org.junit.jupiter.api.Test
 import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties
 import org.springframework.core.annotation.OrderUtils
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.session.web.http.SessionRepositoryFilter
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -40,4 +42,39 @@ class AdminAccessFilterTest {
                 "미허용 요청이 404 가 아니라 메인 체인의 401 로 새어 존재 숨김이 깨진다.",
         )
     }
+
+    @Test
+    fun `admin 과 admin 하위 경로만 게이트한다`() {
+        assertTrue(AdminAccessFilter.isGatedPath("/admin"))
+        assertTrue(AdminAccessFilter.isGatedPath("/admin/announcements"))
+        assertTrue(AdminAccessFilter.isGatedPath("/admin/item-quota"))
+    }
+
+    @Test
+    fun `공개 진입과 정적 prefix 는 게이트하지 않는다`() {
+        // /admin-access 는 grant 진입점이라 세션 이전에 닿아야 한다.
+        // startsWith("/admin") 로 판정하면 과매칭돼 grant 흐름 자체가 막힌다.
+        assertFalse(AdminAccessFilter.isGatedPath("/admin-access/grant"))
+        assertFalse(AdminAccessFilter.isGatedPath("/api/v1/wishlists"))
+    }
+
+    @Test
+    fun `percent-encoding·matrix parameter 로 위장한 admin 경로도 정규화 후 게이트한다`() {
+        // raw requestURI 로 판정하면 필터는 안 걸고 dispatcher 는 정규화 경로로 서빙해, 세션·IP 바인딩·allowlist
+        // 검사를 통째로 건너뛴 채 백오피스에 닿는 우회가 뚫린다(#986). dispatcher 와 같은 경로를 봐야 한다.
+        assertTrue(AdminAccessFilter.isGatedRequest(req("/%61dmin/announcements"))) // %61 = 'a'
+        assertTrue(AdminAccessFilter.isGatedRequest(req("/admin/%69tem-quota"))) // %69 = 'i'
+        assertTrue(AdminAccessFilter.isGatedRequest(req("/admin;x=1")))
+        assertTrue(AdminAccessFilter.isGatedRequest(req("/admin;x=1/announcements")))
+    }
+
+    @Test
+    fun `정규화 후에도 공개 진입 prefix 는 통과한다`() {
+        // 위 우회 차단이 grant 진입까지 함께 막아버리면 백오피스에 아무도 못 들어간다.
+        assertTrue(AdminAccessFilter.isGatedRequest(req("/admin")))
+        assertFalse(AdminAccessFilter.isGatedRequest(req("/admin-access/grant")))
+        assertFalse(AdminAccessFilter.isGatedRequest(req("/%61dmin-access/grant")))
+    }
+
+    private fun req(uri: String) = MockHttpServletRequest().apply { requestURI = uri }
 }

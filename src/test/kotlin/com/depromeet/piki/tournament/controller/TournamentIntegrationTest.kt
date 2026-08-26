@@ -27,6 +27,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.PLAY_LINK_DURATION_DAYS
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -3419,8 +3420,40 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data").isString)
     }
 
+    // 멱등(#980) — 유효한 링크가 있는 상태로 다시 호출해도 더 이상 409 가 아니다. 이게 신고된 증상이었다:
+    // 클라는 성공 직후 로컬 상태를 갱신하지 않아, 같은 세션에서 공유 버튼을 다시 누르면 stale 한 "미생성"
+    // 상태로 POST 를 재호출했고 그게 409 로 막혀 공유 자체가 중단됐다.
     @Test
-    fun `POST play-link 는 이미 생성된 경우 재생성 시 409 를 반환한다`() {
+    fun `POST play-link 는 유효한 링크가 있으면 연장 없이 기존 만료시각을 그대로 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _, _) = completeTournamentWith2Items(mockMvc)
+        val firstResult = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isOk)
+            .andReturn()
+        val firstExpiresAt = objectMapper.readTree(firstResult.response.contentAsString)["data"].asText()
+
+        // 두 번째 호출도 200 이고, 만료시각이 늘어나지 않는다 — 공유 버튼을 다시 누른 것만으로
+        // 노출 기간이 연장되면 주최자가 의도하지 않은 노출이 생긴다.
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data").value(firstExpiresAt))
+    }
+
+    // 종전엔 이 상태에서 POST 도 409(이미 생성됨), GET play-link-info 도 409(만료됨) 로 양쪽 다 막혀
+    // 그 토너먼트는 영구히 재공유가 불가능했다. 유효기간이 링크를 죽이는 데만 쓰이고 되살리는 데는
+    // 안 쓰이던 문제 — 재호출은 새 14일로 갱신돼야 한다.
+    @Test
+    fun `POST play-link 는 만료된 링크가 있으면 새 만료시각으로 갱신한다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, _, _) = completeTournamentWith2Items(mockMvc)
         mockMvc.perform(
@@ -3429,6 +3462,57 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"),
         )
+        val tournament = tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!
+        tournament.expirePlayLink()
+        tournamentJpaRepository.save(tournament)
+
+        val requestedAt = LocalDateTime.now()
+        val renewed = mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isOk)
+            .andReturn()
+
+        // 규정 기간만큼 나왔는지는 저장된 값으로 본다. "미래이기만 하면 통과" 로 두면 재발급 기간이 하루로
+        // 줄어도 안 깨진다. 응답 문자열이 아니라 DB 값을 쓰는 이유: LocalDateTime 응답은 Jackson 이 UTC 로
+        // 간주해 시스템 존으로 변환하며 오프셋을 붙이므로, 와이어 값의 시각이 서버가 저장한 값과 다르다.
+        val storedExpiresAt = requireNotNull(tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt)
+        assertTrue(storedExpiresAt.isAfter(requestedAt.plusDays(PLAY_LINK_DURATION_DAYS).minusSeconds(10)))
+        assertTrue(storedExpiresAt.isBefore(LocalDateTime.now().plusDays(PLAY_LINK_DURATION_DAYS).plusSeconds(10)))
+
+        // GET play-link-info 도 더 이상 만료로 막히지 않고, 재발급된 것과 같은 값을 준다 — 200 만 보면
+        // 조회가 엉뚱한 시각을 주는 회귀를 놓친다. 두 응답은 같은 직렬화를 거치므로 원문 비교로 충분하다.
+        val renewedRaw = objectMapper.readTree(renewed.response.contentAsString)["data"].asText()
+        val info = mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId/play-link-info"))
+            .andExpect(status().isOk)
+            .andReturn()
+        val infoRaw = objectMapper.readTree(info.response.contentAsString)["data"]["playLinkExpiresAt"].asText()
+        assertEquals(renewedRaw, infoRaw)
+    }
+
+    // 주최자가 완료된 토너먼트를 나가면(DELETE) 주최자의 참여 행이 지워지고 플레이 링크가 무효화된다.
+    // 이 무효화는 자연 만료와 컬럼 값이 똑같이 "과거 시각" 이지만, 재발급 대상이면 안 된다 — 주최자가 더
+    // 이상 이 토너먼트의 참여자가 아니므로 createPlayLink 앞단의 소유자 확인에서 먼저 막혀야 한다.
+    @Test
+    fun `POST play-link 는 주최자가 나가서 무효화된 토너먼트에서는 403 이고 갱신되지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, _, _) = completeTournamentWith2Items(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/play-link")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"),
+        )
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$tournamentId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+        val invalidatedExpiresAt = tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt
 
         mockMvc
             .perform(
@@ -3436,7 +3520,79 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{}"),
-            ).andExpect(status().isConflict)
+            ).andExpect(status().isForbidden)
+
+        // 403 만 보면 "거부는 했는데 그 전에 값은 갱신해 버린" 회귀를 못 잡는다. 무효화 시각이 그대로여야
+        // 주최자가 의도적으로 끊은 링크가 되살아나지 않았다고 말할 수 있다.
+        assertEquals(invalidatedExpiresAt, tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.playLinkExpiresAt)
+    }
+
+    // 복제 토너먼트에서는 공유 자체가 불가하다 — 아이템 추가 금지(TOURNAMENT-032)와 같은 결로,
+    // 원본이 아닌 판이 또 다른 원본 행세를 해선 안 된다.
+    // 완료 검사가 CLONE 검사보다 앞서므로, 이 사유에 닿으려면 클론을 끝까지 진행시켜야 한다.
+    @Test
+    fun `POST play-link 는 완료된 CLONE 이어도 403 TOURNAMENT-024 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, cloneId, _) = cloneFromCompletedRoot(mockMvc)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$cloneId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+        // CLONE 은 자기 아이템 행이 없고 ROOT 것을 그대로 쓴다 — 대진도 ROOT 의 tournamentItemId 로 기록한다.
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootId)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$cloneId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},""" +
+                            """"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                    ),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$cloneId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-024"))
+    }
+
+    @Test
+    fun `POST play-link 는 소유자가 아닌 참여자면 403 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val rootTournamentId = createTournament(mockMvc)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":"${tournamentJpaRepository.findByIdAndDeletedAtIsNull(rootTournamentId)!!.inviteCode}"}"""),
+        )
+        addItemsToTournament(mockMvc, rootTournamentId, userId, saveWishItem(name = "아이템1"), saveWishItem(name = "아이템2"))
+        mockMvc.perform(post("/api/v1/tournaments/$rootTournamentId/start").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+        val items = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootTournamentId)
+        mockMvc.perform(
+            post("/api/v1/tournaments/$rootTournamentId/matches")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"currentRound":2,"firstTournamentItemId":${items[0].getId()},""" +
+                        """"secondTournamentItemId":${items[1].getId()},"selectedTournamentItemId":${items[0].getId()}}""",
+                ),
+        )
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$rootTournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isForbidden)
     }
 
     @Test

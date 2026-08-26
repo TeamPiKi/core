@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>추출 모델 · PiKi 백오피스</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
   <style>
     :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --ok:#15803d; --ok-soft:#dcfce7; }
     /* keep-all: 한국어가 어절 중간에서 꺾이지 않게 한다. 모델명처럼 공백 없는 긴 토큰이 칸을 밀어내지 않도록
@@ -53,7 +53,7 @@
   <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
   <div class="wrap">
     <h1>추출 모델</h1>
-    <p class="lede">추출에 쓰는 <b>LLM 모델</b>을 경로별로 배포 없이 지정합니다.</p>
+    <p class="lede">추출에 쓰는 <b>LLM 모델</b>을 경로별로 지정합니다.</p>
 
     <details class="guide">
       <summary>동작 방식</summary>
