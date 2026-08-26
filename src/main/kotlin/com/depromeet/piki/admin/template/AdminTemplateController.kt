@@ -2,6 +2,7 @@ package com.depromeet.piki.admin.template
 import io.swagger.v3.oas.annotations.Hidden
 
 import com.depromeet.piki.admin.access.AdminSession
+import com.depromeet.piki.admin.config.ClientIp
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.notification.domain.NotificationType
@@ -83,6 +84,6 @@ class AdminTemplateController(
 
     private fun actor(request: HttpServletRequest): String = AdminSession.actorName(request)
 
-    private fun clientIp(request: HttpServletRequest): String =
-        request.getHeader("X-Forwarded-For")?.split(",")?.firstOrNull()?.trim()?.ifBlank { null } ?: request.remoteAddr
+    // XFF 첫 hop 은 스푸핑 가능 — nginx 가 append 로 넣어 클라 위조분이 앞에 섞인다. 감사 IP 는 ClientIp 로 통일한다.
+    private fun clientIp(request: HttpServletRequest): String = ClientIp.of(request)
 }

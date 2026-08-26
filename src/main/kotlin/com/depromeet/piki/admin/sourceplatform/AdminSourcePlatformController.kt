@@ -70,9 +70,14 @@ class AdminSourcePlatformController(
             adminSourcePlatformService.save(domain, displayName, actor = AdminSession.actorName(request), clientIp = ClientIp.of(request))
             "redirect:/admin/source-platforms?updated"
         } catch (e: IllegalArgumentException) {
-            model.addAttribute("error", e.message)
-            model.addAttribute("draftDisplayName", displayName)
-            detailView(adminSourcePlatformService.find(domain), model)
+            // find 가 다시 던질 수 있다 — 정규화를 통과 못 하는 domain(경로에 공백 등)이면 save 와 같은 이유로 막힌다.
+            // 복구 경로에서 새 예외가 새면 화면이 raw JSON 400 으로 갈린다(#988). 그 땐 목록으로 돌린다.
+            runCatching { adminSourcePlatformService.find(domain) }
+                .map { platform ->
+                    model.addAttribute("error", e.message)
+                    model.addAttribute("draftDisplayName", displayName)
+                    detailView(platform, model)
+                }.getOrElse { "redirect:/admin/source-platforms?missing" }
         }
 
     @PostMapping("/{domain}/delete")

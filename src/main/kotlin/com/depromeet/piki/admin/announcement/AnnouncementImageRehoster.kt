@@ -1,5 +1,6 @@
 package com.depromeet.piki.admin.announcement
 
+import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.announcement.domain.AnnouncementBodyImages
 import com.depromeet.piki.announcement.domain.AnnouncementImageFile
 import com.depromeet.piki.common.storage.ImageStorage
@@ -12,6 +13,7 @@ import java.util.UUID
 // fetch·업로드는 외부 호출이라 @Transactional 을 두지 않는다 — 호출부(AdminAnnouncementService)가
 // 트랜잭션 밖에서 이 빈을 부르고, 영속화만 짧은 트랜잭션(AnnouncementWriter)에 위임한다(## 트랜잭션 경계).
 @Component
+@ConditionalOnAdminEnabled
 class AnnouncementImageRehoster(
     private val fetcher: AnnouncementImageFetcher,
     private val imageStorage: ImageStorage,

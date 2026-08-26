@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>공지 수정 · PiKi 백오피스</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
   <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/toastui-editor.min.css">
   <style>
     :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;}
@@ -33,8 +33,8 @@
   <div class="wrap">
     <h1>공지 수정</h1>
     <p class="lede">발송 전 초안을 다듬습니다. 발송·예약된 공지는 수정할 수 없습니다.</p>
-    <div class="err" th:if="${param.error == 'length'}">제목은 255자, 본문은 10000자, 푸시 문구는 255자를 넘을 수 없습니다.</div>
-    <div class="err" th:if="${param.error == 'image'}">본문 이미지를 가져오지 못했습니다. 이미지 주소(https)를 확인하거나 다른 이미지를 사용해주세요.</div>
+    <div class="err" th:if="${param.error != null and param.error[0] == 'length'}">제목은 255자, 본문은 10000자, 푸시 문구는 255자를 넘을 수 없습니다.</div>
+    <div class="err" th:if="${param.error != null and param.error[0] == 'image'}">본문 이미지를 가져오지 못했습니다. 이미지 주소(https)를 확인하거나 다른 이미지를 사용해주세요.</div>
 
     <form class="card" th:action="@{/admin/announcements/{id}/edit(id=${announcement.id})}" method="post" id="editForm">
       <div class="row"><label for="title">제목 <span class="hint">공지 목록·상세에 보이는 제목</span></label><input id="title" name="title" type="text" required maxlength="255" th:value="${draftTitle != null ? draftTitle : announcement.title}"></div>
@@ -64,6 +64,8 @@
     </form>
   </div>
 
+  <!-- TODO(#988): uicdn.toast.com 이 CORS 헤더를 주지 않아 SRI 를 걸 수 없다(crossorigin 을 붙이는 순간 차단).
+       CORS 를 주는 CDN(jsDelivr @toast-ui/editor)으로 옮기면 걸 수 있으나 같은 3.2.2 라도 빌드가 달라 별도 확인이 필요하다. -->
   <script src="https://uicdn.toast.com/editor/3.2.2/toastui-editor-all.min.js"></script>
   <script th:inline="javascript">
     // 기존 본문(마크다운)을 에디터에 채운다. th:inline 이 따옴표·개행을 JS 문자열로 안전 이스케이프한다.

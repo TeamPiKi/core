@@ -52,10 +52,9 @@ class AdminAccessFilterTest {
 
     @Test
     fun `공개 진입과 정적 prefix 는 게이트하지 않는다`() {
-        // /admin-access 는 grant 진입점이라 세션 이전에 닿아야 하고, /admin-assets 는 정적 prefix 다.
-        // startsWith("/admin") 로 판정하면 둘 다 과매칭돼 grant 흐름 자체가 막힌다.
+        // /admin-access 는 grant 진입점이라 세션 이전에 닿아야 한다.
+        // startsWith("/admin") 로 판정하면 과매칭돼 grant 흐름 자체가 막힌다.
         assertFalse(AdminAccessFilter.isGatedPath("/admin-access/grant"))
-        assertFalse(AdminAccessFilter.isGatedPath("/admin-assets/app.css"))
         assertFalse(AdminAccessFilter.isGatedPath("/api/v1/wishlists"))
     }
 

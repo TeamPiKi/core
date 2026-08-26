@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>공지 발송 · PiKi 백오피스</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
   <style>
     :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;}
     *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);}
@@ -53,8 +53,12 @@
     <div class="ok" th:if="${param.scheduled}">공지가 예약됐습니다. 예약 시각에 자동 발송됩니다.</div>
     <div class="ok" th:if="${param.canceled}">예약을 취소했습니다.</div>
     <div class="ok" th:if="${param.deleted}">공지를 삭제했습니다.</div>
-    <div class="ok" th:if="${param.error == 'length'}" style="background:#fee2e2;color:#b42318">제목은 255자, 본문은 10000자, 푸시 문구는 255자를 넘을 수 없습니다.</div>
-    <div class="ok" th:if="${param.error == 'image'}" style="background:#fee2e2;color:#b42318">본문 이미지를 가져오지 못했습니다. 이미지 주소(https)를 확인하거나 다른 이미지를 사용해주세요.</div>
+    <!-- 발송·취소·삭제가 계약 실패로 되돌아온 경우. 대개 다른 운영자와 겹쳤거나 버튼을 두 번 눌렀을 때다. -->
+    <div class="ok" th:if="${param.error != null and param.error[0] == 'send'}" style="background:#fee2e2;color:#b42318">이미 발송됐거나 예약된 공지입니다. 아래 목록에서 현재 상태를 확인하세요.</div>
+    <div class="ok" th:if="${param.error != null and param.error[0] == 'cancel'}" style="background:#fee2e2;color:#b42318">예약을 취소하지 못했습니다. 이미 발송이 시작됐을 수 있습니다.</div>
+    <div class="ok" th:if="${param.error != null and param.error[0] == 'delete'}" style="background:#fee2e2;color:#b42318">삭제하지 못했습니다. 발송·예약된 공지는 삭제할 수 없습니다.</div>
+    <div class="ok" th:if="${param.error != null and param.error[0] == 'length'}" style="background:#fee2e2;color:#b42318">제목은 255자, 본문은 10000자, 푸시 문구는 255자를 넘을 수 없습니다.</div>
+    <div class="ok" th:if="${param.error != null and param.error[0] == 'image'}" style="background:#fee2e2;color:#b42318">본문 이미지를 가져오지 못했습니다. 이미지 주소(https)를 확인하거나 다른 이미지를 사용해주세요.</div>
 
     <form th:action="@{/admin/announcements}" method="post" style="margin-bottom:22px">
       <button class="btn" type="submit">+ 새 공지 작성</button>

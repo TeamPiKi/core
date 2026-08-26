@@ -16,7 +16,7 @@ import org.springframework.web.util.UrlPathHelper
 
 // prod·전 환경의 /admin 게이트 — 슬랙으로 검증된 세션 + allowlist IP + 세션-IP 바인딩 셋 다 맞아야 통과, 아니면 404.
 // password 가 아니라 "슬랙 링크 클릭으로 발급된 세션"이 신원이다. 미허용은 401/302 가 아니라 404(존재 숨김).
-// 공개 진입(/admin-access/**)·정적(/admin-assets/**)은 경로가 달라 이 필터 대상이 아니다(shouldNotFilter).
+// 공개 진입(/admin-access/**)은 경로가 달라 이 필터 대상이 아니다(shouldNotFilter).
 //
 // order: SessionRepositoryFilter 바로 안쪽이어야 한다(#891). 세션이 Redis 로 옮겨간 뒤(#885/#888)
 // getSession 은 그 필터가 씌우는 요청 래퍼를 통해서만 저장소에 닿는다 — 바깥에서 부르면 래퍼가 없는 원본 요청이라
@@ -81,7 +81,7 @@ class AdminAccessFilter(
 
         fun isGatedRequest(request: HttpServletRequest): Boolean = isGatedPath(PATH_HELPER.getPathWithinApplication(request))
 
-        // /admin 과 /admin/** 만 게이트. /admin-assets·/admin-access 는 다른 prefix 라 제외(공개 진입·정적).
+        // /admin 과 /admin/** 만 게이트. /admin-access 는 다른 prefix 라 제외(공개 진입).
         // 세그먼트 경계로 매칭해 /admin-access 류 과매칭을 막는다.
         fun isGatedPath(uri: String): Boolean = uri == "/admin" || uri.startsWith("/admin/")
     }
