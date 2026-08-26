@@ -21,6 +21,18 @@
           {
             "type": "command",
             "command": "bash -c 'file=$(jq -r .tool_input.file_path 2>/dev/null); [[ \"$file\" == *.kt ]] || exit 0; hits=$(grep -nE \"(==|!=)[[:space:]]*null\" \"$file\" || true); if [ -n \"$hits\" ]; then echo \"🚫 null 리터럴 비교 금지 (CLAUDE.md 참조). Elvis(?:)로 치환하세요:\" >&2; echo \"$hits\" >&2; exit 2; fi; exit 0'"
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'file=$(jq -r .tool_input.file_path 2>/dev/null); [[ \"$file\" == *.html ]] || exit 0; bad=0; u=$(grep -nE \"th:utext=\" \"$file\" | grep -v \"<!--\" || true); if [ -n \"$u\" ]; then echo \"🚫 th:utext 금지 (CLAUDE.md). 값 출처가 DB 로 바뀌는 순간 저장형 XSS 다 - th:text 로 나누세요:\" >&2; echo \"$u\" >&2; bad=1; fi; p=$(grep -nE \"param\\.[a-zA-Z_][a-zA-Z0-9_]* *==\" \"$file\" || true); if [ -n \"$p\" ]; then echo \"🚫 param.x 는 String[] 이라 문자열 직접 비교는 항상 false (CLAUDE.md). param.x != null and param.x[0] == ... 형태로 쓰세요:\" >&2; echo \"$p\" >&2; bad=1; fi; exit $((bad*2))'"
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'file=$(jq -r .tool_input.file_path 2>/dev/null); [[ \"$file\" == *.kt ]] || exit 0; hits=$(grep -n \"getHeader(\\\"X-Forwarded-For\\\")\" \"$file\" || true); if [ -n \"$hits\" ]; then echo \"🚫 XFF 첫 hop 은 요청자가 위조할 수 있다 (CLAUDE.md). 클라 IP 는 ClientIp.of(request) 로 읽으세요:\" >&2; echo \"$hits\" >&2; exit 2; fi; exit 0'"
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'file=$(jq -r .tool_input.file_path 2>/dev/null); case \"$file\" in */piki/admin/*.kt) ;; *) exit 0 ;; esac; b=\"^@(Service|Component|Controller|RestController|Configuration)([^a-zA-Z]|$)\"; a=$(grep -cE \"$b\" \"$file\"); c=$(grep -c \"^@ConditionalOnAdminEnabled\" \"$file\"); [ \"$a\" = \"$c\" ] && exit 0; echo \"🚫 admin 빈은 @ConditionalOnAdminEnabled 로 게이트해야 합니다 (빈 ${a}개 / 게이트 ${c}개, CLAUDE.md). admin.enabled=false 환경에서도 생성돼 부팅을 깰 수 있습니다:\" >&2; grep -nE \"$b\" \"$file\" >&2; exit 2'"
           }
         ]
       }
