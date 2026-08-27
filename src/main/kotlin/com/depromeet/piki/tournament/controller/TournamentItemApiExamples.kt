@@ -7,6 +7,7 @@ import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
@@ -311,7 +312,7 @@ class TournamentItemApiExamples(
         PresignedImageUploadResponse(
             uploads =
                 listOf(
-                    PresignedImageUploadResponse.PresignedImageUpload(
+                    PresignedImageUpload(
                         imageKey = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
                         uploadUrl =
                             "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +
