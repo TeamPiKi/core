@@ -3,18 +3,24 @@ package com.depromeet.piki.tournament.service
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.ErrorCode
+import com.depromeet.piki.common.exception.ErrorPayload
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
 // message·category·httpStatus 는 전부 errorCode 하나에서 파생한다(TournamentErrorCode 가 single source).
 class TournamentException private constructor(
     override val errorCode: ErrorCode,
+    override val payload: Map<String, Any>? = null,
 ) : BaseException(errorCode.message),
-    HttpMappable {
+    HttpMappable,
+    ErrorPayload {
     override val category: ErrorCategory get() = errorCode.category
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
+        // 중복 응답이 알려주는 기존 출전 아이템의 id. 응답 data 의 키라 클라 계약이므로 여기 한 곳에 둔다.
+        const val EXISTING_TOURNAMENT_ITEM_ID = "tournamentItemId"
+
         fun forbiddenTournament(): TournamentException = TournamentException(TournamentErrorCode.FORBIDDEN_TOURNAMENT)
 
         fun notFoundTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_TOURNAMENT)
@@ -35,7 +41,16 @@ class TournamentException private constructor(
 
         fun tooManyTournamentItems(): TournamentException = TournamentException(TournamentErrorCode.TOO_MANY_TOURNAMENT_ITEMS)
 
-        fun duplicateTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM)
+        // 이미 출전한 아이템의 tournament_item id 를 응답 data 로 함께 내린다(#973) — 위시 중복(WishException.alreadyExists)과 같은 결로,
+        // 사유(409)만으로는 클라가 "이미 담긴 그 아이템"을 가리킬 수 없어 목록을 다시 조회해야 했다.
+        //
+        // id 는 단건 링크 등록에서만 실린다. 다건 위시 담기는 요청 안의 중복(같은 id 두 번)과 기존 출전분과의 중복을
+        // 함께 다루고 후자도 여러 건일 수 있어, 가리킬 아이템 하나를 고를 수 없다 — 그때는 사유만 내려간다.
+        fun duplicateTournamentItem(existingTournamentItemId: Long? = null): TournamentException =
+            TournamentException(
+                TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM,
+                existingTournamentItemId?.let { mapOf(EXISTING_TOURNAMENT_ITEM_ID to it) },
+            )
 
         fun notFoundTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_TOURNAMENT_ITEM)
 

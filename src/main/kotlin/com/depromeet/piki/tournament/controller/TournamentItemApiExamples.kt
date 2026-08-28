@@ -25,6 +25,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpStatus
 
+// 중복 추가 409 example 이 보여주는 기존 출전 아이템의 id — 성공 example 의 tournamentItemIds 와 같은 값을 써서
+// "이미 담긴 그 아이템"을 가리킨다는 것이 문서에서 자연스럽게 읽히게 한다.
+private const val EXAMPLE_TOURNAMENT_ITEM_ID = 1L
+
 @Configuration
 class TournamentItemApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
@@ -61,6 +65,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notFoundItems(), name = "존재하지 않는 아이템 포함")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        // 다건 경로라 가리킬 아이템 하나를 고를 수 없다 — 사유만 내려간다(TournamentException 주석 참고).
                         add(TournamentException.duplicateTournamentItem(), name = "이미 등록된/중복 아이템")
                         add(TournamentException.itemNotReady(), name = "PENDING/PROCESSING/FAILED 등 미완료 상품 포함")
                     }
@@ -81,6 +86,11 @@ class TournamentItemApiExamples(
                         add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
+                        // 단건 경로라 겹친 아이템을 특정할 수 있다 — data 로 그 tournament_item id 를 함께 내린다(#973).
+                        add(
+                            TournamentException.duplicateTournamentItem(EXAMPLE_TOURNAMENT_ITEM_ID),
+                            name = "이미 담긴 링크 (같은 상품을 다시 추가)",
+                        )
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 차감)")
                         add(capacityExceeded, name = "서비스 전체 가용량 소진")
                     }

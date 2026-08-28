@@ -8,6 +8,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishException
@@ -37,6 +38,23 @@ class WishPersistenceService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // 등록 전 사전 확인 — 이미 담은 상품이면 한도를 깎기 전에 거를 수 있도록 그 위시의 id 를 돌려준다(#973).
+    // 없으면 null(신규 등록으로 진행).
+    //
+    // 락 밖 조회라 근사치다: 병합 경합 창에서는 여기서 본 item 과 persist 가 실제로 붙는 item(승자)이 다를 수 있다.
+    // 정확한 판정은 persist 가 행 락 안에서 다시 하므로, 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
+    @Transactional(readOnly = true)
+    fun findExistingWishId(
+        userId: UUID,
+        link: ProductLink,
+    ): Long? {
+        val shared = itemSharingService.resolveExistingItem(link) ?: return null
+        return wishRepository
+            .findByItemIdsAndUserId(listOf(shared.getId()), userId)
+            .firstOrNull()
+            ?.getId()
+    }
+
     // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
     // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
     // snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
@@ -59,8 +77,10 @@ class WishPersistenceService(
                 // 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 — 병합 재시도 경합에선 둘이
                 // 다르고(shared=loser, attachment.item=winner), 행 락 뒤라 검사도 직렬화된다. 409 면 트랜잭션
                 // 롤백으로 attach 가 만든 PENDING 도 함께 사라진다.
-                if (wishRepository.countByItemIdsAndUserId(listOf(attachment.item.getId()), userId) > 0) {
-                    throw WishException.alreadyExists()
+                // 이미 담긴 위시의 id 를 응답에 실어야 하므로 존재 여부(count)가 아니라 그 행을 찾는다(#973).
+                // itemId 는 유저 내에서 사실상 1:1 이라 첫 건이 곧 그 위시다.
+                wishRepository.findByItemIdsAndUserId(listOf(attachment.item.getId()), userId).firstOrNull()?.let {
+                    throw WishException.alreadyExists(it.getId())
                 }
                 val wish = wishRepository.save(Wish(userId = userId, snapshotId = attachment.snapshot.getId()))
                 return WishWithItem(

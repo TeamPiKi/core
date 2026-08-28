@@ -27,6 +27,10 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpStatus
 import java.time.LocalDateTime
 
+// 중복 등록 409 example 이 보여주는 기존 위시 id. 다른 example 의 wish id(1024 등)와 같은 값을 써서
+// "이미 담긴 그 위시"를 가리킨다는 것이 문서에서 자연스럽게 읽히게 한다.
+private const val EXAMPLE_WISH_ID = 1024L
+
 @Configuration
 class WishlistApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
@@ -49,7 +53,7 @@ class WishlistApiExamples(
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
-                    add(WishException.alreadyExists(), name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)")
+                    add(WishException.alreadyExists(EXAMPLE_WISH_ID), name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")

@@ -102,7 +102,8 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "409",
                 description =
-                    "이미 위시리스트에 등록된 상품 (같은 상품을 다시 담음 — code: WISH-009) · " +
+                    "이미 위시리스트에 등록된 상품 (같은 상품을 다시 담음 — code: WISH-009, " +
+                        "`data.wishId` 에 이미 담긴 그 위시의 id 가 실린다) · " +
                         "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)",
                 content = [
                     Content(

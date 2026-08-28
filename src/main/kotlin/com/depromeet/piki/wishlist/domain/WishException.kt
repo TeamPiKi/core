@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.domain
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.ErrorCode
+import com.depromeet.piki.common.exception.ErrorPayload
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
@@ -12,12 +13,17 @@ import org.springframework.http.HttpStatus
 // message·category·httpStatus 는 전부 errorCode 하나에서 파생한다(WishErrorCode 가 single source).
 class WishException private constructor(
     override val errorCode: ErrorCode,
+    override val payload: Map<String, Any>? = null,
 ) : BaseException(errorCode.message),
-    HttpMappable {
+    HttpMappable,
+    ErrorPayload {
     override val category: ErrorCategory get() = errorCode.category
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
+        // 중복 응답이 알려주는 기존 위시의 id. 응답 data 의 키라 클라 계약이므로 문자열을 흩뿌리지 않고 여기 한 곳에 둔다.
+        const val EXISTING_WISH_ID = "wishId"
+
         // 위시리스트는 회원 전용 — 게스트(인증은 됐으나 회원 아님)가 정상 요청으로 닿을 수 있는 계약 응답이라 커스텀 예외(403).
         // Security 에서 MEMBER 만 허용하면 detail 없는 권한 없음 403 으로 떨어져 "회원 전용" 사유를 못 전달하므로,
         // authenticated() 로 통과시킨 뒤 서비스가 이 예외로 막는다(UserException.guestCannotWithdraw 와 같은 패턴).
@@ -39,6 +45,10 @@ class WishException private constructor(
 
         // 공유 정체성(#825) 도입으로 비로소 판정 가능해진 앞문 중복 — 같은 사용자가 이미 담은 상품(같은 귀결점)을
         // 또 등록하면 새 카드 대신 409 로 알린다(결정 3c). 별칭 미스로 파싱 후에야 판명되는 뒷문 중복은 여기 안 닿는다.
-        fun alreadyExists(): WishException = WishException(WishErrorCode.ALREADY_EXISTS)
+        //
+        // 이미 담긴 위시의 id 를 응답 data 로 함께 내린다(#973) — 사유(409)만으로는 클라가 "이미 담았어요, 보러가기"
+        // 를 그릴 수 없어 목록을 다시 조회해야 했다.
+        fun alreadyExists(existingWishId: Long): WishException =
+            WishException(WishErrorCode.ALREADY_EXISTS, mapOf(EXISTING_WISH_ID to existingWishId))
     }
 }

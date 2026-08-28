@@ -256,7 +256,9 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트)",
+                description =
+                    "상태 충돌 (PENDING 이 아닌 토너먼트 · 이미 담긴 링크 - 같은 상품을 다시 추가하면 " +
+                        "`data.tournamentItemId` 에 이미 출전 중인 그 아이템의 id 가 실린다)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
