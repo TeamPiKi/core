@@ -22,7 +22,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @ExceptionHandler(BaseException::class)
-    fun handleBaseException(e: BaseException): ResponseEntity<ApiResponseBody<Nothing>> {
+    fun handleBaseException(e: BaseException): ResponseEntity<ApiResponseBody<Map<String, Any>>> {
         val status = if (e is HttpMappable) e.httpStatus else HttpStatus.INTERNAL_SERVER_ERROR
         val category = if (e is HttpMappable) e.category else ErrorCategory.SERVER_ERROR
         // 5xx 레벨은 HttpMappable 유무가 아니라 category 로 가른다 — 같은 502 라도 SERVER_ERROR(우리 설정·코드 버그:
@@ -51,9 +51,12 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         // 뭉치고, CONFLICT 처럼 공통 code 가 없는 category 는 null → 기존 fail(category) fallback(code 없음).
         // detail 은 어느 경로든 e.message 를 유지한다(이관 단계: code 만 추가, detail 제거는 전체 이관 후).
         val errorCode = (e as? HttpMappable)?.errorCode ?: CommonErrorCode.of(category)
+        // 사유를 아는 것만으로 클라가 다음 행동을 못 정하는 예외만 맥락을 함께 싣는다(ErrorPayload).
+        // 없으면 null 이라 기존 에러 응답 모양(data 없음)이 그대로 유지된다.
+        val payload = (e as? ErrorPayload)?.payload
         val body =
             errorCode
-                ?.let { ApiResponseBody.fail<Nothing>(it, e.message) }
+                ?.let { ApiResponseBody.fail(it, e.message, payload) }
                 ?: ApiResponseBody.fail(category, e.message)
         // 재시도 시점을 아는 예외(RetryAfter)만 Retry-After 를 싣는다 — 429 한도 초과가 현재 유일한 구현체다.
         // 모르는 예외에 0 같은 거짓 대기값을 실어 클라가 즉시 재시도하게 만들지 않도록 타입으로 가린다.

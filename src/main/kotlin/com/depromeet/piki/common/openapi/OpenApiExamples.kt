@@ -2,6 +2,7 @@ package com.depromeet.piki.common.openapi
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.CommonErrorCode
+import com.depromeet.piki.common.exception.ErrorPayload
 import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.common.response.ApiResponseBody
 import io.swagger.v3.oas.models.Operation
@@ -61,9 +62,11 @@ class OperationExamples(
             // handleBaseException 과 동일한 code 우선순위로 example 을 만든다: 예외 자신의 errorCode → 없으면
             // category 로 공통 code 파생(도메인 code 없는 5xx 를 공통 5xx code 로 뭉침) → 그것도 없으면 category fallback.
             // 실제 응답과 lockstep 이라 5xx 외부 의존성 예외도 example 이 code 를 정확히 보여준다.
+            // 맥락을 함께 내리는 예외(ErrorPayload)는 그 data 까지 같은 규칙으로 싣는다 — 핸들러가 싣는 것을
+            // example 이 빠뜨리면 클라가 문서만 보고 그 필드의 존재를 알 수 없다.
             payload =
                 (exception.errorCode ?: CommonErrorCode.of(exception.category))
-                    ?.let { ApiResponseBody.fail<Unit>(it, exception.message) }
+                    ?.let { ApiResponseBody.fail(it, exception.message, (exception as? ErrorPayload)?.payload) }
                     ?: ApiResponseBody.fail<Unit>(category = exception.category, detail = exception.message),
         )
 
