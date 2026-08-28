@@ -1,0 +1,27 @@
+# 프로젝트 보드 동기화 — 본문은 TeamPiKi/infra 의 reusable 정본에 있고, 이 caller 는 트리거·권한·
+# secrets 전달만 소유한다. @main 참조는 허거덩과 같은 SSOT 선택 — 정본 머지 즉시 이 repo 에 반영된다.
+# 이슈 오픈(보드 등록·본문 날짜/우선순위 파싱·작성자 할당)과 PR 오픈/닫힘(연관 이슈 In review/Done
+# 전이·default branch 머지 PR 의 보드 반영)을 구독한다.
+# 동작에는 repo secret PROJECT_TOKEN(조직 보드 쓰기 PAT: project + repo 스코프)이 필요하다 —
+# 미설정이면 정본이 경고 후 skip 해 CI 는 빨갛게 되지 않는다.
+name: Project Board Sync
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, closed]
+
+# 최소권한: 상단은 비우고 job 단위로만 준다.
+permissions: {}
+
+jobs:
+  sync:
+    # 정본 job 들이 요구하는 권한의 합집합 — 이슈 작성자 자동 할당(issue-auto-assign)의 issues:write.
+    # 보드 쓰기는 GITHUB_TOKEN 이 아니라 PROJECT_TOKEN(PAT)이라 여기 권한이 필요 없다.
+    permissions:
+      issues: write
+    uses: TeamPiKi/infra/.github/workflows/project-board-sync.yml@main
+    # caller secret 전체를 넘기는 inherit 대신 정본이 요구하는 것만 명시 전달 (최소 전달).
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
