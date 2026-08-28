@@ -173,7 +173,9 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록된 아이템 · 요청 내 중복 아이템 · PENDING/PROCESSING/FAILED 등 미완료 상품 포함)",
+                description =
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록된 아이템 · 요청 내 중복 아이템 · " +
+                        "PENDING/PROCESSING/FAILED 등 미완료 상품 포함 · 값이 비어 있는 미완성 상품 포함)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
