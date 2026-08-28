@@ -53,6 +53,24 @@ class ImagePresignService(
         return uploads
     }
 
+    // pending 매핑 없이 발급만 한다 — 확정 신호가 안 와도 되는 경로(프로필 이미지)가 쓴다.
+    // 위시·토너먼트 등록은 확정이 유실돼도 폴링이 등록을 마쳐야 해서 pending 을 남기지만(at-least-once),
+    // 프로필은 사용자가 다시 시도하면 그만이라 남길 상태가 없다. 미확정 raw 는 items/raw/ lifecycle(1일)이 만료한다.
+    //
+    // 허용 형식 정책은 호출부가 갖는다 — 프로필(ProfileImageFile)과 상품 이미지(ProductImage)의 허용 목록이
+    // 독립이라, 검증을 끝낸 확장자만 받아 key 형식과 발급만 여기서 책임진다.
+    fun presignRawUpload(
+        extension: String,
+        contentType: String,
+    ): PresignedRawUpload {
+        val key = "$RAW_PREFIX${UUID.randomUUID()}.$extension"
+        val url = imageStorage.presignUpload(key, contentType, s3Properties.presignedUploadExpiry)
+        return PresignedRawUpload(imageKey = key, uploadUrl = url, contentType = contentType)
+    }
+
+    // 우리가 발급한 raw key 의 확장자. verifyUploaded 를 통과한 key 만 넘어오므로 형식이 보장된다.
+    fun extensionOf(imageKey: String): String = imageKey.substringAfterLast('.')
+
     fun verifyUploaded(imageKeys: List<String>) {
         imageKeys.forEach { key ->
             // 우리가 발급하는 raw key 형식이 아니면 클라가 임의 경로를 준 것 — 400.

@@ -135,7 +135,8 @@ interface TournamentApi {
                 - pending.inviteCode, pending.inviteExpiresAt 은 null (초대 기간 종료)
             - COMPLETED: completed 필드
               - result: 1위부터 최대 4위까지 순위 아이템 목록
-              - hasGroupResult: 참여자 2명 이상이면 true. 클라이언트는 이 값으로 친구 토너먼트 결과 보기 버튼을 제어한다.
+              - isGroupTournament: 소셜(그룹) 토너먼트 여부. 참여자 2명 이상이면 true(완료 무관). 클라이언트는 이 값으로 "전체 결과 보기" 배너를 노출한다 - 첫 완주자가 누구든 새로고침 없이 배너가 보인다.
+              - hasGroupResult: 그룹 결과 조회 가능 여부. 완료한 플레이어가 2명 이상이면 true. 클라이언트는 이 값으로 배너 활성/비활성(다른 사람 결과가 아직 없으면 empty state)을 가른다.
               - canAddItem: 결과 화면에서 아이템 담기(위시/링크/이미지)가 가능하면 true. ROOT 소유자·소셜 초대 CLONE 소유자는 true, 플레이링크 CLONE 소유자는 false.
             나머지 필드는 응답에 포함되지 않는다.
         """,
@@ -615,7 +616,7 @@ interface TournamentApi {
             이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
             결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
             소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
-            다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있으며, 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
+            다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있다. 소셜 토너먼트면 완주 즉시 isGroupTournament=true 로 "전체 결과 보기" 배너가 노출되고(새로고침 불필요), 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
         """,
     )
     @ApiResponses(
@@ -689,19 +690,31 @@ interface TournamentApi {
     ): ApiResponseBody<RecordMatchResponse>
 
     @Operation(
-        summary = "플레이 링크 생성",
+        summary = "플레이 링크 생성 (멱등)",
         description = """
-            완료된 토너먼트의 플레이 링크를 생성한다. 토너먼트 소유자만 호출 가능.
-            플레이 링크를 통해 친구들이 동일한 아이템 구성으로 토너먼트를 진행할 수 있다.
-            만료 기간은 생성 시점 + 14일로 고정이며 변경 불가.
-            이미 링크가 생성된 경우 409.
+            완료된 토너먼트의 플레이 링크를 만들거나 갱신한다. 토너먼트 소유자만 호출 가능.
+            플레이 링크를 통해 친구들이 동일한 아이템 구성으로 각자 자기 토너먼트를 진행할 수 있다
+            (친구마다 원본을 복제한 새 토너먼트가 생긴다 - `POST /{sourceTournamentId}/from-play-link`).
+
+            **호출 시점의 링크 상태에 따라 동작이 갈리고, 항상 200을 반환한다.**
+            - 아직 만든 적 없으면: 새로 만든다 (생성 시점 + 14일).
+            - 유효한 링크가 있으면: **연장하지 않고** 기존 만료시각을 그대로 돌려준다. 공유 버튼을 다시 누른 것만으로
+              노출 기간이 늘어나는 것을 막기 위함이다.
+            - 만료된 링크가 있으면: 새 14일로 갱신한다.
+
+            플레이 링크는 **토너먼트당 하나**이고 주소가 `tournamentId` 로 결정된다(별도 토큰 없음) - 같은
+            토너먼트에 여러 개를 만들 수 없다. 링크를 통해 들어오는 인원 제한은 없고, 들어온 사람마다 자기
+            클론이 하나씩 생긴다.
+
+            초대 코드(시작 전, 참여자로 합류)와는 다른 기능이며 동시에 열리는 구간이 없다 - 초대 코드는
+            PENDING 상태에서만, 플레이 링크는 COMPLETED 상태에서만 쓸 수 있다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "플레이 링크 생성 성공 (playLinkExpiresAt 반환)",
+                description = "플레이 링크 생성 또는 갱신 성공 (playLinkExpiresAt 반환) - 매 호출이 이 응답이다",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -721,7 +734,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (COMPLETED가 아닌 토너먼트 · 플레이 링크가 이미 생성됨)",
+                description = "상태 충돌 (COMPLETED가 아닌 토너먼트)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],

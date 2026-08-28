@@ -6,18 +6,21 @@ import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUpload
+import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.user.controller.dto.MyProfileResponse
 import com.depromeet.piki.user.controller.dto.NicknameCheckRequest
 import com.depromeet.piki.user.controller.dto.NicknameCheckResponse
+import com.depromeet.piki.user.controller.dto.ProfileImagePresignRequest
 import com.depromeet.piki.user.controller.dto.UserResponse
 import com.depromeet.piki.user.controller.dto.UserUpdateRequest
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
+import java.util.UUID
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpStatus
-import java.util.UUID
 
 @Configuration
 class UserApiExamples(
@@ -48,6 +51,37 @@ class UserApiExamples(
                         add(UserException.deletedUser(), name = "탈퇴한 유저")
                     }
 
+                handlerMethod.binds(UserController::presignProfileImage) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            name = "발급 성공",
+                            payload =
+                                ApiResponseBody.ok(
+                                    PresignedImageUpload(
+                                        imageKey = SAMPLE_IMAGE_KEY,
+                                        uploadUrl = "https://piki-images.s3.ap-northeast-2.amazonaws.com/$SAMPLE_IMAGE_KEY?X-Amz-Signature=...",
+                                        contentType = "image/png",
+                                    ),
+                                ),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "contentType 누락",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = ProfileImagePresignRequest.CONTENT_TYPE_REQUIRED_MESSAGE,
+                                ),
+                        )
+                        add(UserException.unsupportedProfileImageType(), name = "지원하지 않는 이미지 형식")
+                        unauthorized()
+                        add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 업로드 거부")
+                        add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
+                        add(UserException.deletedUser(), name = "탈퇴한 유저")
+                        add(ImageStorageException.presignFailed(), name = "업로드 URL 발급 실패")
+                    }
+
                 handlerMethod.binds(UserController::updateMe) ->
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
@@ -70,15 +104,15 @@ class UserApiExamples(
                             payload =
                                 ApiResponseBody.fail<Unit>(
                                     CommonErrorCode.INVALID_INPUT,
-                                    // @ModelAttribute(multipart) Bean Validation 위반도 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
+                                    // Bean Validation 위반은 GlobalExceptionHandler.detailOf 가 위반 필드의 메시지를 그대로 detail 로 내린다.
                                     detail = UserUpdateRequest.NICKNAME_SIZE_MESSAGE,
                                 ),
                         )
-                        // 빈 파일은 같은 detail (클라 액션 동일: 파일 재첨부)
+                        // 우리가 발급하지 않은 key 형식 · 아직 S3 에 안 올라온 key — 확정 전에 걸러진다.
+                        add(ImageUploadException.invalidKey(), name = "발급하지 않은 이미지 key")
+                        add(ImageUploadException.notUploaded(), name = "업로드되지 않은 이미지 key")
+                        // 원본을 읽어 검증한 결과 — 빈 파일, 발급 때 선언한 형식과 실제 내용 불일치(위조·손상).
                         add(UserException.emptyProfileImage(), name = "빈 이미지 파일")
-                        // 타입 미지정·미지원 형식은 같은 detail (클라 액션 동일: 허용 형식으로 변경)
-                        add(UserException.unsupportedProfileImageType(), name = "지원하지 않는 이미지 형식")
-                        // 선언한 Content-Type 과 실제 파일 시그니처가 어긋남 (헤더 위조·손상)
                         add(UserException.malformedProfileImage(), name = "형식과 내용 불일치")
                         // @Size(min = 1) 은 공백 1자를 통과시키고, 예약 prefix 도 못 거른다 —
                         // 둘 다 User.validateNickname 이 잡아 400 으로 나간다.
@@ -90,14 +124,9 @@ class UserApiExamples(
                         add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 수정 거부")
                         // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
                         add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
-                        // multipart 한도 초과 — ResponseEntityExceptionHandler 가 표준으로 413 처리하고
-                        // handleExceptionInternal 이 ApiResponseBody(category=INVALID_INPUT, 기본 detail)로 감싼다.
-                        add(
-                            status = HttpStatus.PAYLOAD_TOO_LARGE,
-                            name = "파일 크기 초과",
-                            payload = ApiResponseBody.fail<Unit>(CommonErrorCode.INVALID_INPUT),
-                        )
-                        add(ImageStorageException.uploadFailed(), name = "이미지 저장소(S3) 업로드 실패")
+                        add(ImageStorageException.existsCheckFailed(), name = "이미지 저장소(S3) 업로드 상태 확인 실패")
+                        add(ImageStorageException.downloadFailed(), name = "이미지 저장소(S3) 원본 읽기 실패")
+                        add(ImageStorageException.uploadFailed(), name = "이미지 저장소(S3) 저장 실패")
                     }
 
                 handlerMethod.binds(UserController::withdraw) ->
@@ -140,6 +169,11 @@ class UserApiExamples(
             }
             operation
         }
+
+    // 발급 example 의 raw key — 실제 발급 형식(items/raw/{UUID}.{ext})과 같은 모양으로 둔다.
+
+    private val SAMPLE_IMAGE_KEY = "items/raw/550e8400-e29b-41d4-a716-446655440000.png"
+
 
     private fun sampleUser(): UserResponse =
         UserResponse(

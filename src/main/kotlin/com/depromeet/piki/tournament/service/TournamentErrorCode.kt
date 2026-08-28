@@ -40,6 +40,9 @@ enum class TournamentErrorCode(
     ALREADY_PARTICIPANT("TOURNAMENT-022", ErrorCategory.CONFLICT, "이미 참여 중인 토너먼트예요."),
     NOT_COMPLETED_TOURNAMENT("TOURNAMENT-023", ErrorCategory.CONFLICT, "완료된 토너먼트에서만 할 수 있어요."),
     CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK("TOURNAMENT-024", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트는 공유 링크를 만들 수 없어요."),
+    // 025 는 #980 에서 발생을 멈췄다. createPlayLink 가 멱등해지며(유효하면 기존 값 반환, 만료됐으면 재발급)
+    // "이미 있으면 무조건 거부" 하던 이 사유가 사라졌다 — 그 거부가 만료 후 영구 재발급 불가로 이어졌었다.
+    // 번호는 재사용하지 않고 결번으로 남긴다(코드가 클라 계약). GUEST_CANNOT_CREATE_TOURNAMENT(036)와 같은 결.
     PLAY_LINK_ALREADY_CREATED("TOURNAMENT-025", ErrorCategory.CONFLICT, "이미 플레이 링크가 만들어진 토너먼트예요."),
     PLAY_LINK_NOT_CREATED("TOURNAMENT-026", ErrorCategory.NOT_FOUND, "아직 플레이 링크가 만들어지지 않은 토너먼트예요."),
     PLAY_LINK_EXPIRED("TOURNAMENT-027", ErrorCategory.CONFLICT, "플레이 링크가 만료됐어요."),
@@ -68,5 +71,25 @@ enum class TournamentErrorCode(
         "TOURNAMENT-037",
         ErrorCategory.TOO_MANY_REQUESTS,
         "이 토너먼트에는 지금 아이템을 추가할 수 없어요. 잠시 후 다시 시도해 주세요.",
+    ),
+
+    // 038 은 플레이 링크 클론의 아이템 단건 조회 정합(#977)에서 추가됐다. 클론은 원본 아이템을 이어받아 조회는 되지만,
+    // 수정·삭제하면 원본을 건드리게 되므로 아이템 추가 금지(032)와 같은 결로 막는다 — 옛 "직접 소속" 스코프 체크의
+    // 혼란스러운 404 를 의도된 정책 403 으로 대체한다.
+    CLONED_TOURNAMENT_CANNOT_MODIFY_ITEMS(
+        "TOURNAMENT-038",
+        ErrorCategory.FORBIDDEN,
+        "플레이 링크로 만든 토너먼트에서는 아이템을 수정하거나 삭제할 수 없어요.",
+    ),
+
+    // 039~040 은 미완성(INCOMPLETE) 안내를 012·013 에서 갈라낸 것이다(#944 후속). 두 문구는 "잠시 후"·"모두
+    // 준비되면" 이라 기다리면 풀린다는 뜻인데, 미완성은 사용자가 빈 값을 채우지 않는 한 영원히 풀리지 않아
+    // 안내가 사실과 어긋났다. code 까지 나누는 이유는 클라이언트도 같은 이유로 화면을 갈라야 하기 때문이다 —
+    // 한 code 로 묶여 있으면 "기다리라" 와 "채우라" 를 구분할 근거가 응답에 없다.
+    ITEM_INCOMPLETE("TOURNAMENT-039", ErrorCategory.CONFLICT, "정보가 비어 있는 상품이에요. 내용을 채운 뒤 담아 주세요."),
+    ITEM_INCOMPLETE_TO_START(
+        "TOURNAMENT-040",
+        ErrorCategory.CONFLICT,
+        "정보가 비어 있는 상품이 있어요. 모두 채워야 시작할 수 있어요.",
     ),
 }

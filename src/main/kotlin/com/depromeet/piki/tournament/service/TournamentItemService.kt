@@ -122,6 +122,9 @@ class TournamentItemService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
+        // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — effective-id 로 뚫으면 원본을 수정하게 되므로 막는다(#977).
+        // 아이템 추가 금지(032)와 같은 결. 조회는 허용(getTournamentItem), 수정만 금지.
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)

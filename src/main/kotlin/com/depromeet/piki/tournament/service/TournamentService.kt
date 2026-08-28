@@ -168,6 +168,9 @@ class TournamentService(
                 .findByIds(wishRepository.findByItemIdsAndUserId(command.itemIds, userId).map { it.snapshotId })
                 .associateBy { it.itemId }
         // 파싱 대기·진행 중(PENDING·PROCESSING)이거나 실패(FAILED)한 상품은 이름·가격이 비어 출전에 부적합하다. 활성 snapshot 이 READY 인 것만 허용.
+        // 미완성(INCOMPLETE)은 그 앞에서 먼저 가른다 — 기다리면 풀리는 파싱 중과 달리 사용자가 빈 값을 채워야 풀려,
+        // "잠시 후 추가해 주세요" 가 사실이 아니게 된다. 둘이 섞였을 땐 행동이 필요한 쪽을 알린다.
+        if (activeSnapshotByItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncomplete()
         if (activeSnapshotByItemId.size != command.itemIds.size || activeSnapshotByItemId.values.any { !it.isReady() }) {
             throw TournamentException.itemNotReady()
         }
@@ -239,6 +242,9 @@ class TournamentService(
                 .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
                 .associate { it.getId() to it }
         if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
+        // 담기 게이트와 같은 이유로 미완성을 먼저 본다. 아이템별 루프가 아니라 전체를 한 번 훑는 이유는, 루프에
+        // 맡기면 앞선 아이템이 파싱 중이기만 해도 "모두 준비되면" 안내가 나가 뒤쪽 미완성이 가려지기 때문이다.
+        if (pinnedByTournamentItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncompleteToStart()
         for (tournamentItem in tournamentItems) {
             val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
             if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()
@@ -376,7 +382,7 @@ class TournamentService(
                     val userHistories = tournamentRepository.findHistoriesByTournamentIdAndTournamentUserId(
                         tournamentId, currentUser.getId(),
                     )
-                    return buildCompleted(tournament, userHistories, computeHasGroupResult(tournament), isOwner, canAddItemForTournament(tournament, userId))
+                    return buildCompleted(tournament, userHistories, computeGroupFlags(tournament), isOwner, canAddItemForTournament(tournament, userId))
                 }
 
                 // 본인 history만 사용 — 다른 참여자의 매치는 본인 진행 상태에 영향을 주지 않는다.
@@ -452,9 +458,9 @@ class TournamentService(
                     val cloneHistories = tournamentRepository.findHistoriesByTournamentIdAndTournamentUserId(
                         myClone.getId(), myCloneOwnerTU.getId(),
                     )
-                    return buildCompleted(myClone, cloneHistories, computeHasGroupResult(tournament), false, true)
+                    return buildCompleted(myClone, cloneHistories, computeGroupFlags(tournament), false, true)
                 }
-                buildCompleted(tournament, histories, computeHasGroupResult(tournament), isOwner, canAddItemForTournament(tournament, userId))
+                buildCompleted(tournament, histories, computeGroupFlags(tournament), isOwner, canAddItemForTournament(tournament, userId))
             }
         }
     }
@@ -505,7 +511,10 @@ class TournamentService(
             ?: throw TournamentException.forbiddenTournament()
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId)
             ?: throw TournamentException.notFoundTournamentItem()
-        if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
+        // 클론은 DB 아이템 행이 없어 원본(source) 아이템을 이어받아 조회한다(목록·시작과 동일). 스코프는 자기 id 가 아니라
+        // effective(원본) 기준으로 검사해야 목록에서 받은 id 로 단건 조회가 통과한다(#977). ROOT 는 source 가 없어 자기 id.
+        val effectiveTournamentId = tournament.sourceTournamentId ?: tournamentId
+        if (tournamentItem.tournamentId != effectiveTournamentId) throw TournamentException.notFoundTournamentItem()
         // 표시값: 대기실(PENDING)은 파생(#857), 시작 후는 start 가 박제한 포인터 그대로(겨룬 값 고정).
         // sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
         val pointer = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
@@ -672,7 +681,7 @@ class TournamentService(
                     return RecordMatchResult(
                         nextMatch = null,
                         completed = buildCompleted(
-                            tournament, histories, computeHasGroupResult(tournament),
+                            tournament, histories, computeGroupFlags(tournament),
                             tournamentUser.getId() == tournament.ownerTournamentUserId,
                             canAddItemForTournament(tournament, userId),
                         ),
@@ -742,18 +751,43 @@ class TournamentService(
         return RecordMatchResult(
             nextMatch = null,
             completed = buildCompleted(
-                tournament, histories + newHistory, computeHasGroupResult(tournament), isOwner,
+                tournament, histories + newHistory, computeGroupFlags(tournament), isOwner,
                 canAddItemForTournament(tournament, userId),
             ),
         )
     }
 
-    private fun computeHasGroupResult(tournament: Tournament): Boolean {
+    private data class GroupFlags(
+        val hasGroupResult: Boolean,
+        val isGroupTournament: Boolean,
+    )
+
+    // 그룹 결과 관련 두 플래그를 한 번에 구한다 — 루트 기준 클론 목록·전체 TU 를 공유해 조회를 중복하지 않는다.
+    //   hasGroupResult    : 완료한 고유 사용자 수 >= 2 → 그룹 결과 "조회 가능"(progressive gate, core#456).
+    //   isGroupTournament : 참여한 고유 사용자 수 >= 2 → "소셜(그룹) 토너먼트 여부"(완료 무관, core#370 원래 정의).
+    // 배너 "노출"은 isGroupTournament 로, "활성/비활성"은 hasGroupResult 로 가른다 — 첫 완주자가 누구든 새로고침 없이
+    // 배너를 본다(#975). 솔로는 참여자가 항상 정확히 1이라 false.
+    // record 가 아니라 userId 로 센다 — 같은 사용자가 ROOT TU 와 자기 CLONE 을 모두 가질 수 있어서다(주최자가 자기
+    // 플레이링크로 self-clone 을 만드는 경로에 가드가 없다). 그대로 record 를 세면 1명이 2로 잡혀 solo 가 그룹으로 오인된다.
+    private fun computeGroupFlags(tournament: Tournament): GroupFlags {
         val rootId = tournament.sourceTournamentId ?: tournament.getId()
-        // 루트 토너먼트 내 완료 참여자(TU) + 완료된 클론 토너먼트 수의 합이 2 이상이면 그룹 결과를 조회할 수 있다.
-        val completedInRoot = tournamentUserRepository.countCompletedByTournamentId(rootId)
-        val completedClones = tournamentRepository.findBySourceTournamentId(rootId).count { it.isCompleted() }
-        return completedInRoot + completedClones >= 2
+        val clones = tournamentRepository.findBySourceTournamentId(rootId)
+        val rootUsers = tournamentUserRepository.findByTournamentId(rootId)
+        val cloneOwnerById = tournamentUserRepository
+            .findByIds(clones.map { it.ownerTournamentUserId }.toSet())
+            .associateBy { it.getId() }
+        val participantUserIds = buildSet {
+            rootUsers.forEach { add(it.userId) }
+            clones.forEach { clone -> cloneOwnerById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
+        val completedUserIds = buildSet {
+            rootUsers.filter { it.isCompleted() }.forEach { add(it.userId) }
+            clones.filter { it.isCompleted() }.forEach { clone -> cloneOwnerById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
+        return GroupFlags(
+            hasGroupResult = completedUserIds.size >= 2,
+            isGroupTournament = participantUserIds.size >= 2,
+        )
     }
 
     // ROOT 는 항상 아이템 담기 가능. CLONE 은 소셜 초대로 ROOT 에 TournamentUser 가 있으면 true,
@@ -768,7 +802,7 @@ class TournamentService(
     private fun buildCompleted(
         tournament: Tournament,
         histories: List<TournamentHistory>,
-        hasGroupResult: Boolean,
+        groupFlags: GroupFlags,
         isOwner: Boolean,
         canAddItem: Boolean,
     ): TournamentDetail.Completed {
@@ -794,7 +828,8 @@ class TournamentService(
                     imageUrl = snapshot.imageUrl,
                 )
             },
-            hasGroupResult = hasGroupResult,
+            hasGroupResult = groupFlags.hasGroupResult,
+            isGroupTournament = groupFlags.isGroupTournament,
             isOwner = isOwner,
             isRoot = isRoot,
             canAddItem = canAddItem,
@@ -908,7 +943,13 @@ class TournamentService(
                 ?: throw TournamentException.forbiddenTournament()
         if (tournamentUser.getId() != tournament.ownerTournamentUserId) throw TournamentException.forbiddenTournament()
         if (!tournament.isRoot()) throw TournamentException.clonedTournamentCannotSharePlayLink()
-        tournament.playLinkExpiresAt?.let { throw TournamentException.playLinkAlreadyCreated() }
+        // 멱등(#980) — 유효한 링크가 있으면 그 값을 그대로 돌려준다(연장하지 않는다: 공유 버튼을 다시 누른
+        // 것만으로 노출 기간이 늘면 주최자가 의도하지 않은 노출이 생긴다). 없거나(최초) 만료됐으면 새로 발급한다.
+        // 종전엔 "값이 있으면 무조건 거부" 라 만료된 뒤에는 영구히 재발급이 안 됐다 — 유효기간이 링크를 죽이는
+        // 데만 쓰이고 되살리는 데는 안 쓰였다. 주최자 탈퇴로 무효화된 경우는 이 지점에 닿지 않는다: softDelete
+        // 가 주최자 TournamentUser 행을 지우므로 위 findByTournamentIdAndUserId 가 못 찾아 forbiddenTournament
+        // 로 먼저 걸린다(findByTournamentIdAndUserIdAndDeletedAtIsNull 위임, 실측 확인).
+        if (tournament.isPlayLinkValid()) return requireNotNull(tournament.playLinkExpiresAt)
         val expiresAt = LocalDateTime
             .now()
             .plusDays(PLAY_LINK_DURATION_DAYS)
@@ -1013,11 +1054,16 @@ class TournamentService(
             requesterOwnedClone?.isCompleted() ?: false
         }
         // completedRootTUs·completedClones 는 아래 plays 빌드에도 쓰이므로 미리 구해 게이트와 공유한다.
-        // computeHasGroupResult 를 별도 호출하면 findBySourceTournamentId 와 countCompletedByTournamentId 를
-        // 중복 조회하게 되므로 인라인으로 처리한다.
+        // computeGroupFlags 를 별도 호출하면 findBySourceTournamentId 등을 중복 조회하게 되므로 인라인으로 처리한다.
         val completedRootTUs = tournamentUserRepository.findCompletedByTournamentId(tournamentId)
         val completedClones = allClones.filter { it.isCompleted() }
-        if (!requesterHasCompleted || completedRootTUs.size + completedClones.size < 2) {
+        // 완료자는 record 가 아니라 userId 로 센다 — 주최자가 자기 self-clone 을 완주하면 ROOT·CLONE 두 record 가
+        // 같은 사용자다(computeGroupFlags 와 동일 기준). record 로 세면 solo 가 게이트를 통과해버린다.
+        val completedUserIds = buildSet {
+            completedRootTUs.forEach { add(it.userId) }
+            completedClones.forEach { clone -> cloneOwnerTUById[clone.ownerTournamentUserId]?.let { add(it.userId) } }
+        }
+        if (!requesterHasCompleted || completedUserIds.size < 2) {
             throw TournamentException.groupResultNotAvailable()
         }
 
@@ -1032,7 +1078,7 @@ class TournamentService(
                 val ownerTU = cloneOwnerTUById[clone.ownerTournamentUserId] ?: return@forEach
                 add(Play(clone.getId(), ownerTU.getId(), ownerTU.userId))
             }
-        }
+        }.distinctBy { it.userUUID } // 같은 사용자의 ROOT·self-clone 플레이가 결과에 두 번 실리지 않게 dedup (ROOT 플레이 우선).
 
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
@@ -1129,6 +1175,8 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
+        // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — 삭제 시 원본을 건드리므로 막는다(#977, 추가 금지 032 와 같은 결).
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)

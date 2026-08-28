@@ -102,6 +102,6 @@
 3. `POST /api/v1/wishlists` (MEMBER 토큰 + `{"url":"..."}`) → 201 `status=PENDING` (비동기)
 4. `GET /api/v1/wishlists` 폴링 → `status` 가 `PENDING → PROCESSING → READY/FAILED` 로 전이, READY 면 name·currentPrice·currency·imageUrl 채워짐
 - 인증: 기본 WEB(토큰을 HttpOnly 쿠키로 내림). `X-Client-Type: app` 헤더를 보내야 body 로 토큰 수신.
-- 레이트리밋: `POST /api/v1/wishlists` 는 IP당 분당 30회(`piki_llm` zone).
+- 레이트리밋: `POST /api/v1/wishlists` 는 전역 그물(`piki_general`, IP당 초당 20회)과 계정별 등록 quota(시간당 30회)를 받는다.
 
 > 테스트한 전체 URL 은 §3 표의 각 플랫폼 행에 풀로 기재돼 있다.

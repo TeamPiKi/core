@@ -1,6 +1,7 @@
 package com.depromeet.piki.admin.announcement
 import com.depromeet.piki.announcement.repository.AnnouncementRepository
 
+import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -10,6 +11,7 @@ import java.util.UUID
 // 트랜잭션 밖에서 돌므로, 상태 전환·진행률 갱신·delivery 행 저장만 이 별도 빈의 짧은 트랜잭션에 위임한다
 // (CLAUDE.md "외부 호출은 트랜잭션 밖" + self-invocation 회피 — async 빈에서 직접 @Transactional 호출은 proxy 우회).
 @Service
+@ConditionalOnAdminEnabled
 class AnnouncementProgressWriter(
     private val announcementRepository: AnnouncementRepository,
     private val deliveryRepository: AnnouncementDeliveryRepository,

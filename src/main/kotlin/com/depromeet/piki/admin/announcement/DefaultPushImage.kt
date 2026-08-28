@@ -1,5 +1,6 @@
 package com.depromeet.piki.admin.announcement
 
+import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import com.depromeet.piki.common.storage.S3Properties
 import org.springframework.stereotype.Component
 
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component
 // (#473 고도화 — kind 로 라벨·아이콘을 가른다) 알림 발송 경로의 소비자가 사라졌다. 지금 유일한 소비자가
 // AdminAnnouncementController 뿐이라 admin 패키지에 둔다 — 알림 발송이 이 이미지를 쓴다는 오독을 막는다.
 @Component
+@ConditionalOnAdminEnabled
 class DefaultPushImage(
     s3Properties: S3Properties,
 ) {
