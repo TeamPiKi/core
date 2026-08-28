@@ -56,19 +56,7 @@ class WishlistController(
         )
     }
 
-    @PostMapping("/images", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
-    @ResponseStatus(HttpStatus.CREATED)
-    override fun registerFromImages(
-        @AuthenticationPrincipal userId: UUID,
-        @RequestParam("images", required = false) images: List<MultipartFile>?,
-    ): ApiResponseBody<List<WishItemResponse>> {
-        // images 파트를 아예 안 보내면(0장) Spring 이 컨트롤러 진입 전 MissingServletRequestPartException 으로
-        // 끊어 캐치올(500)로 떨어진다. required=false + orEmpty 로 항상 서비스 검증(invalidImageCount, 400)에 닿게 한다.
-        val results = wishlistService.registerFromImages(images = images.orEmpty(), userId = userId)
-        return ApiResponseBody.created(results.map { toResponse(it) })
-    }
-
-    // 이미지 등록 v2 1단계 — presigned 업로드 URL 발급. pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않으므로 200 OK.
+    // 이미지 등록 1단계 — presigned 업로드 URL 발급. pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않으므로 200 OK.
     @PostMapping("/images/presigned")
     override fun presignImageUploads(
         @AuthenticationPrincipal userId: UUID,
@@ -78,7 +66,7 @@ class WishlistController(
         return ApiResponseBody.ok(PresignedImageUploadResponse.from(uploads))
     }
 
-    // 이미지 등록 v2 2단계 — 업로드 확정. PENDING 위시를 생성하므로 v1(registerFromImages)과 같은 201 CREATED.
+    // 이미지 등록 2단계 — 업로드 확정. PENDING 위시를 생성하므로 URL 등록과 같은 201 CREATED.
     @PostMapping("/images/confirm")
     @ResponseStatus(HttpStatus.CREATED)
     override fun confirmImageRegistration(
@@ -155,7 +143,7 @@ class WishlistController(
     // 다중 삭제는 의미상 DELETE 지만, DELETE + body 는 중간자(게이트웨이·LB·CDN)가 body 를 스트립/거절할 수 있어
     // (RFC 9110 은 DELETE body 의미를 정의하지 않음) id 목록을 query param(?ids=1,2,3)으로 받는다.
     // 누락 시 required=false + orEmpty 로 WishDeleteIds 검증(400)에 닿게 한다 — required=true 면 누락이
-    // MissingServletRequestParameterException → 캐치올 500 으로 새기 때문이다(registerFromImages 의 교훈).
+    // MissingServletRequestParameterException → 캐치올 500 으로 새기 때문이다.
     @DeleteMapping
     override fun deleteWishes(
         @AuthenticationPrincipal userId: UUID,

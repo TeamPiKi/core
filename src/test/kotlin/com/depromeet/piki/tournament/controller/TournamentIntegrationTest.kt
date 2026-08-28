@@ -2497,31 +2497,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-images 는 참여자이면 PENDING 아이템을 생성하고 tournamentItemIds 를 반환한다`() {
-        stubImageParsingWorker.enabled = false
-        try {
-            val mockMvc = buildMockMvc()
-            val tournamentId = createTournament(mockMvc)
-            val image1 = MockMultipartFile("images", "img1.jpg", "image/jpeg", ByteArray(100) { 1 })
-            val image2 = MockMultipartFile("images", "img2.jpg", "image/jpeg", ByteArray(100) { 2 })
-
-            mockMvc
-                .perform(
-                    multipart("/api/v1/tournaments/$tournamentId/items/images")
-                        .file(image1)
-                        .file(image2)
-                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-                ).andExpect(status().isOk)
-                .andExpect(jsonPath("$.data.tournamentItemIds").isArray)
-                .andExpect(jsonPath("$.data.tournamentItemIds.length()").value(2))
-
-            assertEquals(2, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
-        } finally {
-            stubImageParsingWorker.enabled = true
-        }
-    }
-
-    @Test
     fun `게스트 합류 시 TournamentJoined 이벤트가 발행된다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
@@ -2568,16 +2543,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
-            val image1 = MockMultipartFile("images", "img1.jpg", "image/jpeg", ByteArray(100) { 1 })
-            val image2 = MockMultipartFile("images", "img2.jpg", "image/jpeg", ByteArray(100) { 2 })
+            val imageKeys = presignImageKeys(mockMvc, tournamentId, count = 2)
 
-            mockMvc
-                .perform(
-                    multipart("/api/v1/tournaments/$tournamentId/items/images")
-                        .file(image1)
-                        .file(image2)
-                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-                ).andExpect(status().isOk)
+            confirmImages(mockMvc, tournamentId, imageKeys).andExpect(status().isOk)
 
             val added = applicationEvents.stream(TournamentItemAdded::class.java).toList()
             assertEquals(1, added.size)
@@ -2586,24 +2554,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         } finally {
             stubImageParsingWorker.enabled = true
         }
-    }
-
-    @Test
-    fun `POST tournaments-id-items-images 에서 토너먼트 참여자가 아니면 403 을 반환하고 raw 를 올리지 않는다`() {
-        val mockMvc = buildMockMvc()
-        val tournamentId = createTournament(mockMvc)
-        val image = MockMultipartFile("images", "test.jpg", "image/jpeg", ByteArray(100) { 1 })
-        val rawBefore = stubImageStorage.uploadedKeys.count { it.startsWith("items/raw/") }
-
-        mockMvc
-            .perform(
-                multipart("/api/v1/tournaments/$tournamentId/items/images")
-                    .file(image)
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
-            ).andExpect(status().isForbidden)
-
-        // 권한 검증(verifyCanAddItems)이 업로드 전에 거부하므로 raw 가 S3 에 올라가지 않아야 한다(orphan 방지).
-        assertEquals(rawBefore, stubImageStorage.uploadedKeys.count { it.startsWith("items/raw/") })
     }
 
     @Test
@@ -2622,42 +2572,15 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
         ).andReturn()
         val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
-        val image = MockMultipartFile("images", "test.jpg", "image/jpeg", ByteArray(100) { 1 })
 
+        // 복제 토너먼트는 아이템 추가 자체가 막혀 있어, 업로드를 시작하기도 전인 발급 단계에서 거부된다.
         mockMvc
             .perform(
-                multipart("/api/v1/tournaments/$cloneId/items/images")
-                    .file(image)
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+                post("/api/v1/tournaments/$cloneId/items/images/presigned")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .content(objectMapper.writeValueAsString(mapOf("contentTypes" to listOf("image/jpeg")))),
             ).andExpect(status().isForbidden)
-    }
-
-    @Test
-    fun `POST tournaments-id-items-images 에서 이미지 6개 이상이면 400 을 반환한다`() {
-        val mockMvc = buildMockMvc()
-        val tournamentId = createTournament(mockMvc)
-        val images = (1..6).map { i -> MockMultipartFile("images", "img$i.jpg", "image/jpeg", ByteArray(100) { 1 }) }
-
-        val request = images.fold(multipart("/api/v1/tournaments/$tournamentId/items/images")) { req, file ->
-            req.file(file)
-        }.header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-
-        mockMvc
-            .perform(request)
-            .andExpect(status().isBadRequest)
-    }
-
-    @Test
-    fun `POST tournaments-id-items-images 에서 이미지 파트를 보내지 않으면 400 을 반환한다`() {
-        val mockMvc = buildMockMvc()
-        val tournamentId = createTournament(mockMvc)
-
-        // .file(...) 없이 images 파트를 아예 생략 — required=false + orEmpty 로 서비스 검증(개수 0)에 닿아 400.
-        mockMvc
-            .perform(
-                multipart("/api/v1/tournaments/$tournamentId/items/images")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isBadRequest)
     }
 
     @Test
@@ -2698,15 +2621,47 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createTournament(mockMvc)
         val full32 = (1..32).map { saveWishItem() }.toLongArray()
         addItemsToTournament(mockMvc, tournamentId, userId, *full32)
-        val image = MockMultipartFile("images", "img.jpg", "image/jpeg", ByteArray(100) { 1 })
+        // 발급은 사전 권한만 보므로 통과한다 — 정원 최종 판정은 아이템이 실제로 생기는 확정 단계가 쥔다.
+        val imageKeys = presignImageKeys(mockMvc, tournamentId, count = 1)
 
-        mockMvc
-            .perform(
-                multipart("/api/v1/tournaments/$tournamentId/items/images")
-                    .file(image)
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isBadRequest)
+        confirmImages(mockMvc, tournamentId, imageKeys).andExpect(status().isBadRequest)
     }
+
+    // 이미지 등록 1단계 — presigned 를 발급받아 imageKey 들을 돌려준다. 업로드는 클라가 S3 에 직접 하므로
+    // 테스트에서 재현하지 않는다(StubImageStorage.exists 기본값이 "올라왔다"라 확정 단계가 그대로 통과한다).
+    private fun presignImageKeys(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        count: Int,
+        actor: UUID = userId,
+    ): List<String> {
+        val response =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/images/presigned")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(actor))
+                        .content(objectMapper.writeValueAsString(mapOf("contentTypes" to List(count) { "image/jpeg" }))),
+                ).andExpect(status().isOk)
+                .andReturn()
+                .response
+                .getContentAsString(Charsets.UTF_8)
+        val uploads = objectMapper.readTree(response).path("data").path("uploads")
+        return (0 until uploads.size()).map { uploads.path(it).path("imageKey").asText() }
+    }
+
+    // 이미지 등록 2단계 — 상태 단언은 호출부가 한다(성공·거부 시나리오가 갈리므로).
+    private fun confirmImages(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        imageKeys: List<String>,
+        actor: UUID = userId,
+    ) = mockMvc.perform(
+        post("/api/v1/tournaments/$tournamentId/items/images/confirm")
+            .contentType(MediaType.APPLICATION_JSON)
+            .header(HttpHeaders.AUTHORIZATION, authHeader(actor))
+            .content(objectMapper.writeValueAsString(mapOf("imageKeys" to imageKeys))),
+    )
 
     private fun buildMockMvc(): MockMvc =
         MockMvcBuilders
@@ -2869,31 +2824,37 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
 
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
-    // 이미지 경로도 link 처럼 PENDING 으로 작업 큐 적재되므로, persistPendingImages 로 만든 뒤 claim(PROCESSING)→markReady 로
-    // 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
+    // 등록 API 를 타지 않고 행을 직접 심는다 — 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이고,
+    // 등록 경로 자체(발급·확정)는 TournamentItemImagePresignedIntegrationTest 가 따로 덮는다.
+    // 적재 후 claim(PROCESSING)→markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
-        val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
-        itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
+        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId()))
+        wishJpaRepository.save(Wish(userId = owner, snapshotId = snapshot.getId()))
+        snapshot.markProcessing()
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            result.snapshot.getId(),
+            snapshot.getId(),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
-        return result.item.getId()
+        return item.getId()
     }
 
     // 위시의 활성 snapshot 이 미완성(INCOMPLETE)인 아이템 — 가격만 빠진 부분 추출이라 markExtracted 가 그렇게 판정한다(#944).
+    // 적재는 saveWishItem 과 같은 이유로 행을 직접 심는다(등록 경로는 presigned 통합 테스트가 덮는다).
     private fun saveIncompleteWishItem(owner: UUID = userId, name: String = "가격 없는 아이템"): Long {
-        val result = wishPersistenceService.persistPendingImages(owner, listOf("items/raw/${UUID.randomUUID()}.png")).first()
-        itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
+        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId()))
+        wishJpaRepository.save(Wish(userId = owner, snapshotId = snapshot.getId()))
+        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            result.snapshot.getId(),
+            snapshot.getId(),
             ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
-        return result.item.getId()
+        return item.getId()
     }
 
     @Test

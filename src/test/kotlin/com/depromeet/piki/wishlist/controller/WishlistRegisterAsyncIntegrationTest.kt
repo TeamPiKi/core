@@ -30,10 +30,8 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -270,8 +268,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = {
                 ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
-            val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
+            val itemId = registerImageAndGetItemId(mockMvc, userId)
 
             await().atMost(Duration.ofSeconds(5)).until {
                 latestSnapshot(itemId)?.status == ItemStatus.READY
@@ -296,8 +293,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             // 확정 실패(상품 아님)는 다시 해도 결과가 같아 즉시 FAILED 로 종결한다 (일시 외부 오류는 PROCESSING 유지 — 아래 별도 테스트).
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
-            val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
+            val itemId = registerImageAndGetItemId(mockMvc, userId)
 
             await().atMost(Duration.ofSeconds(5)).until {
                 latestSnapshot(itemId)?.status == ItemStatus.FAILED
@@ -327,8 +323,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
+            val itemId = registerImageAndGetItemId(mockMvc, userId)
             // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
             await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
             // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
@@ -348,15 +343,27 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = {
                 ProductSnapshot(link = null, name = "상품", price = 1_000, imageUrl = "https://img.example.com/p.png")
             }
-            val request = multipart("/api/v1/wishlists/images")
-            (1..5).forEach { i ->
-                request.file(MockMultipartFile("images", "p$i.png", "image/png", byteArrayOf(i.toByte())))
-            }
-            request.header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+            val presignResponse =
+                mockMvc
+                    .perform(
+                        post("/api/v1/wishlists/images/presigned")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                            .content(objectMapper.writeValueAsString(mapOf("contentTypes" to List(5) { "image/png" }))),
+                    ).andExpect(status().isOk)
+                    .andReturn()
+                    .response
+                    .getContentAsString(Charsets.UTF_8)
+            val uploads = objectMapper.readTree(presignResponse).path("data").path("uploads")
+            val imageKeys = (0 until uploads.size()).map { uploads.path(it).path("imageKey").asText() }
             val response =
                 mockMvc
-                    .perform(request)
-                    .andExpect(status().isCreated)
+                    .perform(
+                        post("/api/v1/wishlists/images/confirm")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                            .content(objectMapper.writeValueAsString(mapOf("imageKeys" to imageKeys))),
+                    ).andExpect(status().isCreated)
                     .andExpect(jsonPath("$.data.length()").value(5))
                     // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 작업 큐에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
                     .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
@@ -391,8 +398,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = {
                 ProductSnapshot(link = null, name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
-            val image = MockMultipartFile("images", "p.png", "image/png", byteArrayOf(1, 2, 3))
-            val itemId = registerImageAndGetItemId(mockMvc, userId, image)
+            val itemId = registerImageAndGetItemId(mockMvc, userId)
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
 
             // 파싱이 끝나면 등록 시 올린 raw 원본(items/raw/...)을 S3 에서 회수한다(누수 방지, best-effort 라 회수까지 await).
@@ -676,17 +682,38 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             .asLong()
     }
 
+    // 이미지 한 장을 등록하고 그 item id 를 돌려준다 — 발급(presigned) → 확정(confirm) 2단계를 그대로 탄다.
+    // 업로드 자체는 클라가 S3 에 직접 하므로 여기선 재현하지 않는다(StubImageStorage.exists 기본값이 "올라왔다").
     private fun registerImageAndGetItemId(
         mockMvc: MockMvc,
         userId: UUID,
-        image: MockMultipartFile,
     ): Long {
+        val presignResponse =
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/images/presigned")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                        .content(objectMapper.writeValueAsString(mapOf("contentTypes" to listOf("image/png")))),
+                ).andExpect(status().isOk)
+                .andReturn()
+                .response
+                .getContentAsString(Charsets.UTF_8)
+        val imageKey =
+            objectMapper
+                .readTree(presignResponse)
+                .path("data")
+                .path("uploads")
+                .path(0)
+                .path("imageKey")
+                .asText()
         val response =
             mockMvc
                 .perform(
-                    multipart("/api/v1/wishlists/images")
-                        .file(image)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                    post("/api/v1/wishlists/images/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                        .content(objectMapper.writeValueAsString(mapOf("imageKeys" to listOf(imageKey)))),
                 ).andExpect(status().isCreated)
                 .andReturn()
                 .response

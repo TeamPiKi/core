@@ -66,34 +66,10 @@ class TournamentItemService(
         return persisted.tournamentItemId
     }
 
-    fun addItemsFromImages(
-        userId: UUID,
-        tournamentId: Long,
-        images: List<MultipartFile>,
-    ): List<Long> {
-        if (images.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
-        // 권한·상태·복제를 업로드 전에 미리 검증 — 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다(정원 동시성 최종 검증은 persist 의 FOR UPDATE).
-        tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
-        // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
-        val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
-        // 장마다 추출이 따로 도는 별개 item 이라 장수만큼 오너 몫에서 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
-        itemQuotaGuard.consume(ownerIdOf(tournamentId), images.size, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
-        // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
-        val imageKeys = productImages.map { uploadRaw(it) }
-        // 사전검증을 통과해도 정원은 persist 의 FOR UPDATE 가 최종 판정한다(동시 추가 race). 거기서 거부되면 방금 올린 raw 가
-        // 어떤 item 에도 매이지 않은 orphan 으로 남고 워커가 영영 안 본다 — persist 실패 시 즉시 회수한다(best-effort, lifecycle 백업).
-        // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
-        val persisted =
-            runCatching { tournamentItemPersistenceService.persistPendingImageItems(userId, tournamentId, imageKeys) }
-                .onFailure { imagePresignService.deleteRawsQuietly(imageKeys) }
-                .getOrThrow()
-        return persisted.map { it.tournamentItemId }
-    }
-
-    // 이미지 등록 v2 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다(위시 presignImageUploads 와 동일 패턴).
-    // v1(addItemsFromImages)이 서버로 바이트를 받아 S3 에 올리던 것을 클라→S3 직접 업로드로 바꿔 서버 대역·메모리를 아낀다.
+    // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다(위시 presignImageUploads 와 동일 패턴).
+    // 원본 바이트가 서버 메모리·대역을 경유하지 않는다.
     // 개수·권한(참여자·PENDING·비복제)을 사전 검증하고, content-type 검증·raw key 생성·presign 은 ImagePresignService 에 위임한다.
-    // 발급은 pending_uploads 매핑만 남기고 tournament_item 을 만들지 않으므로 정원 최종 판정(persist 의 FOR UPDATE)은 confirm 으로 미룬다 — 여기선 사전 권한만 본다(v1 대칭).
+    // 발급은 pending_uploads 매핑만 남기고 tournament_item 을 만들지 않으므로 정원 최종 판정(persist 의 FOR UPDATE)은 confirm 으로 미룬다 — 여기선 사전 권한만 본다.
     fun presignImageUploads(
         userId: UUID,
         tournamentId: Long,
@@ -128,13 +104,6 @@ class TournamentItemService(
         return tournamentItemPersistenceService
             .registerClaimedImages(imageKeys, userId, tournamentId)
             .map { it.tournamentItemId }
-    }
-
-    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다(워커가 download(key)로 다시 읽는다). 파싱이 끝나면 워커가 회수한다.
-    private fun uploadRaw(image: ProductImage): String {
-        val key = "items/raw/${UUID.randomUUID()}.${image.extension}"
-        imageStorage.upload(image.bytes, key, image.mimeType)
-        return key
     }
 
     // recoverWishItem 과 동일한 패턴(#825 결정 4) — 수기 수정은 상태 무관 허용이며 MANUAL 새 버전 + pin 이동으로

@@ -14,12 +14,13 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 
-// 이미지 등록 v2 의 공통 presigned 업로드 프리미티브 — 위시·토너먼트가 권한 검증 후 위임한다.
+// 이미지 등록의 공통 presigned 업로드 프리미티브 — 위시·토너먼트가 권한 검증 후 위임한다.
 //   발급: content-type 을 검증해 raw key(items/raw/{UUID}.{ext})를 만들고, 클라가 서버를 거치지 않고 S3 에 직접 PUT 할
 //         presigned URL 을 준다. 발급된 key 는 pending_uploads 에 맥락과 함께 커밋해, confirm 이 안 와도 폴링 백스톱이
 //         S3 존재를 확인해 등록할 수 있게 한다(클라 신호에 의존하지 않는 at-least-once).
 //   확정 검증: 클라가 되돌려준 key 가 우리 발급 형식인지 + 실제로 S3 에 올라왔는지(HEAD) 확인한다.
-//   raw 회수: item 에 매이지 못한 raw 를 best-effort 로 삭제한다(v1 경로가 거부·실패 시 사용).
+// raw 회수는 두지 않는다 — raw 를 올린 주체가 클라이고, 등록에 매이지 못한 raw 는 폴링이 pending 매핑을 정리한 뒤
+// items/raw/ S3 lifecycle 이 만료시킨다.
 // 개수 검증(1~5)은 도메인 계약이라 호출부(위시=member, 토너먼트=참여자·상태)가 각자 담당한다 — 여기선 형식·존재만 본다.
 @Service
 class ImagePresignService(
@@ -76,16 +77,6 @@ class ImagePresignService(
             if (!RAW_KEY_REGEX.matches(key)) throw ImageUploadException.invalidKey()
             // presigned 로 실제 올리지 않고 confirm 을 부른 것 — 400 (스토리지 장애면 exists 가 502 로 던진다).
             if (!imageStorage.exists(key)) throw ImageUploadException.notUploaded()
-        }
-    }
-
-    // item 에 매이지 못한 raw(거부·실패 등록의 orphan)를 best-effort 로 회수한다 — v1(multipart) 경로가 persist 거부·실패 시 부른다.
-    // 삭제 실패가 원래 예외(클라이언트로 나갈 사유)를 덮지 않게 runCatching 으로 삼키고 경고만 남긴다. 회수 못 한 raw 는
-    // items/raw/ S3 lifecycle 이 백업으로 만료한다.
-    fun deleteRawsQuietly(imageKeys: List<String>) {
-        imageKeys.forEach { key ->
-            runCatching { imageStorage.delete(key) }
-                .onFailure { e -> log.warn("raw {} 회수 실패(lifecycle 이 만료): {}", key, e.message) }
         }
     }
 
