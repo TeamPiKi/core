@@ -1,6 +1,9 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -11,7 +14,8 @@ import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
-import com.depromeet.piki.wishlist.service.WishPersistenceService
+import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -48,7 +52,9 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
-    @Autowired private lateinit var wishPersistenceService: WishPersistenceService
+    @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
+
+    @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
     @Autowired private lateinit var jwtProvider: JwtProvider
 
@@ -459,14 +465,17 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         name: String,
         price: Int,
     ): Long {
-        val result = wishPersistenceService.persistPendingImages(userId, listOf("items/raw/${UUID.randomUUID()}.png")).first()
-        itemSnapshotJpaRepository.findById(result.snapshot.getId()).get().markProcessing()
+        // 필요한 것은 "READY 인 위시 아이템" 이라는 상태뿐이라 등록 API 를 타지 않고 행을 직접 심는다.
+        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
+        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId()))
+        wishJpaRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            result.snapshot.getId(),
+            snapshot.getId(),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
-        return result.item.getId()
+        return item.getId()
     }
 
     private fun tournamentItemIdsOf(tournamentId: Long): List<Long> =

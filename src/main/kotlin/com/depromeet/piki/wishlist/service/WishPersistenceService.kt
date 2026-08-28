@@ -82,20 +82,7 @@ class WishPersistenceService(
         return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
     }
 
-    // v1(multipart) 이미지 다건 등록 — 서버가 바이트를 받아 S3 에 올린 뒤 pending 매핑 없이 바로 적재한다.
-    // 입력(imageKey)이 행에 박혀 durable 하므로 link 경로와 같은 작업 큐에 적재한다 — 디스패처가 PENDING 을 집어 워커에 넘긴다.
-    @Transactional
-    fun persistPendingImages(
-        userId: UUID,
-        imageKeys: List<String>,
-    ): List<WishWithItem> {
-        // 실시간(v1 multipart) 경로 — persist 와 같은 활성 유저 잠금 가드(#776). tombstone race 를 막고,
-        // absent 는 앞단(requireMember)이 거른다(persist 주석 참고).
-        userService.rejectIfWithdrawnForUpdate(userId)
-        return persistImagesInternal(userId, imageKeys)
-    }
-
-    // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
+    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
     // 잠가 삭제(claim)하고, claim 에 성공한(=이 트랜잭션이 가져간) WISH 매핑만 적재한다 — confirm·폴링이 같은 key 를
     // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 user·토너먼트 맥락 매핑은 걸러낸다.
     @Transactional
@@ -123,7 +110,7 @@ class WishPersistenceService(
     }
 
     // 이미지 key 들을 item(정체성) → PENDING snapshot(작업 큐 적재) → wish 순서로 배치 적재하는 공통 코어.
-    // 트랜잭션은 호출부(persistPendingImages·registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
+    // 트랜잭션은 호출부(registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
     private fun persistImagesInternal(
         userId: UUID,
         imageKeys: List<String>,

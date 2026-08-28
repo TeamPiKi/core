@@ -23,10 +23,10 @@ enum class ImageStorageErrorCode(
     PRESIGN_FAILED("STORAGE-002", ErrorCategory.RETRYABLE, "이미지 업로드 URL 을 발급하지 못했어요. 잠시 후 다시 시도해 주세요."),
     EXISTS_CHECK_FAILED("STORAGE-003", ErrorCategory.RETRYABLE, "이미지 업로드 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."),
 
-    // ⚠️ 이 하나만 ErrorCodeRegistry 에 등록하지 않는다. 삭제 실패는 호출부 세 곳이 전부 runCatching 으로
+    // ⚠️ 이 하나만 ErrorCodeRegistry 에 등록하지 않는다. 삭제 실패는 호출부가 전부 runCatching 으로
     // 삼키고 warn 로그만 남긴다 — 탈퇴 시 프로필 파기(WithdrawalService)·공지 이미지 정리(AdminAnnouncementService)는
-    // 본 작업을 성공 처리하고 후속 정리 대상으로 넘기며, raw 회수(deleteRawsQuietly)는 원래 예외를 덮지 않으려
-    // 삼킨다. 따라서 GlobalExceptionHandler 에 닿지 않아 wire code 로 나갈 수 없고, 클라가 절대 못 받는 code 를
+    // 본 작업을 성공 처리하고 후속 정리 대상으로 넘긴다.
+    // 따라서 GlobalExceptionHandler 에 닿지 않아 wire code 로 나갈 수 없고, 클라가 절대 못 받는 code 를
     // 공개 카탈로그에 두면 code→문구 매핑에 노이즈만 된다(SNAPSHOT·EXTRACTOR 미등록과 같은 기준).
     // 그럼에도 엔트리를 두는 이유는 S3ImageStorage 가 실제로 이 예외를 던지기 때문이다 — 예외 클래스 모양을
     // 다른 도메인과 통일(errorCode 참조)하려면 참조할 code 가 하나 있어야 한다.

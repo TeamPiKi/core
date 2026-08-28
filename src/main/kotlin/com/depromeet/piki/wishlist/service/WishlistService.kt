@@ -72,31 +72,8 @@ class WishlistService(
         return wishPersistenceService.persist(userId, Item(link))
     }
 
-    // 이미지 등록은 registerFromUrl(link)와 같은 비동기 작업 큐 흐름 — 입력이 이미지(다건)일 뿐이다.
-    // 개수·형식을 동기로 검증(400)한 뒤, 원본을 S3 에 durable 적재(raw key 확보)하고 link 경로처럼 PENDING item·wish 를
-    // 배치 저장해 즉시 반환한다. 실제 추출(Gemini·크롭·결과 업로드)은 디스패처(@Scheduled)가 PENDING 을 집어 워커에 넘긴다.
-    // raw 를 먼저 올려 입력이 durable 하므로, @Async 유실·일시 오류로 재실행돼도 워커가 그 key 로 원본을 다시 읽는다.
-    fun registerFromImages(
-        images: List<MultipartFile>,
-        userId: UUID,
-    ): List<WishWithItem> {
-        requireMember(userId)
-        if (images.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        // 형식 검증(빈 바이트·미지원 MIME) — 실패 시 즉시 400. 유효한 이미지만 durable 적재한다.
-        val productImages = images.map { ProductImage.of(it.bytes, it.contentType) }
-        // 장마다 추출이 따로 도는 별개 item 이라 장수만큼 차감한다. S3 업로드 전에 둬서 거부될 요청이 raw 를 남기지 않게 한다.
-        itemQuotaGuard.consume(userId, images.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
-        // 원본을 S3 raw 에 올려 입력을 durable 화한다(외부 호출, 트랜잭션 밖). 이 key 가 item 의 입력 정체성이 된다.
-        val imageKeys = productImages.map { uploadRaw(it) }
-        // 위시 이미지 등록엔 정원 같은 계약 거부가 없어 정상 흐름에선 persist 가 떨어지지 않지만, 예기치 못한 영속화 실패에도
-        // 방금 올린 raw 가 orphan 으로 새지 않게 즉시 회수한다(tournament 경로와 대칭, best-effort, lifecycle 백업).
-        return runCatching { wishPersistenceService.persistPendingImages(userId, imageKeys) }
-            .onFailure { imagePresignService.deleteRawsQuietly(imageKeys) }
-            .getOrThrow()
-    }
-
-    // 이미지 등록 v2 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다. v1(registerFromImages)이 서버로 바이트를
-    // 받아 S3 에 올리던 것을 클라→S3 직접 업로드로 바꿔, 원본 바이트가 서버 메모리·대역을 경유하지 않게 한다.
+    // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다. 클라→S3 직접 업로드라
+    // 원본 바이트가 서버 메모리·대역을 경유하지 않는다.
     // 회원·개수(계약) 검증만 여기서 하고, content-type 검증·raw key 생성·presign 발급은 ImagePresignService 에 위임한다.
     fun presignImageUploads(
         contentTypes: List<String>,
@@ -105,8 +82,8 @@ class WishlistService(
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         // content-type 검증을 차감 앞으로 당긴다 — presignRawUploads 안에서 걸러도 결과는 같지만, 그러면 지원하지
-        // 않는 MIME 을 보낸 요청이 몫을 깎고 400 을 받는다. v1(registerFromImages)이 ProductImage.of 로 형식을
-        // 먼저 거르는 것과 순서를 맞춘다. 같은 검증이 발급 시점에 한 번 더 도는 것은 부작용 없는 순수 함수라 무해하다.
+        // 않는 MIME 을 보낸 요청이 몫을 깎고 400 을 받는다. 형식 위반은 몫을 건드리기 전에 거른다는 순서를 지킨다.
+        // 같은 검증이 발급 시점에 한 번 더 도는 것은 부작용 없는 순수 함수라 무해하다.
         contentTypes.forEach { ProductImage.extensionForMimeType(it) }
         // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
@@ -130,14 +107,6 @@ class WishlistService(
         // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
-    }
-
-    // 원본 이미지를 S3 raw prefix 에 올리고 그 object key 를 돌려준다. upload 는 공개 URL 을 반환하지만 작업 큐 입력엔
-    // 우리가 만든 key 가 필요하다(워커가 download(key)로 다시 읽는다). 파싱이 끝나면 워커가 이 raw 를 회수한다.
-    private fun uploadRaw(image: ProductImage): String {
-        val key = "items/raw/${UUID.randomUUID()}.${image.extension}"
-        imageStorage.upload(image.bytes, key, image.mimeType)
-        return key
     }
 
     @Transactional(readOnly = true)
