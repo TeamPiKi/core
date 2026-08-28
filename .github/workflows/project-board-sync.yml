@@ -22,4 +22,6 @@ jobs:
     permissions:
       issues: write
     uses: TeamPiKi/infra/.github/workflows/project-board-sync.yml@main
-    secrets: inherit
+    # caller secret 전체를 넘기는 inherit 대신 정본이 요구하는 것만 명시 전달 (최소 전달).
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
