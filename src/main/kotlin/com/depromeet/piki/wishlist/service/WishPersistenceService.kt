@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.user.service.UserService
@@ -34,6 +35,7 @@ class WishPersistenceService(
     private val userService: UserService,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
+    private val itemDisplayService: ItemDisplayService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -143,9 +145,13 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        val base =
+        val pointer =
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        // base 는 포인터가 아니라 카드가 보여준 표시값(#858) — 포인터가 미완성이어도 카드엔 최신 기계 READY 가
+        // 떠 있고, 사용자는 그 값을 보며 일부 필드만 고친다. 포인터를 base 로 쓰면 안 고친 필드가 빈 값에서
+        // 병합돼, 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕긴다(담기 게이트와 같은 어긋남, #1006).
+        val base = itemDisplayService.resolveDisplay(pointer)
         val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
         val manual =
             itemSnapshotRepository.save(
@@ -210,10 +216,11 @@ class WishPersistenceService(
             wish.swapSnapshot(inProgress.getId())
             return WishWithItem(wish = wish, item = item, snapshot = inProgress)
         }
-        // 추출 실패(FAILED) 항목은 새로고침 대상이 아니다 — 보정(recover)으로 복구한다(409). 새로고침은 성공(READY)
-        // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
-        // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).
-        if (activeSnapshot.isFailed()) throw WishException.failedNotRefreshable()
+        // 판정은 표시값(#858) — 포인터가 FAILED 여도 같은 item 을 남이 담아 추출이 성공했으면 카드엔 그 값이
+        // 떠 있고, item 이 추출 가능하다는 증거이므로 새로고침을 막을 이유가 없다. 표시값까지 FAILED(기계 READY
+        // 부재)면 재추출도 결정론적으로 재실패할 것이라 보정(recover, 수기 수정)으로 유도한다(409).
+        // recover 와의 직렬화는 wish 행 락(findByIdForUpdate)이 진다 — 두 경로 모두 같은 락을 잡는다.
+        if (itemDisplayService.resolveDisplay(activeSnapshot).isFailed()) throw WishException.failedNotRefreshable()
         // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다.
         val newSnapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         wish.swapSnapshot(newSnapshot.getId())

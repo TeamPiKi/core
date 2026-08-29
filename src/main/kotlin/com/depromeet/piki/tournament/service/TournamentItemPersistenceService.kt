@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -36,6 +37,7 @@ class TournamentItemPersistenceService(
     private val eventPublisher: ApplicationEventPublisher,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
+    private val itemDisplayService: ItemDisplayService,
 ) {
     @Transactional
     fun persistLinkItem(
@@ -164,12 +166,15 @@ class TournamentItemPersistenceService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 토너먼트는 출전 시점 pin snapshot 을 base 로 쓴다. 최신(findLatestByItemId)이 아니라 tournamentItem.snapshotId
-        // 기준이어야, 같은 item 에 버전이 여러 개 생겨도 이 카드가 보던 버전 위에 수정이 얹혀 격리가 유지된다.
+        // base 는 "이 카드가 보여주던 값" 이다. 수정은 PENDING 전용(위 가드)이고 PENDING 카드는 pin 이 아니라
+        // 표시값(#858, 최신 기계 READY 우선 파생)을 그리므로, pin 을 base 로 쓰면 화면과 다른 값 위에 병합돼
+        // 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕길 수 있다. 시작 후 격리는 start 의 repin 이 진다 —
+        // 여기서 최신을 좇는 게 아니라, 카드 렌더와 같은 파생 규칙을 쓰는 것이다.
         val snapshotId = tournamentItem.snapshotId
-        val base =
+        val pointer =
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
+        val base = itemDisplayService.resolveDisplay(pointer)
         val manual =
             itemSnapshotRepository.save(
                 ItemSnapshot.manual(

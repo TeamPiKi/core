@@ -8,6 +8,7 @@ import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.DomainAccessPolicy
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
@@ -28,6 +29,7 @@ class TournamentItemService(
     private val tournamentUserRepository: TournamentUserRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemQuotaGuard: ItemQuotaGuard,
+    private val itemDisplayService: ItemDisplayService,
 ) {
     // 아이템 등록 비용은 요청자가 아니라 **토너먼트 오너**의 몫에서 깎는다(#339). 참여자에는 게스트가 섞이는데
     // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있다. 오너는 반드시
@@ -138,7 +140,8 @@ class TournamentItemService(
             itemSnapshotRepository.findById(snapshotId)
                 ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
         ItemSnapshot.manual(
-            base = snapshot,
+            // dry-run 도 실제 저장(persistence.manualEdit)과 같은 base(표시값) 를 써야 같은 규칙으로 거른다.
+            base = itemDisplayService.resolveDisplay(snapshot),
             name = name,
             price = price,
             imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },

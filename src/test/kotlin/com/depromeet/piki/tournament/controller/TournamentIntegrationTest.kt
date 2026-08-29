@@ -2241,6 +2241,63 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 있으면 가격 없는 미완성 pin 에도 이름만 수정이 성공한다`() {
+        // 회귀(#1006 과 같은 축): PENDING 카드는 pin 이 아니라 표시값을 그린다. base 가 pin 이면 화면엔 가격이
+        // 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 으로 튕긴다. 표시값 base 로 카드에 보인 가격이 병합되는지 본다.
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val incompleteItem = itemJpaRepository.save(Item())
+        val pin = saveSnapshot(
+            incompleteItem.getId(),
+            status = ItemStatus.INCOMPLETE,
+            name = "미완성 이름",
+            imageUrl = "https://img.example.com/i.png",
+        )
+        tournamentItemJpaRepository.save(
+            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = pin.getId()),
+        )
+        saveMachineReadySnapshot(incompleteItem.getId())
+        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .param("name", "내가 고친 이름")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+
+        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
+        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
+        assertEquals("내가 고친 이름", manual.name)
+        assertEquals(89_000, manual.price, "안 보낸 가격은 카드가 보여주던 표시값에서 병합돼야 한다")
+    }
+
+    @Test
+    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 없으면 가격 없는 미완성 pin 의 이름만 수정을 400 으로 거부한다`() {
+        // 위 테스트의 대조군 — 표시값이 곧 pin 이면 병합해도 가격이 비어 거부돼야 한다(입력 계약 400).
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val incompleteItem = itemJpaRepository.save(Item())
+        val pin = saveSnapshot(
+            incompleteItem.getId(),
+            status = ItemStatus.INCOMPLETE,
+            name = "미완성 이름",
+            imageUrl = "https://img.example.com/i.png",
+        )
+        tournamentItemJpaRepository.save(
+            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = pin.getId()),
+        )
+        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .param("name", "내가 고친 이름")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 수기 수정하면 200 과 MANUAL 새 버전으로 교체된다`() {
         // 수기 수정 상시 허용(#825 결정 4) — READY 는 더 이상 409 가 아니다.
         val mockMvc = buildMockMvc()

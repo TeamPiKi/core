@@ -214,7 +214,8 @@ class WishlistService(
             itemSnapshotRepository.findById(wish.snapshotId)
                 ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
         ItemSnapshot.manual(
-            base = activeSnapshot,
+            // dry-run 도 실제 저장(manualEdit)과 같은 base(표시값) 를 써야 같은 규칙으로 거른다.
+            base = itemDisplayService.resolveDisplay(activeSnapshot),
             name = name,
             price = price,
             imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
