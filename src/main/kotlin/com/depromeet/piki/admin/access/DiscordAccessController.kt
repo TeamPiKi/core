@@ -132,7 +132,13 @@ class DiscordAccessController(
         val ip = ClientIp.of(request)
         allowlistService.grant(ip, identity.name)
         // ADMIN 은 백오피스라 세션(신원)을 발급한다. DOCS/SPEC(#733)는 문서 노출용이라 IP 등록만 하고 세션은 안 준다.
+        //
+        // 신원을 심기 전에 기존 세션을 버리고 새 id 를 발급한다(#988) — 세션 픽세이션 방어. 그대로 getSession(true)
+        // 를 부르면 공격자가 미리 심어둔 JSESSIONID 에 admin 신원이 얹혀, 공격자가 이미 아는 id 가 admin 세션이 된다.
+        // Spring Security 의 세션 픽세이션 보호는 인증 이벤트에서 도는데 이 체인은 permitAll(인증 없음)이라 안 돈다.
+        // 지금은 아래 IP 바인딩이 피해를 막고 있으나, 같은 egress NAT 를 쓰는 공격자에겐 그 한 겹이 통하지 않는다.
         if (identity.dest.issueSession) {
+            request.getSession(false)?.invalidate()
             AdminSession.establish(request.getSession(true), identity.name, ip)
         }
         auditService.record(

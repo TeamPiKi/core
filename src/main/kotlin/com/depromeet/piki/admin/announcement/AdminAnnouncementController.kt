@@ -169,9 +169,15 @@ class AdminAnnouncementController(
             scheduledAt?.trim()?.ifBlank { null }?.let {
                 runCatching { LocalDateTime.parse(it) }.getOrElse { return "redirect:/admin/announcements/$id/send?error=time" }
             }
-        adminAnnouncementService.schedule(id, at, actor = actor(request), clientIp = clientIp(request))
-        // 예약이면 목록에서 예약 상태를 보고, 즉시면 바로 결과(진행률) 화면으로 보낸다.
-        return at?.let { "redirect:/admin/announcements?scheduled" } ?: "redirect:/admin/announcements/$id/result"
+        return try {
+            adminAnnouncementService.schedule(id, at, actor = actor(request), clientIp = clientIp(request))
+            // 예약이면 목록에서 예약 상태를 보고, 즉시면 바로 결과(진행률) 화면으로 보낸다.
+            at?.let { "redirect:/admin/announcements?scheduled" } ?: "redirect:/admin/announcements/$id/result"
+        } catch (e: IllegalArgumentException) {
+            // 이미 발송·예약된 공지(발송 버튼 더블클릭 등)와 과거 시각 예약 — 흔한 운영자 레이스라 계약 실패다.
+            // 안 잡으면 @RestControllerAdvice 가 SSR 페이지를 raw JSON 400 으로 갈아치워 운영자가 화면을 잃는다(#988).
+            "redirect:/admin/announcements?error=send"
+        }
     }
 
     // 예약 취소 — SCHEDULED → DRAFT.
@@ -180,8 +186,13 @@ class AdminAnnouncementController(
         @PathVariable id: Long,
         request: HttpServletRequest,
     ): String {
-        adminAnnouncementService.cancelSchedule(id, actor = actor(request), clientIp = clientIp(request))
-        return "redirect:/admin/announcements?canceled"
+        return try {
+            adminAnnouncementService.cancelSchedule(id, actor = actor(request), clientIp = clientIp(request))
+            "redirect:/admin/announcements?canceled"
+        } catch (e: IllegalArgumentException) {
+            // 스케줄러가 방금 집어간 공지 — 취소할 대상이 이미 없다. 목록으로 돌려 현재 상태를 보게 한다.
+            "redirect:/admin/announcements?error=cancel"
+        }
     }
 
     // 발송 결과 화면 — 집계(성공·실패·코드별)와 진행률 %. SENDING 동안 result.json 을 폴링해 갱신한다.
@@ -206,8 +217,13 @@ class AdminAnnouncementController(
     fun delete(
         @PathVariable id: Long,
     ): String {
-        adminAnnouncementService.delete(id)
-        return "redirect:/admin/announcements?deleted"
+        return try {
+            adminAnnouncementService.delete(id)
+            "redirect:/admin/announcements?deleted"
+        } catch (e: IllegalArgumentException) {
+            // 그 사이 발송·예약으로 넘어갔거나 다른 운영자가 이미 지운 공지 — 삭제 대상이 아니다.
+            "redirect:/admin/announcements?error=delete"
+        }
     }
 
     private fun actor(request: HttpServletRequest): String = AdminSession.actorName(request)

@@ -273,27 +273,3 @@ logging:
     #    (prod ECS JSON 은 MDC 를 필드로 자동 출력하므로 이 평문 패턴에만 명시한다.)
     # 색상(%clr)은 쓰지 않는다 — non-TTY(컨테이너 stdout)에선 어차피 plain 이고, 로컬 콘솔 색상보다 패턴 단순함을 택한다.
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS, Asia/Seoul} %-5level [%thread] [%X{traceId:-},%X{spanId:-}] [user=%X{userId:-}] %logger{36} : %msg%n%wEx"
-
-# 에러 트래킹(#608). prod 에만 DSN 을 주입해 켠다 — 빈 DSN 이면 SDK 가 no-op 이라 dev/로컬은 자동 off 다(코드 분기 0).
-# error 로그를 sentry-logback appender 가 Sentry 이슈로 그룹핑한다(우리 예외는 GlobalExceptionHandler 가 잡아
-# log.error(.., e) 로 남기므로 MVC 미처리예외 통합이 아니라 로그 캡처가 주 경로). 트레이싱은 Sentry 가 아니라
-# 기존 OTel→Tempo 가 담당하므로 traces-sample-rate=0. PII(헤더·쿠키·바디)는 자동 수집하지 않고, 안전 컨텍스트만
-# SentryContextEventProcessor 가 명시 부착한다(traceId·userId·adminActor·endpoint·provider 태그 + URL 쿼리스트링 마스킹).
-sentry:
-  dsn: ${SENTRY_DSN:}
-  # environment 는 별도 env 로 가른다(deploy.yml 이 resolve 환경명을 주입, ENV_ACCESS_GATE 와 동일 패턴).
-  environment: ${SENTRY_ENVIRONMENT:local}
-  # 릴리즈 식별자 — prod promote 는 semver(v1.0.1), 그 외는 배포 커밋 sha (deploy.yml 이 주입). suspect commit·
-  # regression 탐지에 쓰인다(GitHub 연동 승인 후 활성). Sentry UI 에 prod 는 v1.0.1 로, dev 는 sha 로 보인다.
-  release: ${SENTRY_RELEASE:}
-  # Sentry 트레이싱 미사용(Tempo 와 중복·비용 방지). 에러 캡처만 한다.
-  traces-sample-rate: 0
-  # 헤더·쿠키·바디 자동 수집 off. 안전 컨텍스트만 EventProcessor 가 명시 부착한다(CLAUDE.md PII 정책).
-  send-default-pii: false
-  logging:
-    # appender 가 이벤트화할 최소 레벨 — error(예상 못한 서버 버그·SERVER_ERROR 5xx)만 Sentry 이슈로 올린다.
-    # sentry-logback 은 warn 을 예외 유무와 무관하게 전부 이벤트화해(노이즈·쿼터), warn 까지 올리면 진짜 장애(error)가
-    # 묻힌다 → error 로 둔다(CodeRabbit #609 리뷰 반영). warn 레벨 외부 일시실패(Gemini retryable 등)는 이벤트가 아니라
-    # breadcrumb(아래 info+)으로 남아 error 이벤트의 맥락으로 따라붙고, 추세는 Loki·Prometheus 로 본다.
-    minimum-event-level: error
-    minimum-breadcrumb-level: info

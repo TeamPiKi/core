@@ -362,17 +362,6 @@ jobs:
           # 전 엔드포인트·스키마가 외부에 드러나지 않게 dev 외엔 문서 자체를 끈다. 비민감 플래그라 secret 아님(inline).
           SPRINGDOC_ENABLED: ${{ needs.resolve.outputs.environment == 'dev' && 'true' || 'false' }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
-          # 에러 트래킹(#608) — prod 만 DSN 주입(빈값이면 SDK no-op). SENTRY_DSN secret 미설정이어도 빈값이라
-          # 배포는 안 깨지고 Sentry 만 꺼진다(non-breaking). dev 는 조건상 항상 빈값이라 off.
-          SENTRY_DSN: ${{ needs.resolve.outputs.environment == 'prod' && secrets.SENTRY_DSN || '' }}
-          # environment 는 resolve 환경명으로 가른다(Sentry UI 필터·알림).
-          SENTRY_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          # Sentry release — prod(environment=prod) 이고 version 입력이 있을 때만 semver(inputs.version, 예: v1.0.1).
-          # 그 외(dev·직접 push·version 없는 prod)는 배포 커밋 sha(resolve.ref = workflow_run.head_sha)로 폴백한다.
-          # environment=='prod' 를 함께 거는 이유: version 을 넣은 dev 수동 dispatch 까지 semver 로 섞여 환경 추적성이
-          # 흐려지는 걸 막는다. release 잡의 GitHub Release 도 prod 한정이라, prod 에선 Sentry release == GitHub Release(v1.0.1)로
-          # 맞고 suspect commit·regression 이 그 태그 커밋으로 이어진다(GitHub 연동 승인 후). github.sha(deploy.yml HEAD)는 안 쓴다.
-          SENTRY_RELEASE: ${{ (needs.resolve.outputs.environment == 'prod' && inputs.version != '') && inputs.version || needs.resolve.outputs.ref }}
           # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
           # 전 환경이 extractor 전용 박스 하나를 공유한다(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
           # dev 도 동거 컨테이너(host.docker.internal:8090)가 아니라 전용 박스를 본다(#862) — 동거는 어떤 워크플로도
@@ -385,7 +374,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,SENTRY_DSN,SENTRY_ENVIRONMENT,SENTRY_RELEASE,EXTRACT_REMOTE_BASE_URL
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
@@ -424,7 +413,7 @@ jobs:
             # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
             # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
             # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
-            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE SENTRY_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOGGING_STRUCTURED_FORMAT_CONSOLE TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
+            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOGGING_STRUCTURED_FORMAT_CONSOLE TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
             RUN_ENV_FLAGS=""
             TAB="$(printf '\t')"
             while IFS="$TAB" read -r P_NAME P_B64; do
@@ -568,8 +557,7 @@ jobs:
               --env JAVA_TOOL_OPTIONS --env LOGGING_STRUCTURED_FORMAT_CONSOLE --env TRACING_OTLP_ENABLED \
               --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
               --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED \
-              $RUN_ENV_FLAGS \
-              --env SENTRY_DSN --env SENTRY_ENVIRONMENT --env SENTRY_RELEASE
+              $RUN_ENV_FLAGS
 
       - name: Health check and switch
         id: health

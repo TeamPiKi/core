@@ -67,6 +67,19 @@ class StubImageStorage : ImageStorage {
         return existsBehavior(key)
     }
 
+    // 원본 읽기 stub — 서버가 raw 를 내려받아 형식을 검증하는 경로(프로필 이미지 확정)를 재현한다.
+    // 실제로 저장한 바이트가 없으므로 default 를 throw 로 둔다 — 무엇을 읽은 셈 칠지는 시나리오마다 달라서,
+    // 세팅을 빠뜨린 테스트가 우연한 기본값으로 통과하면 안 된다(stub 기본 동작 원칙). 검증은 downloadedKeys 를 본다.
+    val downloadedKeys = mutableListOf<String>()
+    var downloadBehavior: (String) -> ByteArray = {
+        error("stub.downloadBehavior 를 테스트 본문에서 명시 세팅해야 한다.")
+    }
+
+    override fun download(key: String): ByteArray {
+        downloadedKeys.add(key)
+        return downloadBehavior(key)
+    }
+
     companion object {
         // 실제 S3ImageStorage 와 같은 "{publicBaseUrl}/{key}" 형식을 흉내 내도록, 테스트 application.yml 의
         // s3.public-base-url 과 동일하게 둔다. 공지 이미지 rehost(#561)가 "이미 우리 S3 인 URL"을 publicBaseUrl

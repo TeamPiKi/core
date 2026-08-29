@@ -33,5 +33,8 @@ class ImageStorageException private constructor(
 
         fun existsCheckFailed(cause: Throwable? = null): ImageStorageException =
             ImageStorageException(ImageStorageErrorCode.EXISTS_CHECK_FAILED, cause)
+
+        fun downloadFailed(cause: Throwable? = null): ImageStorageException =
+            ImageStorageException(ImageStorageErrorCode.DOWNLOAD_FAILED, cause)
     }
 }

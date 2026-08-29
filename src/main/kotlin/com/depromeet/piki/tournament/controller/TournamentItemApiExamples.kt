@@ -7,6 +7,7 @@ import com.depromeet.piki.common.openapi.examples
 import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
@@ -68,6 +69,7 @@ class TournamentItemApiExamples(
                         // 다건 경로라 가리킬 아이템 하나를 고를 수 없다 — 사유만 내려간다(TournamentException 주석 참고).
                         add(TournamentException.duplicateTournamentItem(), name = "이미 등록된/중복 아이템")
                         add(TournamentException.itemNotReady(), name = "PENDING/PROCESSING/FAILED 등 미완료 상품 포함")
+                        add(TournamentException.itemIncomplete(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                     }
 
                 handlerMethod.binds(TournamentItemController::addItemFromLink) ->
@@ -92,34 +94,6 @@ class TournamentItemApiExamples(
                             name = "이미 담긴 링크 (같은 상품을 다시 추가)",
                         )
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 차감)")
-                        add(capacityExceeded, name = "서비스 전체 가용량 소진")
-                    }
-
-                handlerMethod.binds(TournamentItemController::addItemsFromImages) ->
-                    operation.examples(openApiObjectMapper.delegate) {
-                        add(
-                            status = HttpStatus.OK,
-                            name = "이미지 아이템 추가 성공",
-                            payload =
-                                ApiResponseBody.ok(
-                                    AddTournamentItemsFromImagesResponse(
-                                        tournamentItemIds = listOf(1L, 2L, 3L),
-                                    ),
-                                ),
-                        )
-                        add(TournamentException.invalidImageCount(), name = "이미지 개수 위반 (1~5개)")
-                        // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
-                        add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
-                        add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
-                        add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
-                        add(TournamentException.tooManyTournamentItems(), name = "아이템 최대 32개 초과")
-                        unauthorized()
-                        add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
-                        add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")
-                        add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
-                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
-                        add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
-                        add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 이미지 장수만큼 차감)")
                         add(capacityExceeded, name = "서비스 전체 가용량 소진")
                     }
 
@@ -182,6 +156,7 @@ class TournamentItemApiExamples(
                         add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
+                        add(TournamentException.clonedTournamentCannotModifyItems(), name = "플레이 링크 클론은 아이템 수정 불가")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notFoundTournamentItem(), name = "토너먼트 아이템을 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
@@ -197,6 +172,7 @@ class TournamentItemApiExamples(
                         )
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
+                        add(TournamentException.clonedTournamentCannotModifyItems(), name = "플레이 링크 클론은 아이템 삭제 불가")
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notFoundTournamentItem(), name = "토너먼트 아이템을 찾을 수 없음")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
@@ -318,7 +294,7 @@ class TournamentItemApiExamples(
         PresignedImageUploadResponse(
             uploads =
                 listOf(
-                    PresignedImageUploadResponse.PresignedImageUpload(
+                    PresignedImageUpload(
                         imageKey = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
                         uploadUrl =
                             "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +

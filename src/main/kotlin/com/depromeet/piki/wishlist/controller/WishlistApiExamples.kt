@@ -8,6 +8,7 @@ import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
@@ -214,26 +215,6 @@ class WishlistApiExamples(
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아닌 항목 포함")
                     unauthorized()
-                }
-            }
-            if (handlerMethod.binds(WishlistController::registerFromImages)) {
-                operation.examples(openApiObjectMapper.delegate) {
-                    add(
-                        status = HttpStatus.CREATED,
-                        name = "이미지 등록 접수 (PENDING, 다건)",
-                        payload = ApiResponseBody.created(imagePendingEntries),
-                    )
-                    add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
-                    // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
-                    add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
-                    add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
-                    add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
-                    add(ImageStorageException.uploadFailed(), name = "이미지 저장 실패 (S3 업로드 장애)")
-                    unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
-                    add(UserException.deletedUser(), name = "탈퇴한 유저")
-                    add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (이미지 장수만큼 소모)")
-                    add(capacityExceeded, name = "서비스 전체 가용량 소진")
                 }
             }
             if (handlerMethod.binds(WishlistController::presignImageUploads)) {
@@ -463,14 +444,14 @@ class WishlistApiExamples(
         PresignedImageUploadResponse(
             uploads =
                 listOf(
-                    PresignedImageUploadResponse.PresignedImageUpload(
+                    PresignedImageUpload(
                         imageKey = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
                         uploadUrl =
                             "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +
                                 "550e8400-e29b-41d4-a716-446655440000.png?X-Amz-Signature=EXAMPLE",
                         contentType = "image/png",
                     ),
-                    PresignedImageUploadResponse.PresignedImageUpload(
+                    PresignedImageUpload(
                         imageKey = "items/raw/7c9e6679-7425-40de-944b-e07fc1f90ae7.jpg",
                         uploadUrl =
                             "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/" +

@@ -238,6 +238,7 @@ class TournamentApiExamples(
                         add(TournamentException.notFoundItems(), name = "존재하지 않는 아이템 포함")
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(TournamentException.itemNotReadyToStart(), name = "아직 준비 중인 상품 포함")
+                        add(TournamentException.itemIncompleteToStart(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                         add(TournamentException.itemPriceRequired(), name = "가격 정보 없는 상품 포함")
                         // 아래 둘은 멤버 시작 경로(startAsMember) — 주최자가 ROOT 를 시작해야 멤버가 본인 클론을 만들 수 있다.
                         add(TournamentException.notInProgressTournament(), name = "주최자가 아직 시작하지 않음 (멤버 시작)")
@@ -314,6 +315,7 @@ class TournamentApiExamples(
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
+                                                isGroupTournament = true,
                                                 canAddItem = true,
                                                 playLinkExpiresAt = LocalDateTime.of(2026, 6, 20, 22, 0, 0),
                                             ),
@@ -563,6 +565,7 @@ class TournamentApiExamples(
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
+                                                isGroupTournament = true,
                                                 canAddItem = true,
                                                 playLinkExpiresAt = LocalDateTime.of(2026, 6, 20, 22, 0, 0),
                                             ),
@@ -650,10 +653,21 @@ class TournamentApiExamples(
 
                 handlerMethod.binds(TournamentController::createPlayLink) ->
                     operation.examples(openApiObjectMapper.delegate) {
+                        // 멱등(#980) — 세 상태(최초 생성 · 유효한 값 그대로 · 만료 후 갱신) 모두 200 이다.
                         add(
                             status = HttpStatus.OK,
-                            name = "플레이 링크 생성 성공",
+                            name = "최초 생성",
                             payload = ApiResponseBody.ok(LocalDateTime.of(2026, 6, 9, 22, 0, 0)),
+                        )
+                        add(
+                            status = HttpStatus.OK,
+                            name = "유효한 링크가 이미 있음 (연장 없이 기존 만료시각 그대로)",
+                            payload = ApiResponseBody.ok(LocalDateTime.of(2026, 6, 9, 22, 0, 0)),
+                        )
+                        add(
+                            status = HttpStatus.OK,
+                            name = "만료된 링크를 다시 호출 (새 14일로 갱신)",
+                            payload = ApiResponseBody.ok(LocalDateTime.of(2026, 6, 27, 10, 0, 0)),
                         )
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "권한 없음 (참여자 아님 · 소유자 아님)")
@@ -663,7 +677,6 @@ class TournamentApiExamples(
                         )
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트")
-                        add(TournamentException.playLinkAlreadyCreated(), name = "플레이 링크 이미 생성됨")
                     }
 
                 handlerMethod.binds(TournamentController::getPlayLinkInfo) ->

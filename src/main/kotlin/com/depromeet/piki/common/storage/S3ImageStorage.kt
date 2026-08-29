@@ -81,6 +81,16 @@ class S3ImageStorage(
             if ((e as? S3Exception)?.statusCode() == 404) false else throw ImageStorageException.existsCheckFailed(e)
         }
 
+    override fun download(key: String): ByteArray =
+        // 리전 내(EC2 -> S3) 전송이라 왕복이 짧고 egress 과금도 없다. 객체 없음(404)도 여기선 장애다 —
+        // 호출부가 exists 로 확인한 뒤 부르므로, 없다면 그 사이 사라진 비정상 상태다.
+        runCatching {
+            s3Client
+                .getObjectAsBytes(
+                    GetObjectRequest.builder().bucket(s3Properties.bucket).key(key).build(),
+                ).asByteArray()
+        }.getOrElse { e -> throw ImageStorageException.downloadFailed(e) }
+
     override fun deleteByPrefix(prefix: String) {
         // AWS SDK 예외를 삭제 실패 계약 예외(502)로 변환한다. 호출부(탈퇴)가 best-effort 로 감싸지만
         // 일관성을 위해 같은 변환을 둔다 — 던지는 예외 타입이 경계 전체에서 동일해야 호출부가 한 가지로 다룬다.

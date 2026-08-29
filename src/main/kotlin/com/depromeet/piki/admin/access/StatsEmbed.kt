@@ -92,7 +92,9 @@ object StatsEmbed {
                 ),
         )
 
-    private const val TYPE_CHANNEL_MESSAGE = 4
-    private const val FLAG_EPHEMERAL = 64
+    // 인터랙션 응답 타입·ephemeral 플래그는 같은 패키지 DiscordInteractions 가 소유한다(#988) — 여기서 다시
+    // 선언하면 Discord 가 값을 바꿀 때 한쪽만 고쳐져, /stats 만 admin 채널에 공개로 올라가는 식으로 조용히 갈린다.
+    private const val TYPE_CHANNEL_MESSAGE = DiscordInteractions.TYPE_CHANNEL_MESSAGE
+    private const val FLAG_EPHEMERAL = DiscordInteractions.FLAG_EPHEMERAL
     private const val COLOR_BLURPLE = 0x5865F2
 }
