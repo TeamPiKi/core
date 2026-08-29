@@ -621,6 +621,43 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments-id-items-wish 는 남이 같은 링크를 담아 성공한 값이 있으면 내 포인터가 미완성이어도 담긴다`() {
+        // 회귀(담기·시작 판정 어긋남): 같은 링크는 한 item 을 공유하고, 카드는 포인터가 아니라 최신 기계 READY 를
+        // 보여준다(displayOf). 판정만 포인터를 보면 화면엔 가격이 떠 있는데 "채운 뒤 담아 주세요" 가 나가고,
+        // 같은 아이템으로 시작은 되는 어긋남이 생긴다. 담기·시작이 같은 값을 보는지 이 테스트가 고정한다.
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveIncompleteWishItem()
+        saveMachineReadySnapshot(itemId)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `POST tournaments-id-items-wish 는 남이 담아 성공한 값이 없으면 미완성 포인터를 그대로 거부한다`() {
+        // 위 테스트의 대조군 — 최신 기계 READY 가 없으면 표시값이 곧 포인터라 판정이 그대로 미완성이어야 한다.
+        // 이게 없으면 위 테스트만으로는 "게이트를 통째로 지웠을 때"도 초록불이 된다.
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveIncompleteWishItem()
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_INCOMPLETE.code))
+    }
+
+    @Test
     fun `POST tournaments-id-start 에서 INCOMPLETE 아이템이 있으면 409 와 미완성 전용 code 를 반환한다`() {
         // 토너먼트에 직접 추가한 아이템의 파싱이 미완성으로 끝난 경우 — 담기 게이트를 거치지 않아 여기서 걸린다.
         // 가격만 채워진 조합이라, 가격 부재(ITEM_PRICE_REQUIRED)가 아니라 미완성으로 갈리는 것까지 함께 본다.
@@ -2840,6 +2877,31 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             expectedAttempt = 0,
         )
         return item.getId()
+    }
+
+    // 같은 item 에 기계 READY 버전을 하나 더 쌓는다 — 다른 사용자가 같은 링크를 담아 새 추출이 성공한 상황이다
+    // (attachOrNull 이 미완성·실패를 재사용 대상으로 안 봐서 새 PENDING 을 만들고, 그게 성공하면 이 모양이 된다).
+    // source 를 markExtracted 가 채우게 두는 이유: 표시값 파생은 기계 READY(SERVER·SERVER_LLM)만 후보로 본다.
+    private fun saveMachineReadySnapshot(
+        itemId: Long,
+        name: String = "남이 채운 이름",
+        price: Int = 89_000,
+    ) {
+        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(itemId))
+        snapshot.markProcessing()
+        itemParsingService.markExtracted(
+            snapshot.getId(),
+            // extractionMethod 를 실어야 source 가 SERVER 로 남는다 - 표시값 파생은 출처가 기계인 READY 만 후보로
+            // 보므로, 이걸 빼면 status 만 READY 인 "출처 불명" 버전이 되어 파생에 안 걸린다(실제 추출은 항상 싣는다).
+            ProductSnapshot(
+                name = name,
+                price = price,
+                currency = "KRW",
+                imageUrl = "https://img.example.com/b.png",
+                extractionMethod = "STRUCTURED",
+            ),
+            expectedAttempt = 0,
+        )
     }
 
     // 위시의 활성 snapshot 이 미완성(INCOMPLETE)인 아이템 — 가격만 빠진 부분 추출이라 markExtracted 가 그렇게 판정한다(#944).
