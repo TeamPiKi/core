@@ -167,13 +167,16 @@ class TournamentService(
             itemSnapshotRepository
                 .findByIds(wishRepository.findByItemIdsAndUserId(command.itemIds, userId).map { it.snapshotId })
                 .associateBy { it.itemId }
-        // 파싱 대기·진행 중(PENDING·PROCESSING)이거나 실패(FAILED)한 상품은 이름·가격이 비어 출전에 부적합하다. 활성 snapshot 이 READY 인 것만 허용.
-        // 미완성(INCOMPLETE)은 그 앞에서 먼저 가른다 — 기다리면 풀리는 파싱 중과 달리 사용자가 빈 값을 채워야 풀려,
-        // "잠시 후 추가해 주세요" 가 사실이 아니게 된다. 둘이 섞였을 땐 행동이 필요한 쪽을 알린다.
-        if (activeSnapshotByItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncomplete()
-        if (activeSnapshotByItemId.size != command.itemIds.size || activeSnapshotByItemId.values.any { !it.isReady() }) {
-            throw TournamentException.itemNotReady()
-        }
+        if (activeSnapshotByItemId.size != command.itemIds.size) throw TournamentException.itemNotReady()
+        // 판정은 포인터가 아니라 카드에 뜨는 값으로 한다 — 남이 같은 링크를 담아 추출이 성공하면 내 포인터가
+        // 미완성·실패로 남아 있어도 카드엔 그 성공값이 뜬다(displayOf). 포인터로 판정하면 화면엔 값이 다 있는데
+        // "채운 뒤 담아 주세요" 가 나가고, 같은 아이템으로 시작은 되는 어긋남이 생긴다.
+        // 박제는 포인터 그대로다 — 겨루는 값 확정은 start 의 몫이고(#858), 대기실 표시도 파생으로 움직인다.
+        requireEntryEligible(
+            displayOf(activeSnapshotByItemId.values),
+            TournamentException::itemIncomplete,
+            TournamentException::itemNotReady,
+        )
         val savedItemIds = tournamentItemRepository
             .saveAll(
                 command.itemIds.map { itemId ->
@@ -242,13 +245,14 @@ class TournamentService(
                 .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
                 .associate { it.getId() to it }
         if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
-        // 담기 게이트와 같은 이유로 미완성을 먼저 본다. 아이템별 루프가 아니라 전체를 한 번 훑는 이유는, 루프에
-        // 맡기면 앞선 아이템이 파싱 중이기만 해도 "모두 준비되면" 안내가 나가 뒤쪽 미완성이 가려지기 때문이다.
-        if (pinnedByTournamentItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncompleteToStart()
+        requireEntryEligible(
+            pinnedByTournamentItemId.values,
+            TournamentException::itemIncompleteToStart,
+            TournamentException::itemNotReadyToStart,
+        )
         for (tournamentItem in tournamentItems) {
-            val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
-            if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()
-            snapshot.price ?: throw TournamentException.itemPriceRequired()
+            pinnedByTournamentItemId.getValue(tournamentItem.getId()).price
+                ?: throw TournamentException.itemPriceRequired()
         }
         tournament.start()
         // 시작이 커밋된 뒤에만 참가자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
@@ -1288,6 +1292,31 @@ class TournamentService(
     // CLONE 토너먼트는 DB 에 아이템 행이 없고, ROOT 의 아이템을 sourceTournamentId 로 공유한다.
     private fun getEffectiveTournamentItems(tournament: Tournament): List<TournamentItem> =
         tournamentItemRepository.findAllByTournamentId(tournament.sourceTournamentId ?: tournament.getId())
+
+    /**
+     * 출전 가능 판정의 단일 출처. 담기와 시작이 같은 질문("이 아이템들로 겨룰 수 있나")에 답하므로 한 벌만 둔다 —
+     * 두 벌이던 동안 담기만 포인터를, 시작은 표시값을 봐서 같은 아이템이 담기는 거부되고 시작은 되는 어긋남이
+     * 있었다. 갈라질 수 있는 구조 자체를 없앤다.
+     *
+     * 미완성을 먼저 보는 이유: 파싱 중은 기다리면 풀리지만 미완성은 사용자가 빈 값을 채워야 풀린다. 둘이 섞였을
+     * 땐 행동이 필요한 쪽을 알려야 하고, 아이템별 루프에 맡기면 앞선 파싱 중이 뒤쪽 미완성을 가린다.
+     *
+     * @param snapshots 판정 대상. 두 경로 모두 **표시값**을 넘긴다(포인터가 아니다).
+     */
+    private fun requireEntryEligible(
+        snapshots: Collection<ItemSnapshot>,
+        incomplete: () -> TournamentException,
+        notReady: () -> TournamentException,
+    ) {
+        if (snapshots.any { it.isIncomplete() }) throw incomplete()
+        if (snapshots.any { !it.isReady() }) throw notReady()
+    }
+
+    /** 포인터 묶음을 카드에 뜨는 값으로 바꾼다. 파생 대상이 없는 포인터는 자기 자신이 표시값이다. */
+    private fun displayOf(pointers: Collection<ItemSnapshot>): Collection<ItemSnapshot> {
+        val displayById = itemDisplayService.resolveDisplay(pointers)
+        return pointers.map { displayById[it.getId()] ?: it }
+    }
 
     // tournament_item 들이 고정한 snapshot 을 한 번에 조회해 id→snapshot 맵으로. 표시값 조회의 메모리 조인 재료다.
     private fun snapshotsOf(tournamentItems: Collection<TournamentItem>): Map<Long, ItemSnapshot> =
