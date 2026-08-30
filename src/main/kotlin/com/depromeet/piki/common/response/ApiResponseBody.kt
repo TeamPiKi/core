@@ -25,9 +25,7 @@ data class ApiResponseBody<T>(
 
         // code 를 배정한 도메인 예외용 — ErrorCode 를 강타입으로 받아 code·detail 을 채운다.
         // 진입점이 ErrorCode 라 임의 문자열을 code 로 넣는 실수가 컴파일로 차단되고, ErrorCode→wire 문자열 변환은 이 한 곳뿐이다.
-        //
-        // data 는 기본 null 이다 — 에러 응답은 code 로 사유를 알리는 것이 원칙이고, 대다수 사유는 실어 보낼 맥락이 없다.
-        // 사유를 아는 것만으로 클라가 다음 행동을 못 정하는 경우에만 채운다(ErrorPayload 참고).
+        // data 는 기본 null 이다 — 에러는 code 로 사유를 알리는 것이 원칙이다 (예외는 ErrorPayload 참고).
         fun <T> fail(
             errorCode: ErrorCode,
             detail: String? = null,

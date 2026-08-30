@@ -68,8 +68,7 @@ class WishlistService(
         accessPolicy.verifyRegistrable(link)
         // 이미 담은 상품이면 차감 전에 거른다(#973) — 등록되지 않을 요청이 몫을 깎으면 안 된다. 특히 응답이
         // 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 사용자는 담지도 못한 채 한도만 소모한다.
-        // 최종 판정은 persist 가 행 락 안에서 다시 한다(여기는 락 밖 근사치).
-        wishPersistenceService.findExistingWishId(userId, link)?.let { throw WishException.alreadyExists(it) }
+        wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
         // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
         // 파서로 풀려 LLM 을 안 타도 fetch·추출 모듈 시간·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
         itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)

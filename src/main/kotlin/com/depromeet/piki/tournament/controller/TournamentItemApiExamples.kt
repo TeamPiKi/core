@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
+import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
@@ -26,8 +27,8 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpStatus
 
-// 중복 추가 409 example 이 보여주는 기존 출전 아이템의 id — 성공 example 의 tournamentItemIds 와 같은 값을 써서
-// "이미 담긴 그 아이템"을 가리킨다는 것이 문서에서 자연스럽게 읽히게 한다.
+// 링크 추가 example 들이 함께 쓰는 아이템 id. 성공 응답이 돌려준 아이템과 중복 추가 409 가 가리키는 아이템이
+// 같은 값이어야 "이미 담긴 그 아이템"이라는 것이 문서에서 읽힌다.
 private const val EXAMPLE_TOURNAMENT_ITEM_ID = 1L
 
 @Configuration
@@ -77,7 +78,10 @@ class TournamentItemApiExamples(
                         add(
                             status = HttpStatus.OK,
                             name = "링크 아이템 추가 성공",
-                            payload = ApiResponseBody.ok(AddTournamentItemFromLinkResponse(tournamentItemId = 1L)),
+                            payload =
+                                ApiResponseBody.ok(
+                                    AddTournamentItemFromLinkResponse(tournamentItemId = EXAMPLE_TOURNAMENT_ITEM_ID),
+                                ),
                         )
                         add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                         add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
@@ -90,7 +94,10 @@ class TournamentItemApiExamples(
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         // 단건 경로라 겹친 아이템을 특정할 수 있다 — data 로 그 tournament_item id 를 함께 내린다(#973).
                         add(
-                            TournamentException.duplicateTournamentItem(EXAMPLE_TOURNAMENT_ITEM_ID),
+                            AlreadyRegisteredException.tournamentItem(
+                                TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM,
+                                EXAMPLE_TOURNAMENT_ITEM_ID,
+                            ),
                             name = "이미 담긴 링크 (같은 상품을 다시 추가)",
                         )
                         add(itemQuotaExceeded, name = "아이템 등록 한도 초과 (오너 몫에서 차감)")

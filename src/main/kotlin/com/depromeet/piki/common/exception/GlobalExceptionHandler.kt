@@ -22,7 +22,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @ExceptionHandler(BaseException::class)
-    fun handleBaseException(e: BaseException): ResponseEntity<ApiResponseBody<Map<String, Any>>> {
+    fun handleBaseException(e: BaseException): ResponseEntity<ApiResponseBody<Any>> {
         val status = if (e is HttpMappable) e.httpStatus else HttpStatus.INTERNAL_SERVER_ERROR
         val category = if (e is HttpMappable) e.category else ErrorCategory.SERVER_ERROR
         // 5xx 레벨은 HttpMappable 유무가 아니라 category 로 가른다 — 같은 502 라도 SERVER_ERROR(우리 설정·코드 버그:
@@ -51,8 +51,7 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         // 뭉치고, CONFLICT 처럼 공통 code 가 없는 category 는 null → 기존 fail(category) fallback(code 없음).
         // detail 은 어느 경로든 e.message 를 유지한다(이관 단계: code 만 추가, detail 제거는 전체 이관 후).
         val errorCode = (e as? HttpMappable)?.errorCode ?: CommonErrorCode.of(category)
-        // 사유를 아는 것만으로 클라가 다음 행동을 못 정하는 예외만 맥락을 함께 싣는다(ErrorPayload).
-        // 없으면 null 이라 기존 에러 응답 모양(data 없음)이 그대로 유지된다.
+        // 맥락을 아는 예외만 data 를 싣는다 (ErrorPayload 참고 — RetryAfter 와 같이 타입으로 가린다).
         val payload = (e as? ErrorPayload)?.payload
         val body =
             errorCode
