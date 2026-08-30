@@ -2247,17 +2247,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val incompleteItem = itemJpaRepository.save(Item())
-        val pin = saveSnapshot(
-            incompleteItem.getId(),
+        val tournamentItemId = saveTournamentItemFor(
+            tournamentId,
+            incompleteItem,
             status = ItemStatus.INCOMPLETE,
             name = "미완성 이름",
             imageUrl = "https://img.example.com/i.png",
-        )
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = pin.getId()),
-        )
+        ).getId()
         saveMachineReadySnapshot(incompleteItem.getId())
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
 
         mockMvc
             .perform(
@@ -2278,16 +2275,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val incompleteItem = itemJpaRepository.save(Item())
-        val pin = saveSnapshot(
-            incompleteItem.getId(),
+        val tournamentItemId = saveTournamentItemFor(
+            tournamentId,
+            incompleteItem,
             status = ItemStatus.INCOMPLETE,
             name = "미완성 이름",
             imageUrl = "https://img.example.com/i.png",
-        )
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = pin.getId()),
-        )
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        ).getId()
 
         mockMvc
             .perform(
@@ -2882,7 +2876,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     currency = currency,
                     imageUrl = imageUrl,
                     status = status,
-                    extractedAt = if (status == ItemStatus.READY) LocalDateTime.now() else null,
+                    // READY·INCOMPLETE 는 추출이 값을 남긴 상태라 추출시각이 있다(saveSnapshot 과 같은 규칙).
+                    extractedAt = if (status == ItemStatus.READY || status == ItemStatus.INCOMPLETE) LocalDateTime.now() else null,
                 ),
             )
         return tournamentItemJpaRepository.save(

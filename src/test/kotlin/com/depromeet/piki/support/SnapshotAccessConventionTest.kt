@@ -15,41 +15,28 @@ import kotlin.test.fail
  * 자기 갈래를 적어야 하고, 그 순간 위 규칙을 읽게 된다. 갈래 판정 자체는 사람 리뷰 몫이다(오탐 없는 기계 판정 불가).
  */
 class SnapshotAccessConventionTest {
-    /** 원본 저장소(ItemSnapshotRepository)를 직접 쓰는 것이 허용된 item 패키지 밖 클래스와 그 갈래. */
+    /** 원본 저장소(ItemSnapshotRepository)를 직접 쓰는 것이 허용된 item 패키지 밖 클래스(경로 접미사)와 그 갈래. */
     private val allowedRawConsumers =
         mapOf(
-            "ItemParsingCompletedHandler.kt" to "버전 자체 — 방금 전이된 그 버전의 이름으로 알림 문구를 만든다",
-            "ItemParsingFailedHandler.kt" to "버전 자체 — 위와 동일",
-            "ItemParsingIncompleteHandler.kt" to "버전 자체 — 위와 동일",
-            "TournamentItemDeletedHandler.kt" to "버전 자체 — 삭제된 출전 카드가 보던 버전의 이름",
-            "TournamentService.kt" to "정체성(itemId 추출)·표시값 입력. 출전 판정은 requireEntryEligible(표시값)이 진다",
-            "TournamentItemService.kt" to "수정 dry-run 의 포인터 로드 — base 는 표시값으로 파생해 쓴다",
-            "TournamentItemPersistenceService.kt" to "쓰기(PENDING·MANUAL 적재)·정체성. 수정 base 는 표시값으로 파생",
-            "WishlistService.kt" to "가격 이력(버전 자체)·표시값 입력·dry-run 포인터 로드",
-            "WishPersistenceService.kt" to "쓰기(PENDING·MANUAL 적재)·포인터 로드. 수정 base·새로고침 판정은 표시값",
+            "notification/handler/ItemParsingCompletedHandler.kt" to "버전 자체 — 방금 전이된 그 버전의 이름으로 알림 문구를 만든다",
+            "notification/handler/ItemParsingFailedHandler.kt" to "버전 자체 — 위와 동일",
+            "notification/handler/ItemParsingIncompleteHandler.kt" to "버전 자체 — 위와 동일",
+            "notification/handler/TournamentItemDeletedHandler.kt" to "버전 자체 — 삭제된 출전 카드가 보던 버전의 이름",
+            "tournament/service/TournamentService.kt" to
+                "정체성(itemId 추출)·표시값 입력. 출전 판정은 requireEntryEligible(표시값)이 진다",
+            "tournament/service/TournamentItemPersistenceService.kt" to
+                "쓰기(PENDING·MANUAL 적재)·정체성. 수정 base 는 표시값(editBasisOf)",
+            "wishlist/service/WishlistService.kt" to "가격 이력(버전 자체)·표시값 입력",
+            "wishlist/service/WishPersistenceService.kt" to
+                "쓰기(PENDING·MANUAL 적재)·진행 중 합류 조회. 수정 base·새로고침 판정은 표시값",
         )
-
-    private val mainSources: List<Pair<File, List<String>>> by lazy {
-        val root = File("src/main/kotlin")
-        check(root.isDirectory) { "메인 소스 루트를 찾지 못했다: ${root.absolutePath}" }
-        root.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .map { it to it.readLines().map(String::trim).filter { line -> line.startsWith("import ") } }
-            .toList()
-    }
-
-    private fun isItemPackage(file: File): Boolean = file.path.contains("/com/depromeet/piki/item/")
-
-    private fun usesRawRepository(imports: List<String>): Boolean =
-        imports.any { it == "import com.depromeet.piki.item.repository.ItemSnapshotRepository" }
 
     @Test
     fun `item 패키지 밖에서 스냅샷 원본 저장소를 직접 쓰는 클래스는 동결 목록에 갈래와 함께 등록돼 있어야 한다`() {
         val offenders =
-            mainSources
-                .filter { (file, imports) -> !isItemPackage(file) && usesRawRepository(imports) }
-                .map { (file, _) -> file }
-                .filterNot { it.name in allowedRawConsumers }
+            rawConsumers.filterNot { file ->
+                allowedRawConsumers.keys.any { file.invariantSeparatorsPath.endsWith(it) }
+            }
         if (offenders.isNotEmpty()) {
             fail(
                 "ItemSnapshotRepository 를 직접 쓰는 새 클래스가 있다. 사용자 화면 행동에 관여하는 읽기면 " +
@@ -62,14 +49,29 @@ class SnapshotAccessConventionTest {
 
     @Test
     fun `동결 목록에는 실제 소비자만 남는다 - 소비를 멈춘 클래스는 목록에서 지운다`() {
-        val actual =
-            mainSources
-                .filter { (file, imports) -> !isItemPackage(file) && usesRawRepository(imports) }
-                .map { (file, _) -> file.name }
-                .toSet()
-        val stale = allowedRawConsumers.keys - actual
+        val stale =
+            allowedRawConsumers.keys.filterNot { key ->
+                rawConsumers.any { it.invariantSeparatorsPath.endsWith(key) }
+            }
         if (stale.isNotEmpty()) {
             fail("소비를 멈췄는데 목록에 남은 항목(목록이 낡으면 동결이 무의미해진다): " + stale.joinToString(", "))
+        }
+    }
+
+    companion object {
+        private const val RAW_IMPORT = "import com.depromeet.piki.item.repository.ItemSnapshotRepository"
+
+        // 두 테스트가 같은 집합을 봐야 동결이 성립하므로 스캔·필터를 한 번만 계산해 공유한다 — JUnit 은 테스트마다
+        // 인스턴스를 새로 만들어 인스턴스 lazy 로는 1회가 안 된다. startsWith 매칭이라 별칭 import(as X)도 잡는다.
+        private val rawConsumers: List<File> by lazy {
+            val root = File("src/main/kotlin")
+            check(root.isDirectory) { "메인 소스 루트를 찾지 못했다: ${root.absolutePath}" }
+            root
+                .walkTopDown()
+                .filter { it.isFile && it.extension == "kt" }
+                .filterNot { it.invariantSeparatorsPath.contains("/com/depromeet/piki/item/") }
+                .filter { file -> file.useLines { lines -> lines.any { it.trim().startsWith(RAW_IMPORT) } } }
+                .toList()
         }
     }
 }

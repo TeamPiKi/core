@@ -6,12 +6,8 @@ import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.DomainAccessPolicy
-import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import org.springframework.stereotype.Service
@@ -25,11 +21,8 @@ class TournamentItemService(
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
-    private val tournamentItemRepository: TournamentItemRepository,
     private val tournamentUserRepository: TournamentUserRepository,
-    private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemQuotaGuard: ItemQuotaGuard,
-    private val itemDisplayService: ItemDisplayService,
 ) {
     // 아이템 등록 비용은 요청자가 아니라 **토너먼트 오너**의 몫에서 깎는다(#339). 참여자에는 게스트가 섞이는데
     // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있다. 오너는 반드시
@@ -121,33 +114,12 @@ class TournamentItemService(
         image: MultipartFile?,
     ) {
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
-        val tournament =
-            tournamentRepository.findTournamentById(tournamentId)
-                ?: throw TournamentException.notFoundTournament()
-        // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — effective-id 로 뚫으면 원본을 수정하게 되므로 막는다(#977).
-        // 아이템 추가 금지(032)와 같은 결. 조회는 허용(getTournamentItem), 수정만 금지.
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        val tournamentItem =
-            tournamentItemRepository.findById(tournamentItemId)
-                ?: throw TournamentException.notFoundTournamentItem()
-        if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
-        if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 전에 거른다. 이미지가 오면 업로드가 imageUrl 을
-        // 채울 것이므로 자리표시 URL 로 그 자리만 메워 검증한다(저장 안 됨 — dry-run). 최종 판정은 manualEdit 이 다시 한다.
-        val snapshotId = tournamentItem.snapshotId
-        val snapshot =
-            itemSnapshotRepository.findById(snapshotId)
-                ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        ItemSnapshot.manual(
-            // dry-run 도 실제 저장(persistence.manualEdit)과 같은 base(표시값) 를 써야 같은 규칙으로 거른다.
-            base = itemDisplayService.resolveDisplay(snapshot),
-            name = name,
-            price = price,
-            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
-            currency = currency,
-            editedBy = userId,
-        )
+        // 업로드 전 사전 검증(orphan 방지)은 이미지가 있을 때만 — 그게 dry-run 의 유일한 존재 이유라, 업로드가
+        // 없는 수정은 manualEdit(락 안)의 최종 판정 하나로 충분하다(예외·응답 동일, 쿼리만 줄어든다).
+        productImage?.let {
+            tournamentItemPersistenceService
+                .validateManualEdit(userId, tournamentId, tournamentItemId, name, price, currency)
+        }
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
@@ -160,6 +132,3 @@ class TournamentItemService(
         private const val MAX_IMAGE_COUNT = 5
     }
 }
-
-// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
-private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

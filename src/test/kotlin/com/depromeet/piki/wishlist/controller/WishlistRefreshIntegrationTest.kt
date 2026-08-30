@@ -237,9 +237,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/failed")))
-            val snapshot = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
-            val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+            val (wish, _, _) = seedFailedWish(userId, "https://shop.example.com/products/failed")
 
             mockMvc
                 .perform(
@@ -262,9 +260,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/failed-shared")))
-            val failed = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
-            val wish = wishRepository.save(Wish(userId = userId, snapshotId = failed.getId()))
+            val (wish, item, failed) = seedFailedWish(userId, "https://shop.example.com/products/failed-shared")
             // 남이 같은 링크를 담아 추출이 성공한 상황 — source 가 기계(SERVER)여야 표시값 파생 후보에 든다.
             itemSnapshotRepository.save(
                 ItemSnapshot(
@@ -450,6 +446,17 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     // READY 상태의 link 보유 위시를 직접 시딩한다. (wishId, itemId, snapshotId) 반환.
+    // FAILED 위시 시딩 — 재추출 입력(link)이 있는 item 에 실패로 종결된 활성 포인터를 단다.
+    private fun seedFailedWish(
+        userId: UUID,
+        url: String,
+    ): Triple<Wish, Item, ItemSnapshot> {
+        val item = itemRepository.save(Item(ProductLink.parse(url)))
+        val failed = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
+        val wish = wishRepository.save(Wish(userId = userId, snapshotId = failed.getId()))
+        return Triple(wish, item, failed)
+    }
+
     private fun seedReadyWish(
         userId: UUID,
         url: String,

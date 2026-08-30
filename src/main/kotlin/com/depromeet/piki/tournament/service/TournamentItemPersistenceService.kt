@@ -166,15 +166,7 @@ class TournamentItemPersistenceService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-        // base 는 "이 카드가 보여주던 값" 이다. 수정은 PENDING 전용(위 가드)이고 PENDING 카드는 pin 이 아니라
-        // 표시값(#858, 최신 기계 READY 우선 파생)을 그리므로, pin 을 base 로 쓰면 화면과 다른 값 위에 병합돼
-        // 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕길 수 있다. 시작 후 격리는 start 의 repin 이 진다 —
-        // 여기서 최신을 좇는 게 아니라, 카드 렌더와 같은 파생 규칙을 쓰는 것이다.
-        val snapshotId = tournamentItem.snapshotId
-        val pointer =
-            itemSnapshotRepository.findById(snapshotId)
-                ?: error("snapshot 없음 — tournamentItemId=$tournamentItemId, snapshotId=$snapshotId")
-        val base = itemDisplayService.resolveDisplay(pointer)
+        val base = editBasisOf(tournamentItem)
         val manual =
             itemSnapshotRepository.save(
                 ItemSnapshot.manual(
@@ -187,6 +179,48 @@ class TournamentItemPersistenceService(
                 ),
             )
         tournamentItem.repinSnapshot(manual.getId())
+    }
+
+    // 업로드 전 사전 검증(던지기 전용) — S3 orphan 방지가 유일한 존재 이유라 호출부가 이미지 있을 때만 부른다.
+    // 권한·상태 검증과 병합 base 선택(editBasisOf)을 manualEdit 과 같은 코드로 타므로 dry-run 이 실제 저장과
+    // 갈라질 수 없다. 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
+    @Transactional(readOnly = true)
+    fun validateManualEdit(
+        userId: UUID,
+        tournamentId: Long,
+        tournamentItemId: Long,
+        name: String?,
+        price: Int?,
+        currency: String?,
+    ) {
+        val tournament =
+            tournamentRepository.findTournamentById(tournamentId)
+                ?: throw TournamentException.notFoundTournament()
+        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
+        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
+        val tournamentItem =
+            tournamentItemRepository.findById(tournamentItemId)
+                ?: throw TournamentException.notFoundTournamentItem()
+        if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
+        if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
+        ItemSnapshot.manual(
+            base = editBasisOf(tournamentItem),
+            name = name,
+            price = price,
+            imageUrl = PRE_UPLOAD_VALIDATION_IMAGE_URL,
+            currency = currency,
+            editedBy = userId,
+        )
+    }
+
+    // base 는 "이 카드가 보여주던 값" 이다. 수정은 PENDING 전용(호출부 가드)이고 PENDING 카드는 pin 이 아니라
+    // 표시값(#858, 최신 기계 READY 우선 파생)을 그리므로, pin 을 base 로 쓰면 화면과 다른 값 위에 병합돼
+    // 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕길 수 있다. 시작 후 격리는 start 의 repin 이 진다.
+    private fun editBasisOf(tournamentItem: TournamentItem): ItemSnapshot {
+        val pointer =
+            itemSnapshotRepository.findById(tournamentItem.snapshotId)
+                ?: error("snapshot 없음 — snapshotId=${tournamentItem.snapshotId}")
+        return itemDisplayService.resolveDisplay(pointer)
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.
@@ -225,3 +259,6 @@ class TournamentItemPersistenceService(
         }
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

@@ -103,6 +103,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         price: Int? = 10_000,
         currency: String? = "KRW",
         imageUrl: String? = "https://img.example.com/a.png",
+        // 기본 null(출처 미기록) — 표시값 파생 후보(기계 READY)로 만들려면 "STRUCTURED" 를 명시한다.
+        extractionMethod: String? = null,
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
@@ -116,6 +118,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 price = price,
                 currency = currency,
                 imageUrl = imageUrl,
+                extractionMethod = extractionMethod,
             ),
             expectedAttempt = 0,
         )
@@ -481,32 +484,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         val authHeader = "Bearer ${memberToken(userId)}"
         val url = "https://shop.example.com/products/shared-incomplete"
 
-        // 내 등록 — 부분 추출(가격 없음)로 미완성 종결. 시딩은 워커를 안 태우고 전이만 재현한다(saveWishItem 류와 같은 결).
-        val mine = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
-        mine.snapshot.markProcessing()
-        itemParsingService.markExtracted(
-            mine.snapshot.getId(),
-            ProductSnapshot(name = "미완성 이름", imageUrl = "https://img.example.com/i.png", extractionMethod = "STRUCTURED"),
-            expectedAttempt = 0,
-        )
-        // 남의 등록 — 같은 링크라 같은 item 에 붙고(미완성은 재사용 대상이 아니라 새 PENDING), 추출이 성공한다.
-        val other = wishPersistenceService.persist(otherUserId, Item(ProductLink.parse(url)))
-        other.snapshot.markProcessing()
-        itemParsingService.markExtracted(
-            other.snapshot.getId(),
-            ProductSnapshot(
-                name = "남이 채운 이름",
-                price = 89_000,
-                currency = "KRW",
-                imageUrl = "https://img.example.com/b.png",
-                extractionMethod = "STRUCTURED",
-            ),
-            expectedAttempt = 0,
-        )
+        // 내 등록은 부분 추출(가격 없음)로 미완성 종결. 남의 등록은 같은 링크라 같은 item 에 붙고
+        // (미완성은 재사용 대상이 아니라 새 PENDING), 기계 추출(STRUCTURED)이 성공해 표시값 후보가 된다.
+        val myWishId = seedReadyWish(userId, url, name = "미완성 이름", price = null, currency = null)
+        seedReadyWish(otherUserId, url, name = "남이 채운 이름", price = 89_000, extractionMethod = "STRUCTURED")
 
         mockMvc
             .perform(
-                multipart("/api/v1/wishlists/${mine.wish.getId()}")
+                multipart("/api/v1/wishlists/$myWishId")
                     .param("name", "내가 고친 이름")
                     .with {
                         it.method = "PATCH"
@@ -515,7 +500,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
 
         mockMvc
-            .perform(get("/api/v1/wishlists/${mine.wish.getId()}").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .perform(get("/api/v1/wishlists/$myWishId").header(HttpHeaders.AUTHORIZATION, authHeader))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("내가 고친 이름"))
             .andExpect(jsonPath("$.data.item.price").value(89_000))
@@ -529,17 +514,12 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
 
-        val mine = wishPersistenceService.persist(userId, Item(ProductLink.parse("https://shop.example.com/products/lone-incomplete")))
-        mine.snapshot.markProcessing()
-        itemParsingService.markExtracted(
-            mine.snapshot.getId(),
-            ProductSnapshot(name = "미완성 이름", imageUrl = "https://img.example.com/i.png", extractionMethod = "STRUCTURED"),
-            expectedAttempt = 0,
-        )
+        val myWishId =
+            seedReadyWish(userId, "https://shop.example.com/products/lone-incomplete", name = "미완성 이름", price = null, currency = null)
 
         mockMvc
             .perform(
-                multipart("/api/v1/wishlists/${mine.wish.getId()}")
+                multipart("/api/v1/wishlists/$myWishId")
                     .param("name", "내가 고친 이름")
                     .with {
                         it.method = "PATCH"
