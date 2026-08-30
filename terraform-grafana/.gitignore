@@ -1,0 +1,30 @@
+# Local .terraform directories
+.terraform/
+# Note: .terraform.lock.hcl is intentionally committed (provider version lock).
+
+# State files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Sensitive variable values
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Backend 설정 — 계정번호 포함 (자격증명에서 파생 생성, README "일상 워크플로우" 참고)
+backend.hcl
+
+# CLI config
+.terraformrc
+terraform.rc
+
+# Plan output
+*.tfplan
+
+# Infracost local cache
+.infracost/
