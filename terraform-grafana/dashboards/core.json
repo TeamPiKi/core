@@ -1084,8 +1084,8 @@
         "y": 33
       },
       "datasource": {
-        "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "type": "loki",
+        "uid": "grafanacloud-logs"
       },
       "fieldConfig": {
         "defaults": {
@@ -1125,13 +1125,13 @@
         {
           "refId": "A",
           "datasource": {
-            "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "type": "loki",
+            "uid": "grafanacloud-logs"
           },
-          "expr": "sum(increase(item_parsing_total{application=\"piki-core\", environment=\"$environment\", result=\"failed\"}[$__range])) / clamp_min(sum(increase(item_parsing_total{application=\"piki-core\", environment=\"$environment\"}[$__range])), 1) * 100 or vector(0)"
+          "expr": "100 * (sum(count_over_time({container=~\"piki-core-(blue|green)\", environment=\"$environment\"} |= \"item.parse.result\" | logfmt | __error__=\"\" | result=\"failed\" [$__range])) or vector(0)) / (sum(count_over_time({container=~\"piki-core-(blue|green)\", environment=\"$environment\"} |= \"item.parse.result\" | logfmt | __error__=\"\" [$__range])) or vector(1))"
         }
       ],
-      "description": "선택한 시간 범위 전체의 실패 비율 (red switch)"
+      "description": "선택한 시간 범위 전체의 실패 비율 (red switch). 메트릭이 아니라 로그 기반 - 카운터는 재배포 리셋에 더해, 신규 시계열의 첫 증가(0->1)를 increase 가 못 잡아 단발 실패가 안 보인다 (2026-08-30 실측)"
     },
     {
       "id": 25,
@@ -1430,7 +1430,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "{container=~\"piki-core-(blue|green)\", environment=\"$environment\", level=~\"(?i)(error|warn)\"}"
+          "expr": "{container=~\"piki-core-(blue|green)\", environment=\"$environment\", level=~\"(?i)(error|warn(ing)?|critical)\"}"
         }
       ],
       "description": "Loki level 라벨 기준. 본문 정규식 매칭은 INFO 도메인 예외까지 끌어와 노이즈였다 (#855)"

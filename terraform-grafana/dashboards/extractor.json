@@ -1251,7 +1251,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "{service=\"piki-extractor\", level=~\"(?i)(error|warn)\"}"
+          "expr": "{service=\"piki-extractor\", level=~\"(?i)(error|warn(ing)?|critical)\"}"
         }
       ]
     },

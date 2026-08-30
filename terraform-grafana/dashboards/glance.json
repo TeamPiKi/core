@@ -551,7 +551,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "sum by (service) (count_over_time({service=~\"piki-core|piki-extractor|piki-renderer\", level=~\"(?i)error\"}[$__interval]))",
+          "expr": "sum by (service) (count_over_time({service=~\"piki-core|piki-extractor|piki-renderer\", level=~\"(?i)(error|critical)\"}[$__interval]))",
           "legendFormat": "{{service}}"
         }
       ],
@@ -568,8 +568,8 @@
         "y": 11
       },
       "datasource": {
-        "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "type": "loki",
+        "uid": "grafanacloud-logs"
       },
       "fieldConfig": {
         "defaults": {
@@ -600,14 +600,15 @@
         {
           "refId": "A",
           "datasource": {
-            "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "type": "loki",
+            "uid": "grafanacloud-logs"
           },
-          "expr": "sum by (environment) (increase(item_parsing_total{application=\"piki-core\", result=\"failed\"}[$__rate_interval]))",
+          "expr": "sum by (environment) (count_over_time({container=~\"piki-core-(blue|green)\"} |= \"item.parse.result\" | logfmt | __error__=\"\" | result=\"failed\" [$__interval]))",
           "legendFormat": "{{environment}}"
         }
       ],
-      "interval": "1m"
+      "interval": "1m",
+      "description": "로그 기반 - 메트릭 카운터는 재배포 리셋·신규 시계열 첫 증가 누락으로 단발 실패를 놓친다 (2026-08-30 실측)"
     },
     {
       "id": 12,
