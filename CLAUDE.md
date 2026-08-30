@@ -148,6 +148,7 @@ worktree 생성을 물을 때, **그 worktree 로 세션을 진입(`EnterWorktre
 - **이유**: 셸 cwd 가 메인 체크아웃에 남으면 statusline·하단 경로·표시 PR 이 전부 메인 브랜치 기준이라, 정작 작업 중인 worktree 브랜치가 안 보여 작업이 엉뚱한 곳에 가는지 혼란스럽다. `git -C`/`gradlew -p` 로 worktree 를 정확히 다뤄도 표시는 안 맞는다.
 - `EnterWorktree` 로 진입하면 세션 cwd·statusline·git·gradle 이 다 worktree 로 정렬되고 `-C`/`-p` 도 불필요하다. `git worktree add` 로 base(`origin/dev`)를 명시해 만든 뒤 `EnterWorktree path=...` 로 진입하면 base 도 확실하다 (`EnterWorktree name=...` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다).
 - 사용자가 진입을 원치 않아 메인 cwd 를 유지하면, statusline 이 worktree 브랜치를 안 보여준다는 점을 미리 알리고 `git -C` 로 격리한다.
+- **워크스페이스 루트(`piki/`)에서 시작한 세션은 이 원칙이 기본값이다** - 로비에서 `EnterWorktree(path=...)` 로 이 repo 의 worktree 에 들어와 작업하고, 다른 repo 로 갈 땐 로비를 거친다. 로비 규칙은 루트의 `.claude/rules/piki-workspace.md`(infra 정본)가 담당한다.
 
 ### 스택 브랜치는 쓰지 않는다
 
