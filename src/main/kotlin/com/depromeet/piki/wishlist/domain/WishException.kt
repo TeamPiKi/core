@@ -37,8 +37,5 @@ class WishException private constructor(
 
         fun failedNotRefreshable(): WishException = WishException(WishErrorCode.FAILED_NOT_REFRESHABLE)
 
-        // 공유 정체성(#825) 도입으로 비로소 판정 가능해진 앞문 중복 — 같은 사용자가 이미 담은 상품(같은 귀결점)을
-        // 또 등록하면 새 카드 대신 409 로 알린다(결정 3c). 별칭 미스로 파싱 후에야 판명되는 뒷문 중복은 여기 안 닿는다.
-        fun alreadyExists(): WishException = WishException(WishErrorCode.ALREADY_EXISTS)
     }
 }

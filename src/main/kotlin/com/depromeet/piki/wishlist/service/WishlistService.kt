@@ -66,6 +66,9 @@ class WishlistService(
         // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
         // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
         accessPolicy.verifyRegistrable(link)
+        // 이미 담은 상품이면 차감 전에 거른다(#973) — 등록되지 않을 요청이 몫을 깎으면 안 된다. 특히 응답이
+        // 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 사용자는 담지도 못한 채 한도만 소모한다.
+        wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
         // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
         // 파서로 풀려 LLM 을 안 타도 fetch·추출 모듈 시간·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
         itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)

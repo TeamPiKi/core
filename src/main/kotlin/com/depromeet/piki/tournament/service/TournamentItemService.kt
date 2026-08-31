@@ -58,6 +58,9 @@ class TournamentItemService(
         // 권한·상태를 차감 전에 확인한다(이미지 경로와 같은 이유) — 참여자도 아닌 요청이 오너의 몫을 깎으면 안 된다.
         // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
+        // 이미 담긴 링크면 차감 전에 거른다(#973) — 추가되지 않을 요청이 오너의 몫을 깎으면 안 된다.
+        // 특히 응답이 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 담지도 못한 채 한도만 소모된다.
+        tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, link)
         itemQuotaGuard.consume(ownerIdOf(tournamentId), 1, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
         // URL 경로는 PENDING snapshot 을 커밋만 하고(작업 큐 적재) 즉시 반환한다. 파싱은 디스패처(@Scheduled)가
         // PENDING 을 집어 워커에 넘긴다 — @Async 유실과 무관하게 최소 1회는 claim 된다(at-least-once).

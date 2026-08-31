@@ -35,6 +35,9 @@ class TournamentException private constructor(
 
         fun tooManyTournamentItems(): TournamentException = TournamentException(TournamentErrorCode.TOO_MANY_TOURNAMENT_ITEMS)
 
+        // 겹친 아이템을 가리킬 수 없는 경우 — 다건 위시 담기는 요청 안의 중복(같은 id 두 번)과 기존 출전분과의
+        // 중복을 함께 다루고 후자도 여러 건일 수 있어, 하나를 고를 수 없다. 그때는 사유만 내려간다.
+        // 단건 링크 등록처럼 겹친 아이템이 특정되면 AlreadyRegisteredException.tournamentItem 을 쓴다(#973).
         fun duplicateTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM)
 
         fun notFoundTournamentItem(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_TOURNAMENT_ITEM)

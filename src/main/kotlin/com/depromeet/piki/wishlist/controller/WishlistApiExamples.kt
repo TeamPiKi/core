@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.controller
 
+import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
@@ -28,6 +29,10 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpStatus
 import java.time.LocalDateTime
 
+// 이 파일의 example 들이 함께 쓰는 위시 id. 목록·상세 example 의 위시와 중복 등록 409 가 가리키는 위시가
+// 같은 값이어야 "이미 담긴 그 위시"라는 것이 문서에서 읽힌다.
+private const val EXAMPLE_WISH_ID = 1024L
+
 @Configuration
 class WishlistApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
@@ -50,7 +55,10 @@ class WishlistApiExamples(
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
-                    add(WishException.alreadyExists(), name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)")
+                    add(
+                        AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, EXAMPLE_WISH_ID),
+                        name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)",
+                    )
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -266,7 +274,7 @@ class WishlistApiExamples(
         WishDetailResponse(
             wish =
                 WishItemResponse.WishView(
-                    id = 1024,
+                    id = EXAMPLE_WISH_ID,
                     createdAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                 ),
             memo = "생일 선물 후보",
@@ -364,7 +372,7 @@ class WishlistApiExamples(
         WishItemResponse(
             wish =
                 WishItemResponse.WishView(
-                    id = 1024,
+                    id = EXAMPLE_WISH_ID,
                     createdAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                 ),
             item =
