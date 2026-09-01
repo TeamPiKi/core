@@ -16,6 +16,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import io.swagger.v3.oas.annotations.Operation
@@ -323,6 +324,44 @@ interface TournamentApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "토너먼트 ID", example = "1") tournamentId: Long,
     ): ApiResponseBody<GroupResultResponse>
+
+    @Operation(
+        summary = "토너먼트 참여 닉네임 수정",
+        description = """
+            이 토너먼트에서만 보이는 참여 닉네임(표시명)을 바꾼다. 유저 프로필 닉네임은 바뀌지 않는다.
+            결과·진행 화면의 참여자 이름과 알림(SSE·FCM) 문구에 이 닉네임이 쓰인다.
+            요청자가 참여한 토너먼트여야 한다(멤버는 자기 루트 토너먼트 id, 플레이링크 게스트는 자기 복제 토너먼트 id 를 넘긴다).
+        """,
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "닉네임 수정 성공",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (닉네임이 1~10자 범위를 벗어남)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (요청자가 이 토너먼트 참여자가 아님)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+        ],
+    )
+    fun updateNickname(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "토너먼트 ID", example = "1") tournamentId: Long,
+        request: UpdateTournamentNicknameRequest,
+    ): ApiResponseBody<Unit>
 
     @Operation(
         summary = "토너먼트 생성",

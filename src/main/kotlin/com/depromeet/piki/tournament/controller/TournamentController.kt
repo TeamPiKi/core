@@ -15,6 +15,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentInviteService
@@ -97,6 +98,16 @@ class TournamentController(
     ): ApiResponseBody<GroupResultResponse> {
         val result = tournamentService.getGroupResult(userId, tournamentId)
         return ApiResponseBody.ok(GroupResultResponse.from(result))
+    }
+
+    @PatchMapping("/{tournamentId}/nickname")
+    override fun updateNickname(
+        @AuthenticationPrincipal userId: UUID,
+        @PathVariable tournamentId: Long,
+        @Valid @RequestBody request: UpdateTournamentNicknameRequest,
+    ): ApiResponseBody<Unit> {
+        tournamentService.updateNickname(userId, tournamentId, request.nickname)
+        return ApiResponseBody.ok()
     }
 
     @PostMapping
