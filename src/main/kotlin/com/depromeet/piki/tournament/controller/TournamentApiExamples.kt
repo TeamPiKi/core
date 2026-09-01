@@ -808,6 +808,7 @@ class TournamentApiExamples(
                         )
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "참여자가 아님")
+                        add(UserException.duplicateNickname(), name = "닉네임 중복 (전역 유일 위반)")
                     }
             }
             operation

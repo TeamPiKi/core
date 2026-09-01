@@ -355,6 +355,11 @@ interface TournamentApi {
                 description = "권한 없음 (요청자가 이 토너먼트 참여자가 아님)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
+            ApiResponse(
+                responseCode = "409",
+                description = "닉네임 중복 USER-004 (다른 참여자 · 다른 유저 프로필 닉과 겹침 — 모든 표시명은 전역에서 유일)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
         ],
     )
     fun updateNickname(

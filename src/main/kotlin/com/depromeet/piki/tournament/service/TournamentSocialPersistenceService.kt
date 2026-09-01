@@ -5,6 +5,7 @@ import com.depromeet.piki.tournament.event.TournamentJoined
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import com.depromeet.piki.user.domain.User
+import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.service.UserService
 import java.util.UUID
 import org.springframework.context.ApplicationEventPublisher
@@ -34,6 +35,9 @@ class TournamentSocialPersistenceService(
         if (tournamentUserRepository.countByTournamentId(tournamentId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
             throw TournamentException.participantLimitExceeded()
         }
+        // 게스트 참여 닉도 전역 유일(#1018) — users 풀 충돌은 createGuestWithNickname(saveNewUser)이 잡고,
+        // 여기선 참여 닉 풀(tournament_users)과의 충돌을 먼저 막는다. 신규 게스트라 제외할 자기 자신은 없다.
+        if (tournamentUserRepository.existsByNickname(nickname)) throw UserException.duplicateNickname()
         val user = userService.createGuestWithNickname(nickname)
         // 토너먼트 닉네임을 게스트의 프로필 닉네임(방금 입력값)으로 채운다(#1018) — 이후 수정은 프로필과 분리.
         tournamentUserRepository.save(TournamentUser(tournamentId, user.id, user.nickname))
