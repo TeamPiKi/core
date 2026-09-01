@@ -8,6 +8,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.item.service.ItemParsingService
+import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
@@ -27,6 +28,7 @@ import com.depromeet.piki.tournament.event.TournamentStarted
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.service.PLAY_LINK_DURATION_DAYS
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
@@ -107,6 +109,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var stubImageStorage: StubImageStorage
 
     @Autowired private lateinit var stubRefreshTokenStore: StubRefreshTokenStore
+
+    // #1018 — SSE/FCM 알림 문구가 프로필 닉이 아니라 토너먼트 전용 닉을 쓰는지 직접 검증하기 위해 주입한다.
+    @Autowired private lateinit var tournamentNotificationVariables: TournamentNotificationVariables
 
     // 발행 검증용 — 같은 스레드(MockMvc 컨트롤러 실행)에서 publish 된 도메인 이벤트를 기록한다.
     // AFTER_COMMIT 리스너 발화(별도 스레드, 트랜잭션 롤백 무관) 여부와 독립적으로 "서비스가 이벤트를 쐈는가" 만 본다.
@@ -1752,6 +1757,107 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending.participants[0].userId").isString)
             .andExpect(jsonPath("$.data.pending.participants[0].nickname").isString)
             .andExpect(jsonPath("$.data.pending.participants[0].profileImage").value(userProfileImage))
+    }
+
+    // #1018 — 토너먼트 참여 닉네임과 프로필 닉네임을 분리한다. 아래는 그 정책·버그 수정의 계약 검증이다.
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 토너먼트 표시명만 바꾸고 프로필 닉네임은 유지한다`() {
+        // 버그: 토너먼트 입장 닉네임을 고치면 프로필 닉네임까지 바뀌던 커플링을 끊는다(#1018).
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "원래닉")
+        val tournamentId = createTournament(mockMvc)
+
+        // 생성 직후 참가자 표시명은 프로필에서 프리필된 "원래닉".
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(jsonPath("$.data.pending.participants[0].nickname").value("원래닉"))
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"토너닉"}"""),
+            ).andExpect(status().isOk)
+
+        // 표시명은 토너먼트 전용 닉으로 바뀐다.
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(jsonPath("$.data.pending.participants[0].nickname").value("토너닉"))
+
+        // 프로필 닉네임은 불변 — 이 단언이 원래 버그의 회귀 가드다.
+        assertEquals("원래닉", userJpaRepository.findById(userId).get().nickname)
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 참가자가 아니면 403 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage)
+        val tournamentId = createTournament(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "외부인")
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"침입자"}"""),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-001"))
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 닉네임이 10자를 초과하면 400 을 반환한다`() {
+        // OpenAPI example 의 400 detail 이 실제 응답과 일치하는지 실측 고정한다(CLAUDE.md example single-source).
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage)
+        val tournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"12345678901"}"""),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.detail").value(UpdateTournamentNicknameRequest.NICKNAME_SIZE_MESSAGE))
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 이후 SSE FCM actorName 은 토너먼트 전용 닉을 쓴다`() {
+        // 알림 문구(SSE·FCM)도 프로필이 아니라 토너먼트 닉을 써야 한다는 요구의 직접 검증.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "프로필닉")
+        val tournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"토너닉"}"""),
+            ).andExpect(status().isOk)
+
+        val context = tournamentNotificationVariables.context(tournamentId, userId)
+        assertEquals("토너닉", context.variables["actorName"])
+    }
+
+    @Test
+    fun `GET tournaments-id 는 레거시 NULL 닉네임 참가자를 프로필 닉으로 폴백해 표시한다`() {
+        // 기존 데이터(TU.nickname NULL)는 건드리지 않고 프로필 닉으로 폴백한다 — 마이그레이션은 신규부터.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "프로필닉")
+        val tournamentId = createTournament(mockMvc)
+
+        // 레거시 행 재현: 생성 때 채워진 TU 닉을 NULL 로 되돌린다.
+        val tu = tournamentUserJpaRepository.findByTournamentIdAndDeletedAtIsNull(tournamentId).first()
+        tu.nickname = null
+        tournamentUserJpaRepository.save(tu)
+
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(jsonPath("$.data.pending.participants[0].nickname").value("프로필닉"))
     }
 
     @Test
@@ -3878,6 +3984,42 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items").isArray)
             .andExpect(jsonPath("$.data.items[0].chosenBy[0].isWithdrawn").value(false))
+    }
+
+    @Test
+    fun `GET group-result 는 선택자 닉네임을 토너먼트 전용 닉으로 내려준다`() {
+        // 공유·결과 화면의 "누가 무엇을 1등으로 골랐나" 선택자 이름도 토너먼트 닉을 써야 한다(#1018).
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자프로필")
+        saveUser(otherUserId, "https://cdn.example.com/guest.jpg", "게스트프로필")
+        val rootId = completeSocialTournamentWith2Players(mockMvc)
+
+        // 주최자의 토너먼트 닉을 프로필과 다르게 바꾼다 — 그룹 결과가 어느 쪽을 쓰는지 가른다.
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$rootId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"주최자토너닉"}"""),
+            ).andExpect(status().isOk)
+
+        val result = mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/group-result")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+
+        val nicknames = objectMapper
+            .readTree(result.response.contentAsString)["data"]["items"]
+            .flatMap { it["chosenBy"] }
+            .map { it["nickname"].asText() }
+            .toSet()
+
+        // 주최자는 토너먼트 닉으로 뜨고 프로필 닉은 새지 않는다. 클론 소유자(플레이링크 게스트)도 자기 토너먼트 닉으로 뜬다.
+        assertTrue("주최자토너닉" in nicknames, "선택자에 토너먼트 닉이 있어야 한다: $nicknames")
+        assertTrue("주최자프로필" !in nicknames, "프로필 닉이 그룹 결과에 새면 안 된다: $nicknames")
+        assertTrue("게스트프로필" in nicknames, "클론 소유자(게스트)도 그룹 결과에 표시돼야 한다: $nicknames")
     }
 
     @Test
