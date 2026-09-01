@@ -97,7 +97,8 @@ class TournamentService(
             )
         val tournamentUser =
             tournamentUserRepository.save(
-                TournamentUser(tournamentId = tournament.getId(), userId = userId),
+                // 토너먼트 닉네임은 생성 시점 프로필 닉네임으로 채운다(#1018) — 이후 프로필 수정과 분리.
+                TournamentUser(tournament.getId(), userId, nicknameOf(userId)),
             )
         tournament.assignOwner(tournamentUser.getId())
         return CreateTournamentResult(
@@ -105,6 +106,24 @@ class TournamentService(
             inviteCode = inviteCode,
             inviteExpiresAt = inviteExpiresAt,
         )
+    }
+
+    // 토너먼트 닉네임 fill 용 — 참여 시점의 프로필 닉네임을 스냅샷한다(#1018). 유저가 없으면(이례) null → 표시 시 폴백.
+    private fun nicknameOf(userId: UUID): String? = userRepository.findById(userId)?.nickname
+
+    // 이 토너먼트에서 쓸 참여 닉네임만 바꾼다(#1018) — 유저 프로필(users.nickname)은 건드리지 않는다.
+    // 요청자가 참여한 토너먼트여야 한다(그 tournamentId 의 TU 소유자). 아니면 접근 불가(403).
+    // (게스트/멤버 공통: 각자 자기 TU — 멤버는 루트 TU, 플레이링크 게스트는 자기 클론 TU — 를 tournamentId 로 가리켜 부른다.)
+    @Transactional
+    fun updateNickname(
+        userId: UUID,
+        tournamentId: Long,
+        nickname: String,
+    ) {
+        val tournamentUser = tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
+            ?: throw TournamentException.forbiddenTournament()
+        tournamentUser.rename(nickname)
+        tournamentUserRepository.save(tournamentUser)
     }
 
     @Transactional
@@ -123,7 +142,7 @@ class TournamentService(
         if (tournamentUserRepository.countByTournamentId(tournamentId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
             throw TournamentException.participantLimitExceeded()
         }
-        tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = userId))
+        tournamentUserRepository.save(TournamentUser(tournamentId, userId, nicknameOf(userId)))
         // 참여가 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = userId))
     }
@@ -305,7 +324,7 @@ class TournamentService(
                 sourceTournamentId = rootTournamentId,
             ),
         )
-        val cloneTU = tournamentUserRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        val cloneTU = tournamentUserRepository.save(TournamentUser(clone.getId(), userId, nicknameOf(userId)))
         clone.assignOwner(cloneTU.getId())
         clone.start()
 
@@ -367,7 +386,8 @@ class TournamentService(
                             userById[tu.userId]?.let { user ->
                                 TournamentDetail.ParticipantDetail(
                                     userId = user.id,
-                                    nickname = user.nickname,
+                                    // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                                    nickname = tu.nickname ?: user.nickname,
                                     profileImage = user.profileImage,
                                     isWithdrawn = !user.isActive(),
                                     itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -489,7 +509,8 @@ class TournamentService(
                 userById[tu.userId]?.let { user ->
                     TournamentDetail.ParticipantDetail(
                         userId = user.id,
-                        nickname = user.nickname,
+                        // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                        nickname = tu.nickname ?: user.nickname,
                         profileImage = user.profileImage,
                         isWithdrawn = !user.isActive(),
                         itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -1020,7 +1041,7 @@ class TournamentService(
             ),
         )
         val tournamentUser = tournamentUserRepository.save(
-            TournamentUser(tournamentId = newTournament.getId(), userId = userId),
+            TournamentUser(newTournament.getId(), userId, nicknameOf(userId)),
         )
         newTournament.assignOwner(tournamentUser.getId())
         // 플레이링크로 새 클론을 만들어 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). get-or-create 의 신규 생성 분기에서만 발행한다.
@@ -1087,6 +1108,9 @@ class TournamentService(
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
             .associateBy { it.id }
+        // 표시명은 각 play 의 TU 닉네임(토너먼트 전용) 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018).
+        // 클론 play 는 클론 오너 TU 의 닉네임(게스트가 정한 값), 루트 play 는 루트 TU 의 닉네임을 쓴다.
+        val nicknameByTuId = (completedRootTUs + cloneOwnerTUById.values).associate { it.getId() to it.nickname }
 
         // "선택자" = 해당 아이템을 자신의 1위(우승)로 고른 참여자
         // itemId 단위로 집계하고 정렬 후 그룹 rank 를 부여한다.
@@ -1121,7 +1145,7 @@ class TournamentService(
             val user = userById[play.userUUID] ?: continue
             val participant = ParticipantSummary(
                 userId = user.id,
-                nickname = user.nickname,
+                nickname = nicknameByTuId[play.tuId] ?: user.nickname,
                 profileImage = user.profileImage,
                 isWithdrawn = !user.isActive(),
             )

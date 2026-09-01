@@ -35,7 +35,8 @@ class TournamentSocialPersistenceService(
             throw TournamentException.participantLimitExceeded()
         }
         val user = userService.createGuestWithNickname(nickname)
-        tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = user.id))
+        // 토너먼트 닉네임을 게스트의 프로필 닉네임(방금 입력값)으로 채운다(#1018) — 이후 수정은 프로필과 분리.
+        tournamentUserRepository.save(TournamentUser(tournamentId, user.id, user.nickname))
         // 게스트 합류도 일반 참여와 같은 사실이라 같은 이벤트를 발행한다. 커밋된 뒤에만 전달되도록 트랜잭션 안에서 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = user.id))
         return user
