@@ -1,6 +1,9 @@
 package com.depromeet.piki.user.service
 
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.tournament.domain.TournamentUser
+import com.depromeet.piki.tournament.repository.TournamentUserRepository
+import com.depromeet.piki.user.domain.UserException
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
@@ -23,6 +26,22 @@ import kotlin.test.assertFailsWith
 class UserProfileUpdateIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var userService: UserService
+
+    @Autowired
+    private lateinit var tournamentUserRepository: TournamentUserRepository
+
+    @Test
+    fun `프로필 닉네임을 다른 사람의 토너먼트 참여 닉과 같게 바꾸면 409(닉네임 중복)로 막힌다`() {
+        // 전역 유일(#1018)의 반대 방향: 프로필 닉 변경도 참여 닉 풀(tournament_users)과 겹치면 안 된다.
+        // "라떼왕"은 어느 유저 프로필에도 없는 참여 닉 전용 값이라, users 풀이 아니라 참여 닉 풀 검사가 막는 것을 격리한다.
+        val other = UUID.randomUUID()
+        tournamentUserRepository.save(TournamentUser(tournamentId = 1L, userId = other, nickname = "라떼왕"))
+        val me = userService.createGuestWithNickname("q${UUID.randomUUID().toString().take(4)}").id
+
+        assertFailsWith<UserException> {
+            userService.updateProfile(me, "라떼왕", null)
+        }
+    }
 
     @Test
     fun `닉네임 무관 DB 위반(profileImage 길이 초과)은 409 로 오분류되지 않고 원본 예외로 드러난다`() {

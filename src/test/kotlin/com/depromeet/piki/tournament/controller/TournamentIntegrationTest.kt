@@ -1825,6 +1825,100 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH tournaments-id-nickname 은 같은 토너먼트 다른 참가자의 참여 닉과 겹치면 409 를 반환한다`() {
+        // 토너먼트 내부 유일화(#1018). 참여 닉 전용 값(어느 유저 프로필과도 다른 값)으로 충돌시켜 참여 닉 풀 검사를 격리한다.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "참가자")
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":"$inviteCode"}"""),
+        ).andExpect(status().isOk)
+        // 다른 참가자가 참여 닉을 프로필과 다른 값으로 바꾼다 → "라떼왕"은 어느 유저 프로필에도 없는 참여 닉 전용 값.
+        mockMvc.perform(
+            patch("/api/v1/tournaments/$tournamentId/nickname")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"nickname":"라떼왕"}"""),
+        ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"라떼왕"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 다른 유저의 프로필 닉과 겹치면 409 를 반환한다`() {
+        // 토너먼트 외부(전역 유저 프로필 닉)와도 유일화(#1018). 참여하지 않은 제3자의 프로필 닉으로 충돌.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val tournamentId = createTournament(mockMvc)
+        saveUser(UUID.randomUUID(), "https://cdn.example.com/third.jpg", "제3자")
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"제3자"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 자기 프로필 닉과 같은 값이면 통과한다`() {
+        // "자기 이름은 항상 허용"(#1018) — 자기 프로필·자기 참여 닉과 같은 값은 전역 유일 검사에서 자기 자신을 제외한다.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "내닉")
+        val tournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"내닉"}"""),
+            ).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `POST tournaments-id-join-guest 는 기존 참여 닉과 겹치면 409 를 반환한다`() {
+        // 게스트 참여 닉도 전역 유일(#1018). 참여 닉 전용 값으로 충돌시켜 참여 닉 풀 검사를 격리한다.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "참가자")
+        mockMvc.perform(
+            post("/api/v1/tournaments/$tournamentId/join")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"inviteCode":"$inviteCode"}"""),
+        ).andExpect(status().isOk)
+        mockMvc.perform(
+            patch("/api/v1/tournaments/$tournamentId/nickname")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"nickname":"라떼왕"}"""),
+        ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join/guest")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode","nickname":"라떼왕"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
     fun `PATCH tournaments-id-nickname 이후 SSE FCM actorName 은 토너먼트 전용 닉을 쓴다`() {
         // 알림 문구(SSE·FCM)도 프로필이 아니라 토너먼트 닉을 써야 한다는 요구의 직접 검증.
         val mockMvc = buildMockMvc()
