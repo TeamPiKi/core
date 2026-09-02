@@ -38,4 +38,29 @@ class DefaultProfileImagesTest {
 
         assertTrue(produced.all { it in expected }, "random() 이 기본 아바타 4종 범위를 벗어났다: $produced")
     }
+
+    @Test
+    fun `deleted 는 publicBaseUrl 과 defaults 탈퇴 아바타 png 를 조립한다`() {
+        val images = defaultProfileImages("https://piki.s3.ap-northeast-2.amazonaws.com")
+
+        assertEquals("https://piki.s3.ap-northeast-2.amazonaws.com/defaults/user-deleted.png", images.deleted())
+    }
+
+    @Test
+    fun `deleted 도 publicBaseUrl 끝 슬래시를 무시해 슬래시가 중복되지 않는다`() {
+        val images = defaultProfileImages("https://piki.s3.ap-northeast-2.amazonaws.com/")
+
+        assertEquals("https://piki.s3.ap-northeast-2.amazonaws.com/defaults/user-deleted.png", images.deleted())
+    }
+
+    // 탈퇴 아바타는 랜덤 4종과 다른 축이라, random() 이 절대 이 값을 뽑아선 안 된다(탈퇴 아닌 유저가 탈퇴 프사를 갖는 사고).
+    @Test
+    fun `random 은 탈퇴 아바타를 뽑지 않는다`() {
+        val images = defaultProfileImages("https://piki.s3.ap-northeast-2.amazonaws.com")
+        val deleted = images.deleted()
+
+        val produced = (1..200).map { images.random() }.toSet()
+
+        assertTrue(produced.none { it == deleted }, "random() 이 탈퇴 아바타를 뽑았다: $deleted")
+    }
 }

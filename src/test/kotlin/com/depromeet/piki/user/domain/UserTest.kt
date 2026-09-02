@@ -87,16 +87,21 @@ class UserTest {
             identityType = IdentityType.MEMBER,
         )
 
+    // 탈퇴 아바타 URL 은 env 별 버킷을 흡수하려 호출부(DefaultProfileImages.deleted())가 넘긴다.
+    // 엔티티는 "무엇으로 덮을지" 를 모르고 받은 값을 그대로 반영하는지만 책임지므로, 여기선 임의 URL 로 그 계약을 본다.
+    private val DELETED_IMAGE = "https://cdn.example/defaults/user-deleted.png"
+
     @Test
     fun `MEMBER 탈퇴 시 deletedAt 이 설정되고 닉네임-프로필이 비식별화된다`() {
         val id = UUID.fromString("8f1a3c2b-9d44-4e2a-9b12-1a2b3c4d5e6f")
         val user = member(id)
 
-        user.withdraw()
+        user.withdraw(DELETED_IMAGE)
 
         assertNotNull(user.deletedAt)
         assertEquals("탈퇴" + "8f1a3c2b", user.nickname)
-        assertEquals(User.WITHDRAWN_PROFILE_IMAGE, user.profileImage)
+        // 원래 프사(https://example.com/original.png)가 넘긴 탈퇴 아바타로 덮인다.
+        assertEquals(DELETED_IMAGE, user.profileImage)
     }
 
     @Test
@@ -104,8 +109,8 @@ class UserTest {
         val a = member(UUID.fromString("aaaaaaaa-0000-0000-0000-000000000000"))
         val b = member(UUID.fromString("bbbbbbbb-0000-0000-0000-000000000000"))
 
-        a.withdraw()
-        b.withdraw()
+        a.withdraw(DELETED_IMAGE)
+        b.withdraw(DELETED_IMAGE)
 
         assertEquals(true, a.nickname.length <= User.NICKNAME_MAX_LENGTH)
         assertEquals(true, b.nickname.length <= User.NICKNAME_MAX_LENGTH)
@@ -117,19 +122,19 @@ class UserTest {
     fun `게스트에 withdraw 를 호출하면 불변식 위반으로 예외가 발생한다`() {
         val user = guest()
         // MEMBER 전용 경로 — 게스트는 도메인 check 위반(서비스가 사전에 403 으로 막아 정상 흐름에선 닿지 않음).
-        assertFailsWith<IllegalStateException> { user.withdraw() }
+        assertFailsWith<IllegalStateException> { user.withdraw(DELETED_IMAGE) }
     }
 
     @Test
     fun `탈퇴는 멱등하지 않고 재호출 시 닉네임이 재파생되어도 동일하다`() {
         val id = UUID.fromString("8f1a3c2b-9d44-4e2a-9b12-1a2b3c4d5e6f")
         val user = member(id)
-        user.withdraw()
+        user.withdraw(DELETED_IMAGE)
         val firstDeletedAt = user.deletedAt
         val firstNickname = user.nickname
 
         // softDelete 가 멱등이라 deletedAt 은 유지되고, 닉네임은 같은 id 파생이라 동일하다.
-        user.withdraw()
+        user.withdraw(DELETED_IMAGE)
 
         assertEquals(firstDeletedAt, user.deletedAt)
         assertEquals(firstNickname, user.nickname)
@@ -139,7 +144,7 @@ class UserTest {
     fun `isActive 는 탈퇴 전 true 탈퇴 후 false 다`() {
         val user = member()
         assertEquals(true, user.isActive())
-        user.withdraw()
+        user.withdraw(DELETED_IMAGE)
         assertEquals(false, user.isActive())
     }
 
@@ -166,7 +171,7 @@ class UserTest {
     fun `탈퇴로 전이된 tombstone 닉네임 자체는 예약 prefix 검증을 우회한다`() {
         // withdraw 는 validateNickname 을 거치지 않고 anonymizedNickname 을 직접 대입하므로 예약 prefix 검증에 걸리지 않는다.
         val user = member()
-        user.withdraw()
+        user.withdraw(DELETED_IMAGE)
         assertEquals(true, user.nickname.startsWith(User.WITHDRAWN_NICKNAME_PREFIX))
     }
 }

@@ -22,7 +22,6 @@ import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentException
-import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -751,7 +750,7 @@ class TournamentApiExamples(
                                                                     ),
                                                                 // 탈퇴 유저 — 닉네임·프로필은 익명값, isWithdrawn=true 로 FE 가 "유저 알수없음" 렌더.
                                                                 nickname = "탈퇴aaaaaaaa",
-                                                                profileImage = User.WITHDRAWN_PROFILE_IMAGE,
+                                                                profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-deleted.png",
                                                                 isWithdrawn = true,
                                                             ),
                                                         ),

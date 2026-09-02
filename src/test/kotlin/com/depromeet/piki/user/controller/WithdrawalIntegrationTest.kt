@@ -5,6 +5,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.service.DefaultProfileImages
 import com.depromeet.piki.user.service.WithdrawalService
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
@@ -45,6 +46,9 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var withdrawalService: WithdrawalService
+
+    @Autowired
+    private lateinit var defaultProfileImages: DefaultProfileImages
 
     @Autowired
     private lateinit var stubWithdrawnTokenStore: com.depromeet.piki.support.StubWithdrawnTokenStore
@@ -263,6 +267,33 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         assertNotNull(userDeletedAt, "user 가 tombstone 으로 soft-delete 되어야 한다")
+    }
+
+    // 탈퇴해도 공유 토너먼트 히스토리엔 참여자로 남으므로, 프사는 빈 값이 아니라 탈퇴 전용 기본 아바타여야 한다.
+    // 단언 기준을 DefaultProfileImages.deleted() 로 두어(하드코딩 URL 이 아니라) env 별 publicBaseUrl 조립까지 함께 고정한다.
+    @Test
+    fun `DELETE users me - 탈퇴하면 프로필이 탈퇴 전용 기본 아바타로 덮인다`() {
+        val userId = UUID.randomUUID()
+        insertUser(userId, "멤버닉네임", IdentityType.MEMBER)
+
+        mockMvc()
+            .perform(
+                delete("/api/v1/users/me")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
+            ).andExpect(status().isOk)
+
+        // tombstone UPDATE 는 테스트 트랜잭션 세션에 버퍼만 된 상태다. raw SELECT 는 세션을 경유하지 않으므로 먼저 flush 한다.
+        entityManager.flush()
+        entityManager.clear()
+
+        val profileImage =
+            jdbcTemplate.queryForObject(
+                "SELECT profile_image FROM users WHERE id = ?",
+                String::class.java,
+                uuidToBytes(userId),
+            )
+        assertEquals(defaultProfileImages.deleted(), profileImage)
+        assertTrue(profileImage!!.endsWith("/defaults/user-deleted.png"), "탈퇴 아바타 키가 아니다: $profileImage")
     }
 
     @Test
