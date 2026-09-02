@@ -97,7 +97,8 @@ class TournamentService(
             )
         val tournamentUser =
             tournamentUserRepository.save(
-                TournamentUser(tournamentId = tournament.getId(), userId = userId),
+                // 토너먼트 닉네임은 생성 시점 프로필 닉네임으로 채운다(#1018) — 이후 프로필 수정과 분리.
+                TournamentUser(tournament.getId(), userId, nicknameOf(userId)),
             )
         tournament.assignOwner(tournamentUser.getId())
         return CreateTournamentResult(
@@ -105,6 +106,36 @@ class TournamentService(
             inviteCode = inviteCode,
             inviteExpiresAt = inviteExpiresAt,
         )
+    }
+
+    // 토너먼트 닉네임 fill 용 — 참여 시점의 프로필 닉네임을 스냅샷한다(#1018). 유저가 없으면(이례) null → 표시 시 폴백.
+    private fun nicknameOf(userId: UUID): String? = userRepository.findById(userId)?.nickname
+
+    // 이 토너먼트에서 쓸 참여 닉네임만 바꾼다(#1018) — 유저 프로필(users.nickname)은 건드리지 않는다.
+    // 요청자가 참여한 토너먼트여야 한다(그 tournamentId 의 TU 소유자). 아니면 접근 불가(403).
+    // (게스트/멤버 공통: 각자 자기 TU — 멤버는 루트 TU, 플레이링크 게스트는 자기 클론 TU — 를 tournamentId 로 가리켜 부른다.)
+    @Transactional
+    fun updateNickname(
+        userId: UUID,
+        tournamentId: Long,
+        nickname: String,
+    ) {
+        val tournamentUser = tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
+            ?: throw TournamentException.forbiddenTournament()
+        ensureNicknameAvailable(nickname, userId)
+        tournamentUser.rename(nickname)
+        tournamentUserRepository.save(tournamentUser)
+    }
+
+    // 참여 닉네임은 "모든 표시명 전역 유일"(#1018) — 프로필 닉 풀(users)과 참여 닉 풀(tournament_users) 어느 쪽과도
+    // 겹치면 안 된다. 자기 자신(자기 프로필·자기 다른 참여 닉)은 제외해 프리필·재설정이 자연스럽게 통과한다.
+    // 교차 테이블 UNIQUE 는 MySQL 로 못 걸어 앱 레이어 검사다(프로필 닉과 같은 방식, 좁은 race 창 감수).
+    private fun ensureNicknameAvailable(
+        nickname: String,
+        requesterId: UUID,
+    ) {
+        if (userRepository.existsByNicknameAndIdNot(nickname, requesterId)) throw UserException.duplicateNickname()
+        if (tournamentUserRepository.existsByNicknameExcludingUser(nickname, requesterId)) throw UserException.duplicateNickname()
     }
 
     @Transactional
@@ -123,7 +154,7 @@ class TournamentService(
         if (tournamentUserRepository.countByTournamentId(tournamentId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
             throw TournamentException.participantLimitExceeded()
         }
-        tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = userId))
+        tournamentUserRepository.save(TournamentUser(tournamentId, userId, nicknameOf(userId)))
         // 참여가 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = userId))
     }
@@ -305,7 +336,7 @@ class TournamentService(
                 sourceTournamentId = rootTournamentId,
             ),
         )
-        val cloneTU = tournamentUserRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        val cloneTU = tournamentUserRepository.save(TournamentUser(clone.getId(), userId, nicknameOf(userId)))
         clone.assignOwner(cloneTU.getId())
         clone.start()
 
@@ -367,7 +398,8 @@ class TournamentService(
                             userById[tu.userId]?.let { user ->
                                 TournamentDetail.ParticipantDetail(
                                     userId = user.id,
-                                    nickname = user.nickname,
+                                    // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                                    nickname = tu.nickname ?: user.nickname,
                                     profileImage = user.profileImage,
                                     isWithdrawn = !user.isActive(),
                                     itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -489,7 +521,8 @@ class TournamentService(
                 userById[tu.userId]?.let { user ->
                     TournamentDetail.ParticipantDetail(
                         userId = user.id,
-                        nickname = user.nickname,
+                        // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                        nickname = tu.nickname ?: user.nickname,
                         profileImage = user.profileImage,
                         isWithdrawn = !user.isActive(),
                         itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -1020,7 +1053,7 @@ class TournamentService(
             ),
         )
         val tournamentUser = tournamentUserRepository.save(
-            TournamentUser(tournamentId = newTournament.getId(), userId = userId),
+            TournamentUser(newTournament.getId(), userId, nicknameOf(userId)),
         )
         newTournament.assignOwner(tournamentUser.getId())
         // 플레이링크로 새 클론을 만들어 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). get-or-create 의 신규 생성 분기에서만 발행한다.
@@ -1087,6 +1120,16 @@ class TournamentService(
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
             .associateBy { it.id }
+        // 표시명 해석은 알림(TournamentNotificationVariables.context)과 같은 규칙 — 루트 TU 우선, 없으면 클론 오너 TU(#1018).
+        // 멤버는 루트 TU + 자기 클론 TU 를 둘 다 갖는데, 편집·표시의 정본은 대기실에서 보이는 루트 TU 다. 클론 play 로만
+        // 이름을 풀면(과거 방식) 그룹 결과가 루트 닉과 어긋난다 — 멤버는 루트 TU 로, 루트 TU 없는 플레이링크 게스트만 클론 TU 로 푼다.
+        // 값이 NULL(레거시)이면 다음 후보로, 최종은 프로필 닉으로 폴백한다.
+        // findByTournamentId(활성 TU)는 아직 완료 안 한 멤버 루트 TU 를 커버하고, completedRootTUs(deletedAt 무관)는
+        // 삭제한 주최자의 완료 ROOT TU 를 커버한다 — 둘을 합쳐, 삭제된 완료 ROOT 가 스냅샷 닉 대신 프로필로 폴백하지 않게 한다.
+        val rootNicknameByUserId =
+            (tournamentUserRepository.findByTournamentId(tournamentId) + completedRootTUs)
+                .associate { it.userId to it.nickname }
+        val nicknameByTuId = cloneOwnerTUById.values.associate { it.getId() to it.nickname }
 
         // "선택자" = 해당 아이템을 자신의 1위(우승)로 고른 참여자
         // itemId 단위로 집계하고 정렬 후 그룹 rank 를 부여한다.
@@ -1121,7 +1164,8 @@ class TournamentService(
             val user = userById[play.userUUID] ?: continue
             val participant = ParticipantSummary(
                 userId = user.id,
-                nickname = user.nickname,
+                // 루트 TU 우선(멤버·주최자) → 클론 오너 TU(플레이링크 게스트) → 프로필(레거시). 알림 문구 해석과 동일 규칙.
+                nickname = rootNicknameByUserId[play.userUUID] ?: nicknameByTuId[play.tuId] ?: user.nickname,
                 profileImage = user.profileImage,
                 isWithdrawn = !user.isActive(),
             )
