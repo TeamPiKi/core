@@ -25,11 +25,13 @@ data class ApiResponseBody<T>(
 
         // code 를 배정한 도메인 예외용 — ErrorCode 를 강타입으로 받아 code·detail 을 채운다.
         // 진입점이 ErrorCode 라 임의 문자열을 code 로 넣는 실수가 컴파일로 차단되고, ErrorCode→wire 문자열 변환은 이 한 곳뿐이다.
+        // data 는 기본 null 이다 — 에러는 code 로 사유를 알리는 것이 원칙이다 (예외는 ErrorPayload 참고).
         fun <T> fail(
             errorCode: ErrorCode,
             detail: String? = null,
+            data: T? = null,
         ): ApiResponseBody<T> =
-            ApiResponseBody(data = null, code = errorCode.code, detail = detail ?: errorCode.category.description)
+            ApiResponseBody(data = data, code = errorCode.code, detail = detail ?: errorCode.category.description)
 
         // code 없는 fallback 경로용(Security 401/403·Bean Validation·generic). 이관 전 예외도 여기로 온다 → code=null.
         fun <T> fail(

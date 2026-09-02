@@ -27,6 +27,14 @@ class TournamentUserRepositoryImpl(
     override fun countByTournamentId(tournamentId: Long): Int =
         tournamentUserJpaRepository.countByTournamentIdAndDeletedAtIsNull(tournamentId)
 
+    override fun existsByNickname(nickname: String): Boolean =
+        tournamentUserJpaRepository.existsByNicknameAndDeletedAtIsNull(nickname)
+
+    override fun existsByNicknameExcludingUser(
+        nickname: String,
+        excludeUserId: UUID,
+    ): Boolean = tournamentUserJpaRepository.existsByNicknameAndDeletedAtIsNullAndUserIdNot(nickname, excludeUserId)
+
     override fun findByTournamentIds(tournamentIds: List<Long>): List<TournamentUser> =
         if (tournamentIds.isEmpty()) {
             emptyList()

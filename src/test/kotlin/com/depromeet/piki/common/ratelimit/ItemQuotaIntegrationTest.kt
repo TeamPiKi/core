@@ -399,6 +399,128 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `이미 담은 상품을 다시 등록하면 몫을 쓰지 않고 409 에 그 위시 id 를 함께 내린다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        // 파싱이 돌면 canonical 확정·병합이 끼어들어 정체성 판정이 흔들린다 — 등록 시점 별칭만으로 판정되게 꺼 둔다.
+        stubItemParsingWorker.enabled = false
+        val url = "https://www.musinsa.com/products/8100004"
+        try {
+            val created =
+                mockMvc
+                    .perform(
+                        post("/api/v1/wishlists")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""{"url":"$url"}"""),
+                    ).andExpect(status().isCreated)
+                    .andReturn()
+            val wishId =
+                objectMapper
+                    .readTree(created.response.getContentAsString(Charsets.UTF_8))
+                    .path("data")
+                    .path("wish")
+                    .path("id")
+                    .asLong()
+            // 첫 등록은 새 파싱을 만드니 정상적으로 1 을 쓴다.
+            assertEquals(1L, currentCount(userId))
+
+            // 응답이 유실된 뒤의 재시도와 같은 모양 — 클라는 담겼는지 모른 채 같은 URL 을 다시 보낸다.
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"$url"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value(WishErrorCode.ALREADY_EXISTS.code))
+                // 사유만으로는 어느 위시인지 알 수 없어 목록을 다시 조회해야 했다 — 그 위시를 바로 가리킨다.
+                .andExpect(jsonPath("$.data.wishId").value(wishId))
+
+            // 핵심: 담기지 않은 요청이 몫을 깎으면 사용자는 재시도할수록 한도만 잃는다.
+            assertEquals(1L, currentCount(userId))
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
+    fun `이미 담은 상품은 몫이 소진돼 있어도 429 가 아니라 409 로 거부된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertUser(userId, IdentityType.MEMBER)
+        stubItemParsingWorker.enabled = false
+        val url = "https://www.musinsa.com/products/8100006"
+        try {
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"$url"}"""),
+                ).andExpect(status().isCreated)
+            // 등록 뒤에 몫을 소진시킨다 — 이 상태에서 같은 상품을 다시 보내면 두 사유(중복·한도)가 동시에 성립한다.
+            fillQuota(userId, settings.current().userLimit)
+
+            // 중복은 한도와 무관한 사실이라 그쪽이 먼저 답이다. 한도를 먼저 보면 "담을 수 있었는데 몫이 없다"는
+            // 잘못된 안내(429 + Retry-After)가 나가고, 창이 지나 재시도해도 결국 409 다.
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"$url"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value(WishErrorCode.ALREADY_EXISTS.code))
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
+    fun `이미 담긴 링크를 토너먼트에 다시 추가하면 오너 몫을 쓰지 않고 409 에 그 아이템 id 를 함께 내린다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertUser(ownerId, IdentityType.MEMBER)
+        stubItemParsingWorker.enabled = false
+        val url = "https://www.musinsa.com/products/8100005"
+        try {
+            val (tournamentId, _) = createTournament(mockMvc, ownerId)
+            val added =
+                mockMvc
+                    .perform(
+                        post("/api/v1/tournaments/$tournamentId/items/link")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""{"url":"$url"}"""),
+                    ).andExpect(status().isOk)
+                    .andReturn()
+            val tournamentItemId =
+                objectMapper
+                    .readTree(added.response.getContentAsString(Charsets.UTF_8))
+                    .path("data")
+                    .path("tournamentItemId")
+                    .asLong()
+            assertEquals(1L, currentCount(ownerId))
+
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId, IdentityType.MEMBER)}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"$url"}"""),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM.code))
+                .andExpect(jsonPath("$.data.tournamentItemId").value(tournamentItemId))
+
+            assertEquals(1L, currentCount(ownerId))
+        } finally {
+            stubItemParsingWorker.enabled = true
+        }
+    }
+
+    @Test
     fun `토너먼트 오너의 몫이 소진되면 참여 게스트의 등록이 429 와 TOURNAMENT-037 로 거부된다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()

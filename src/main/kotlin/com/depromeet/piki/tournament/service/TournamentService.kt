@@ -97,7 +97,8 @@ class TournamentService(
             )
         val tournamentUser =
             tournamentUserRepository.save(
-                TournamentUser(tournamentId = tournament.getId(), userId = userId),
+                // 토너먼트 닉네임은 생성 시점 프로필 닉네임으로 채운다(#1018) — 이후 프로필 수정과 분리.
+                TournamentUser(tournament.getId(), userId, nicknameOf(userId)),
             )
         tournament.assignOwner(tournamentUser.getId())
         return CreateTournamentResult(
@@ -105,6 +106,36 @@ class TournamentService(
             inviteCode = inviteCode,
             inviteExpiresAt = inviteExpiresAt,
         )
+    }
+
+    // 토너먼트 닉네임 fill 용 — 참여 시점의 프로필 닉네임을 스냅샷한다(#1018). 유저가 없으면(이례) null → 표시 시 폴백.
+    private fun nicknameOf(userId: UUID): String? = userRepository.findById(userId)?.nickname
+
+    // 이 토너먼트에서 쓸 참여 닉네임만 바꾼다(#1018) — 유저 프로필(users.nickname)은 건드리지 않는다.
+    // 요청자가 참여한 토너먼트여야 한다(그 tournamentId 의 TU 소유자). 아니면 접근 불가(403).
+    // (게스트/멤버 공통: 각자 자기 TU — 멤버는 루트 TU, 플레이링크 게스트는 자기 클론 TU — 를 tournamentId 로 가리켜 부른다.)
+    @Transactional
+    fun updateNickname(
+        userId: UUID,
+        tournamentId: Long,
+        nickname: String,
+    ) {
+        val tournamentUser = tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
+            ?: throw TournamentException.forbiddenTournament()
+        ensureNicknameAvailable(nickname, userId)
+        tournamentUser.rename(nickname)
+        tournamentUserRepository.save(tournamentUser)
+    }
+
+    // 참여 닉네임은 "모든 표시명 전역 유일"(#1018) — 프로필 닉 풀(users)과 참여 닉 풀(tournament_users) 어느 쪽과도
+    // 겹치면 안 된다. 자기 자신(자기 프로필·자기 다른 참여 닉)은 제외해 프리필·재설정이 자연스럽게 통과한다.
+    // 교차 테이블 UNIQUE 는 MySQL 로 못 걸어 앱 레이어 검사다(프로필 닉과 같은 방식, 좁은 race 창 감수).
+    private fun ensureNicknameAvailable(
+        nickname: String,
+        requesterId: UUID,
+    ) {
+        if (userRepository.existsByNicknameAndIdNot(nickname, requesterId)) throw UserException.duplicateNickname()
+        if (tournamentUserRepository.existsByNicknameExcludingUser(nickname, requesterId)) throw UserException.duplicateNickname()
     }
 
     @Transactional
@@ -123,7 +154,7 @@ class TournamentService(
         if (tournamentUserRepository.countByTournamentId(tournamentId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
             throw TournamentException.participantLimitExceeded()
         }
-        tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = userId))
+        tournamentUserRepository.save(TournamentUser(tournamentId, userId, nicknameOf(userId)))
         // 참여가 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = userId))
     }
@@ -167,13 +198,16 @@ class TournamentService(
             itemSnapshotRepository
                 .findByIds(wishRepository.findByItemIdsAndUserId(command.itemIds, userId).map { it.snapshotId })
                 .associateBy { it.itemId }
-        // 파싱 대기·진행 중(PENDING·PROCESSING)이거나 실패(FAILED)한 상품은 이름·가격이 비어 출전에 부적합하다. 활성 snapshot 이 READY 인 것만 허용.
-        // 미완성(INCOMPLETE)은 그 앞에서 먼저 가른다 — 기다리면 풀리는 파싱 중과 달리 사용자가 빈 값을 채워야 풀려,
-        // "잠시 후 추가해 주세요" 가 사실이 아니게 된다. 둘이 섞였을 땐 행동이 필요한 쪽을 알린다.
-        if (activeSnapshotByItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncomplete()
-        if (activeSnapshotByItemId.size != command.itemIds.size || activeSnapshotByItemId.values.any { !it.isReady() }) {
-            throw TournamentException.itemNotReady()
-        }
+        if (activeSnapshotByItemId.size != command.itemIds.size) throw TournamentException.itemNotReady()
+        // 판정은 포인터가 아니라 카드에 뜨는 값으로 한다 — 남이 같은 링크를 담아 추출이 성공하면 내 포인터가
+        // 미완성·실패로 남아 있어도 카드엔 그 성공값이 뜬다(displayOf). 포인터로 판정하면 화면엔 값이 다 있는데
+        // "채운 뒤 담아 주세요" 가 나가고, 같은 아이템으로 시작은 되는 어긋남이 생긴다.
+        // 박제는 포인터 그대로다 — 겨루는 값 확정은 start 의 몫이고(#858), 대기실 표시도 파생으로 움직인다.
+        requireEntryEligible(
+            displayOf(activeSnapshotByItemId.values),
+            TournamentException::itemIncomplete,
+            TournamentException::itemNotReady,
+        )
         val savedItemIds = tournamentItemRepository
             .saveAll(
                 command.itemIds.map { itemId ->
@@ -242,13 +276,14 @@ class TournamentService(
                 .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
                 .associate { it.getId() to it }
         if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
-        // 담기 게이트와 같은 이유로 미완성을 먼저 본다. 아이템별 루프가 아니라 전체를 한 번 훑는 이유는, 루프에
-        // 맡기면 앞선 아이템이 파싱 중이기만 해도 "모두 준비되면" 안내가 나가 뒤쪽 미완성이 가려지기 때문이다.
-        if (pinnedByTournamentItemId.values.any { it.isIncomplete() }) throw TournamentException.itemIncompleteToStart()
+        requireEntryEligible(
+            pinnedByTournamentItemId.values,
+            TournamentException::itemIncompleteToStart,
+            TournamentException::itemNotReadyToStart,
+        )
         for (tournamentItem in tournamentItems) {
-            val snapshot = pinnedByTournamentItemId.getValue(tournamentItem.getId())
-            if (!snapshot.isReady()) throw TournamentException.itemNotReadyToStart()
-            snapshot.price ?: throw TournamentException.itemPriceRequired()
+            pinnedByTournamentItemId.getValue(tournamentItem.getId()).price
+                ?: throw TournamentException.itemPriceRequired()
         }
         tournament.start()
         // 시작이 커밋된 뒤에만 참가자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
@@ -301,7 +336,7 @@ class TournamentService(
                 sourceTournamentId = rootTournamentId,
             ),
         )
-        val cloneTU = tournamentUserRepository.save(TournamentUser(tournamentId = clone.getId(), userId = userId))
+        val cloneTU = tournamentUserRepository.save(TournamentUser(clone.getId(), userId, nicknameOf(userId)))
         clone.assignOwner(cloneTU.getId())
         clone.start()
 
@@ -363,7 +398,8 @@ class TournamentService(
                             userById[tu.userId]?.let { user ->
                                 TournamentDetail.ParticipantDetail(
                                     userId = user.id,
-                                    nickname = user.nickname,
+                                    // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                                    nickname = tu.nickname ?: user.nickname,
                                     profileImage = user.profileImage,
                                     isWithdrawn = !user.isActive(),
                                     itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -485,7 +521,8 @@ class TournamentService(
                 userById[tu.userId]?.let { user ->
                     TournamentDetail.ParticipantDetail(
                         userId = user.id,
-                        nickname = user.nickname,
+                        // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
+                        nickname = tu.nickname ?: user.nickname,
                         profileImage = user.profileImage,
                         isWithdrawn = !user.isActive(),
                         itemCount = itemCountByUserId[tu.userId] ?: 0,
@@ -1016,7 +1053,7 @@ class TournamentService(
             ),
         )
         val tournamentUser = tournamentUserRepository.save(
-            TournamentUser(tournamentId = newTournament.getId(), userId = userId),
+            TournamentUser(newTournament.getId(), userId, nicknameOf(userId)),
         )
         newTournament.assignOwner(tournamentUser.getId())
         // 플레이링크로 새 클론을 만들어 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). get-or-create 의 신규 생성 분기에서만 발행한다.
@@ -1083,6 +1120,16 @@ class TournamentService(
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
             .associateBy { it.id }
+        // 표시명 해석은 알림(TournamentNotificationVariables.context)과 같은 규칙 — 루트 TU 우선, 없으면 클론 오너 TU(#1018).
+        // 멤버는 루트 TU + 자기 클론 TU 를 둘 다 갖는데, 편집·표시의 정본은 대기실에서 보이는 루트 TU 다. 클론 play 로만
+        // 이름을 풀면(과거 방식) 그룹 결과가 루트 닉과 어긋난다 — 멤버는 루트 TU 로, 루트 TU 없는 플레이링크 게스트만 클론 TU 로 푼다.
+        // 값이 NULL(레거시)이면 다음 후보로, 최종은 프로필 닉으로 폴백한다.
+        // findByTournamentId(활성 TU)는 아직 완료 안 한 멤버 루트 TU 를 커버하고, completedRootTUs(deletedAt 무관)는
+        // 삭제한 주최자의 완료 ROOT TU 를 커버한다 — 둘을 합쳐, 삭제된 완료 ROOT 가 스냅샷 닉 대신 프로필로 폴백하지 않게 한다.
+        val rootNicknameByUserId =
+            (tournamentUserRepository.findByTournamentId(tournamentId) + completedRootTUs)
+                .associate { it.userId to it.nickname }
+        val nicknameByTuId = cloneOwnerTUById.values.associate { it.getId() to it.nickname }
 
         // "선택자" = 해당 아이템을 자신의 1위(우승)로 고른 참여자
         // itemId 단위로 집계하고 정렬 후 그룹 rank 를 부여한다.
@@ -1117,7 +1164,8 @@ class TournamentService(
             val user = userById[play.userUUID] ?: continue
             val participant = ParticipantSummary(
                 userId = user.id,
-                nickname = user.nickname,
+                // 루트 TU 우선(멤버·주최자) → 클론 오너 TU(플레이링크 게스트) → 프로필(레거시). 알림 문구 해석과 동일 규칙.
+                nickname = rootNicknameByUserId[play.userUUID] ?: nicknameByTuId[play.tuId] ?: user.nickname,
                 profileImage = user.profileImage,
                 isWithdrawn = !user.isActive(),
             )
@@ -1288,6 +1336,31 @@ class TournamentService(
     // CLONE 토너먼트는 DB 에 아이템 행이 없고, ROOT 의 아이템을 sourceTournamentId 로 공유한다.
     private fun getEffectiveTournamentItems(tournament: Tournament): List<TournamentItem> =
         tournamentItemRepository.findAllByTournamentId(tournament.sourceTournamentId ?: tournament.getId())
+
+    /**
+     * 출전 가능 판정의 단일 출처. 담기와 시작이 같은 질문("이 아이템들로 겨룰 수 있나")에 답하므로 한 벌만 둔다 —
+     * 두 벌이던 동안 담기만 포인터를, 시작은 표시값을 봐서 같은 아이템이 담기는 거부되고 시작은 되는 어긋남이
+     * 있었다. 갈라질 수 있는 구조 자체를 없앤다.
+     *
+     * 미완성을 먼저 보는 이유: 파싱 중은 기다리면 풀리지만 미완성은 사용자가 빈 값을 채워야 풀린다. 둘이 섞였을
+     * 땐 행동이 필요한 쪽을 알려야 하고, 아이템별 루프에 맡기면 앞선 파싱 중이 뒤쪽 미완성을 가린다.
+     *
+     * @param snapshots 판정 대상. 두 경로 모두 **표시값**을 넘긴다(포인터가 아니다).
+     */
+    private fun requireEntryEligible(
+        snapshots: Collection<ItemSnapshot>,
+        incomplete: () -> TournamentException,
+        notReady: () -> TournamentException,
+    ) {
+        if (snapshots.any { it.isIncomplete() }) throw incomplete()
+        if (snapshots.any { !it.isReady() }) throw notReady()
+    }
+
+    /** 포인터 묶음을 카드에 뜨는 값으로 바꾼다. 파생 대상이 없는 포인터는 자기 자신이 표시값이다. */
+    private fun displayOf(pointers: Collection<ItemSnapshot>): Collection<ItemSnapshot> {
+        val displayById = itemDisplayService.resolveDisplay(pointers)
+        return pointers.map { displayById[it.getId()] ?: it }
+    }
 
     // tournament_item 들이 고정한 snapshot 을 한 번에 조회해 id→snapshot 맵으로. 표시값 조회의 메모리 조인 재료다.
     private fun snapshotsOf(tournamentItems: Collection<TournamentItem>): Map<Long, ItemSnapshot> =

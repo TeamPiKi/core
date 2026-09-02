@@ -71,7 +71,7 @@ class UserDeviceRegisterConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `다른 기기 row 가 들고 있던 토큰을 동시 재등록해도 500 없이 토큰 1개로 수렴한다`() {
-        // Sentry delete 경쟁 재현 — 토큰을 들고 있던 기존 row(holder)가 있고, 같은 토큰을 다른 deviceId 로
+        // delete 경쟁 재현 — 토큰을 들고 있던 기존 row(holder)가 있고, 같은 토큰을 다른 deviceId 로
         // (앱 재설치로 device_id 가 바뀐 같은 유저의 중복 요청 등) 동시 재등록하면, 모든 시도가 holder 를
         // release 하려다 엔티티 delete 의 "정확히 1 row" 단언이 깨져 StaleStateException(→500)이 났다.
         // bulk delete 로 멱등 해제하도록 고친 뒤엔 500 없이 토큰 1 row 로 수렴해야 한다(#396 후속).

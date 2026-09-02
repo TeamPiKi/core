@@ -20,6 +20,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentDetailResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentInvitePreviewResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentStartResponse
 import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
+import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentException
 import com.depromeet.piki.user.domain.UserException
@@ -790,6 +791,27 @@ class TournamentApiExamples(
                             TournamentException.groupResultNotAvailable(),
                             name = "본인 플레이 미완료 · 완료 인원 2명 미만",
                         )
+                    }
+
+                handlerMethod.binds(TournamentController::updateNickname) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            name = "토너먼트 닉네임 수정 성공",
+                            payload = ApiResponseBody.ok<Unit>(),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "닉네임이 1~10자 범위를 벗어남",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = UpdateTournamentNicknameRequest.NICKNAME_SIZE_MESSAGE,
+                                ),
+                        )
+                        unauthorized()
+                        add(TournamentException.forbiddenTournament(), name = "참여자가 아님")
+                        add(UserException.duplicateNickname(), name = "닉네임 중복 (전역 유일 위반)")
                     }
             }
             operation

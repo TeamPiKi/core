@@ -8,6 +8,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
+import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -37,6 +38,48 @@ class TournamentItemPersistenceService(
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
 ) {
+    // 이 토너먼트에 이미 출전 중인 item → 그 tournament_item id. 중복 판정이 "무엇과 겹치는지"까지 답해야 해서(#973)
+    // 존재 여부가 아니라 매핑으로 만든다. snapshot 을 못 찾는 행은 자연히 빠지는데, 그런 행은 정원·중복 어느 쪽에도 셀 수 없다.
+    private fun existingTournamentItemIdByItemId(tournamentId: Long): Map<Long, Long> {
+        val tournamentItemIdBySnapshotId =
+            tournamentItemRepository.findAllByTournamentId(tournamentId).associate { it.snapshotId to it.getId() }
+        if (tournamentItemIdBySnapshotId.isEmpty()) return emptyMap()
+        return itemSnapshotRepository
+            .findByIds(tournamentItemIdBySnapshotId.keys.toList())
+            .associate { it.itemId to tournamentItemIdBySnapshotId.getValue(it.getId()) }
+    }
+
+    // 처음 보는 링크 모양의 중복 — 기존 출전분 중 raw link 가 같은 행의 tournament_item id. 없으면 null.
+    // 사전 확인과 최종 판정이 같은 규칙을 봐야 하므로(한쪽만 고치면 조용히 어긋난다) 두 곳이 이 함수를 공유한다.
+    private fun duplicatedByRawLink(
+        existingByItemId: Map<Long, Long>,
+        link: ProductLink,
+    ): Long? =
+        itemRepository
+            .findByIds(existingByItemId.keys.toList())
+            .firstOrNull { it.link == link }
+            ?.let { existingByItemId.getValue(it.getId()) }
+
+    // 등록 전 사전 확인 — 이미 담긴 링크면 한도를 깎기 전에 409 로 끊는다(#973).
+    // persistLinkItem 과 같은 두 갈래(raw link 모양 / 공유 정체성)를 본다.
+    //
+    // 락 밖 조회라 근사치다. 최종 판정은 persistLinkItem 이 정원 검사와 함께 트랜잭션 안에서 다시 하므로,
+    // 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
+    @Transactional(readOnly = true)
+    fun rejectIfAlreadyAdded(
+        tournamentId: Long,
+        link: ProductLink,
+    ) {
+        val existingByItemId = existingTournamentItemIdByItemId(tournamentId)
+        if (existingByItemId.isEmpty()) return
+        val duplicated =
+            duplicatedByRawLink(existingByItemId, link)
+                ?: itemSharingService.resolveExistingItem(link)?.let { existingByItemId[it.getId()] }
+        duplicated?.let {
+            throw AlreadyRegisteredException.tournamentItem(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM, it)
+        }
+    }
+
     @Transactional
     fun persistLinkItem(
         userId: UUID,
@@ -47,23 +90,19 @@ class TournamentItemPersistenceService(
         // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 기존 item 에 붙는다. 중복 검사도 정체성(itemId) 기준으로
         // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
         val shared = itemSharingService.resolveExistingItem(link)
-        val existingItems = tournamentItemRepository.findAllByTournamentId(tournamentId)
-        val existingItemIds =
-            existingItems
-                .takeIf { it.isNotEmpty() }
-                ?.let { items -> itemSnapshotRepository.findByIds(items.map { it.snapshotId }).map { it.itemId } }
-                .orEmpty()
-        if (existingItemIds.isNotEmpty()) {
-            // 처음 보는 링크 모양의 중복은 raw link 비교(기존 방식)로 잡는다. 정체성 기준 검사는 attach 뒤에서.
-            val existingLinks = itemRepository.findByIds(existingItemIds).mapNotNull { it.link }
-            if (link in existingLinks) throw TournamentException.duplicateTournamentItem()
+        val existingByItemId = existingTournamentItemIdByItemId(tournamentId)
+        // 처음 보는 링크 모양의 중복은 raw link 비교(기존 방식)로 잡는다. 정체성 기준 검사는 attach 뒤에서.
+        duplicatedByRawLink(existingByItemId, link)?.let {
+            throw AlreadyRegisteredException.tournamentItem(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM, it)
         }
         shared?.let { sharedItem ->
             // attach 메타(reused·refreshNeeded)는 위시 등록 응답부터 노출한다(#853) — 토너먼트 응답 노출은 클라 요구가 생기면.
             val attachment = itemSharingService.resolveAttachment(sharedItem.getId(), link)
             // 정체성 중복 검사·반환 itemId 는 실제로 붙은 attachment.item 기준 — 병합 재시도 경합에선 별칭으로
             // 찾은 shared(loser)와 다르고(승자로 재해석), 이 기준이어야 반환 itemId 와 snapshot 소속이 일치한다.
-            if (attachment.item.getId() in existingItemIds) throw TournamentException.duplicateTournamentItem()
+            existingByItemId[attachment.item.getId()]?.let {
+                throw AlreadyRegisteredException.tournamentItem(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM, it)
+            }
             val tournamentItem = tournamentItemRepository.saveAll(
                 listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = attachment.snapshot.getId())),
             ).first()
@@ -94,15 +133,7 @@ class TournamentItemPersistenceService(
         return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
     }
 
-    // v1(multipart) 이미지 아이템 추가 — 서버가 바이트를 받아 올린 뒤 pending 매핑 없이 바로 적재한다.
-    @Transactional
-    fun persistPendingImageItems(
-        userId: UUID,
-        tournamentId: Long,
-        imageKeys: List<String>,
-    ): List<PersistedTournamentItem> = persistImageItemsInternal(userId, tournamentId, imageKeys)
-
-    // v2 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
+    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
     // 잠가 삭제(claim)하고, claim 에 성공한 TOURNAMENT 매핑(해당 user·tournament)만 적재한다 — confirm·폴링이 같은 key 를
     // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 맥락 매핑은 걸러낸다.
     @Transactional

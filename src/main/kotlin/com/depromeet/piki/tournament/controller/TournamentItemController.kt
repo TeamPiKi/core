@@ -24,9 +24,7 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 @RestController
@@ -65,18 +63,6 @@ class TournamentItemController(
         return ApiResponseBody.ok(AddTournamentItemFromLinkResponse(tournamentItemId))
     }
 
-    @PostMapping("/{tournamentId}/items/images", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
-    override fun addItemsFromImages(
-        @AuthenticationPrincipal userId: UUID,
-        @PathVariable tournamentId: Long,
-        @RequestParam("images", required = false) images: List<MultipartFile>?,
-    ): ApiResponseBody<AddTournamentItemsFromImagesResponse> {
-        // images 파트 미첨부(0장)는 Spring 이 진입 전 예외로 끊어 캐치올(500)로 가므로,
-        // required=false + orEmpty 로 항상 서비스 검증(invalidImageCount, 400)에 닿게 한다.
-        val tournamentItemIds = tournamentItemService.addItemsFromImages(userId, tournamentId, images.orEmpty())
-        return ApiResponseBody.ok(AddTournamentItemsFromImagesResponse(tournamentItemIds))
-    }
-
     // 이미지 등록 v2 1단계 — presigned 발급. pending_uploads 에 발급 기록만 남기고 tournament_item 은 아직 만들지 않으므로 200 OK.
     @PostMapping("/{tournamentId}/items/images/presigned")
     override fun presignImageUploads(
@@ -88,7 +74,7 @@ class TournamentItemController(
         return ApiResponseBody.ok(PresignedImageUploadResponse.from(uploads))
     }
 
-    // 이미지 등록 v2 2단계 — 업로드 확정. v1(addItemsFromImages)과 같은 200 OK + tournamentItemIds.
+    // 이미지 등록 2단계 — 업로드 확정. 아이템이 실제로 추가되며 tournamentItemIds 를 200 으로 돌려준다.
     @PostMapping("/{tournamentId}/items/images/confirm")
     override fun confirmImageRegistration(
         @AuthenticationPrincipal userId: UUID,

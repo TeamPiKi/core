@@ -55,7 +55,7 @@ class UserDeviceWriter(
     // keep(내 기기 row)과 동일 row 면 두고, 다르면 holder 를 PK 기준 bulk delete 로 지운다.
     // 엔티티 delete+flush(정확히 1 row 단언) 대신 PK bulk delete 라 멱등하다 — 동시 등록으로 다른 트랜잭션이
     // 같은 holder 를 먼저 지워 0 row 가 돼도 StaleStateException(ObjectOptimisticLockingFailureException → 500)
-    // 없이 무해하게 끝난다(#396 후속, Sentry delete 경쟁). PK 조건이라 fcm_token 갭락을 안 잡아 데드락도 없고,
+    // 없이 무해하게 끝난다(#396 후속, delete 경쟁). PK 조건이라 fcm_token 갭락을 안 잡아 데드락도 없고,
     // bulk delete 는 즉시 실행돼 후속 save 보다 먼저 DB 에 반영되므로 UNIQUE(fcm_token) 충돌을 막던 flush 도 불필요하다.
     private fun releaseStaleTokenHolder(
         fcmToken: String,

@@ -22,6 +22,8 @@ class UserService(
     private val userDetailRepository: UserDetailRepository,
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
+    // 프로필 닉이 토너먼트 참여 닉 풀과도 겹치지 않게 검사(#1018 "모든 표시명 전역 유일"). tournament 모듈이 구현.
+    private val nicknameReservationChecker: NicknameReservationChecker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -354,9 +356,12 @@ class UserService(
         nickname: String,
         userId: UUID?,
     ): Boolean =
-        userId
-            ?.let { !userRepository.existsByNicknameAndIdNot(nickname, it) }
-            ?: !userRepository.existsByNickname(nickname)
+        !nicknameReservationChecker.isTakenByOtherTournamentUser(nickname, userId) &&
+            (
+                userId
+                    ?.let { !userRepository.existsByNicknameAndIdNot(nickname, it) }
+                    ?: !userRepository.existsByNickname(nickname)
+            )
 
     // 내 정보(닉네임·프로필 이미지) 부분 수정 영속화 — 들어온 필드만 갱신한다. 둘을 한 트랜잭션에 묶어
     // "닉네임은 됐는데 이미지는 실패" 같은 부분 성공을 막는다. 이미지 S3 업로드(외부 호출)는 ProfileUpdateService 가
@@ -373,6 +378,8 @@ class UserService(
             buildList {
                 nickname?.let {
                     if (userRepository.existsByNicknameAndIdNot(it, userId)) throw UserException.duplicateNickname()
+                    // 프로필 닉도 토너먼트 참여 닉 풀과 겹치면 안 된다(#1018 전역 유일 — 반대 방향). 자기 참여 닉은 제외.
+                    if (nicknameReservationChecker.isTakenByOtherTournamentUser(it, userId)) throw UserException.duplicateNickname()
                     user.updateNickname(it)
                     add("nickname")
                 }
