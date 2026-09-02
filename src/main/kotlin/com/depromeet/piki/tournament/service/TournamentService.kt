@@ -1124,8 +1124,11 @@ class TournamentService(
         // 멤버는 루트 TU + 자기 클론 TU 를 둘 다 갖는데, 편집·표시의 정본은 대기실에서 보이는 루트 TU 다. 클론 play 로만
         // 이름을 풀면(과거 방식) 그룹 결과가 루트 닉과 어긋난다 — 멤버는 루트 TU 로, 루트 TU 없는 플레이링크 게스트만 클론 TU 로 푼다.
         // 값이 NULL(레거시)이면 다음 후보로, 최종은 프로필 닉으로 폴백한다.
+        // findByTournamentId(활성 TU)는 아직 완료 안 한 멤버 루트 TU 를 커버하고, completedRootTUs(deletedAt 무관)는
+        // 삭제한 주최자의 완료 ROOT TU 를 커버한다 — 둘을 합쳐, 삭제된 완료 ROOT 가 스냅샷 닉 대신 프로필로 폴백하지 않게 한다.
         val rootNicknameByUserId =
-            tournamentUserRepository.findByTournamentId(tournamentId).associate { it.userId to it.nickname }
+            (tournamentUserRepository.findByTournamentId(tournamentId) + completedRootTUs)
+                .associate { it.userId to it.nickname }
         val nicknameByTuId = cloneOwnerTUById.values.associate { it.getId() to it.nickname }
 
         // "선택자" = 해당 아이템을 자신의 1위(우승)로 고른 참여자

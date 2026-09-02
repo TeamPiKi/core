@@ -4153,6 +4153,46 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET group-result 는 삭제된 완료 주최자도 스냅샷 참여 닉으로 표시한다`() {
+        // 완료 토너먼트를 주최자가 삭제하면 주최자 루트 TU 는 soft-delete(deletedAt) 되지만 완료 내역은 그룹 결과에 남는다.
+        // 표시명 해석이 활성 TU 만 보면 삭제된 완료 주최자가 스냅샷 닉 대신 프로필 닉으로 폴백한다 — completedRootTUs(deletedAt 무관)를
+        // 함께 봐야 한다(#1018, CodeRabbit).
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자프로필")
+        saveUser(otherUserId, "https://cdn.example.com/member.jpg", "멤버프로필")
+        val rootId = completeSocialTournamentWith2Players(mockMvc)
+
+        // 주최자가 자기 참여 닉을 편집한 뒤 완료 토너먼트를 삭제(주최자 TU 만 soft-delete, 멤버 클론·내역은 보존).
+        mockMvc.perform(
+            patch("/api/v1/tournaments/$rootId/nickname")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"nickname":"주최자토너닉"}"""),
+        ).andExpect(status().isOk)
+        mockMvc.perform(
+            delete("/api/v1/tournaments/$rootId")
+                .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+        ).andExpect(status().isOk)
+
+        // 멤버(본인 클론 완료)가 그룹 결과를 조회 — 삭제된 주최자도 편집한 스냅샷 닉으로 떠야 한다.
+        val result = mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/group-result")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+
+        val nicknames = objectMapper
+            .readTree(result.response.contentAsString)["data"]["items"]
+            .flatMap { it["chosenBy"] }
+            .map { it["nickname"].asText() }
+            .toSet()
+
+        assertTrue("주최자토너닉" in nicknames, "삭제된 완료 주최자도 스냅샷 참여 닉으로 표시돼야 한다: $nicknames")
+        assertTrue("주최자프로필" !in nicknames, "삭제된 주최자가 프로필 닉으로 폴백하면 안 된다: $nicknames")
+    }
+
+    @Test
     fun `GET group-result 의 참여자가 탈퇴 유저면 isWithdrawn=true 로 내려온다`() {
         val mockMvc = buildMockMvc()
         val owner = saveUser(userId, userProfileImage, "곧나갈사람")
