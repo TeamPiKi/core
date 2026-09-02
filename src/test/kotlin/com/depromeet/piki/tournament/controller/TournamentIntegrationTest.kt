@@ -34,6 +34,7 @@ import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
+import com.depromeet.piki.user.service.DefaultProfileImages
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
@@ -87,6 +88,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var tournamentUserJpaRepository: TournamentUserJpaRepository
 
     @Autowired private lateinit var userJpaRepository: UserJpaRepository
+
+    @Autowired private lateinit var defaultProfileImages: DefaultProfileImages
 
     @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
 
@@ -4199,7 +4202,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         // Design B: group-result 는 2명 이상 완료 시에만 조회 가능하다.
         val tournamentId = completeSocialTournamentWith2Players(mockMvc)
         // 그룹 결과 참여자(= 토너먼트 owner)를 탈퇴 tombstone 으로 전이시킨다.
-        owner.withdraw()
+        owner.withdraw(defaultProfileImages.deleted())
         userJpaRepository.save(owner)
 
         mockMvc
@@ -4208,6 +4211,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items[0].chosenBy[0].isWithdrawn").value(true))
+            // 탈퇴해도 히스토리엔 참여자로 남으므로, 프사가 사라지지 않고 탈퇴 전용 기본 아바타로 내려온다.
+            .andExpect(
+                jsonPath("$.data.items[0].chosenBy[0].profileImage").value(defaultProfileImages.deleted()),
+            )
     }
 
     @Test

@@ -21,6 +21,7 @@ class WithdrawalPersistenceService(
     private val userDeviceRepository: UserDeviceRepository,
     private val wishRepository: WishRepository,
     private val notificationRepository: NotificationRepository,
+    private val defaultProfileImages: DefaultProfileImages,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -46,7 +47,9 @@ class WithdrawalPersistenceService(
 
         // 1. users 익명 tombstone 전이(softDelete + 닉네임/프로필 비식별화). 게스트면 도메인 check 위반 → 500.
         //    (정상 흐름은 호출부가 게스트를 403 으로 막아 여기 닿지 않는다.)
-        user.withdraw()
+        //    프사는 탈퇴 전용 기본 아바타로 덮는다 — 공유 토너먼트 히스토리엔 참여자로 남으므로 빈 값이 아니라
+        //    "탈퇴한 유저" 를 나타내는 이미지가 필요하다. URL 은 env 별 버킷을 흡수하도록 DefaultProfileImages 가 조립한다.
+        user.withdraw(defaultProfileImages.deleted())
         userRepository.save(user)
 
         // 2. user_details 하드삭제 — socialId 즉시 파기(PIPA "지체없이 파기"), UNIQUE 풀려 재가입 가능.
