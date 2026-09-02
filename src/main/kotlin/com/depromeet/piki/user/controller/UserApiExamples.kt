@@ -13,6 +13,7 @@ import com.depromeet.piki.user.controller.dto.UserResponse
 import com.depromeet.piki.user.controller.dto.UserUpdateRequest
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.user.service.DefaultProfileImages
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -22,6 +23,9 @@ import java.util.UUID
 @Configuration
 class UserApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
+    // example 의 기본 아바타 URL 을 실제 발급 로직에서 끌어온다 — 하드코딩하면 env 별 버킷과 어긋나
+    // docs 가 어느 환경에서도 열리지 않는 주소를 보여준다(기존 piki-assets 가 그랬다).
+    private val defaultProfileImages: DefaultProfileImages,
 ) {
     @Bean
     fun userOpenApiExamples(): OperationCustomizer =
@@ -145,7 +149,7 @@ class UserApiExamples(
         UserResponse(
             id = SAMPLE_USER_ID,
             nickname = "뛰어다니는 강아지",
-            profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-1.png",
+            profileImage = defaultProfileImages.urlOf(1),
             identityType = IdentityType.GUEST,
         )
 
@@ -153,7 +157,7 @@ class UserApiExamples(
         MyProfileResponse(
             id = SAMPLE_USER_ID,
             nickname = "뛰어다니는 강아지",
-            profileImage = "https://api.dicebear.com/9.x/bottts/svg?seed=$SAMPLE_USER_ID",
+            profileImage = defaultProfileImages.urlOf(2),
             identityType = IdentityType.MEMBER,
             email = "user@gmail.com",
         )

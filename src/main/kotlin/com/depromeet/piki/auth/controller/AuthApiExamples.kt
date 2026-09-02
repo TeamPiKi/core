@@ -14,6 +14,7 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.user.controller.dto.UserResponse
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.user.service.DefaultProfileImages
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -23,6 +24,9 @@ import java.util.UUID
 @Configuration
 class AuthApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
+    // example 의 기본 아바타 URL 을 실제 발급 로직에서 끌어온다 — 하드코딩하면 env 별 버킷과 어긋나
+    // docs 가 어느 환경에서도 열리지 않는 주소를 보여준다(기존 piki-assets 가 그랬다).
+    private val defaultProfileImages: DefaultProfileImages,
 ) {
     @Bean
     fun authOpenApiExamples(): OperationCustomizer =
@@ -41,7 +45,7 @@ class AuthApiExamples(
                                                 id = UUID.fromString("8f1a3c2b-9d44-4e2a-9b12-1a2b3c4d5e6f"),
                                                 nickname = "뛰어다니는 강아지",
                                                 profileImage =
-                                                    "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-1.png",
+                                                    defaultProfileImages.urlOf(1),
                                                 identityType = IdentityType.GUEST,
                                             ),
                                         tokenPair =
@@ -100,7 +104,7 @@ class AuthApiExamples(
                                                 id = UUID.fromString("3b9c1d2e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"),
                                                 nickname = "홍길동",
                                                 profileImage =
-                                                    "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-2.png",
+                                                    defaultProfileImages.urlOf(2),
                                                 identityType = IdentityType.MEMBER,
                                             ),
                                         tokenPair =
@@ -141,7 +145,7 @@ class AuthApiExamples(
                                                 id = UUID.fromString("3b9c1d2e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"),
                                                 nickname = "홍길동",
                                                 profileImage =
-                                                    "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-2.png",
+                                                    defaultProfileImages.urlOf(2),
                                                 identityType = IdentityType.MEMBER,
                                             ),
                                         tokenPair =

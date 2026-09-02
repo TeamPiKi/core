@@ -23,6 +23,7 @@ import com.depromeet.piki.tournament.controller.dto.TournamentSummaryResponse
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import com.depromeet.piki.tournament.service.TournamentException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.user.service.DefaultProfileImages
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -33,6 +34,9 @@ import java.util.UUID
 @Configuration
 class TournamentApiExamples(
     private val openApiObjectMapper: OpenApiObjectMapper,
+    // example 의 기본 아바타 URL 을 실제 발급 로직에서 끌어온다 — 하드코딩하면 env 별 버킷과 어긋나
+    // docs 가 어느 환경에서도 열리지 않는 주소를 보여준다(기존 piki-assets 가 그랬다).
+    private val defaultProfileImages: DefaultProfileImages,
 ) {
     @Bean
     fun tournamentOpenApiExamples(): OperationCustomizer =
@@ -144,7 +148,7 @@ class TournamentApiExamples(
                                         ),
                                         userId = UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
                                         nickname = "멋진친구",
-                                        profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-3.png",
+                                        profileImage = defaultProfileImages.urlOf(3),
                                         tournamentId = 1,
                                     ),
                                 ),
@@ -740,7 +744,7 @@ class TournamentApiExamples(
                                                                         "11111111-2222-3333-4444-555555555555",
                                                                     ),
                                                                 nickname = "참여자A",
-                                                                profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-3.png",
+                                                                profileImage = defaultProfileImages.urlOf(3),
                                                                 isWithdrawn = false,
                                                             ),
                                                             GroupResultResponse.ParticipantSummaryResponse(
@@ -750,7 +754,7 @@ class TournamentApiExamples(
                                                                     ),
                                                                 // 탈퇴 유저 — 닉네임·프로필은 익명값, isWithdrawn=true 로 FE 가 "유저 알수없음" 렌더.
                                                                 nickname = "탈퇴aaaaaaaa",
-                                                                profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-deleted.png",
+                                                                profileImage = defaultProfileImages.deleted(),
                                                                 isWithdrawn = true,
                                                             ),
                                                         ),
@@ -770,7 +774,7 @@ class TournamentApiExamples(
                                                                         "11111111-2222-3333-4444-555555555555",
                                                                     ),
                                                                 nickname = "참여자A",
-                                                                profileImage = "https://piki-assets.s3.ap-northeast-2.amazonaws.com/defaults/user-profile-3.png",
+                                                                profileImage = defaultProfileImages.urlOf(3),
                                                                 isWithdrawn = false,
                                                             ),
                                                         ),
