@@ -4117,6 +4117,42 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `GET group-result 는 멤버를 클론 TU 가 아니라 루트 TU 닉으로 표시한다`() {
+        // 멤버는 루트 TU + 자기 클론 TU 를 둘 다 갖는다. 대기실에서 편집하는 정본은 루트 TU 이고, 클론 TU 는
+        // 시작 시점 프로필 스냅샷이라 편집이 반영되지 않는다. 그룹 결과가 클론 TU 로 이름을 풀면 편집이 안 보인다 —
+        // 알림과 같은 루트 TU 우선 규칙으로 풀어야 한다(#1018, CodeRabbit).
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        saveUser(otherUserId, "https://cdn.example.com/member.jpg", "멤버프로필")
+        val rootId = completeSocialTournamentWith2Players(mockMvc)
+
+        // 멤버가 자기 루트(대기실) 닉을 편집 → 루트 TU 만 "멤버토너닉", 클론 TU 는 프리필 "멤버프로필" 유지.
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$rootId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"멤버토너닉"}"""),
+            ).andExpect(status().isOk)
+
+        val result = mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId/group-result")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andReturn()
+
+        val nicknames = objectMapper
+            .readTree(result.response.contentAsString)["data"]["items"]
+            .flatMap { it["chosenBy"] }
+            .map { it["nickname"].asText() }
+            .toSet()
+
+        assertTrue("멤버토너닉" in nicknames, "그룹 결과는 멤버의 루트 TU(편집된) 닉을 써야 한다: $nicknames")
+        assertTrue("멤버프로필" !in nicknames, "클론 TU 의 프리필 프로필 닉이 그룹 결과에 새면 안 된다: $nicknames")
+    }
+
+    @Test
     fun `GET group-result 의 참여자가 탈퇴 유저면 isWithdrawn=true 로 내려온다`() {
         val mockMvc = buildMockMvc()
         val owner = saveUser(userId, userProfileImage, "곧나갈사람")

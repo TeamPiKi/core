@@ -1120,9 +1120,13 @@ class TournamentService(
         val userById = userRepository
             .findByIds(plays.map { it.userUUID }.toSet())
             .associateBy { it.id }
-        // 표시명은 각 play 의 TU 닉네임(토너먼트 전용) 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018).
-        // 클론 play 는 클론 오너 TU 의 닉네임(게스트가 정한 값), 루트 play 는 루트 TU 의 닉네임을 쓴다.
-        val nicknameByTuId = (completedRootTUs + cloneOwnerTUById.values).associate { it.getId() to it.nickname }
+        // 표시명 해석은 알림(TournamentNotificationVariables.context)과 같은 규칙 — 루트 TU 우선, 없으면 클론 오너 TU(#1018).
+        // 멤버는 루트 TU + 자기 클론 TU 를 둘 다 갖는데, 편집·표시의 정본은 대기실에서 보이는 루트 TU 다. 클론 play 로만
+        // 이름을 풀면(과거 방식) 그룹 결과가 루트 닉과 어긋난다 — 멤버는 루트 TU 로, 루트 TU 없는 플레이링크 게스트만 클론 TU 로 푼다.
+        // 값이 NULL(레거시)이면 다음 후보로, 최종은 프로필 닉으로 폴백한다.
+        val rootNicknameByUserId =
+            tournamentUserRepository.findByTournamentId(tournamentId).associate { it.userId to it.nickname }
+        val nicknameByTuId = cloneOwnerTUById.values.associate { it.getId() to it.nickname }
 
         // "선택자" = 해당 아이템을 자신의 1위(우승)로 고른 참여자
         // itemId 단위로 집계하고 정렬 후 그룹 rank 를 부여한다.
@@ -1157,7 +1161,8 @@ class TournamentService(
             val user = userById[play.userUUID] ?: continue
             val participant = ParticipantSummary(
                 userId = user.id,
-                nickname = nicknameByTuId[play.tuId] ?: user.nickname,
+                // 루트 TU 우선(멤버·주최자) → 클론 오너 TU(플레이링크 게스트) → 프로필(레거시). 알림 문구 해석과 동일 규칙.
+                nickname = rootNicknameByUserId[play.userUUID] ?: nicknameByTuId[play.tuId] ?: user.nickname,
                 profileImage = user.profileImage,
                 isWithdrawn = !user.isActive(),
             )
