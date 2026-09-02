@@ -88,9 +88,9 @@ resource "grafana_rule_group" "errors" {
     exec_err_state = "Error"
     is_paused      = false
     annotations = {
-      logs_url  = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-core%5C%22%2C%20environment%3D%5C%22{{ $labels.environment }}%5C%22%2C%20level%3D~%5C%22%28%3Fi%29error%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D"
+      logs_url  = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-core%5C%22%2C%20environment%3D%5C%22{{ $labels.environment }}%5C%22%2C%20level%3D~%5C%22%28%3Fi%29error%5C%22%7D%20%7C%20error_type%3D%5C%22{{ $labels.error_type }}%5C%22%20%7C%20logger%3D%5C%22{{ $labels.logger }}%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
       summary   = "서버 에러{{ if $labels.error_type }} - {{ $labels.error_type }}{{ end }}{{ if $labels.logger }} ({{ $labels.logger }}){{ end }}"
-      trace_url = "{{ if $labels.trace_id }}https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22tr%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{{ $labels.trace_id }}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D%7D{{ end }}"
+      trace_url = "{{ if $labels.trace_id }}https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22tr%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{{ $labels.trace_id }}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D{{ end }}"
     }
     data {
       ref_id         = "A"
@@ -172,9 +172,9 @@ resource "grafana_rule_group" "parsing" {
     exec_err_state = "Error"
     is_paused      = false
     annotations = {
-      logs_url  = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-core%5C%22%2C%20environment%3D%5C%22{{ $labels.environment }}%5C%22%7D%20%7C~%20%5C%22item.parse%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D"
+      logs_url  = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-core%5C%22%2C%20environment%3D%5C%22{{ $labels.environment }}%5C%22%7D%20%7C~%20%5C%22item.parse%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
       summary   = "파싱 실패 - item {{ $labels.item }}, 사유 {{ $labels.reason }}"
-      trace_url = "{{ if $labels.trace_id }}https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22tr%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{{ $labels.trace_id }}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D%7D{{ end }}"
+      trace_url = "{{ if $labels.trace_id }}https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22tr%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22{{ $labels.trace_id }}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D{{ end }}"
     }
     data {
       ref_id         = "A"
