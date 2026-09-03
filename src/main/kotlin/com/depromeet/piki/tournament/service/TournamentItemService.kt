@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.service
 
+import com.depromeet.piki.common.ratelimit.ItemQuota
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
@@ -55,8 +56,7 @@ class TournamentItemService(
         val link =
             itemRegistrar.accept(
                 url,
-                quotaOwner = ownerIdOf(tournamentId),
-                quotaErrorCode = TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
+                ItemQuota(ownerIdOf(tournamentId), TournamentErrorCode.ITEM_QUOTA_EXCEEDED),
             ) { tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, it) }
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
         val persisted = tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, link)

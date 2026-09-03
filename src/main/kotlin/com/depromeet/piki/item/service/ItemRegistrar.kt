@@ -1,11 +1,10 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.exception.ErrorCode
+import com.depromeet.piki.common.ratelimit.ItemQuota
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.routing.DomainAccessPolicy
 import org.springframework.stereotype.Component
-import java.util.UUID
 
 // 링크로 아이템을 받아들이는 관문. 위시·토너먼트가 각자 베껴 쓰던 등록 서두를 한 자리로 모은다.
 //
@@ -19,17 +18,15 @@ class ItemRegistrar(
     private val accessPolicy: DomainAccessPolicy,
     private val itemQuotaGuard: ItemQuotaGuard,
 ) {
-    // quotaOwner 는 요청자가 아니라 몫의 주인이다 — 토너먼트는 참여자가 넣어도 오너 몫에서 깎인다(ItemQuotaGuard 참고).
     fun accept(
         rawUrl: String,
-        quotaOwner: UUID,
-        quotaErrorCode: ErrorCode,
+        quota: ItemQuota,
         rejectIfDuplicate: (ProductLink) -> Unit,
     ): ProductLink {
         val link = ProductLink.parse(rawUrl)
         accessPolicy.verifyRegistrable(link)
         rejectIfDuplicate(link)
-        itemQuotaGuard.consume(quotaOwner, 1, quotaErrorCode)
+        itemQuotaGuard.consume(quota.owner, 1, quota.errorCode)
         return link
     }
 }

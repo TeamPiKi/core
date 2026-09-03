@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.service
 
+import com.depromeet.piki.common.ratelimit.ItemQuota
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
@@ -58,7 +59,7 @@ class WishlistService(
     ): WishWithItem {
         requireMember(userId)
         val link =
-            itemRegistrar.accept(rawUrl, quotaOwner = userId, quotaErrorCode = WishErrorCode.ITEM_QUOTA_EXCEEDED) {
+            itemRegistrar.accept(rawUrl, ItemQuota(userId, WishErrorCode.ITEM_QUOTA_EXCEEDED)) {
                 wishPersistenceService.rejectIfAlreadyRegistered(userId, it)
             }
         return wishPersistenceService.persist(userId, Item(link))
