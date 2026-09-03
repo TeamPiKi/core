@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
@@ -291,7 +292,7 @@ class TournamentItemApiExamples(
 
     // 아이템 등록 한도 초과(#339). retryAfterSeconds 는 Retry-After 헤더로만 나가고 body 에는 실리지 않으므로
     // example payload 에 영향을 주지 않는다 — 문서상 대표값으로 15분을 넣는다.
-    private val itemQuotaExceeded = ItemQuotaException.exceeded(TournamentErrorCode.ITEM_QUOTA_EXCEEDED, 900)
+    private val itemQuotaExceeded = ItemQuotaException.exceeded(ItemErrorCode.QUOTA_EXCEEDED, 900)
 
     // 전역 가용량 소진(#927). 오너의 몫과 무관하게 서비스 전체가 찬 상태라 503 이고, code 도 도메인이 아닌 공통이다.
     private val capacityExceeded = ItemQuotaException.capacityExceeded(900)

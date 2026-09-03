@@ -24,4 +24,10 @@ enum class ItemErrorCode(
     NAME_REQUIRED_FOR_READY("ITEM-003", ErrorCategory.INVALID_INPUT, "상품 이름을 입력해 주세요."),
     PRICE_REQUIRED_FOR_READY("ITEM-004", ErrorCategory.INVALID_INPUT, "상품 가격을 입력해 주세요."),
     IMAGE_REQUIRED_FOR_READY("ITEM-005", ErrorCategory.INVALID_INPUT, "상품 이미지를 등록해 주세요."),
+
+    // 006 은 한도 code 통합(WISH-010·TOURNAMENT-037 대체)에서 추가됐다. 한도는 아이템 등록의 사실이라
+    // 담는 자리(위시·토너먼트)마다 code 를 나눌 이유가 없다 — 카운터도 하나다.
+    // 문구는 몫의 주인을 드러내지 않는 쪽으로 고정한다: 토너먼트는 오너 몫에서 깎지만 이 응답은 참여 게스트도
+    // 받으므로, 남의 사용량이 문구로 새면 안 된다. 남은 시간은 문구가 아니라 Retry-After 헤더가 전한다.
+    QUOTA_EXCEEDED("ITEM-006", ErrorCategory.TOO_MANY_REQUESTS, "지금은 추가할 수 없어요. 잠시 후 다시 시도해 주세요."),
 }

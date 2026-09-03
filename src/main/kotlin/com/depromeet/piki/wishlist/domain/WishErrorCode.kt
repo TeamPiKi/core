@@ -26,7 +26,4 @@ enum class WishErrorCode(
     ),
     ALREADY_EXISTS("WISH-009", ErrorCategory.CONFLICT, "이미 위시리스트에 등록된 상품이에요."),
 
-    // 010 은 아이템 등록 한도(#339)에서 추가됐다. 창이 지나면 다시 담을 수 있으므로 "다 썼다" 가 아니라
-    // "잠시 후" 로 안내한다 — 남은 시간은 문구가 아니라 Retry-After 헤더가 전한다(문구를 고정으로 두는 이유).
-    ITEM_QUOTA_EXCEEDED("WISH-010", ErrorCategory.TOO_MANY_REQUESTS, "지금은 더 담을 수 없어요. 잠시 후 다시 시도해 주세요."),
 }

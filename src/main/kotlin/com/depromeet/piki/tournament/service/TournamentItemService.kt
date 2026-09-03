@@ -1,12 +1,13 @@
 package com.depromeet.piki.tournament.service
 
-import com.depromeet.piki.common.ratelimit.ItemQuota
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemRegistrar
@@ -53,11 +54,9 @@ class TournamentItemService(
     ): Long {
         // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
-        val link =
-            itemRegistrar.accept(
-                url,
-                ItemQuota(ownerIdOf(tournamentId), TournamentErrorCode.ITEM_QUOTA_EXCEEDED),
-            ) { tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, it) }
+        val link = ProductLink.parse(url)
+        tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, link)
+        itemRegistrar.accept(link, ownerIdOf(tournamentId))
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
         val persisted = tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, link)
         return persisted.tournamentItemId
@@ -79,7 +78,7 @@ class TournamentItemService(
         contentTypes.forEach { ProductImage.extensionForMimeType(it) }
         // 위시 v2 와 같은 이유로 발급 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 한도를 우회한다. confirm 은 차감하지 않는다(이중 차감 방지).
-        itemQuotaGuard.consume(ownerIdOf(tournamentId), contentTypes.size, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
+        itemQuotaGuard.consume(ownerIdOf(tournamentId), contentTypes.size, ItemErrorCode.QUOTA_EXCEEDED)
         return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
             PendingUpload.tournament(key, userId, tournamentId, expiresAt)
         }

@@ -1,6 +1,5 @@
 package com.depromeet.piki.wishlist.service
 
-import com.depromeet.piki.common.ratelimit.ItemQuota
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
@@ -8,11 +7,13 @@ import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemRegistrar
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -58,10 +59,9 @@ class WishlistService(
         userId: UUID,
     ): WishWithItem {
         requireMember(userId)
-        val link =
-            itemRegistrar.accept(rawUrl, ItemQuota(userId, WishErrorCode.ITEM_QUOTA_EXCEEDED)) {
-                wishPersistenceService.rejectIfAlreadyRegistered(userId, it)
-            }
+        val link = ProductLink.parse(rawUrl)
+        wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
+        itemRegistrar.accept(link, userId)
         return wishPersistenceService.persist(userId, Item(link))
     }
 
@@ -81,7 +81,7 @@ class WishlistService(
         // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
         // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
         // 발급만 받고 업로드를 안 하면 그만큼 몫을 손해 보지만, 그건 클라이언트가 자기 요청을 버린 경우다.
-        itemQuotaGuard.consume(userId, contentTypes.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
+        itemQuotaGuard.consume(userId, contentTypes.size, ItemErrorCode.QUOTA_EXCEEDED)
         return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
             PendingUpload.wish(key, userId, expiresAt)
         }
@@ -119,10 +119,14 @@ class WishlistService(
         // 포인터 버전을 끌어온 뒤 표시값은 파생한다(#857) — 카드는 항상 그 상품의 마지막 기계 READY 를 향하고,
         // 수기 존중·진행 중 유지 등 규칙은 ItemDisplayService 가 진다. 포인터는 정체성 도달·수기 존중 판정의 표식이다.
         val snapshotsById =
-            itemSnapshotRepository.findByIds(pageWishes.map { it.snapshotId }).associateBy { it.getId() }
+            itemSnapshotRepository
+                .findByIds(pageWishes.map { it.snapshotId })
+                .associateBy { it.getId() }
         val displayById = itemDisplayService.resolveDisplay(snapshotsById.values)
         // item 정체성은 snapshot.itemId 단일 출처다. snapshot 에서 itemId 를 모아 item 을 한 번에 끌어온다.
-        val itemsById = itemRepository.findByIds(snapshotsById.values.map { it.itemId }).associateBy { it.getId() }
+        val itemsById = itemRepository
+            .findByIds(snapshotsById.values.map { it.itemId })
+            .associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
                 // snapshot·item 은 wish 와 함께 영속화되며 별도 삭제 경로가 없다. 없으면 영속화 경로가 깨진 코드 버그다.
@@ -241,7 +245,7 @@ class WishlistService(
         // 재추출도 파싱을 한 번 더 돌리므로 신규 등록과 같은 비용이다 — 1 로 차감한다.
         // refresh 계약 검증(링크 없음·FAILED 항목 등)은 persistence 안쪽이라 여기선 앞서 깎이는데, 그 두 사유는
         // 클라가 refresh 버튼을 띄우지 않는 상태라 정상 흐름에서 반복 호출되지 않는다.
-        itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
+        itemQuotaGuard.consume(userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
         return wishPersistenceService.refresh(userId = userId, wishId = wishId)
     }
 
