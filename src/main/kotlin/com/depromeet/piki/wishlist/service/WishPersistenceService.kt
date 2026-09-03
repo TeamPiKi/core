@@ -21,13 +21,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
-// WishlistService 의 registerFromUrl 가 외부 LLM 호출을 트랜잭션 바깥에 두도록
-// 영속화만 별도 빈으로 분리. 같은 빈에서 호출하면 Spring AOP proxy 를
-// 거치지 않아 @Transactional 가 무력화되기 때문이다.
-//
-// item 은 정체성(link)만 들고 추출값·상태는 ItemSnapshot 이 보유한다. URL 등록 경로는 link 만 가진 item 과
-// PENDING snapshot(작업 큐 적재)을 같은 트랜잭션에서 함께 저장하고, wish 가 그 snapshot 을 활성 포인터로 가리킨다.
-// 파싱은 디스패처(@Scheduled)가 PENDING 을 집어 시작하므로, 여기선 워커를 트리거하지 않는다.
+// WishlistService 에서 분리된 빈이다. 같은 빈 안에서 부르면 AOP proxy 를 안 거쳐 @Transactional 이 무력화된다.
 @Service
 class WishPersistenceService(
     private val wishRepository: WishRepository,
@@ -40,10 +34,10 @@ class WishPersistenceService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 등록 전 사전 확인 — 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973).
+    // 한도를 깎기 전에 거르는 사전 확인(#973).
     //
     // 락 밖 조회라 근사치다: 병합 경합 창에서는 여기서 본 item 과 persist 가 실제로 붙는 item(승자)이 다를 수 있다.
-    // 정확한 판정은 persist 가 행 락 안에서 다시 하므로, 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
+    // 정확한 판정은 persist 가 행 락 안에서 다시 하므로 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
     @Transactional(readOnly = true)
     fun rejectIfAlreadyRegistered(
         userId: UUID,
@@ -55,75 +49,80 @@ class WishPersistenceService(
         }
     }
 
-    // 유저 안에서 itemId → 그 위시의 id. itemId 는 등록당 1건이라 유저 내에서 사실상 1:1 이고,
     // 삭제된 위시는 조회에서 빠지므로 지웠다 다시 담는 것은 막히지 않는다.
     private fun existingWishId(
         itemId: Long,
         userId: UUID,
     ): Long? = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).firstOrNull()?.getId()
 
-    // item(정체성) → snapshot(PENDING 버전) → wish 순서로 같은 트랜잭션에서 저장한다.
-    // item 생성은 호출부가 트랜잭션 바깥에서 끝내고, 여기선 영속화만 한다.
-    // snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다 — 디스패처가 이 행을 집어 PROCESSING 으로 claim 한다.
+    // 아는 링크 모양이면 그 정체성에 붙고, 처음 보는 모양이면 새로 만든다.
     @Transactional
     fun persist(
         userId: UUID,
         item: Item,
     ): WishWithItem {
-        // 활성 유저 확인·쓰기 경합 차단(#776) — user 행을 잠가 tombstone 이면 409. requireMember(비잠금)의
-        // 확인과 이 트랜잭션의 wish INSERT 사이에 탈퇴 cascade 가 끼어들어 죽은 유저 wish 가 남는 것을 막는다.
-        // absent(users 행 없음)는 여기서 막지 않는다 — 정상 경로는 앞단(WishlistService.requireMember)이 이미 거르고,
-        // 이 방어는 "확인 후 탈퇴가 끼어든" tombstone race 전용이다(FCM 과 같은 결). 행이 있으면 잠가 직렬화한다.
-        userService.rejectIfWithdrawnForUpdate(userId)
-        // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 새 item 을 만들지 않고 기존 item 에 붙는다.
-        // 락 순서 규약(user → 자식)에 따라 user 락 뒤에 item 락(resolveAttachment)이 온다.
-        item.link?.let { link ->
-            itemSharingService.resolveExistingItem(link)?.let { shared ->
-                val attachment = itemSharingService.resolveAttachment(shared.getId(), link)
-                // 앞문 중복(결정 3c): 같은 사용자가 이미 담은 상품이면 새 카드 대신 409. 판정·응답의 정체성 기준은
-                // 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 — 병합 재시도 경합에선 둘이
-                // 다르고(shared=loser, attachment.item=winner), 행 락 뒤라 검사도 직렬화된다. 409 면 트랜잭션
-                // 롤백으로 attach 가 만든 PENDING 도 함께 사라진다.
-                existingWishId(attachment.item.getId(), userId)?.let {
-                    throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it)
-                }
-                val wish = wishRepository.save(Wish(userId = userId, snapshotId = attachment.snapshot.getId()))
-                return WishWithItem(
-                    wish = wish,
-                    item = attachment.item,
-                    snapshot = attachment.snapshot,
-                    reused = attachment.reused,
-                    refreshNeeded = attachment.refreshNeeded,
-                )
-            }
+        val attached = item.link?.let { attachToShared(userId, it) }
+        return attached ?: createFresh(userId, item)
+    }
+
+    // 이미 아는 링크 모양에 붙는 길(#825). 모르는 모양이면 null 을 돌려 새로 만드는 길로 넘긴다.
+    private fun attachToShared(
+        userId: UUID,
+        link: ProductLink,
+    ): WishWithItem? {
+        val shared = itemSharingService.resolveExistingItem(link) ?: return null
+        val attachment = itemSharingService.resolveAttachment(shared.getId(), link)
+        // 중복 판정의 기준은 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 - 병합 재시도
+        // 경합에선 둘이 다르다(shared=loser, attachment.item=winner). 행 락 뒤라 이 검사도 직렬화된다.
+        // 409 면 트랜잭션 롤백으로 attach 가 만든 PENDING 도 함께 사라진다.
+        existingWishId(attachment.item.getId(), userId)?.let {
+            throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it)
         }
+        val wish = wishRepository.save(Wish(userId = userId, snapshotId = attachment.snapshot.getId()))
+        return WishWithItem(
+            wish = wish,
+            item = attachment.item,
+            snapshot = attachment.snapshot,
+            reused = attachment.reused,
+            refreshNeeded = attachment.refreshNeeded,
+        )
+    }
+
+    // 처음 보는 링크를 새 정체성으로 세우는 길. snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다.
+    private fun createFresh(
+        userId: UUID,
+        item: Item,
+    ): WishWithItem {
         val saved = itemRepository.save(item)
-        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다. 같은 트랜잭션이라 등록과 원자적이고,
-        // INSERT IGNORE 라 동시 등록 경합이 등록을 죽이지 않는다.
         itemIdentityRecorder.recordRegistrationAlias(saved)
-        // 저장한 snapshot 의 id 를 wish 의 활성 포인터(snapshotId)로 박는다. 5단계 갱신에서 새 버전으로 스왑된다.
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
         return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
     }
 
-    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
-    // 잠가 삭제(claim)하고, claim 에 성공한(=이 트랜잭션이 가져간) WISH 매핑만 적재한다 — confirm·폴링이 같은 key 를
-    // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 user·토너먼트 맥락 매핑은 걸러낸다.
+    // wish 의 활성 포인터가 가리키는 버전과 그 정체성. 영속화 경로상 반드시 존재하므로 부재는 코드 버그다.
+    private fun activeVersionOf(wish: Wish): WishWithItem {
+        val snapshot =
+            itemSnapshotRepository.findById(wish.snapshotId)
+                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        val item =
+            itemRepository.findById(snapshot.itemId)
+                ?: error("wish ${wish.getId()} 의 item ${snapshot.itemId} 가 없다")
+        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+    }
+
+    // confirm 과 폴링 백스톱이 공유하는 진입점. pending_uploads 를 FOR UPDATE 로 잠가 삭제(claim)하므로
+    // 둘이 같은 key 를 다퉈도 한쪽만 이긴다(멱등).
     @Transactional
     fun registerClaimedImages(
         imageKeys: List<String>,
         userId: UUID,
     ): List<WishWithItem> {
-        // 활성 유저 확인·쓰기 경합 차단(#776). claim(pending_uploads 락)보다 **먼저** user 행을 잠가, 이 프로젝트의
-        // 락 순서 규약 "user → 자식" 을 지킨다(WithdrawalPersistenceService.withdraw 와 동일). 지금은 user 를 먼저
-        // 잠근 뒤 pending_uploads 를 건드리는 경로가 없어 역순 교차가 성립하지 않지만, 탈퇴 cascade 가 이 유저의
-        // pending_uploads 를 함께 정리하는 순간 users→pending_uploads 가 생겨 이 경로와 교차 데드락이 된다.
-        // 부수 효과로 확인~claim 구간이 user 락 안에 들어와, 그 사이 탈퇴가 끼어들 창 자체가 사라진다.
+        // claim 보다 **먼저** user 행을 잠가 락 순서 규약 "user 다음 자식" 을 지킨다(#776). 지금은 역순 교차가
+        // 성립하지 않지만, 탈퇴 cascade 가 이 유저의 pending_uploads 를 함께 정리하는 순간 교차 데드락이 된다.
         //
-        // 이 경로는 스케줄러(지연 처리)·confirm 공용이라, tombstone 이라고 예외를 던지면 트랜잭션 롤백으로
-        // claim(pending_uploads 삭제)이 되살아나 스케줄러가 무한 재시도한다. 그래서 예외 대신 boolean 으로 받아
-        // claim 은 소비하되 wish 생성만 건너뛴다 — 탈퇴 후 남은 pending upload 가 죽은 유저 wish 로 되살아나지 않는다.
+        // 예외가 아니라 boolean 으로 받는다 - 이 경로는 스케줄러 공용이라, tombstone 에 예외를 던지면
+        // 롤백이 claim 을 되살려 무한 재시도가 된다. claim 은 소비하고 wish 생성만 건너뛴다.
         val active = userService.isActiveForUpdate(userId)
         val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.WISH, userId, tournamentId = null)
         if (claimedKeys.isEmpty()) return emptyList()
@@ -134,14 +133,13 @@ class WishPersistenceService(
         return persistImagesInternal(userId, claimedKeys)
     }
 
-    // 이미지 key 들을 item(정체성) → PENDING snapshot(작업 큐 적재) → wish 순서로 배치 적재하는 공통 코어.
-    // 트랜잭션은 호출부(registerClaimedImages)가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
+    // 트랜잭션은 호출부가 연다 - self-invocation 으로 무력화되지 않게 private.
     private fun persistImagesInternal(
         userId: UUID,
         imageKeys: List<String>,
     ): List<WishWithItem> {
         val items = itemRepository.saveAll(imageKeys.map { Item(sourceImageKey = it) })
-        // snapshot 을 itemId 로 매핑해 saveAll 반환 순서에 의존하지 않는다(순서 보존은 공식 계약이 아니다).
+        // itemId 로 매핑한다 - saveAll 반환 순서는 공식 계약이 아니다.
         val snapshotsByItemId =
             itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
         return items.map { item ->
@@ -151,11 +149,8 @@ class WishPersistenceService(
         }
     }
 
-    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
-    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든
-    // 덮어써질 위험 자체가 없고, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
-    // wish 행 락으로 refresh 와 직렬화한다 — 둘 다 활성 포인터를 스왑하는 경로라, 락 없이는 서로의 스왑을 덮는다
-    // (옛 FAILED-상태 분리 방어를 대체하는 장치). base 는 락 안에서 읽은 현재 활성 버전이다.
+    // 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다(#825 결정 4).
+    // wish 행 락으로 refresh 와 직렬화한다 - 둘 다 포인터를 스왑하는 경로라 락 없이는 서로의 스왑을 덮는다.
     @Transactional
     fun manualEdit(
         userId: UUID,
@@ -168,14 +163,11 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        val base =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
+        val current = activeVersionOf(wish)
         val manual =
             itemSnapshotRepository.save(
                 ItemSnapshot.manual(
-                    base = base,
+                    base = current.snapshot,
                     name = name,
                     price = price,
                     imageUrl = imageUrl,
@@ -185,12 +177,11 @@ class WishPersistenceService(
             )
         wish.swapSnapshot(manual.getId())
         memo?.let { wish.updateMemo(it) }
-        return WishWithItem(wish = wish, item = item, snapshot = manual)
+        return WishWithItem(wish = wish, item = current.item, snapshot = manual)
     }
 
-    // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 포인터를 안 바꿔도 행 락은 필요하다:
-    // UPDATE 가 전 컬럼을 쓰므로(dynamic update 아님), 락 없이 읽은 뒤 flush 하면 그 사이 스왑 경로(manualEdit·refresh)가
-    // 커밋한 snapshotId 를 읽던 옛 값으로 되덮는다(lost update). 같은 행 락으로 스왑 경로와 직렬화한다.
+    // 포인터를 안 바꿔도 행 락이 필요하다: UPDATE 가 전 컬럼을 쓰므로(dynamic update 아님), 락 없이 읽은 뒤
+    // flush 하면 그 사이 스왑 경로(manualEdit·refresh)가 커밋한 snapshotId 를 옛 값으로 되덮는다(lost update).
     @Transactional
     fun updateMemo(
         userId: UUID,
@@ -200,17 +191,11 @@ class WishPersistenceService(
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
         wish.updateMemo(memo)
-        val snapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item = itemRepository.findById(snapshot.itemId) ?: error("item ${snapshot.itemId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
+        return activeVersionOf(wish)
     }
 
-    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고
-    // wish 활성 포인터를 즉시 그 버전으로 스왑한다 — 디스패처가 PENDING 을 집어 추출해 READY/FAILED 로 전이한다(등록과 동일 흐름).
-    // 옛 snapshot 행은 유지돼 토너먼트 출전 격리를 지킨다. 외부 호출(추출)은 디스패처가 트랜잭션 밖에서 하므로 여기선 적재만 한다.
-    // 동시 새로고침은 wish 행 락(findByIdForUpdate)으로 직렬화하고, 이미 진행 중이면 멱등(no-op)으로 새 추출을 만들지 않는다.
+    // 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING 을 작업 큐에 적재하고 포인터를 스왑하면
+    // 등록과 같은 흐름을 탄다. 옛 snapshot 행은 남아 토너먼트 출전 격리를 지킨다.
     @Transactional
     fun refresh(
         userId: UUID,
@@ -218,28 +203,19 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // item 정체성은 snapshot.itemId 단일 출처. snapshot·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그).
-        val activeSnapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        val item =
-            itemRepository.findById(activeSnapshot.itemId)
-                ?: error("wish ${wish.getId()} 의 item ${activeSnapshot.itemId} 가 없다")
-        // link 없는 item(이미지 등록분)은 재추출 입력이 없어 새로고침 대상이 아니다(400).
+        val current = activeVersionOf(wish)
+        val item = current.item
         item.link ?: throw WishException.notRefreshable()
-        // 이미 진행 중(PENDING·PROCESSING)이면 새 추출을 만들지 않고 현재 진행 상태를 그대로 반환(멱등).
-        if (activeSnapshot.isInProgress()) return WishWithItem(wish = wish, item = item, snapshot = activeSnapshot)
-        // 공유(#825) — 같은 item 의 다른 참조(다른 위시·출전)가 이미 파싱을 돌리고 있으면 새 작업 대신 그 진행에
-        // 합류한다(#826). 활성 포인터를 그 버전으로 스왑해 완료 시 함께 갱신된다.
+        // 이미 진행 중이면 새 추출을 만들지 않는다(멱등).
+        if (current.snapshot.isInProgress()) return current
+        // 같은 item 의 다른 참조가 이미 파싱 중이면 새 작업 대신 그 진행에 합류한다(#826).
         itemSnapshotRepository.findLatestInProgressByItemId(item.getId())?.let { inProgress ->
             wish.swapSnapshot(inProgress.getId())
             return WishWithItem(wish = wish, item = item, snapshot = inProgress)
         }
-        // 추출 실패(FAILED) 항목은 새로고침 대상이 아니다 — 보정(recover)으로 복구한다(409). 새로고침은 성공(READY)
-        // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
-        // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).
-        if (activeSnapshot.isFailed()) throw WishException.failedNotRefreshable()
-        // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다.
+        // FAILED 는 보정(recover)이 맡는다. 새로고침을 상태로 갈라 둬야 두 경로가 서로의 활성 포인터를
+        // 침범하지 않는다 - 보정 진행 중엔 FAILED 라 새로고침이 여기서 막힌다.
+        if (current.snapshot.isFailed()) throw WishException.failedNotRefreshable()
         val newSnapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         wish.swapSnapshot(newSnapshot.getId())
         return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)
