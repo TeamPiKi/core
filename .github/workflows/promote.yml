@@ -4,7 +4,17 @@ name: Promote
 # 코드는 PR 로 dev 에만 들어오고(squash), 이 워크플로가 "이미 CI 통과·배포된 동일 커밋"을 main 으로
 # 앞으로만(fast-forward) 옮긴다. ff 전용이라 두 브랜치 SHA 가 항상 정렬되고, squash·분기 사고를 구조적으로 막는다.
 #
-# 승격 시 선택한 단위(patch/minor/major)로 다음 semver 버전을 계산해 deploy 로 넘긴다. 실제 태그·릴리즈는
+# 실행은 두 단계다.
+#   plan    - 승인 없이 바로 돈다. 승격 대상(미승격 PR·라벨 집계·다음 버전·ff 가능 여부)을 Step Summary 에
+#             적고 멈춘다. 승격도 배포도 하지 않는다.
+#   promote - environment(promote-approval) 보호규칙에 걸려 승인 대기 상태가 된다. 요약을 읽고 승인하면
+#             그때 ff 승격 + 배포 dispatch 가 이어진다.
+#
+# 왜 이 모양인가: Actions UI 는 workflow_dispatch 인풋을 URL 로 미리 채우지 못한다. 그래서 "확인 결과
+# 화면에서 진행 버튼" 식의 이음은 만들 수 없고, 한 run 안에서 멈췄다 재개하는 승인 게이트가 UI 가 주는
+# 유일한 네이티브 이음이다. 이전에는 dev 에 무엇이 쌓였는지 모르는 채로 bump 드롭다운을 골라야 했다.
+#
+# 승격 시 정해진 단위(auto/patch/minor/major)로 다음 semver 버전을 계산해 deploy 로 넘긴다. 실제 태그·릴리즈는
 # deploy 의 release job 이 "배포 성공 후" 만든다(안 뜬 버전에 태그를 안 박기 위해).
 #
 # main 에는 직접 커밋하지 않는 것이 전제다 (직접 커밋이 들어가면 ff 가 깨져 이 워크플로가 에러로 멈춘다).
@@ -14,27 +24,34 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "prod 버전 증가 단위. 최신 vX.Y.Z 에서 bump, 태그 없으면 v1.0.0 baseline."
+        description: "prod 버전 증가 단위. auto = 승격 대상 PR 라벨로 판정(feat 있으면 minor, 없으면 patch). major 는 명시할 때만."
         required: false
-        default: patch
+        default: auto
         type: choice
         options:
+          - auto
           - patch
           - minor
           - major
-
-# ref 업데이트(contents) + deploy 워크플로 dispatch(actions) 권한.
-permissions:
-  contents: write
-  actions: write
 
 concurrency:
   group: promote-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  promote:
+  # --- 1단계: 확인 -----------------------------------------------------------
+  # 승인 게이트 앞에 둬서 바로 돈다. 여기서 나온 요약이 곧 승인 판단의 근거다.
+  plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      bump: ${{ steps.ver.outputs.bump }}
+      sha: ${{ steps.scan.outputs.sha }}
+      count: ${{ steps.scan.outputs.count }}
+      skipped: ${{ steps.scan.outputs.skipped }}
     steps:
       - name: 실행 브랜치 확인 (dev 만 허용)
         # ref 는 env 로 받아 셸에 직접 보간(injection)하지 않는다.
@@ -46,20 +63,87 @@ jobs:
             exit 1
           fi
 
-      # ff-push 는 기본 GITHUB_TOKEN(contents: write)으로 한다. main 은 ruleset
-      # protectReleaseBranches 가 deletion·non_fast_forward 만 강제하고 PR 규칙이 없어, ff 업데이트가
-      # 그대로 통과한다(별도 App·PAT bypass 불필요). dev 만 protectImportantBranch 로 PR 필수를 유지한다.
-
-      - name: Checkout (태그 조회용)
+      - name: Checkout (태그·브랜치 조회용)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # 모든 브랜치·태그 — origin/main 과의 비교, semver 태그 조회에 둘 다 필요하다.
+
+      - name: 승격 대상 스캔
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+        run: |
+          SRC_SHA=$(git rev-parse origin/dev)
+          echo "sha=$SRC_SHA" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor origin/dev origin/main; then
+            # main 이 이미 dev 를 포함 — 승격할 변경이 없다. 승인 요청까지 가지 않고 여기서 끝낸다.
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::main 은 이미 dev 와 동일 — 승격할 변경 없음"
+            exit 0
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+          # ff 가능 여부를 여기서 먼저 본다. 분기됐다면 승인을 받아 봐야 승격이 실패하므로,
+          # 사람 손이 닿기 전에 멈추는 편이 낫다.
+          if ! git merge-base --is-ancestor origin/main origin/dev; then
+            echo "::error::main 이 dev 에서 분기됨(직접 커밋·hotfix 의심) — fast-forward 승격 불가. 승인 단계로 넘어가지 않는다."
+            exit 1
+          fi
+
+          COUNT=$(git rev-list --count origin/main..origin/dev)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+          # 커밋 제목 끝의 (#N) 이 squash 머지가 남긴 PR 번호다. 라벨은 그 PR 에서 조회한다 — 커밋 제목
+          # prefix 는 PR 제목을 그대로 쓴 커밋에서 비어 있는 경우가 많아 단독 근거로는 약하다.
+          # PR 을 못 찾은 커밋만 제목 prefix 로 보조 판정하고, 그것도 없으면 미상으로 남겨 요약에 드러낸다.
+          : > /tmp/rows.tsv
+          git log --reverse --format='%H%x09%s' origin/main..origin/dev | while IFS=$'\t' read -r SHA SUBJECT; do
+            PR=$(printf '%s' "$SUBJECT" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')
+            TYPE=""
+            TITLE="$SUBJECT"
+            if [ -n "$PR" ]; then
+              META=$(gh api "repos/$R/pulls/$PR" --jq '[([.labels[].name] | join(",")), .title] | @tsv' 2>/dev/null || true)
+              if [ -n "$META" ]; then
+                LABELS=$(printf '%s' "$META" | cut -f1)
+                TITLE=$(printf '%s' "$META" | cut -f2-)
+                TYPE=$(printf '%s' "$LABELS" | tr ',' '\n' | grep -m1 -E '^(feat|fix|refactor|perf|chore|docs|test|infra|epic)$' || true)
+              fi
+            fi
+            if [ -z "$TYPE" ]; then
+              TYPE=$(printf '%s' "$SUBJECT" | grep -oE '^(feat|fix|refactor|perf|chore|docs|test|infra|style):' | tr -d ':')
+            fi
+            [ -n "$TYPE" ] || TYPE="미상"
+            printf '%s\t%s\t%s\t%s\n' "${PR:--}" "$TYPE" "$TITLE" "${SHA:0:7}" >> /tmp/rows.tsv
+          done
+
+          FEAT=$(cut -f2 /tmp/rows.tsv | grep -cx 'feat' || true)
+          UNKNOWN=$(cut -f2 /tmp/rows.tsv | grep -cx '미상' || true)
+          echo "feat=$FEAT" >> "$GITHUB_OUTPUT"
+          echo "unknown=$UNKNOWN" >> "$GITHUB_OUTPUT"
+          echo "::notice::승격 대상 $COUNT 커밋, feat $FEAT 건, 라벨 미상 $UNKNOWN 건"
 
       - name: 다음 prod 버전 계산
         id: ver
+        if: ${{ steps.scan.outputs.skipped == 'false' }}
         env:
-          BUMP: ${{ inputs.bump }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          FEAT: ${{ steps.scan.outputs.feat }}
         run: |
+          # auto: feat 가 하나라도 있으면 minor, 없으면 patch. major 는 breaking change 라 라벨로
+          # 판별할 수 없으므로 auto 가 뽑지 않는다 — 사람이 명시할 때만 적용된다.
+          if [ "$INPUT_BUMP" = "auto" ]; then
+            if [ "${FEAT:-0}" -gt 0 ]; then
+              BUMP="minor"; REASON="auto — feat 라벨 ${FEAT}건"
+            else
+              BUMP="patch"; REASON="auto — feat 라벨 없음"
+            fi
+          else
+            BUMP="$INPUT_BUMP"; REASON="사용자 지정"
+          fi
+
           # 최신 semver 태그. 없으면 v1.0.0 을 "이미 출시된 baseline" 으로 보고 거기서 bump (첫 릴리즈는 v1.0.1~).
           LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
           BASE="${LATEST#v}"
@@ -71,41 +155,109 @@ jobs:
             *)     PA=$((PA + 1)) ;;
           esac
           VER="v${MA}.${MI}.${PA}"
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "::notice::다음 prod 버전 $VER (latest=${LATEST:-none}, bump=$BUMP)"
+          {
+            echo "version=$VER"
+            echo "bump=$BUMP"
+            echo "reason=$REASON"
+            echo "latest=${LATEST:-none}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::다음 prod 버전 $VER (latest=${LATEST:-none}, bump=$BUMP, $REASON)"
 
+      - name: 계획 요약
+        env:
+          SHA: ${{ steps.scan.outputs.sha }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          SKIPPED: ${{ steps.scan.outputs.skipped }}
+          UNKNOWN: ${{ steps.scan.outputs.unknown }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUMP: ${{ steps.ver.outputs.bump }}
+          REASON: ${{ steps.ver.outputs.reason }}
+          LATEST: ${{ steps.ver.outputs.latest }}
+        run: |
+          {
+            echo "### Promote 계획: \`dev\` → \`main\`"
+            echo ""
+            if [ "$SKIPPED" = "true" ]; then
+              echo "main 은 이미 dev 와 동일하다. 승격할 변경이 없어 승인 단계로 넘어가지 않는다."
+              exit 0
+            fi
+            echo "- 승격 지점: \`${SHA:0:7}\` (${COUNT} 커밋)"
+            echo "- 버전: \`$LATEST\` → \`$VERSION\` (bump=**$BUMP**, $REASON)"
+            echo ""
+            echo "| 라벨 | 건수 |"
+            echo "| --- | ---: |"
+            cut -f2 /tmp/rows.tsv | sort | uniq -c | sort -rn | while read -r N T; do
+              echo "| $T | $N |"
+            done
+            echo ""
+            echo "| PR | 라벨 | 제목 |"
+            echo "| --- | --- | --- |"
+            while IFS=$'\t' read -r PR TYPE TITLE SHORT; do
+              TITLE=${TITLE//|/\\|}   # 표 셀을 깨뜨리는 파이프만 이스케이프한다.
+              if [ "$PR" = "-" ]; then
+                echo "| \`$SHORT\` | $TYPE | $TITLE |"
+              else
+                echo "| #$PR | $TYPE | $TITLE |"
+              fi
+            done < /tmp/rows.tsv
+            echo ""
+            if [ "${UNKNOWN:-0}" -gt 0 ]; then
+              echo "> 라벨 미상 ${UNKNOWN}건 — PR 을 못 찾았거나 타입 라벨이 없는 커밋이다. auto 판정에서 feat 로 세지 않으니, 그중 기능 추가가 있으면 아래 승인을 거부하고 \`bump=minor\` 로 다시 실행하라."
+              echo ""
+            fi
+            echo "아래 **promote** job 이 승인을 기다린다. 승인하면 위 목록 그대로 승격된다 — 대기 중 dev 에 새 커밋이 들어와도 이 시점(\`${SHA:0:7}\`)까지만 나간다."
+            echo ""
+            echo "breaking change 가 있으면 거부하고 \`bump=major\` 로 다시 실행하라. auto 는 major 를 뽑지 않는다."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --- 2단계: 진행 -----------------------------------------------------------
+  # environment 의 required reviewer 승인을 받아야 시작된다. 승인 화면에서 bump 를 바꿀 수는 없으므로,
+  # 판정이 다르면 거부하고 bump 를 명시해 재실행하는 것이 정정 경로다.
+  promote:
+    needs: plan
+    if: ${{ needs.plan.outputs.skipped == 'false' }}
+    runs-on: ubuntu-latest
+    environment: promote-approval
+    # ref 업데이트(contents) + deploy 워크플로 dispatch(actions) 권한.
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # ff-push 는 기본 GITHUB_TOKEN(contents: write)으로 한다. main 은 ruleset
+      # protectReleaseBranches 가 deletion·non_fast_forward 만 강제하고 PR 규칙이 없어, ff 업데이트가
+      # 그대로 통과한다(별도 App·PAT bypass 불필요). dev 만 protectImportantBranch 로 PR 필수를 유지한다.
       - name: Fast-forward 승격
-        id: ff
         env:
           GH_TOKEN: ${{ github.token }}
           R: ${{ github.repository }}
+          SRC_SHA: ${{ needs.plan.outputs.sha }}
         run: |
-          SRC_SHA=$(gh api "repos/$R/git/refs/heads/dev" --jq '.object.sha')
+          # dev 의 현재 끝이 아니라 plan 이 요약한 그 지점으로 올린다 — 승인은 그 목록에 대한 승인이고,
+          # 대기 중 dev 가 앞서갔더라도 승인하지 않은 커밋이 prod 로 나가면 안 된다.
           DST_SHA=$(gh api "repos/$R/git/refs/heads/main" --jq '.object.sha')
-          echo "promote dev($SRC_SHA) → main($DST_SHA)"
-          echo "sha=$SRC_SHA" >> "$GITHUB_OUTPUT"
+          echo "promote main($DST_SHA) → $SRC_SHA"
 
-          if [ "$SRC_SHA" = "$DST_SHA" ]; then
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::main 은 이미 dev 와 동일 — 승격할 변경 없음, 배포 생략"
-            exit 0
-          fi
+          # 계획 이후 dev 가 갈라지지 않았는지 확인한다(force-push·되감기). identical/ahead 면 승인된
+          # 지점이 여전히 dev 히스토리 위에 있다는 뜻이다.
+          STATUS=$(gh api "repos/$R/compare/$SRC_SHA...dev" --jq '.status')
+          case "$STATUS" in
+            identical|ahead) ;;
+            *) echo "::error::계획 시점 커밋($SRC_SHA)이 더 이상 dev 히스토리에 없다(compare=$STATUS). dev 가 되감겼거나 force-push 됐다 — 다시 실행해 계획부터 확인하라."; exit 1 ;;
+          esac
 
           # force 없이 PATCH → fast-forward 만 허용. 분기(non-ff)면 422 로 실패해 안전하게 멈춘다.
           if ! gh api -X PATCH "repos/$R/git/refs/heads/main" -f "sha=$SRC_SHA"; then
             echo "::error::dev → main fast-forward 불가. main 이 dev 에서 분기됨(직접 커밋·hotfix 의심) 또는 branch protection 이 ref 업데이트를 막음."
             exit 1
           fi
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
           echo "::notice::dev → main 승격 완료 ($SRC_SHA)"
 
       - name: prod 배포 dispatch
-        if: ${{ steps.ff.outputs.skipped == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
           # gh workflow run 은 repo 를 로컬 .git 에서 추론하려 한다. GH_REPO 로 대상 repo 를 명시해 git 의존을 끊는다.
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           # GITHUB_TOKEN 으로 한 ref 업데이트는 CI(on: push)를 자동 트리거하지 않는다(Actions recursion 방지).
           # ff 라 대상 SHA 는 dev 에서 이미 CI 를 통과한 동일 커밋이므로, CI 재실행 없이 배포만 직접 dispatch 한다.
@@ -115,33 +267,43 @@ jobs:
       - name: 요약
         if: ${{ always() }}
         env:
-          SHA: ${{ steps.ff.outputs.sha }}
-          SKIPPED: ${{ steps.ff.outputs.skipped }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          COUNT: ${{ needs.plan.outputs.count }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUMP: ${{ needs.plan.outputs.bump }}
+          STATUS: ${{ job.status }}
         run: |
           {
             echo "### Promote: prod"
             echo ""
             echo "- 경로: \`dev\` → \`main\`"
-            echo "- 커밋: \`$SHA\`"
-            echo "- 버전: \`$VERSION\` (배포 성공 시 deploy 가 태그·릴리즈 생성)"
-            if [ "$SKIPPED" = "true" ]; then
-              echo "- 결과: 변경 없음(이미 동일) — 배포 생략"
-            else
-              echo "- 결과: fast-forward 승격 + 배포 dispatch"
-            fi
+            echo "- 커밋: \`$SHA\` (${COUNT} 커밋)"
+            echo "- 버전: \`$VERSION\` (bump=$BUMP, 배포 성공 시 deploy 가 태그·릴리즈 생성)"
+            echo "- 결과: $STATUS"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # 승격 자체의 알림(배포 성공/실패 알림은 deploy.yml 이 따로 보낸다). deploy.yml 의 Discord 패턴과 동일하게
-      # DISCORD_WEBHOOK_URL·actor 멘션 맵을 쓴다. 전송 실패가 워크플로를 깨지 않게 continue-on-error.
-      - name: Notify Discord on success
-        if: success()
-        continue-on-error: true
+  # --- 알림 ------------------------------------------------------------------
+  # 두 단계 중 어디서 끝났든 한 곳에서 알린다 (배포 성공/실패 알림은 deploy.yml 이 따로 보낸다).
+  # 승인 대기 자체는 GitHub 이 required reviewer 에게 알리므로 여기서 중복해 보내지 않는다.
+  notify:
+    needs: [plan, promote]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Notify Discord
+        continue-on-error: true   # 전송 실패가 워크플로를 깨지 않게.
         shell: bash
         env:
-          SHA: ${{ steps.ff.outputs.sha }}
-          SKIPPED: ${{ steps.ff.outputs.skipped }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          PLAN: ${{ needs.plan.result }}
+          PROMOTE: ${{ needs.promote.result }}
+          SKIPPED: ${{ needs.plan.outputs.skipped }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          COUNT: ${{ needs.plan.outputs.count }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUMP: ${{ needs.plan.outputs.bump }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
           ACTOR: ${{ github.actor }}
@@ -151,41 +313,28 @@ jobs:
           DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
           DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
           ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
+          RUN_URL="https://github.com/$REPO/actions/runs/$RUN_ID"
+          COMMIT_URL="https://github.com/$REPO/commit/$SHA"
           SHORT_SHA="${SHA:0:7}"
-          COMMIT_URL="https://github.com/${{ github.repository }}/commit/$SHA"
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          VER_LINE=$(printf '\n• 버전: `%s` (배포 성공 시 릴리즈 생성)' "$VERSION")
 
-          if [ "$SKIPPED" = "true" ]; then
+          if [ "$PLAN" != "success" ]; then
+            TEXT=$(printf '❌ Promote 실패: 승격 대상 확인 단계에서 멈춤\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](<%s>)' \
+              "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$SKIPPED" = "true" ]; then
             TEXT=$(printf '🔁 Promote: `dev` → `main` — 변경 없음(이미 동일), 배포 생략\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
               "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$PROMOTE" = "success" ]; then
+            TEXT=$(printf '🚀 Promote 성공: `dev` → `main`\n• 커밋: [%s](<%s>) (%s 커밋)\n• 버전: `%s` (bump=%s, 배포 성공 시 릴리즈 생성)\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](<%s>)' \
+              "$SHORT_SHA" "$COMMIT_URL" "$COUNT" "$VERSION" "$BUMP" "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$PROMOTE" = "failure" ]; then
+            TEXT=$(printf '❌ Promote 실패: `dev` → `main` 승격 중 오류\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](<%s>)' \
+              "$ACTOR_MENTION" "$RUN_URL")
           else
-            TEXT=$(printf '🚀 Promote 성공: `dev` → `main`\n• 커밋: [%s](<%s>)%s\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](<%s>)' \
-              "$SHORT_SHA" "$COMMIT_URL" "$VER_LINE" "$ACTOR_MENTION" "$RUN_URL")
+            # 승인 거부·타임아웃 등으로 promote 가 시작되지 않은 경우.
+            TEXT=$(printf '⏹ Promote 중단: 승인되지 않아 승격하지 않음 (`%s`, %s 커밋)\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
+              "$SHORT_SHA" "$COUNT" "$ACTOR_MENTION" "$RUN_URL")
           fi
-          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
-          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
-      - name: Notify Discord on failure
-        if: failure()
-        continue-on-error: true
-        shell: bash
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
-          ACTOR: ${{ github.actor }}
-        run: |
-          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
-          # jq 에 넘길 맵 — 미설정이면 빈 객체. `${VAR:-{}}` 는 secret 이 설정돼 있으면 bash 가 stray `}` 를 붙여(`...}}`) jq 를 깨뜨리므로 분리한다.
-          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
-          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
-          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          # 분기(non-ff)·dispatch 실패 등.
-          TEXT=$(printf '❌ Promote 실패: `dev` → `main`\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](<%s>)' \
-            "$ACTOR_MENTION" "$RUN_URL")
           HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json; charset=utf-8" \
             --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
