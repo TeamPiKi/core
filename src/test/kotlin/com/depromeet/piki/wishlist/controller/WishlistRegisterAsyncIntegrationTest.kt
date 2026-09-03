@@ -657,6 +657,39 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         }
     }
 
+    // 링크 형식·스킴·빈 값·길이의 응답 계약을 HTTP 레벨에서 못박는다. 파싱 위치가 서비스에서 역직렬화로
+    // 옮겨가도 클라이언트가 보는 code·detail 이 그대로여야 한다.
+    @Test
+    fun `잘못된 링크는 사유별 code 로 400 을 받는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            val cases =
+                listOf(
+                    // 공백이 든 host 는 URI.create 가 던진다(형식). 스킴 없는 상대 URI 는 통과해 스킴 검증에서 걸린다.
+                    Triple("https://exa mple.com/1", "LINK-001", "올바른 링크 형식이 아니에요. 다시 확인해 주세요."),
+                    Triple("example.com/products/1", "LINK-002", "https 링크만 등록할 수 있어요."),
+                    Triple("http://example.com/products/1", "LINK-002", "https 링크만 등록할 수 있어요."),
+                    Triple("", "COMMON-INVALID-INPUT", "링크를 입력해 주세요."),
+                    Triple("https://a.com/" + "x".repeat(2048), "COMMON-INVALID-INPUT", "링크가 너무 길어요."),
+                )
+            cases.forEach { (url, code, detail) ->
+                mockMvc
+                    .perform(
+                        post("/api/v1/wishlists")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}")
+                            .content(objectMapper.writeValueAsString(mapOf("url" to url))),
+                    ).andExpect(status().isBadRequest)
+                    .andExpect(jsonPath("$.code").value(code))
+                    .andExpect(jsonPath("$.detail").value(detail))
+            }
+        } finally {
+            cleanup(userId)
+        }
+    }
+
     private fun registerAndGetItemId(
         mockMvc: MockMvc,
         userId: UUID,
