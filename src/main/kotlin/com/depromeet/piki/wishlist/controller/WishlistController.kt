@@ -38,8 +38,6 @@ class WishlistController(
     private val wishlistService: WishlistService,
     private val sourcePlatformResolver: SourcePlatformResolver,
 ) : WishlistApi {
-    // wish 묶음 → 응답 변환의 단일 지점. sourcePlatform 판정(SourcePlatformResolver)은 빈이 필요해 DTO 의 from 이
-    // 직접 못 하므로 여기서 풀어 넘긴다.
     private fun toResponse(result: WishWithItem): WishItemResponse =
         WishItemResponse.from(result.wish, result.item, result.snapshot, sourcePlatformResolver.resolve(result.item.link))
 
@@ -50,13 +48,12 @@ class WishlistController(
         @Valid @RequestBody request: WishlistRegisterRequest,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
-        // 등록 응답만 공유 attach 메타(reused·refreshNeeded, #853)를 싣는다 — 클라의 "기존 값 사용/새로 가져오기" 선택 근거.
         return ApiResponseBody.created(
             WishItemResponse.fromRegistration(result, sourcePlatformResolver.resolve(result.item.link)),
         )
     }
 
-    // 이미지 등록 1단계 — presigned 업로드 URL 발급. pending_uploads 에 발급 기록만 남기고 Wish·Item 은 아직 만들지 않으므로 200 OK.
+    // 발급 기록만 남기고 Wish·Item 은 아직 만들지 않아 201 이 아니다.
     @PostMapping("/images/presigned")
     override fun presignImageUploads(
         @AuthenticationPrincipal userId: UUID,
@@ -66,7 +63,6 @@ class WishlistController(
         return ApiResponseBody.ok(PresignedImageUploadResponse.from(uploads))
     }
 
-    // 이미지 등록 2단계 — 업로드 확정. PENDING 위시를 생성하므로 URL 등록과 같은 201 CREATED.
     @PostMapping("/images/confirm")
     @ResponseStatus(HttpStatus.CREATED)
     override fun confirmImageRegistration(
