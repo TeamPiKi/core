@@ -6,7 +6,6 @@ import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -62,7 +61,7 @@ class WishlistService(
         val link = ProductLink.parse(rawUrl)
         wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
         itemRegistrar.accept(link, userId)
-        return wishPersistenceService.persist(userId, Item(link))
+        return wishPersistenceService.persist(userId, link)
     }
 
     // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다. 클라→S3 직접 업로드라

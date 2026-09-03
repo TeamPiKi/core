@@ -72,10 +72,10 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100001"
-        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
+        val first = wishPersistenceService.persist(userA, ProductLink.parse(url))
         try {
             // 첫 등록이 PENDING(진행 중) — 두 번째 등록은 새 item·새 작업 없이 같은 snapshot 을 함께 기다린다(#826).
-            val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse(url)))
+            val second = wishPersistenceService.persist(userB, ProductLink.parse(url))
             assertEquals(first.item.getId(), second.item.getId())
             assertEquals(first.snapshot.getId(), second.snapshot.getId())
         } finally {
@@ -90,11 +90,11 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100002"
-        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
+        val first = wishPersistenceService.persist(userA, ProductLink.parse(url))
         try {
             seedMachineReady(first.snapshot.getId(), extractedHoursAgo = 1)
 
-            val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse(url)))
+            val second = wishPersistenceService.persist(userB, ProductLink.parse(url))
             assertEquals(first.item.getId(), second.item.getId())
             assertEquals(first.snapshot.getId(), second.snapshot.getId())
             assertEquals(ItemStatus.READY, second.snapshot.status)
@@ -114,12 +114,12 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100003"
-        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
+        val first = wishPersistenceService.persist(userA, ProductLink.parse(url))
         try {
             // 갱신 권고 임계(24h) 밖의 기계 READY — 그래도 그 값에 붙고, 재추출 여부는 사용자 선택(#853).
             seedMachineReady(first.snapshot.getId(), extractedHoursAgo = 25)
 
-            val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse(url)))
+            val second = wishPersistenceService.persist(userB, ProductLink.parse(url))
             assertEquals(first.item.getId(), second.item.getId())
             assertEquals(first.snapshot.getId(), second.snapshot.getId())
             assertTrue(second.reused)
@@ -138,7 +138,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100006"
-        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse(url)))
+        val first = wishPersistenceService.persist(userA, ProductLink.parse(url))
         try {
             seedMachineReady(first.snapshot.getId(), extractedHoursAgo = 25)
 
@@ -168,7 +168,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     fun `같은 사용자가 같은 상품을 다시 담으면 409 - 링크 모양이 달라도 정체성 기준`() {
         stubItemParsingWorker.enabled = false
         val user = newMember()
-        val first = wishPersistenceService.persist(user, Item(link = ProductLink.parse("https://www.musinsa.com/products/8100004")))
+        val first = wishPersistenceService.persist(user, ProductLink.parse("https://www.musinsa.com/products/8100004"))
         try {
             val mockMvc =
                 MockMvcBuilders
@@ -200,8 +200,8 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val userB = newMember()
         val userC = newMember()
         // 서로 다른 단축 모양이라 별칭 미스 — 각자 item 이 생기고, 파싱 완료 시 같은 귀결점으로 충돌한다(뒷문).
-        val first = wishPersistenceService.persist(userA, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0001")))
-        val second = wishPersistenceService.persist(userB, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002")))
+        val first = wishPersistenceService.persist(userA, ProductLink.parse("https://musinsa.onelink.me/PvkC/share0001"))
+        val second = wishPersistenceService.persist(userB, ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002"))
         val winnerId = first.item.getId()
         val loserId = second.item.getId()
         try {
@@ -226,7 +226,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             val resolved = itemSharingService.resolveExistingItem(ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002"))
             assertEquals(winnerId, resolved?.getId())
             // 실제 등록 흐름(persist)까지 승자에 붙는지 확인 — 조회 공간만이 아니라 attach 도 병합 결과를 따른다.
-            val third = wishPersistenceService.persist(userC, Item(link = ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002")))
+            val third = wishPersistenceService.persist(userC, ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002"))
             assertEquals(winnerId, third.item.getId())
         } finally {
             stubItemParsingWorker.enabled = true

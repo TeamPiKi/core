@@ -34,10 +34,6 @@ class WishPersistenceService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 한도를 깎기 전에 거르는 사전 확인(#973).
-    //
-    // 락 밖 조회라 근사치다: 병합 경합 창에서는 여기서 본 item 과 persist 가 실제로 붙는 item(승자)이 다를 수 있다.
-    // 정확한 판정은 persist 가 행 락 안에서 다시 하므로 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
     @Transactional(readOnly = true)
     fun rejectIfAlreadyRegistered(
         userId: UUID,
@@ -55,15 +51,12 @@ class WishPersistenceService(
         userId: UUID,
     ): Long? = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).firstOrNull()?.getId()
 
-    // 아는 링크 모양이면 그 정체성에 붙고, 처음 보는 모양이면 새로 만든다.
+    // 아는 링크 모양이면 그 정체성에 붙고, 처음 보는 모양이면 새로 세운다.
     @Transactional
     fun persist(
         userId: UUID,
-        item: Item,
-    ): WishWithItem {
-        val attached = item.link?.let { attachToShared(userId, it) }
-        return attached ?: createFresh(userId, item)
-    }
+        link: ProductLink,
+    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, link)
 
     // 이미 아는 링크 모양에 붙는 길(#825). 모르는 모양이면 null 을 돌려 새로 만드는 길로 넘긴다.
     private fun attachToShared(
@@ -91,9 +84,9 @@ class WishPersistenceService(
     // 처음 보는 링크를 새 정체성으로 세우는 길. snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다.
     private fun createFresh(
         userId: UUID,
-        item: Item,
+        link: ProductLink,
     ): WishWithItem {
-        val saved = itemRepository.save(item)
+        val saved = itemRepository.save(Item(link))
         itemIdentityRecorder.recordRegistrationAlias(saved)
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
