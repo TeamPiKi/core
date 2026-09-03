@@ -74,8 +74,11 @@ class LocalSseDelivery(
     }
 
     // write 실패 = 죽은 연결(클라이언트가 끊겼는데 onError/onCompletion 콜백이 아직 안 탄 경우 등).
-    // 레지스트리에서 빼 더 흘려보내지 않게 하고 completeWithError 로 정리를 마무리한다. completeWithError 가
-    // onError 콜백(컨트롤러의 unregister)을 다시 깨울 수 있으나 unregister 는 멱등이라 중복 호출이 무해하다.
+    // 레지스트리에서 빼 더 흘려보내지 않게 하고 complete 로 정리를 마무리한다. completeWithError 를 쓰면 안 된다(#1024):
+    // 에러 종료는 Tomcat 의 /error ERROR 디스패치를 일으키는데, 그 디스패치엔 인증이 없어 AuthorizationDenied 가 나고
+    // SSE 응답은 이미 committed 라 403 도 못 써 "response is already committed" ERROR 로그 두 줄(서버 에러 알림)이 된다.
+    // 클라이언트가 이미 없는 연결이라 에러로 알릴 대상이 없다. complete 도 onCompletion 콜백(컨트롤러의 unregister)을
+    // 다시 깨울 수 있으나 unregister 는 멱등이라 중복 호출이 무해하다.
     // write 성공 여부를 반환한다 — deliver 가 이걸 세어 자동읽음(#812) 근거로 쓴다.
     private fun sendOrEvict(
         userId: UUID,
@@ -93,7 +96,7 @@ class LocalSseDelivery(
                     else -> log.warn("SSE write 실패로 emitter 정리 userId={}", userId, e)
                 }
                 registry.unregister(userId, emitter)
-                runCatching { emitter.completeWithError(e) }
+                runCatching { emitter.complete() }
             }.isSuccess
 
     companion object {
