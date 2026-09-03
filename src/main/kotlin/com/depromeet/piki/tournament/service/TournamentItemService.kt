@@ -8,8 +8,7 @@ import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.routing.DomainAccessPolicy
+import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
@@ -20,7 +19,6 @@ import java.util.UUID
 @Service
 class TournamentItemService(
     private val tournamentItemPersistenceService: TournamentItemPersistenceService,
-    private val accessPolicy: DomainAccessPolicy,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val tournamentRepository: TournamentRepository,
@@ -28,6 +26,7 @@ class TournamentItemService(
     private val tournamentUserRepository: TournamentUserRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemQuotaGuard: ItemQuotaGuard,
+    private val itemRegistrar: ItemRegistrar,
 ) {
     // 아이템 등록 비용은 요청자가 아니라 **토너먼트 오너**의 몫에서 깎는다(#339). 참여자에는 게스트가 섞이는데
     // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있다. 오너는 반드시
@@ -51,19 +50,14 @@ class TournamentItemService(
         tournamentId: Long,
         url: String,
     ): Long {
-        val link = ProductLink.parse(url)
-        // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다(400).
-        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
-        accessPolicy.verifyRegistrable(link)
-        // 권한·상태를 차감 전에 확인한다(이미지 경로와 같은 이유) — 참여자도 아닌 요청이 오너의 몫을 깎으면 안 된다.
         // persist 안에서 정원까지 포함해 최종 판정을 다시 하므로 여기 검증은 사전 확인이다.
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
-        // 이미 담긴 링크면 차감 전에 거른다(#973) — 추가되지 않을 요청이 오너의 몫을 깎으면 안 된다.
-        // 특히 응답이 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 담지도 못한 채 한도만 소모된다.
-        tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, link)
-        itemQuotaGuard.consume(ownerIdOf(tournamentId), 1, TournamentErrorCode.ITEM_QUOTA_EXCEEDED)
-        // URL 경로는 PENDING snapshot 을 커밋만 하고(작업 큐 적재) 즉시 반환한다. 파싱은 디스패처(@Scheduled)가
-        // PENDING 을 집어 워커에 넘긴다 — @Async 유실과 무관하게 최소 1회는 claim 된다(at-least-once).
+        val link =
+            itemRegistrar.accept(
+                url,
+                quotaOwner = ownerIdOf(tournamentId),
+                quotaErrorCode = TournamentErrorCode.ITEM_QUOTA_EXCEEDED,
+            ) { tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, it) }
         // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
         val persisted = tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, link)
         return persisted.tournamentItemId

@@ -11,8 +11,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
-import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.routing.DomainAccessPolicy
+import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -32,7 +31,7 @@ import java.util.UUID
 @Service
 class WishlistService(
     private val wishPersistenceService: WishPersistenceService,
-    private val accessPolicy: DomainAccessPolicy,
+    private val itemRegistrar: ItemRegistrar,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
@@ -52,26 +51,16 @@ class WishlistService(
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
-    // registerFromUrl 는 외부 LLM 호출(read-timeout 60s)을 동기로 기다리지 않는다.
-    // link 만 가진 item 과 PENDING snapshot 을 즉시 커밋해 응답을 돌려주고(클라이언트는 "담는 중" 표시),
-    // 실제 파싱은 디스패처(@Scheduled)가 PENDING 을 집어 워커에 넘겨 READY/FAILED 로 전이시킨다.
-    // DB 의 PENDING 행이 작업의 진실 원천이라 @Async 큐 유실(인스턴스 재시작 등)과 무관하게 최소 1회는 claim 된다(at-least-once).
-    // URL 형식·미지원 플랫폼 같은 계약 위반은 등록 시점에 동기로 거른다(400). 파싱 결과 실패만 FAILED 로 간다.
+    // 파싱을 기다리지 않는다. PENDING snapshot 을 커밋해 즉시 응답하고, 디스패처가 집어 READY/FAILED 로 전이시킨다.
     fun registerFromUrl(
         rawUrl: String,
         userId: UUID,
     ): WishWithItem {
         requireMember(userId)
-        val link = ProductLink.parse(rawUrl)
-        // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
-        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
-        accessPolicy.verifyRegistrable(link)
-        // 이미 담은 상품이면 차감 전에 거른다(#973) — 등록되지 않을 요청이 몫을 깎으면 안 된다. 특히 응답이
-        // 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 사용자는 담지도 못한 채 한도만 소모한다.
-        wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
-        // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
-        // 파서로 풀려 LLM 을 안 타도 fetch·추출 모듈 시간·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
-        itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
+        val link =
+            itemRegistrar.accept(rawUrl, quotaOwner = userId, quotaErrorCode = WishErrorCode.ITEM_QUOTA_EXCEEDED) {
+                wishPersistenceService.rejectIfAlreadyRegistered(userId, it)
+            }
         return wishPersistenceService.persist(userId, Item(link))
     }
 
