@@ -30,7 +30,6 @@ class ImagePresignService(
         formats: List<UploadFormat>,
         pendingOf: (imageKey: String, expiresAt: LocalDateTime) -> PendingUpload,
     ): List<PresignedRawUpload> {
-        // presigned 가 만료된 뒤에도 폴링이 한 번 더 등록을 시도할 여유를 준다.
         val expiresAt = LocalDateTime.now().plus(s3Properties.presignedUploadExpiry).plus(PENDING_GRACE)
         val uploads =
             formats.map { format ->
@@ -42,8 +41,7 @@ class ImagePresignService(
         return uploads
     }
 
-    // pending 을 남기지 않는 발급. 프로필처럼 확정이 유실돼도 사용자가 다시 시도하면 그만인 경로가 쓴다.
-    // 허용 형식이 상품 이미지와 달라 검증을 끝낸 확장자를 받는다.
+    // pending 을 남기지 않는 발급. 확정이 유실돼도 사용자가 다시 시도하면 그만인 경로가 쓴다.
     fun presignRawUpload(
         extension: String,
         contentType: String,
@@ -67,7 +65,6 @@ class ImagePresignService(
 
         private val PENDING_GRACE: Duration = Duration.ofMinutes(2)
 
-        // presignRawUploads 가 만드는 key 와 정확히 일치해야 한다. 확장자 집합을 ProductImage 에서 파생해 수동 동기화를 없앤다.
         private val RAW_KEY_REGEX =
             Regex(
                 "^${RAW_PREFIX}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" +

@@ -53,7 +53,6 @@ class WishlistService(
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
-    // 파싱을 기다리지 않는다. PENDING snapshot 을 커밋해 즉시 응답하고, 디스패처가 집어 READY/FAILED 로 전이시킨다.
     fun registerFromUrl(
         rawUrl: String,
         userId: UUID,
@@ -65,9 +64,6 @@ class WishlistService(
         return wishPersistenceService.persist(userId, link)
     }
 
-    // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다. 클라→S3 직접 업로드라
-    // 원본 바이트가 서버 메모리·대역을 경유하지 않는다.
-    // 회원·개수(계약) 검증만 여기서 하고, content-type 검증·raw key 생성·presign 발급은 ImagePresignService 에 위임한다.
     fun presignImageUploads(
         contentTypes: List<String>,
         userId: UUID,
@@ -83,10 +79,6 @@ class WishlistService(
         }
     }
 
-    // 이미지 등록 v2 확정(빠른 경로) — 클라가 presigned 로 업로드를 마친 key 들을 받아 PENDING 위시로 적재한다.
-    // key 형식·존재(HEAD) 검증 후 pending_uploads 를 claim(FOR UPDATE 삭제)하며 등록한다 — 폴링 백스톱과 같은 진입점이라
-    // confirm 이 안 와도(또는 실패해도) 폴링이 회수하고, 둘이 같은 key 를 다퉈도 claim 이 한쪽만 이긴다(멱등).
-    // persist 실패 시 트랜잭션이 claim 을 롤백해 pending 이 남으므로, 회수는 폴링에 맡긴다(raw 는 클라가 올린 것 + lifecycle 백업).
     fun confirmImageRegistration(
         imageKeys: List<String>,
         userId: UUID,

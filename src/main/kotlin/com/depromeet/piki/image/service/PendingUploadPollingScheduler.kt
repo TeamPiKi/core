@@ -62,7 +62,7 @@ class PendingUploadPollingScheduler(
             .groupBy { RegisterGroup(it.userId, it.context, it.tournamentId) }
             .forEach { (group, uploads) ->
                 // 하나라도 판단이 안 되면 그룹 전체를 보류한다 - 일시 오류로 배치가 쪼개지면 정원 판정이 부분적으로 갈린다.
-                val checked = uploads.mapNotNull { up -> existsOrNull(up.imageKey)?.let { up.imageKey to it } }
+                val checked = uploads.mapNotNull { up -> uploadedOrUnknown(up.imageKey)?.let { up.imageKey to it } }
                 if (checked.size < uploads.size) return@forEach
                 val uploadedKeys = checked.filter { it.second }.map { it.first }
                 if (uploadedKeys.isEmpty()) return@forEach
@@ -71,11 +71,10 @@ class PendingUploadPollingScheduler(
             }
     }
 
-    // 만료됐어도 업로드는 끝난 것은 버리지 않고 마지막 등록을 시도한다.
     private fun expireStale(now: LocalDateTime) {
         val checked =
             pendingUploadRepository.findExpired(now, BATCH_SIZE).mapNotNull { upload ->
-                val exists = existsOrNull(upload.imageKey) ?: return@mapNotNull null
+                val exists = uploadedOrUnknown(upload.imageKey) ?: return@mapNotNull null
                 upload to exists
             }
         val notUploaded = checked.filter { !it.second }.map { it.first }
@@ -89,19 +88,16 @@ class PendingUploadPollingScheduler(
                 runCatching { registerGroup(group, uploads.map { it.imageKey }) }
                     .onFailure { e ->
                         if (e is HttpMappable) {
-                            // 다시 해도 같은 결과라 폐기한다. raw 는 lifecycle 이 정리한다.
                             log.warn("업로드됐으나 등록 못 한 채 만료된 pending 폐기(영구 사유): {}", e.message)
                             pendingUploadRepository.deleteAll(uploads)
                         } else {
-                            // 삭제하지 않고 남겨 다음 폴링이 재시도한다.
                             log.warn("만료 pending 등록 일시 실패, 다음 폴링 재시도: {}", e.message)
                         }
                     }
             }
     }
 
-    // null = 판단 못 함. 호출부가 "안 올라옴(false)" 과 구분해 보류한다.
-    private fun existsOrNull(imageKey: String): Boolean? =
+    private fun uploadedOrUnknown(imageKey: String): Boolean? =
         runCatching { imageStorage.exists(imageKey) }
             .getOrElse { e ->
                 log.warn("pending {} 존재 확인 실패, 이번 주기 보류: {}", imageKey, e.message)
@@ -124,7 +120,6 @@ class PendingUploadPollingScheduler(
         }
     }
 
-    // confirm 의 배치 단위와 같아야 정원 판정이 두 경로에서 갈리지 않는다.
     private data class RegisterGroup(
         val userId: UUID,
         val context: PendingUploadContext,

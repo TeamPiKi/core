@@ -63,10 +63,7 @@ class TournamentItemService(
         return persisted.tournamentItemId
     }
 
-    // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다(위시 presignImageUploads 와 동일 패턴).
-    // 원본 바이트가 서버 메모리·대역을 경유하지 않는다.
-    // 개수·권한(참여자·PENDING·비복제)을 사전 검증하고, content-type 검증·raw key 생성·presign 은 ImagePresignService 에 위임한다.
-    // 발급은 pending_uploads 매핑만 남기고 tournament_item 을 만들지 않으므로 정원 최종 판정(persist 의 FOR UPDATE)은 confirm 으로 미룬다 — 여기선 사전 권한만 본다.
+    // 발급 단계에선 tournament_item 을 만들지 않아 정원 최종 판정은 confirm 으로 미룬다.
     fun presignImageUploads(
         userId: UUID,
         tournamentId: Long,
@@ -81,10 +78,6 @@ class TournamentItemService(
         }
     }
 
-    // 이미지 등록 v2 확정(빠른 경로) — presigned 로 업로드를 마친 key 들을 받아 PENDING 아이템으로 적재한다.
-    // 권한 사전검증 → key 형식·존재(HEAD) 검증 → pending_uploads claim(FOR UPDATE 삭제) + persist(정원 FOR UPDATE 최종 판정).
-    // 폴링 백스톱과 같은 진입점이라 confirm 이 안 와도 폴링이 회수하고, 둘이 같은 key 를 다퉈도 claim 이 한쪽만 이긴다(멱등).
-    // persist 실패 시 트랜잭션이 claim 을 롤백해 pending 이 남으므로 회수는 폴링에 맡긴다(raw 는 클라가 올린 것 + lifecycle 백업).
     fun confirmImageRegistration(
         userId: UUID,
         tournamentId: Long,
@@ -92,7 +85,6 @@ class TournamentItemService(
     ): List<Long> {
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
-        // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return tournamentItemPersistenceService
             .registerClaimedImages(imageKeys, userId, tournamentId)
