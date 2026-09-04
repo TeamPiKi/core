@@ -231,15 +231,13 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `추출 실패(FAILED) 위시를 새로고침하면 409 로 거부된다`() {
-        // 새로고침은 성공(READY) 항목의 재추출 전용 — 추출 실패(FAILED) 항목은 보정(recover)으로 복구한다.
-        // 보정(FAILED)과 새로고침(READY)이 상태로 갈려, recover-vs-refresh 동시 요청이 서로의 활성 포인터를 침범하지 않는다.
+        // 표시값까지 FAILED(같은 item 에 기계 READY 부재)면 재추출도 결정론적으로 재실패한다 — 보정(recover,
+        // 수기 수정)으로 유도한다. 아래 "남이 채운 READY" 테스트의 대조군: 이게 없으면 판정을 통째로 지워도 초록불이다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/failed")))
-            val snapshot = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
-            val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+            val (wish, _, _) = seedFailedWish(userId, "https://shop.example.com/products/failed")
 
             mockMvc
                 .perform(
@@ -248,6 +246,44 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isConflict)
                 .andExpect(jsonPath("$.code").value("WISH-008"))
                 .andExpect(jsonPath("$.detail").value("추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요."))
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `포인터가 FAILED 여도 같은 item 에 남이 채운 기계 READY 가 있으면 새로고침된다`() {
+        // 회귀(#1006 과 같은 축): 카드는 표시값(최신 기계 READY)을 그리는데 판정만 포인터를 보면, 화면엔 값이
+        // 다 떠 있는데 "실패한 항목이라 안 된다"(409)가 나간다. item 이 추출 가능하다는 증거(남의 성공)가 있으므로
+        // 새로고침을 허용하고 새 PENDING 으로 스왑되는 것까지 본다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            val (wish, item, failed) = seedFailedWish(userId, "https://shop.example.com/products/failed-shared")
+            // 남이 같은 링크를 담아 추출이 성공한 상황 — source 가 기계(SERVER)여야 표시값 파생 후보에 든다.
+            itemSnapshotRepository.save(
+                ItemSnapshot(
+                    itemId = item.getId(),
+                    name = "남이 채운 이름",
+                    price = 89_000,
+                    currency = "KRW",
+                    imageUrl = "https://img.example.com/b.png",
+                    status = ItemStatus.READY,
+                    extractedAt = LocalDateTime.now(),
+                    source = ItemSnapshotSource.SERVER,
+                ),
+            )
+
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/${wish.getId()}/refresh")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                ).andExpect(status().isOk)
+
+            val swapped = wishRepository.findById(wish.getId())!!
+            assertNotEquals(failed.getId(), swapped.snapshotId, "활성 포인터가 새 버전으로 스왑돼야 한다")
+            assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(swapped.snapshotId)?.status)
         } finally {
             cleanup(userId)
         }
@@ -410,6 +446,17 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     // READY 상태의 link 보유 위시를 직접 시딩한다. (wishId, itemId, snapshotId) 반환.
+    // FAILED 위시 시딩 — 재추출 입력(link)이 있는 item 에 실패로 종결된 활성 포인터를 단다.
+    private fun seedFailedWish(
+        userId: UUID,
+        url: String,
+    ): Triple<Wish, Item, ItemSnapshot> {
+        val item = itemRepository.save(Item(ProductLink.parse(url)))
+        val failed = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
+        val wish = wishRepository.save(Wish(userId = userId, snapshotId = failed.getId()))
+        return Triple(wish, item, failed)
+    }
+
     private fun seedReadyWish(
         userId: UUID,
         url: String,

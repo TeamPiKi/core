@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -37,6 +38,7 @@ class WishPersistenceService(
     private val userService: UserService,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
+    private val itemDisplayService: ItemDisplayService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -168,9 +170,7 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        val base =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        val base = editBasisOf(wish)
         val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
         val manual =
             itemSnapshotRepository.save(
@@ -186,6 +186,39 @@ class WishPersistenceService(
         wish.swapSnapshot(manual.getId())
         memo?.let { wish.updateMemo(it) }
         return WishWithItem(wish = wish, item = item, snapshot = manual)
+    }
+
+    // 업로드 전 사전 검증(던지기 전용) — S3 orphan 방지가 유일한 존재 이유라 호출부가 이미지 있을 때만 부른다.
+    // 병합 base 를 manualEdit 과 같은 코드(editBasisOf)로 고르므로 dry-run 과 실제 저장이 갈라질 수 없다.
+    // 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
+    @Transactional(readOnly = true)
+    fun validateManualEdit(
+        userId: UUID,
+        wishId: Long,
+        name: String?,
+        price: Int?,
+        currency: String?,
+    ) {
+        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(userId)
+        ItemSnapshot.manual(
+            base = editBasisOf(wish),
+            name = name,
+            price = price,
+            imageUrl = PRE_UPLOAD_VALIDATION_IMAGE_URL,
+            currency = currency,
+            editedBy = userId,
+        )
+    }
+
+    // base 는 포인터가 아니라 카드가 보여준 표시값(#858) — 포인터가 미완성이어도 카드엔 최신 기계 READY 가
+    // 떠 있고, 사용자는 그 값을 보며 일부 필드만 고친다. 포인터를 base 로 쓰면 안 고친 필드가 빈 값에서
+    // 병합돼, 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕긴다(담기 게이트와 같은 어긋남, #1006).
+    private fun editBasisOf(wish: Wish): ItemSnapshot {
+        val pointer =
+            itemSnapshotRepository.findById(wish.snapshotId)
+                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
+        return itemDisplayService.resolveDisplay(pointer)
     }
 
     // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 포인터를 안 바꿔도 행 락은 필요하다:
@@ -235,13 +268,19 @@ class WishPersistenceService(
             wish.swapSnapshot(inProgress.getId())
             return WishWithItem(wish = wish, item = item, snapshot = inProgress)
         }
-        // 추출 실패(FAILED) 항목은 새로고침 대상이 아니다 — 보정(recover)으로 복구한다(409). 새로고침은 성공(READY)
-        // 항목의 재추출 전용이라, 보정(FAILED 대상)과 상태로 갈려 recover-vs-refresh 동시 요청이 서로의 활성 포인터를
-        // 침범하지 않는다(보정 진행 중엔 FAILED 라 새로고침이 여기서 막혀, 보정이 끝나기 전 활성이 스왑되지 않는다).
-        if (activeSnapshot.isFailed()) throw WishException.failedNotRefreshable()
+        // 판정은 표시값(#858) — 포인터가 FAILED 여도 같은 item 을 남이 담아 추출이 성공했으면 카드엔 그 값이
+        // 떠 있고, item 이 추출 가능하다는 증거이므로 새로고침을 막을 이유가 없다. 표시값까지 FAILED(기계 READY
+        // 부재)면 재추출도 결정론적으로 재실패할 것이라 보정(recover, 수기 수정)으로 유도한다(409).
+        // 포인터부터 보는 단락 평가 — FAILED 가 아니면 표시값도 FAILED 일 수 없어(파생 후보가 READY 뿐) 쿼리가 무의미하다.
+        if (activeSnapshot.isFailed() && itemDisplayService.resolveDisplay(activeSnapshot).isFailed()) {
+            throw WishException.failedNotRefreshable()
+        }
         // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다.
         val newSnapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
         wish.swapSnapshot(newSnapshot.getId())
         return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)
     }
 }
+
+// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
+private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

@@ -103,6 +103,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         price: Int? = 10_000,
         currency: String? = "KRW",
         imageUrl: String? = "https://img.example.com/a.png",
+        // 기본 null(출처 미기록) — 표시값 파생 후보(기계 READY)로 만들려면 "STRUCTURED" 를 명시한다.
+        extractionMethod: String? = null,
     ): Long {
         val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
         itemParsingService.claimDuePending(100)
@@ -116,6 +118,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 price = price,
                 currency = currency,
                 imageUrl = imageUrl,
+                extractionMethod = extractionMethod,
             ),
             expectedAttempt = 0,
         )
@@ -467,6 +470,62 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("바꾼 이름"))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
+    }
+
+    @Test
+    fun `남이 같은 링크를 담아 채운 READY 가 있으면 가격 없는 미완성 위시도 이름만 수정이 성공한다`() {
+        // 회귀(#1006 과 같은 축): 카드는 표시값(최신 기계 READY)을 그리는데 병합 base 만 포인터면, 화면엔 가격이
+        // 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 으로 튕긴다. 카드에 보인 가격이 병합되는 것까지 본다.
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        val otherUserId = UUID.randomUUID()
+        insertMember(userId)
+        insertMember(otherUserId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val url = "https://shop.example.com/products/shared-incomplete"
+
+        // 내 등록은 부분 추출(가격 없음)로 미완성 종결. 남의 등록은 같은 링크라 같은 item 에 붙고
+        // (미완성은 재사용 대상이 아니라 새 PENDING), 기계 추출(STRUCTURED)이 성공해 표시값 후보가 된다.
+        val myWishId = seedReadyWish(userId, url, name = "미완성 이름", price = null, currency = null)
+        seedReadyWish(otherUserId, url, name = "남이 채운 이름", price = 89_000, extractionMethod = "STRUCTURED")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$myWishId")
+                    .param("name", "내가 고친 이름")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$myWishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.name").value("내가 고친 이름"))
+            .andExpect(jsonPath("$.data.item.price").value(89_000))
+    }
+
+    @Test
+    fun `남이 채운 READY 가 없으면 가격 없는 미완성 위시의 이름만 수정은 400 으로 거부된다`() {
+        // 위 테스트의 대조군 — 표시값이 곧 포인터면 병합해도 가격이 비어 거부돼야 한다(입력 계약 400).
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+
+        val myWishId =
+            seedReadyWish(userId, "https://shop.example.com/products/lone-incomplete", name = "미완성 이름", price = null, currency = null)
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$myWishId")
+                    .param("name", "내가 고친 이름")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isBadRequest)
     }
 
     @Test
