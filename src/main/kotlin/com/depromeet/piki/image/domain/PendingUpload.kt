@@ -30,18 +30,17 @@ class PendingUpload private constructor(
     val expiresAt: LocalDateTime,
 ) : LongBaseEntity() {
     @Column(name = "next_check_at", nullable = false)
-    var nextCheckAt: LocalDateTime = LocalDateTime.now().plus(MIN_CHECK_INTERVAL)
+    var nextCheckAt: LocalDateTime = LocalDateTime.now().plus(FIRST_CHECK_DELAY)
         protected set
 
     fun backOffCheck(now: LocalDateTime) {
-        nextCheckAt = now.plus(sinceIssued(now).coerceIn(MIN_CHECK_INTERVAL, MAX_CHECK_INTERVAL))
+        nextCheckAt = now.plus(sinceIssued(now))
     }
 
     private fun sinceIssued(now: LocalDateTime): Duration = Duration.between(createdAt, now)
 
     companion object {
-        val MIN_CHECK_INTERVAL: Duration = Duration.ofSeconds(1)
-        val MAX_CHECK_INTERVAL: Duration = Duration.ofSeconds(120)
+        val FIRST_CHECK_DELAY: Duration = Duration.ofSeconds(1)
 
         // 위시 등록 대기 — tournamentId 는 없다(팩토리가 null 로 고정해 맥락 정합을 시그니처로 보장).
         fun wish(

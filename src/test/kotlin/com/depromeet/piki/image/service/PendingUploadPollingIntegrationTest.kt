@@ -2,7 +2,6 @@ package com.depromeet.piki.image.service
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
-import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
@@ -131,7 +130,6 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
             val afterLongWait = waitUntilNextCheck(userId)
 
             assertTrue(afterLongWait > afterShortWait, "$afterShortWait -> $afterLongWait")
-            assertTrue(afterLongWait <= PendingUpload.MAX_CHECK_INTERVAL, "상한을 넘었다: $afterLongWait")
         } finally {
             stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
             cleanupWishes(userId)
