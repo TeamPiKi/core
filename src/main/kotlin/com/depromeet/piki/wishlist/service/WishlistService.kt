@@ -7,6 +7,7 @@ import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
+import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -184,22 +185,11 @@ class WishlistService(
         }
         // 이미지 형식 검증(빈 바이트·미지원 MIME) — 외부 호출 전에 동기로 거른다(400).
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        // 업로드 전 사전 검증(orphan 방지) — 병합 결과가 400 이면 S3 에 올리기 전에 같은 규칙으로 거른다.
-        // 이미지가 오면 업로드가 imageUrl 을 채울 것이므로 자리표시 URL 로 그 자리만 메워 이름·가격 병합을 검증한다
-        // (이 값은 저장되지 않는다 — 던지기 전용 dry-run). 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
-        val activeSnapshot =
-            itemSnapshotRepository.findById(wish.snapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.snapshotId} 가 없다")
-        ItemSnapshot.manual(
-            base = activeSnapshot,
-            name = name,
-            price = price,
-            imageUrl = productImage?.let { PRE_UPLOAD_VALIDATION_IMAGE_URL },
-            currency = currency,
-            editedBy = userId,
-        )
+        // 업로드 전 사전 검증(orphan 방지)은 이미지가 있을 때만 — 그게 dry-run 의 유일한 존재 이유라, 업로드가
+        // 없는 수정은 manualEdit(락 안)의 최종 판정 하나로 충분하다(예외·응답 동일, 쿼리만 줄어든다).
+        productImage?.let {
+            wishPersistenceService.validateManualEdit(userId, wishId, name, price, currency)
+        }
         // 이미지가 있으면 S3 업로드(트랜잭션 밖). 실패 시 ImageStorageException(502).
         val imageUrl =
             productImage?.let {
@@ -269,6 +259,3 @@ class WishlistService(
         private const val PRICE_HISTORY_LIMIT = 50
     }
 }
-
-// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
-private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"
