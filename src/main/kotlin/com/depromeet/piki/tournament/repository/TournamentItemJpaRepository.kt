@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import java.time.LocalDateTime
@@ -57,6 +58,19 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
             "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL ORDER BY t.id ASC",
     )
     fun findRoutingsWithUserBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemUserRoutingView>
+
+    // 위와 같은 (등록자, 토너먼트 좌표) 이되 **버전이 아니라 아이템** 으로 찾고, 지정한 상태의 버전을 pin 한 출전만 고른다(#1028).
+    // 해소 통지의 수신자는 방금 성공한 버전이 아니라 다른 미완성 버전에 멈춰 있던 등록자다 — 위시 쪽과 같은 이유.
+    @Query(
+        "SELECT t.userId AS userId, t.tournamentId AS tournamentId, t.id AS tournamentItemId " +
+            "FROM TournamentItem t, ItemSnapshot s " +
+            "WHERE t.snapshotId = s.id AND s.itemId = :itemId AND s.status IN :statuses AND t.deletedAt IS NULL " +
+            "ORDER BY t.id ASC",
+    )
+    fun findRoutingsWithUserByItemIdAndStatuses(
+        @Param("itemId") itemId: Long,
+        @Param("statuses") statuses: Collection<ItemStatus>,
+    ): List<TournamentItemUserRoutingView>
 
     @Modifying
     @Query(

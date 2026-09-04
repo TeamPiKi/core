@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.tournament.domain.TournamentItem
 import java.time.LocalDateTime
 import java.util.UUID
@@ -27,6 +28,12 @@ class TournamentItemRepositoryImpl(
 
     override fun findRoutingsWithUserBySnapshotId(snapshotId: Long): List<TournamentItemUserRoutingView> =
         tournamentItemJpaRepository.findRoutingsWithUserBySnapshotId(snapshotId)
+
+    override fun findRoutingsWithUserByItemIdAndStatuses(
+        itemId: Long,
+        statuses: Collection<ItemStatus>,
+    ): List<TournamentItemUserRoutingView> =
+        tournamentItemJpaRepository.findRoutingsWithUserByItemIdAndStatuses(itemId, statuses)
 
     override fun findAllByTournamentId(tournamentId: Long): List<TournamentItem> =
         tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)

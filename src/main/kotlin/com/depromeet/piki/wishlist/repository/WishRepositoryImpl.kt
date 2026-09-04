@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import org.springframework.data.domain.Limit
@@ -53,4 +54,9 @@ class WishRepositoryImpl(
 
     override fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView> =
         wishJpaRepository.findOwnerWishIdsBySnapshotId(snapshotId)
+
+    override fun findOwnerWishIdsByItemIdAndStatuses(
+        itemId: Long,
+        statuses: Collection<ItemStatus>,
+    ): List<WishOwnerView> = wishJpaRepository.findOwnerWishIdsByItemIdAndStatuses(itemId, statuses)
 }

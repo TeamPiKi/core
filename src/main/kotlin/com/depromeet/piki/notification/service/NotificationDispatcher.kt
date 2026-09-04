@@ -22,23 +22,35 @@ class NotificationDispatcher(
     private val readOrchestrator: NotificationReadOrchestrator,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val byType: Map<KClass<*>, NotificationEventHandler<*>> =
-        handlers.associateBy { it.eventType }
 
-    // associateBy 는 eventType 충돌 시 마지막 핸들러로 조용히 덮어쓴다 — 같은 이벤트에 핸들러를 둘
-    // 등록하면 한쪽 라우팅이 소리 없이 사라진다. 부팅 시점에 중복을 fail-fast 로 드러낸다.
-    init {
-        val duplicated = handlers.groupBy { it.eventType }.filterValues { it.size > 1 }.keys
-        require(duplicated.isEmpty()) { "eventType 중복 핸들러 등록: $duplicated" }
-    }
+    // 한 이벤트에 핸들러가 **여럿**일 수 있다(#1028). 파싱 완료라는 한 사실에서 "이 파싱을 기다린 사람" 알림과
+    // "다른 버전에 멈춰 있다 남의 성공으로 해소된 사람" 알림이 갈리는데, 둘은 수신자가 배타적이라 각자 자기 타입으로
+    // 나가야 한다. 옛 associateBy 는 충돌 시 마지막 핸들러로 조용히 덮어써서 부팅 require 로 중복을 막고 있었는데,
+    // groupBy 로 전부 돌리면 그 소실 자체가 없어져 가드가 필요 없다.
+    private val byType: Map<KClass<*>, List<NotificationEventHandler<*>>> =
+        handlers.groupBy { it.eventType }
 
     fun dispatch(event: Any) {
-        // 타입 캐스팅은 여기 한 곳에 격리한다 — byType 매칭이 eventType 과 event::class 의 일치를 보장하므로 안전.
-        @Suppress("UNCHECKED_CAST")
-        val handler =
-            byType[event::class] as? NotificationEventHandler<Any>
+        val matched =
+            byType[event::class]
                 ?: error("핸들러 미등록: ${event::class.simpleName}")
+        matched.forEach { handler ->
+            // 한 핸들러의 실패(수신자 역조회 예외 등)가 같은 이벤트의 다른 핸들러를 막지 않게 핸들러 단위로 격리한다 —
+            // 수신자 단위 격리(아래)와 같은 결이다. 격리가 없으면 완료 알림의 조회 실패가 해소 통지까지 함께 삼킨다.
+            // 타입 캐스팅은 여기 한 곳에 격리한다 — byType 매칭이 eventType 과 event::class 의 일치를 보장하므로 안전.
+            @Suppress("UNCHECKED_CAST")
+            runCatching { dispatchTo(handler as NotificationEventHandler<Any>, event) }
+                .onFailure { e ->
+                    log.warn("핸들러 디스패치 실패 type={} event={}", handler.notificationType, event::class.simpleName, e)
+                }
+        }
+    }
 
+    // 핸들러 하나가 자기 수신자에게 fan-out 한다.
+    private fun dispatchTo(
+        handler: NotificationEventHandler<Any>,
+        event: Any,
+    ) {
         val recipients = handler.resolveRecipients(event)
         // 이벤트 수신 → 수신자 도출(인원). 디스패치는 async 워커라 MDC userId 는 이벤트를 유발한 actor 의 것이고,
         // 수신자는 actor 와 다른 유저들이라 수신자 userId 는 아래 fan-out 에서 명시적으로 남긴다.

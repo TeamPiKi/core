@@ -1,7 +1,10 @@
 package com.depromeet.piki.notification.handler
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
+import com.depromeet.piki.tournament.repository.TournamentItemUserRoutingView
+import com.depromeet.piki.wishlist.repository.WishOwnerView
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.stereotype.Component
 import java.util.UUID
@@ -32,15 +35,41 @@ class ItemParsingRecipientResolver(
     // 조회는 2회(위시·토너먼트)로 고정 — 수신자 수만큼 늘지 않는다(N+1 방지). 공유(#825)로 한 유저가 같은 버전을
     // 여러 토너먼트에 올렸으면 id 오름차순 첫 좌표를 골라 결정성만 확보한다(카드 갱신은 SSE 전 좌표 브로드캐스트가 진다).
     // dispatch 는 수신자가 있을 때만 호출하므로 각 수신자는 위시·토너먼트 중 적어도 한쪽에 있어 맵에 반드시 담긴다.
-    fun resolveRoutingsBySnapshot(snapshotId: Long): Map<UUID, NotificationRouting> {
-        val wishIdByUser = wishRepository.findOwnerWishIdsBySnapshotId(snapshotId).associate { it.userId to it.wishId }
-        val tournamentByUser =
-            tournamentItemRepository.findRoutingsWithUserBySnapshotId(snapshotId)
-                .groupBy { it.userId }
-                .mapValues { (_, rows) -> rows.first() }
+    fun resolveRoutingsBySnapshot(snapshotId: Long): Map<UUID, NotificationRouting> =
+        routingsOf(
+            wishRepository.findOwnerWishIdsBySnapshotId(snapshotId),
+            tournamentItemRepository.findRoutingsWithUserBySnapshotId(snapshotId),
+        )
+
+    // 해소 통지(#1028)의 수신자와 라우팅. 위와 달리 **아이템** 으로 찾고 미완성 상태만 고른다 — 이 알림이 가는 곳은
+    // 방금 성공한 버전이 아니라 다른 미완성 버전에 멈춰 있던 사람이라, 버전 역조회로는 한 명도 안 잡힌다.
+    //
+    // 두 알림의 수신자가 배타적인 것도 여기서 나온다: 성공한 버전을 가리키면 READY 라 이 조회에 안 걸리고,
+    // 다른 미완성 버전을 가리키면 완료 알림의 버전 역조회에 안 걸린다. 본인이 새로고침해 성공한 경우는 포인터가
+    // 새 버전으로 옮겨 가 있어 자동으로 완료 알림 쪽이 된다 — "남 때문에" 를 판정하는 별도 플래그가 필요 없다.
+    fun resolveRecoveredRoutingsByItem(itemId: Long): Map<UUID, NotificationRouting> =
+        routingsOf(
+            wishRepository.findOwnerWishIdsByItemIdAndStatuses(itemId, UNRESOLVED_STATUSES),
+            tournamentItemRepository.findRoutingsWithUserByItemIdAndStatuses(itemId, UNRESOLVED_STATUSES),
+        )
+
+    // 위시 좌표 ∪ 토너먼트 좌표를 수신자별 라우팅 하나로 접는다. 한 유저가 양쪽이면 WISH 우선(위 규칙),
+    // 같은 유저의 토너먼트 좌표가 여럿이면 id 오름차순 첫 행(쿼리의 ORDER BY)으로 결정성만 확보한다.
+    private fun routingsOf(
+        wishOwners: List<WishOwnerView>,
+        tournamentRoutings: List<TournamentItemUserRoutingView>,
+    ): Map<UUID, NotificationRouting> {
+        val wishIdByUser = wishOwners.associate { it.userId to it.wishId }
+        val tournamentByUser = tournamentRoutings.groupBy { it.userId }.mapValues { (_, rows) -> rows.first() }
         return (wishIdByUser.keys + tournamentByUser.keys).associateWith { userId ->
             wishIdByUser[userId]?.let { NotificationRouting.Wish(it) }
                 ?: tournamentByUser.getValue(userId).let { NotificationRouting.Tournament(it.tournamentId, it.tournamentItemId) }
         }
+    }
+
+    companion object {
+        // "아직 사람 손이 필요한 상태" — 이 버전을 가리키고 있으면 카드가 비어 있다. 진행 중(PENDING·PROCESSING)은
+        // 곧 자기 결과 알림을 받으므로 제외하고, 옛 READY 를 가리키는 사람도 이미 값을 보고 있어 제외된다.
+        private val UNRESOLVED_STATUSES = listOf(ItemStatus.FAILED, ItemStatus.INCOMPLETE)
     }
 }

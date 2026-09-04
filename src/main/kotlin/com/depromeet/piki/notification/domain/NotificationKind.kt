@@ -35,6 +35,7 @@ enum class NotificationKind {
                 NotificationType.ITEM_PARSING_COMPLETED,
                 NotificationType.ITEM_PARSING_INCOMPLETE,
                 NotificationType.ITEM_PARSING_FAILED,
+                NotificationType.ITEM_PARSING_RECOVERED,
                 -> routingKind ?: WISH
 
                 NotificationType.ANNOUNCEMENT -> SYSTEM
