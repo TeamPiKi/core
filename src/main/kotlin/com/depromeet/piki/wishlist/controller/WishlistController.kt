@@ -53,7 +53,6 @@ class WishlistController(
         )
     }
 
-    // 발급 기록만 남기고 Wish·Item 은 아직 만들지 않아 201 이 아니다.
     @PostMapping("/images/presigned")
     override fun presignImageUploads(
         @AuthenticationPrincipal userId: UUID,

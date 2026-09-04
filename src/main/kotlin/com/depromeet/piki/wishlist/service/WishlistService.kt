@@ -43,12 +43,9 @@ class WishlistService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
 ) {
-    // 위시리스트는 회원 전용. 게스트(인증은 됐으나 회원 아님)는 Security 가 아니라 여기서 도메인 계약으로 막아
-    // "회원만 이용 가능" 이라는 구체 사유를 내려준다(SecurityConfig 의 wishlists authenticated() 주석 참고).
-    // 인증 principal 은 userId 뿐이라 identityType 은 조회로 확인한다 — 모든 진입 메서드가 처리 전에 가장 먼저 호출한다.
+
+    // TODO AOP
     private fun requireMember(userId: UUID) {
-        // 활성 조회라 탈퇴(tombstone) 회원은 identityType 이 MEMBER 여도 여기서 409 로 끊긴다 —
-        // 탈퇴 시 토큰 무효화가 부분 실패한 창에서 죽은 계정이 위시리스트를 쓰는 것을 막는다 (#691).
         val user = userService.findActiveById(userId)
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
@@ -71,8 +68,6 @@ class WishlistService(
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         val formats = contentTypes.map { UploadFormat.of(it) }
-        // confirm 이 아니라 발급 시점에 차감한다. confirm 이 안 와도 폴링 백스톱이 등록을 마치므로,
-        // confirm 에서만 세면 그 경로가 한도를 통째로 우회한다.
         itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
         return imagePresignService.presignRawUploads(formats) { key, expiresAt ->
             PendingUpload.wish(key, userId, expiresAt)

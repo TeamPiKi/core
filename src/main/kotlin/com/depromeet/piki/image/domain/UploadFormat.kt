@@ -1,5 +1,6 @@
 package com.depromeet.piki.image.domain
 
+@ConsistentCopyVisibility
 data class UploadFormat private constructor(
     val contentType: String,
     val extension: String,
