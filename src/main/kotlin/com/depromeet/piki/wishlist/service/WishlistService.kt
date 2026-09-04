@@ -4,6 +4,7 @@ import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemErrorCode
@@ -73,15 +74,11 @@ class WishlistService(
     ): List<PresignedRawUpload> {
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        // content-type 검증을 차감 앞으로 당긴다 — presignRawUploads 안에서 걸러도 결과는 같지만, 그러면 지원하지
-        // 않는 MIME 을 보낸 요청이 몫을 깎고 400 을 받는다. 형식 위반은 몫을 건드리기 전에 거른다는 순서를 지킨다.
-        // 같은 검증이 발급 시점에 한 번 더 도는 것은 부작용 없는 순수 함수라 무해하다.
-        contentTypes.forEach { ProductImage.extensionForMimeType(it) }
-        // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
-        // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
-        // 발급만 받고 업로드를 안 하면 그만큼 몫을 손해 보지만, 그건 클라이언트가 자기 요청을 버린 경우다.
-        itemQuotaGuard.consume(userId, contentTypes.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
+        val formats = contentTypes.map { UploadFormat.of(it) }
+        // confirm 이 아니라 발급 시점에 차감한다. confirm 이 안 와도 폴링 백스톱이 등록을 마치므로,
+        // confirm 에서만 세면 그 경로가 한도를 통째로 우회한다.
+        itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
+        return imagePresignService.presignRawUploads(formats) { key, expiresAt ->
             PendingUpload.wish(key, userId, expiresAt)
         }
     }
@@ -96,7 +93,6 @@ class WishlistService(
     ): List<WishWithItem> {
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
     }
