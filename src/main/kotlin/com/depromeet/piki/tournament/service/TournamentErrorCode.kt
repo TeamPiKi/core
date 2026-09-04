@@ -65,13 +65,6 @@ enum class TournamentErrorCode(
     // 게이트를 되살리는 자리는 TournamentService.rejectIfDeleted 주석에 적혀 있다.
     GUEST_CANNOT_CREATE_TOURNAMENT("TOURNAMENT-036", ErrorCategory.FORBIDDEN, "토너먼트 만들기는 회원만 이용할 수 있어요."),
 
-    // 037 도 #339. 차감 주체는 토너먼트 오너지만 이 응답은 참여자(게스트 포함) 누구나 받을 수 있으므로,
-    // 문구에 "오너의 사용량" 을 드러내지 않는다 — 남의 사용량은 요청자에게 알릴 정보가 아니다.
-    ITEM_QUOTA_EXCEEDED(
-        "TOURNAMENT-037",
-        ErrorCategory.TOO_MANY_REQUESTS,
-        "이 토너먼트에는 지금 아이템을 추가할 수 없어요. 잠시 후 다시 시도해 주세요.",
-    ),
 
     // 038 은 플레이 링크 클론의 아이템 단건 조회 정합(#977)에서 추가됐다. 클론은 원본 아이템을 이어받아 조회는 되지만,
     // 수정·삭제하면 원본을 건드리게 되므로 아이템 추가 금지(032)와 같은 결로 막는다 — 옛 "직접 소속" 스코프 체크의

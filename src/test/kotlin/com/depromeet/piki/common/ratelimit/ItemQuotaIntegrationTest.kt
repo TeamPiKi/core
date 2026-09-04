@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.ratelimit
 
+import com.depromeet.piki.item.domain.ItemErrorCode
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -107,8 +108,8 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"url":"https://www.musinsa.com/products/1"}"""),
             ).andExpect(status().isTooManyRequests)
-            .andExpect(jsonPath("$.code").value(WishErrorCode.ITEM_QUOTA_EXCEEDED.code))
-            .andExpect(jsonPath("$.detail").value(WishErrorCode.ITEM_QUOTA_EXCEEDED.message))
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.QUOTA_EXCEEDED.code))
+            .andExpect(jsonPath("$.detail").value(ItemErrorCode.QUOTA_EXCEEDED.message))
             .andExpect(jsonPath("$.data").doesNotExist())
             // 남은 시간은 창 길이에 따라 달라지므로 값이 아니라 "양수가 실렸다" 를 계약으로 고정한다.
             .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
@@ -285,7 +286,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"url":"https://www.musinsa.com/products/9"}"""),
             ).andExpect(status().isTooManyRequests)
-            .andExpect(jsonPath("$.code").value(WishErrorCode.ITEM_QUOTA_EXCEEDED.code))
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.QUOTA_EXCEEDED.code))
     }
 
     @Test
@@ -337,7 +338,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                         .content("""{"url":"https://www.musinsa.com/products/3"}"""),
                 ).andExpect(status().isTooManyRequests)
                 // 카운터는 하나지만 응답 code 는 경로가 소유한다 — 토너먼트에서 막혔으면 토너먼트 code 다.
-                .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.code))
+                .andExpect(jsonPath("$.code").value(ItemErrorCode.QUOTA_EXCEEDED.code))
         } finally {
             stubItemParsingWorker.enabled = true
         }
@@ -539,14 +540,14 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""{"url":"https://www.musinsa.com/products/4"}"""),
                 ).andExpect(status().isTooManyRequests)
-                .andExpect(jsonPath("$.code").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.code))
-                .andExpect(jsonPath("$.detail").value(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message))
+                .andExpect(jsonPath("$.code").value(ItemErrorCode.QUOTA_EXCEEDED.code))
+                .andExpect(jsonPath("$.detail").value(ItemErrorCode.QUOTA_EXCEEDED.message))
                 .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
 
             // 이 응답은 참여 게스트도 받는다. 남의(오너의) 사용량은 요청자에게 알릴 정보가 아니므로 문구가
             // 그것을 드러내지 않는지 금지 단어 부재로 고정한다 — "토너먼트가 들어있다" 같은 단언은 이 규칙과
             // 무관해서, 문구를 "오너의 남은 사용량이 0이에요" 로 바꿔도 통과해버린다.
-            val message = TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message
+            val message = ItemErrorCode.QUOTA_EXCEEDED.message
             listOf("오너", "소유자", "사용량", "남은").forEach {
                 assertFalse(message.contains(it), "429 문구가 오너의 사용량을 드러낸다: $message")
             }

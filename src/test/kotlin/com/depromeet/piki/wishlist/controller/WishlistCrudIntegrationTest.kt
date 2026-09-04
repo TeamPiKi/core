@@ -106,7 +106,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         // 기본 null(출처 미기록) — 표시값 파생 후보(기계 READY)로 만들려면 "STRUCTURED" 를 명시한다.
         extractionMethod: String? = null,
     ): Long {
-        val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
+        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
         itemParsingService.claimDuePending(100)
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
@@ -131,7 +131,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         userId: UUID,
         url: String,
     ): Long {
-        val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
+        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
         itemParsingService.claimDuePending(100)
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
@@ -145,7 +145,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         userId: UUID,
         url: String,
     ): Long {
-        val result = wishPersistenceService.persist(userId, Item(ProductLink.parse(url)))
+        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
         itemParsingService.claimDuePending(100)
         return result.wish.getId()
     }

@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.ratelimit
 
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -12,22 +13,22 @@ import kotlin.test.assertFailsWith
 class ItemQuotaExceptionTest {
     @Test
     fun `도메인 code 에서 status 와 message 를 파생한다`() {
-        val exception = ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = 900)
+        val exception = ItemQuotaException.exceeded(ItemErrorCode.QUOTA_EXCEEDED, retryAfterSeconds = 900)
 
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, exception.httpStatus)
         assertEquals(ErrorCategory.TOO_MANY_REQUESTS, exception.category)
-        assertEquals(WishErrorCode.ITEM_QUOTA_EXCEEDED, exception.errorCode)
-        assertEquals(WishErrorCode.ITEM_QUOTA_EXCEEDED.message, exception.message)
+        assertEquals(ItemErrorCode.QUOTA_EXCEEDED, exception.errorCode)
+        assertEquals(ItemErrorCode.QUOTA_EXCEEDED.message, exception.message)
         assertEquals(900, exception.retryAfterSeconds)
     }
 
     @Test
     fun `토너먼트 축은 자기 code 와 문구를 쓴다`() {
         // 두 축이 같은 예외 클래스를 공유하되 사용자 대면 문구·code 는 도메인이 소유한다.
-        val exception = ItemQuotaException.exceeded(TournamentErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = 60)
+        val exception = ItemQuotaException.exceeded(ItemErrorCode.QUOTA_EXCEEDED, retryAfterSeconds = 60)
 
-        assertEquals(TournamentErrorCode.ITEM_QUOTA_EXCEEDED, exception.errorCode)
-        assertEquals(TournamentErrorCode.ITEM_QUOTA_EXCEEDED.message, exception.message)
+        assertEquals(ItemErrorCode.QUOTA_EXCEEDED, exception.errorCode)
+        assertEquals(ItemErrorCode.QUOTA_EXCEEDED.message, exception.message)
     }
 
     @Test
@@ -35,10 +36,10 @@ class ItemQuotaExceptionTest {
         // 0 이면 클라가 즉시 재시도해 또 거부되고, 음수는 Retry-After 로 나갈 수 없는 값이다.
         // 지금 유일한 호출자는 최소 1초를 보장하지만, 그건 그쪽 사정이라 팩토리가 자기 불변식으로 못박는다.
         assertFailsWith<IllegalArgumentException> {
-            ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = 0)
+            ItemQuotaException.exceeded(ItemErrorCode.QUOTA_EXCEEDED, retryAfterSeconds = 0)
         }
         assertFailsWith<IllegalArgumentException> {
-            ItemQuotaException.exceeded(WishErrorCode.ITEM_QUOTA_EXCEEDED, retryAfterSeconds = -1)
+            ItemQuotaException.exceeded(ItemErrorCode.QUOTA_EXCEEDED, retryAfterSeconds = -1)
         }
     }
 

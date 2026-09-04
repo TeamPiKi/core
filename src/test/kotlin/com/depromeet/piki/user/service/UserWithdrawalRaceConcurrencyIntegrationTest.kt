@@ -2,10 +2,8 @@ package com.depromeet.piki.user.service
 
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.repository.PendingUploadRepository
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
-import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.User
@@ -28,7 +26,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 // 활성 유저 확인과 쓰기 사이의 check-then-use 경합 차단(#776) 검증.
-// 탈퇴(WithdrawalService.withdraw) cascade 와 유저 쓰기 경로(프로필 수정·wish 등록·FCM 등록)가
+// 탈퇴(WithdrawalService.withdraw) cascade 와 유저 쓰기 경로(프로필 수정·지연 이미지 등록·FCM 등록)가
 // user 행 비관락(findActiveByIdForUpdate)으로 직렬화돼, 어느 인터리빙이든 종단 상태가 tombstone 이고
 // 죽은 유저를 가리키는 자식 행이 남지 않음(계정 부활·PII 복원·orphan 자식 금지)을 확인한다.
 //
@@ -128,33 +126,9 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    @Test
-    fun `탈퇴와 wish 등록이 동시에 일어나도 종단적으로 tombstone 유저의 wish 가 남지 않는다`() {
-        val pool = Executors.newFixedThreadPool(2)
-        try {
-            repeat(ITERATIONS) { i ->
-                val userId = newMember()
-                val created = AtomicReference<WishWithItem?>()
-                try {
-                    raceWithWithdrawal(pool, userId) {
-                        created.set(wishPersistenceService.persist(userId, Item(link = ProductLink.parse("https://example.com/p$i"))))
-                    }
-                    val row = userRow(userId)
-                    assertNotNull(row.deletedAt, "탈퇴가 관여했으면 종단은 tombstone (iter=$i)")
-                    assertEquals(0, wishCount(userId), "tombstone 유저의 wish 행이 남으면 안 된다 (iter=$i)")
-                } finally {
-                    created.get()?.let {
-                        jdbcTemplate.update("DELETE FROM wishes WHERE snapshot_id = ?", it.snapshot.getId())
-                        jdbcTemplate.update("DELETE FROM item_snapshots WHERE id = ?", it.snapshot.getId())
-                        jdbcTemplate.update("DELETE FROM items WHERE id = ?", it.item.getId())
-                    }
-                    cleanupUser(userId)
-                }
-            }
-        } finally {
-            pool.shutdownNow()
-        }
-    }
+    // URL 등록(persist) 경합은 더는 덮지 않는다. 그 경로의 user 행 락을 걷어냈기 때문이다 - 창을 좁힐 뿐
+    // 파싱 실행·한도 차감·고아 snapshot 은 어차피 못 막아, 보장 범위가 실제보다 넓게 읽히는 값이 컸다.
+    // 탈퇴 후 남는 wish 행은 배치 정리로 푼다.
 
     // 지연 이미지 등록(스케줄러·confirm 공용)만 예외 대신 boolean(isActiveForUpdate)으로 조용히 skip 하는 유일한 분기라
     // 별도로 덮는다 — 회귀해도 예외가 안 터져 발견이 늦는 지점이다. 두 계약을 동시에 본다:

@@ -4,14 +4,17 @@ import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemErrorCode
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
+import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.routing.DomainAccessPolicy
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -31,7 +34,7 @@ import java.util.UUID
 @Service
 class WishlistService(
     private val wishPersistenceService: WishPersistenceService,
-    private val accessPolicy: DomainAccessPolicy,
+    private val itemRegistrar: ItemRegistrar,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
@@ -41,72 +44,43 @@ class WishlistService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
 ) {
-    // 위시리스트는 회원 전용. 게스트(인증은 됐으나 회원 아님)는 Security 가 아니라 여기서 도메인 계약으로 막아
-    // "회원만 이용 가능" 이라는 구체 사유를 내려준다(SecurityConfig 의 wishlists authenticated() 주석 참고).
-    // 인증 principal 은 userId 뿐이라 identityType 은 조회로 확인한다 — 모든 진입 메서드가 처리 전에 가장 먼저 호출한다.
+
+    // TODO AOP
     private fun requireMember(userId: UUID) {
-        // 활성 조회라 탈퇴(tombstone) 회원은 identityType 이 MEMBER 여도 여기서 409 로 끊긴다 —
-        // 탈퇴 시 토큰 무효화가 부분 실패한 창에서 죽은 계정이 위시리스트를 쓰는 것을 막는다 (#691).
         val user = userService.findActiveById(userId)
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
-    // registerFromUrl 는 외부 LLM 호출(read-timeout 60s)을 동기로 기다리지 않는다.
-    // link 만 가진 item 과 PENDING snapshot 을 즉시 커밋해 응답을 돌려주고(클라이언트는 "담는 중" 표시),
-    // 실제 파싱은 디스패처(@Scheduled)가 PENDING 을 집어 워커에 넘겨 READY/FAILED 로 전이시킨다.
-    // DB 의 PENDING 행이 작업의 진실 원천이라 @Async 큐 유실(인스턴스 재시작 등)과 무관하게 최소 1회는 claim 된다(at-least-once).
-    // URL 형식·미지원 플랫폼 같은 계약 위반은 등록 시점에 동기로 거른다(400). 파싱 결과 실패만 FAILED 로 간다.
     fun registerFromUrl(
         rawUrl: String,
         userId: UUID,
     ): WishWithItem {
         requireMember(userId)
         val link = ProductLink.parse(rawUrl)
-        // fetch 불가 플랫폼(봇 차단)은 담아봐야 파싱이 무의미하게 실패한다 — 등록 시점에 막아 빠르게 안내한다.
-        // 미지원 목록은 DB 정책(백오피스에서 배포 없이 변경)이 진다 — DomainAccessPolicy 참고.
-        accessPolicy.verifyRegistrable(link)
-        // 이미 담은 상품이면 차감 전에 거른다(#973) — 등록되지 않을 요청이 몫을 깎으면 안 된다. 특히 응답이
-        // 유실된 뒤의 재시도가 이 경로로 들어오는데, 그때마다 몫을 잃으면 사용자는 담지도 못한 채 한도만 소모한다.
         wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
-        // 형식·플랫폼 검증(400)을 통과한 뒤에 차감한다 — 잘못된 URL 로 한도를 깎으면 사용자가 자기 실수로 몫을 잃는다.
-        // 파서로 풀려 LLM 을 안 타도 fetch·추출 모듈 시간·저장·DB 행은 그대로 소모되므로 경로와 무관하게 1 로 센다.
-        itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
-        return wishPersistenceService.persist(userId, Item(link))
+        itemRegistrar.accept(link, userId)
+        return wishPersistenceService.persist(userId, link)
     }
 
-    // 이미지 등록 발급 — 클라가 S3 에 직접 올릴 presigned URL 을 발급한다. 클라→S3 직접 업로드라
-    // 원본 바이트가 서버 메모리·대역을 경유하지 않는다.
-    // 회원·개수(계약) 검증만 여기서 하고, content-type 검증·raw key 생성·presign 발급은 ImagePresignService 에 위임한다.
     fun presignImageUploads(
         contentTypes: List<String>,
         userId: UUID,
     ): List<PresignedRawUpload> {
         requireMember(userId)
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        // content-type 검증을 차감 앞으로 당긴다 — presignRawUploads 안에서 걸러도 결과는 같지만, 그러면 지원하지
-        // 않는 MIME 을 보낸 요청이 몫을 깎고 400 을 받는다. 형식 위반은 몫을 건드리기 전에 거른다는 순서를 지킨다.
-        // 같은 검증이 발급 시점에 한 번 더 도는 것은 부작용 없는 순수 함수라 무해하다.
-        contentTypes.forEach { ProductImage.extensionForMimeType(it) }
-        // v2 는 발급(presign) 시점에 차감한다 — confirm 이 안 와도 폴링 백스톱이 pending 을 회수해 큐에 넣으므로,
-        // confirm 에서만 세면 그 경로가 통째로 한도를 우회한다. 대신 confirm 은 차감하지 않는다(이중 차감 방지).
-        // 발급만 받고 업로드를 안 하면 그만큼 몫을 손해 보지만, 그건 클라이언트가 자기 요청을 버린 경우다.
-        itemQuotaGuard.consume(userId, contentTypes.size, WishErrorCode.ITEM_QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(contentTypes) { key, expiresAt ->
+        val formats = contentTypes.map { UploadFormat.of(it) }
+        itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
+        return imagePresignService.presignRawUploads(formats) { key, expiresAt ->
             PendingUpload.wish(key, userId, expiresAt)
         }
     }
 
-    // 이미지 등록 v2 확정(빠른 경로) — 클라가 presigned 로 업로드를 마친 key 들을 받아 PENDING 위시로 적재한다.
-    // key 형식·존재(HEAD) 검증 후 pending_uploads 를 claim(FOR UPDATE 삭제)하며 등록한다 — 폴링 백스톱과 같은 진입점이라
-    // confirm 이 안 와도(또는 실패해도) 폴링이 회수하고, 둘이 같은 key 를 다퉈도 claim 이 한쪽만 이긴다(멱등).
-    // persist 실패 시 트랜잭션이 claim 을 롤백해 pending 이 남으므로, 회수는 폴링에 맡긴다(raw 는 클라가 올린 것 + lifecycle 백업).
     fun confirmImageRegistration(
         imageKeys: List<String>,
         userId: UUID,
     ): List<WishWithItem> {
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        // 한도는 여기서 차감하지 않는다 — 이 key 들은 presignImageUploads 에서 이미 차감된 몫이다(이중 차감 방지).
         imagePresignService.verifyUploaded(imageKeys)
         return wishPersistenceService.registerClaimedImages(imageKeys, userId)
     }
@@ -128,10 +102,14 @@ class WishlistService(
         // 포인터 버전을 끌어온 뒤 표시값은 파생한다(#857) — 카드는 항상 그 상품의 마지막 기계 READY 를 향하고,
         // 수기 존중·진행 중 유지 등 규칙은 ItemDisplayService 가 진다. 포인터는 정체성 도달·수기 존중 판정의 표식이다.
         val snapshotsById =
-            itemSnapshotRepository.findByIds(pageWishes.map { it.snapshotId }).associateBy { it.getId() }
+            itemSnapshotRepository
+                .findByIds(pageWishes.map { it.snapshotId })
+                .associateBy { it.getId() }
         val displayById = itemDisplayService.resolveDisplay(snapshotsById.values)
         // item 정체성은 snapshot.itemId 단일 출처다. snapshot 에서 itemId 를 모아 item 을 한 번에 끌어온다.
-        val itemsById = itemRepository.findByIds(snapshotsById.values.map { it.itemId }).associateBy { it.getId() }
+        val itemsById = itemRepository
+            .findByIds(snapshotsById.values.map { it.itemId })
+            .associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
                 // snapshot·item 은 wish 와 함께 영속화되며 별도 삭제 경로가 없다. 없으면 영속화 경로가 깨진 코드 버그다.
@@ -239,7 +217,7 @@ class WishlistService(
         // 재추출도 파싱을 한 번 더 돌리므로 신규 등록과 같은 비용이다 — 1 로 차감한다.
         // refresh 계약 검증(링크 없음·FAILED 항목 등)은 persistence 안쪽이라 여기선 앞서 깎이는데, 그 두 사유는
         // 클라가 refresh 버튼을 띄우지 않는 상태라 정상 흐름에서 반복 호출되지 않는다.
-        itemQuotaGuard.consume(userId, 1, WishErrorCode.ITEM_QUOTA_EXCEEDED)
+        itemQuotaGuard.consume(userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
         return wishPersistenceService.refresh(userId = userId, wishId = wishId)
     }
 
