@@ -15,11 +15,10 @@ class PendingUploadRepositoryImpl(
         // 빈 IN 절은 무의미한 쿼리라 조회 자체를 건너뛴다.
         imageKeys.takeIf { it.isNotEmpty() }?.let { jpaRepository.findAllByImageKeyInForUpdate(it) } ?: emptyList()
 
-    override fun findLiveForPolling(
+    override fun findDueForCheck(
         now: LocalDateTime,
-        pollableBefore: LocalDateTime,
         batchSize: Int,
-    ): List<PendingUpload> = jpaRepository.findLive(now, pollableBefore, PageRequest.of(0, batchSize))
+    ): List<PendingUpload> = jpaRepository.findDueForCheck(now, PageRequest.of(0, batchSize))
 
     override fun findExpired(
         now: LocalDateTime,

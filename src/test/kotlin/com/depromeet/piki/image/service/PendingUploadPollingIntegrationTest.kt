@@ -2,6 +2,7 @@ package com.depromeet.piki.image.service
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
@@ -28,9 +29,11 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // 이미지 등록 v2 폴링 백스톱 — 클라 confirm 없이 "발급된 pending 을 서버 폴링이 스스로 확인해 등록"하는 경로.
 // 폴링 @Scheduled 자동 실행은 IntegrationTestSupport 에서 꺼져 있고(stub exists 기본 true 로 인한 오염 방지),
@@ -94,20 +97,68 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `방금 발급된 pending 은 grace 안이라 폴링이 아직 등록하지 않는다`() {
+    fun `방금 발급된 pending 은 첫 확인 시각 전이라 폴링이 건드리지 않는다`() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             seedExtractor()
-            // 발급 직후 — createdAt 이 now 라 POLL_GRACE 안. confirm 이 먼저 처리하도록 폴링은 아직 개입하지 않는다.
             wishlistService.presignImageUploads(listOf("image/png"), userId)
 
             pollingScheduler.pollOnce()
 
             assertEquals(0, wishCount(userId))
-            // grace 안이라 등록도 정리도 안 된 채 pending 이 남는다.
             assertEquals(1, pendingCount(userId))
         } finally {
+            cleanupWishes(userId)
+        }
+    }
+
+    @Test
+    fun `안 올라온 pending 은 오래 기다릴수록 다음 확인이 멀어진다`() {
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            seedExtractor()
+            stubImageStorage.existsBehavior = { false }
+            wishlistService.presignImageUploads(listOf("image/png"), userId)
+
+            issuedAgo(userId, Duration.ofSeconds(10))
+            pollingScheduler.pollOnce()
+            val afterShortWait = waitUntilNextCheck(userId)
+
+            issuedAgo(userId, Duration.ofMinutes(10))
+            pollingScheduler.pollOnce()
+            val afterLongWait = waitUntilNextCheck(userId)
+
+            assertTrue(afterLongWait > afterShortWait, "$afterShortWait -> $afterLongWait")
+            assertTrue(afterLongWait <= PendingUpload.MAX_CHECK_INTERVAL, "상한을 넘었다: $afterLongWait")
+        } finally {
+            stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
+            cleanupWishes(userId)
+        }
+    }
+
+    @Test
+    fun `한 배치에서 일부만 올라오면 올라온 것만 등록하고 나머지는 다음 확인을 미룬다`() {
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            seedExtractor()
+            val uploads = wishlistService.presignImageUploads(listOf("image/png", "image/jpeg"), userId)
+            val uploadedKey = uploads.first().imageKey
+            stubImageStorage.existsBehavior = { key -> key == uploadedKey }
+            issuedAgo(userId, Duration.ofSeconds(10))
+
+            pollingScheduler.pollOnce()
+
+            assertEquals(1, wishCount(userId))
+            assertEquals(1, pendingCount(userId))
+            assertTrue(
+                waitUntilNextCheck(userId) > Duration.ZERO,
+                "남은 pending 이 미뤄지지 않으면 만료까지 매 주기 HEAD 를 맞는다",
+            )
+        } finally {
+            stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
             cleanupWishes(userId)
         }
     }
@@ -301,13 +352,29 @@ class PendingUploadPollingIntegrationTest : IntegrationTestSupport() {
 
     // ---- 헬퍼 ----
 
-    // 발급 직후 createdAt 은 now 라 POLL_GRACE 안이다. 폴링 대상이 되도록 발급 시각을 과거로 밀어 grace 를 통과시킨다.
-    private fun makePollable(userId: UUID) {
+    private fun makePollable(userId: UUID) = issuedAgo(userId, Duration.ofMinutes(1))
+
+    private fun issuedAgo(
+        userId: UUID,
+        ago: Duration,
+    ) {
+        val issuedAt = LocalDateTime.now().minus(ago)
         jdbcTemplate.update(
-            "UPDATE pending_uploads SET created_at = ? WHERE user_id = ?",
-            LocalDateTime.now().minusMinutes(1),
+            "UPDATE pending_uploads SET created_at = ?, next_check_at = ? WHERE user_id = ?",
+            issuedAt,
+            issuedAt,
             uuidToBytes(userId),
         )
+    }
+
+    private fun waitUntilNextCheck(userId: UUID): Duration {
+        val nextCheckAt =
+            jdbcTemplate.queryForObject(
+                "SELECT next_check_at FROM pending_uploads WHERE user_id = ? ORDER BY id LIMIT 1",
+                LocalDateTime::class.java,
+                uuidToBytes(userId),
+            ) ?: error("pending 이 없다")
+        return Duration.between(LocalDateTime.now(), nextCheckAt)
     }
 
     // 토너먼트를 지정 개수의 READY 아이템으로 미리 채운다(정원 경계 시나리오용). 정원 카운트는 tournament_items 행 수만 본다.

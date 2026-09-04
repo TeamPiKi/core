@@ -17,15 +17,12 @@ interface PendingUploadJpaRepository : JpaRepository<PendingUpload, Long> {
         @Param("imageKeys") imageKeys: List<String>,
     ): List<PendingUpload>
 
-    // 폴링 대상 — 아직 안 만료됐고 발급 후 grace 가 지난(createdAt <= pollableBefore) 매핑 FIFO. grace 로 confirm(빠른 경로)이
-    // 먼저 처리할 시간을 줘 confirm·폴링 레이스를 줄인다. 락 없이 조회만 하고(HEAD 확인 대상 선별), 실제 등록은 claim(FOR UPDATE)에서 잠근다.
     @Query(
-        "select p from PendingUpload p where p.expiresAt > :now and p.createdAt <= :pollableBefore " +
+        "select p from PendingUpload p where p.expiresAt > :now and p.nextCheckAt <= :now " +
             "order by p.createdAt asc, p.id asc",
     )
-    fun findLive(
+    fun findDueForCheck(
         @Param("now") now: LocalDateTime,
-        @Param("pollableBefore") pollableBefore: LocalDateTime,
         pageable: Pageable,
     ): List<PendingUpload>
 

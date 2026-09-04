@@ -10,11 +10,8 @@ interface PendingUploadRepository {
     // 호출부가 같은 트랜잭션에서 deleteAll 로 claim 을 확정한다 — confirm 과 폴링이 같은 key 를 다퉈도 한쪽만 이긴다.
     fun findAllByImageKeysForUpdate(imageKeys: List<String>): List<PendingUpload>
 
-    // 폴링이 집을 대기 매핑 — 아직 안 만료됐고 발급 grace(pollableBefore)가 지난 것 batchSize 개(HEAD 확인 대상, FIFO).
-    // grace 로 confirm(빠른 경로)에 우선권을 줘 confirm·폴링이 같은 key 를 다투는 레이스를 줄인다.
-    fun findLiveForPolling(
+    fun findDueForCheck(
         now: LocalDateTime,
-        pollableBefore: LocalDateTime,
         batchSize: Int,
     ): List<PendingUpload>
 

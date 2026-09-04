@@ -13,7 +13,6 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.Executor
@@ -58,17 +57,36 @@ class PendingUploadPollingScheduler(
 
     private fun registerUploaded(now: LocalDateTime) {
         pendingUploadRepository
-            .findLiveForPolling(now, now.minus(POLL_GRACE), BATCH_SIZE)
+            .findDueForCheck(now, BATCH_SIZE)
             .groupBy { RegisterGroup(it.userId, it.context, it.tournamentId) }
-            .forEach { (group, uploads) ->
-                // 하나라도 판단이 안 되면 그룹 전체를 보류한다 - 일시 오류로 배치가 쪼개지면 정원 판정이 부분적으로 갈린다.
-                val checked = uploads.mapNotNull { up -> uploadedOrUnknown(up.imageKey)?.let { up.imageKey to it } }
-                if (checked.size < uploads.size) return@forEach
-                val uploadedKeys = checked.filter { it.second }.map { it.first }
-                if (uploadedKeys.isEmpty()) return@forEach
-                runCatching { registerGroup(group, uploadedKeys) }
-                    .onFailure { e -> log.warn("pending 그룹(user={}, ctx={}) 등록 실패(다음 폴링 재시도): {}", group.userId, group.context, e.message) }
+            .forEach { (group, uploads) -> settleGroup(group, uploads, now) }
+    }
+
+    private fun settleGroup(
+        group: RegisterGroup,
+        uploads: List<PendingUpload>,
+        now: LocalDateTime,
+    ) {
+        val checked = uploads.map { it to uploadedOrUnknown(it.imageKey) }
+        // 하나라도 판단이 안 되면 그룹 전체를 보류한다 - 일시 오류로 배치가 쪼개지면 정원 판정이 부분적으로 갈린다.
+        if (checked.any { it.second == null }) return
+        val (uploaded, awaiting) = checked.partition { it.second == true }
+        backOffAll(awaiting.map { it.first }, now)
+        if (uploaded.isEmpty()) return
+        runCatching { registerGroup(group, uploaded.map { it.first.imageKey }) }
+            .onFailure { e ->
+                log.warn("pending 그룹(user={}, ctx={}) 등록 실패(다음 폴링 재시도): {}", group.userId, group.context, e.message)
+                backOffAll(uploaded.map { it.first }, now)
             }
+    }
+
+    private fun backOffAll(
+        uploads: List<PendingUpload>,
+        now: LocalDateTime,
+    ) {
+        if (uploads.isEmpty()) return
+        uploads.forEach { it.backOffCheck(now) }
+        pendingUploadRepository.saveAll(uploads)
     }
 
     private fun expireStale(now: LocalDateTime) {
@@ -129,7 +147,5 @@ class PendingUploadPollingScheduler(
     companion object {
         private const val BATCH_SIZE = 100
 
-        // confirm 이 먼저 처리할 시간을 준다. 같은 key 를 다투는 레이스를 시간으로 갈라 줄인다.
-        private val POLL_GRACE: Duration = Duration.ofSeconds(15)
     }
 }

@@ -6,6 +6,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
+import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -28,7 +29,20 @@ class PendingUpload private constructor(
     @Column(name = "expires_at", nullable = false)
     val expiresAt: LocalDateTime,
 ) : LongBaseEntity() {
+    @Column(name = "next_check_at", nullable = false)
+    var nextCheckAt: LocalDateTime = LocalDateTime.now().plus(MIN_CHECK_INTERVAL)
+        protected set
+
+    fun backOffCheck(now: LocalDateTime) {
+        nextCheckAt = now.plus(sinceIssued(now).coerceIn(MIN_CHECK_INTERVAL, MAX_CHECK_INTERVAL))
+    }
+
+    private fun sinceIssued(now: LocalDateTime): Duration = Duration.between(createdAt, now)
+
     companion object {
+        val MIN_CHECK_INTERVAL: Duration = Duration.ofSeconds(1)
+        val MAX_CHECK_INTERVAL: Duration = Duration.ofSeconds(120)
+
         // 위시 등록 대기 — tournamentId 는 없다(팩토리가 null 로 고정해 맥락 정합을 시그니처로 보장).
         fun wish(
             imageKey: String,
