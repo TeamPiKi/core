@@ -1,10 +1,10 @@
 ---
-paths: ["src/main/**/domain/**/*.kt", "src/main/resources/db/migration/**"]
+paths: ["src/main/**/domain/**/*.kt", "src/main/**/*Entity.kt", "src/main/kotlin/com/depromeet/piki/admin/**/*.kt", "src/main/resources/db/migration/**"]
 ---
 
 # DB 스키마 (외래 키 · 마이그레이션)
 
-`CLAUDE.md` 의 `## DB 스키마` 스텁이 불변식을 갖고, 이 파일이 상세 규약이다. 엔티티(`*/domain/**`)와 마이그레이션 파일을 다룰 때 자동 로드된다.
+`CLAUDE.md` 의 `## DB 스키마` 스텁이 불변식을 갖고, 이 파일이 상세 규약이다. 엔티티(`*/domain/**`·`*Entity.kt`·admin 패키지)와 마이그레이션 파일을 다룰 때 자동 로드된다. `@Entity` 22개 중 6개가 `domain/` 밖(admin 2·product 3·common 1)에 있어 패턴을 셋으로 둔다.
 
 ## 테이블 간 외래 키
 

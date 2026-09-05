@@ -138,7 +138,7 @@ YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위�
 
 현재 브랜치의 목적과 다른 작업(다른 이슈·기능)을 요청받으면 곧장 현재 브랜치에 얹지 않고, `AskUserQuestion` 으로 worktree 분리를 첫 번째(recommend) 옵션으로 묻는다. 같은 이슈의 후속 단계면 묻지 않고 이어간다. 생성·진입·정리 절차는 `/issue`·`/session-close` 스킬과 루트의 로비 규칙(`.claude/rules/piki-workspace.md`)이 담당하고, 여기에는 이 repo 의 정책만 둔다.
 
-- **분기 base 는 항상 `origin/dev`.** `git worktree add ... origin/dev` 로 만든 뒤 `EnterWorktree path=` 로 진입한다. `EnterWorktree name=` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다.
+- **분기 base 는 항상 `origin/dev`.** `git worktree add ... origin/dev` 로 만든 뒤 `EnterWorktree path=` 로 진입한다. 진입 여부는 분리를 묻는 그 질문에서 함께 확인하고, 묻지 않은 자동 진입은 하지 않는다. 진입하지 않고 메인 cwd 에 남으면 statusline·하단 경로·PR 표시가 전부 메인 브랜치 기준이 돼 작업 위치가 보이지 않으므로, 그 사실을 알리고 `git -C` 로 격리한다. `EnterWorktree name=` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다.
 - **스택 브랜치는 쓰지 않는다.** 다른 feature 브랜치 위에 쌓지 않고, 의존하는 작업이 `dev` 에 머지될 때까지 기다린 뒤 분기한다(시퀀싱). 여러 사람이 squash/rebase 로 머지하는 환경에서 스택은 base 가 바뀔 때마다 하위 브랜치가 꼬인다. 기다릴 수 없으면 사용자에게 먼저 알린다.
 - **정리는 이벤트에 얹는다.** 작업 종료·PR 머지 직후와 새 worktree 생성 직전에, clean 이고 머지·삭제된 브랜치인 worktree 만 제거한다. `--force` 는 쓰지 않고, dirty 면 작업 중일 수 있어 그대로 둔다. 주기 검사(타이머)는 두지 않는다.
 

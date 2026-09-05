@@ -1,5 +1,5 @@
 ---
-paths: ["src/main/**/SecurityConfig.kt", "src/main/**/*Filter.kt", "src/main/kotlin/com/depromeet/piki/admin/**", "src/main/resources/templates/**"]
+paths: ["src/main/**/SecurityConfig.kt", "src/main/**/*Filter.kt", "src/main/**/*Controller.kt", "src/main/kotlin/com/depromeet/piki/admin/**", "src/main/resources/templates/**"]
 ---
 
 # 웹 요청 경계에서 반복해 틀리는 것
