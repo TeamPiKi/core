@@ -136,36 +136,11 @@ YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위�
 
 ## 별도 작업은 worktree 로 분리
 
-현재 브랜치의 작업과 **무관한 별도 작업**(다른 이슈·기능)을 요청받으면, 곧장 현재 브랜치에 얹지 말고 **worktree 를 만들지 물어본다**. `AskUserQuestion` 으로 선택지를 제시하되 **worktree 생성을 recommend(첫 번째 옵션)** 로 둔다.
+현재 브랜치의 목적과 다른 작업(다른 이슈·기능)을 요청받으면 곧장 현재 브랜치에 얹지 않고, `AskUserQuestion` 으로 worktree 분리를 첫 번째(recommend) 옵션으로 묻는다. 같은 이슈의 후속 단계면 묻지 않고 이어간다. 생성·진입·정리 절차는 `/issue`·`/session-close` 스킬과 루트의 로비 규칙(`.claude/rules/piki-workspace.md`)이 담당하고, 여기에는 이 repo 의 정책만 둔다.
 
-- **트리거**: 새 요청이 현재 브랜치의 목적과 다른 작업일 때만 묻는다. 현재 작업의 연속(같은 이슈/기능의 후속 단계)이면 묻지 않고 그대로 진행한다.
-- 새 worktree·branch 는 `origin/dev` 기준으로 분기한다 (위 `## 기본 브랜치`).
-
-### worktree 진입은 EnterWorktree 로 — statusline·cwd 정렬
-
-worktree 생성을 물을 때, **그 worktree 로 세션을 진입(`EnterWorktree`)할지도 함께 묻는다.** 자동 진입하지 않고 항상 확인한다.
-
-- **이유**: 셸 cwd 가 메인 체크아웃에 남으면 statusline·하단 경로·표시 PR 이 전부 메인 브랜치 기준이라, 정작 작업 중인 worktree 브랜치가 안 보여 작업이 엉뚱한 곳에 가는지 혼란스럽다. `git -C`/`gradlew -p` 로 worktree 를 정확히 다뤄도 표시는 안 맞는다.
-- `EnterWorktree` 로 진입하면 세션 cwd·statusline·git·gradle 이 다 worktree 로 정렬되고 `-C`/`-p` 도 불필요하다. `git worktree add` 로 base(`origin/dev`)를 명시해 만든 뒤 `EnterWorktree path=...` 로 진입하면 base 도 확실하다 (`EnterWorktree name=...` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다).
-- 사용자가 진입을 원치 않아 메인 cwd 를 유지하면, statusline 이 worktree 브랜치를 안 보여준다는 점을 미리 알리고 `git -C` 로 격리한다.
-- **워크스페이스 루트(`piki/`)에서 시작한 세션은 이 원칙이 기본값이다** - 로비에서 `EnterWorktree(path=...)` 로 이 repo 의 worktree 에 들어와 작업하고, 다른 repo 로 갈 땐 로비를 거친다. 로비 규칙은 루트의 `.claude/rules/piki-workspace.md`(infra 정본)가 담당한다.
-
-### 스택 브랜치는 쓰지 않는다
-
-모든 branch·worktree 는 `origin/dev` 에서 분기하고, **다른 feature 브랜치 위에 쌓지 않는다** (B 의 PR 이 A 를 base 로 향하게 하지 않는다).
-
-- 작업이 아직 머지되지 않은 다른 작업에 의존하면, **스택 대신 시퀀싱**한다 — base 가 `dev` 에 머지될 때까지 기다렸다가 `dev` 에서 분기한다.
-- 기다릴 수 없을 만큼 급한 의존이면 임의로 쌓지 말고 **사용자에게 먼저 알린다.**
-- 이유: 여러 사람이 squash/rebase 로 머지하는 환경에서 스택은 base 가 머지·force-push 될 때마다 하위 브랜치가 꼬인다. auto-restack 툴·규율 없이는 유지 비용이 이득을 넘는다.
-
-### worktree 정리는 주기 검사 대신 이벤트에 얹는다
-
-worktree 누적을 막되 **주기적 검사(타이머·cron)는 두지 않는다.** 정리는 이미 일어나는 두 이벤트에 piggyback 한다.
-
-- **작업 종료 / PR 머지 직후** — 그 worktree 의 목적이 끝났으므로 그 자리에서 제거한다.
-- **새 worktree 생성 직전** — 머지·삭제된 브랜치의 stale worktree 를 함께 prune 한다 (`git worktree prune` + 머지·gone 브랜치 worktree 제거).
-- **안전 가드**: clean(커밋 안 된 변경 없음) + 머지·삭제된 브랜치인 worktree 만 제거한다. **절대 `--force` 를 쓰지 않는다.** dirty 면 작업 중일 수 있으므로 그냥 두고 넘어간다.
-- 한계 인지: 작업이 중단돼 PR 이 안 난 worktree 는 위 두 이벤트에 안 걸려 남을 수 있다. 이는 다음 worktree 생성 시점에 정리되거나, 사용자가 직접 정리한다.
+- **분기 base 는 항상 `origin/dev`.** `git worktree add ... origin/dev` 로 만든 뒤 `EnterWorktree path=` 로 진입한다. `EnterWorktree name=` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다.
+- **스택 브랜치는 쓰지 않는다.** 다른 feature 브랜치 위에 쌓지 않고, 의존하는 작업이 `dev` 에 머지될 때까지 기다린 뒤 분기한다(시퀀싱). 여러 사람이 squash/rebase 로 머지하는 환경에서 스택은 base 가 바뀔 때마다 하위 브랜치가 꼬인다. 기다릴 수 없으면 사용자에게 먼저 알린다.
+- **정리는 이벤트에 얹는다.** 작업 종료·PR 머지 직후와 새 worktree 생성 직전에, clean 이고 머지·삭제된 브랜치인 worktree 만 제거한다. `--force` 는 쓰지 않고, dirty 면 작업 중일 수 있어 그대로 둔다. 주기 검사(타이머)는 두지 않는다.
 
 ## 의존성 관리
 
@@ -180,25 +155,16 @@ worktree 누적을 막되 **주기적 검사(타이머·cron)는 두지 않는�
 - **버전 옆에 주석으로 고정 이유가 적혀 있으면 함부로 만지지 않는다.** 의도된 down-pin 일 가능성이 높다. 사용자에게 변경 이유와 호환성 확인 후 진행.
 - 예: Testcontainers BOM 의 `// ... 모듈이 따라올 때까지 testcontainers BOM 을 1.21.4 로 명시 고정.` 주석.
 
-## 테이블 간 외래 키
+## DB 스키마
 
-**DB `FOREIGN KEY` 제약을 두지 않는다.** 테이블 간 관계는 논리적으로만 연결한다.
-
-### 규칙
-- 마이그레이션에 `CONSTRAINT ... FOREIGN KEY` 를 추가하지 않는다. 엔티티는 raw ID 필드(`itemId: Long` 등)로 다른 테이블을 참조하며, JPA 연관관계 어노테이션(`@ManyToOne` 등)도 쓰지 않는다.
-- 조회 성능을 위한 인덱스(`KEY idx_*`)는 FK 와 무관하므로 그대로 둔다.
-- 참조 무결성은 애플리케이션 코드(서비스 계층의 존재 검증 등)가 책임진다.
-
-## DB 마이그레이션
-
-**도구**: Flyway. **위치**: `src/main/resources/db/migration/`. 상세 규약(네이밍·out-of-order·commutative·forward-only·destructive 단계 배포)은 그 디렉터리의 `CLAUDE.md` 에 있고, 마이그레이션 파일을 다룰 때 자동으로 로드된다. **FK 제약은 절대 추가하지 않는다** (`## 테이블 간 외래 키` 참조).
+FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는다. 테이블 관계는 raw ID 필드로만 잇고 참조 무결성은 서비스 계층이 책임진다. 마이그레이션은 Flyway(`src/main/resources/db/migration/`, 그 디렉터리의 `CLAUDE.md` 가 네이밍·배포 규약). 상세는 `.claude/rules/db-schema.md` 가 엔티티·마이그레이션 파일을 다룰 때 자동 로드된다.
 
 ## 트랜잭션 경계
 
 **`@Transactional` 은 서비스 메서드 레벨에 둔다.** 조회 전용 메서드는 `@Transactional(readOnly = true)`. (메서드마다 readOnly 분기가 다르므로 클래스 레벨보다 메서드 레벨이 자연스럽다.)
 
 ### 외부 호출은 트랜잭션 밖에서
-외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: Gemini 60s) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
+외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: extractor 원격 추출 호출) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
 
 - 외부 호출은 트랜잭션 바깥에서 끝내고, **영속화만 별도 빈에 위임**해 짧은 트랜잭션으로 묶는다.
 - 예: `WishlistService.register` 는 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임.
@@ -255,38 +221,18 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 - **도메인 → 응답 DTO**: 응답 DTO 의 `companion object` 에 `from(도메인)` 정적 팩토리. 예: `UserResponse.from(user)`, `TournamentInfoResponse.from(info)`.
 - **요청 DTO → 도메인/커맨드**: 요청 DTO 의 `toXxx()` 인스턴스 메서드. 예: `CreateTournamentRequest.toCreateTournament()`.
-- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: `GeminiExtractionResult.toProductSnapshot(link)`.
+- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 원격 추출 응답 DTO 의 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
 - **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `from()`. 예: `Item.from(snapshot)`.
 
 매핑 분기·정규화는 단위 테스트로 검증한다 (`## 테스트 분류` 의 매퍼 함수 분기).
 
 ## 컨트롤러 / OpenAPI 문서
 
-**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다 — 절대 규칙.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
+**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
 
-## 웹 요청 경계에서 반복해 틀리는 것
+## 웹 요청 경계
 
-전부 실제로 이 repo 에서 한 번씩 났던 결함이다(#986·#988). 문법이 멀쩡하고 테스트도 초록불이라 **코드만 봐서는 티가 안 나는 종류**라 여기 못박는다.
-
-### 판단이 필요해 사람·모델이 지켜야 하는 것
-
-- **경로로 접근을 판정할 땐 raw `request.requestURI` 가 아니라 `UrlPathHelper` 정규화 경로를 쓴다.** dispatcher 는 디코딩 경로로 라우팅하므로 `/%61dmin/...` 이 필터만 건너뛰고 컨트롤러엔 닿는다.
-- **상태를 바꾸는 요청은 fetch 여도 CSRF 를 면제하지 않는다.** "JSON API 라 토큰을 못 싣는다" 는 틀렸다 — 헤더로 실으면 된다.
-- **신원이 올라가는 시점(로그인·grant)에 기존 세션을 버리고 새로 발급한다.** `getSession(true)` 만 부르면 공격자가 미리 심어둔 세션 id 에 권한이 얹힌다.
-- **`permitAll` 매처·필터 예외는 실제로 서빙하는 대상이 있을 때만 둔다.** 빈 채로 두면 나중에 그 경로에 놓이는 것이 무인증 공개가 되고, 보안 설정에 이미 있어 의도한 것처럼 보인다.
-- **SSR 컨트롤러(Thymeleaf 반환)는 계약 예외를 잡아 리다이렉트한다.** 안 잡으면 `@RestControllerAdvice` 가 화면을 raw JSON 으로 갈아치워 운영자가 페이지를 잃는다.
-- **서블릿 필터의 `@Order` 는 유일값으로 둔다.** 값이 겹치면 순서가 비명세 규칙으로 갈려, 차단 필터가 로깅 필터 바깥으로 밀리면 차단 기록 자체가 안 남는다.
-- **브라우저가 스스로 반복하는 요청엔 종료 조건과 상한을 둔다.** 대상이 사라져도 멈추지 않으면 탭 하나가 시간당 수천 건을 보낸다.
-- **외부 CDN 자원은 버전을 고정하고 SRI 를 건다. 단 SRI 를 걸었으면 실제 로드를 눈으로 확인한다.** CORS 헤더를 안 주는 CDN 은 `crossorigin` 이 붙는 순간 리소스를 통째로 차단해, 검사 없이 두는 것보다 나쁜 결과가 된다.
-
-### 훅이 차단하는 것 (`.claude/settings.json`)
-
-기계가 오탐 없이 판정하므로 산문으로 반복하지 않는다. 차단 메시지가 옳은 형태를 알려준다.
-
-- 클라이언트 IP 를 `X-Forwarded-For` 에서 직접 읽기 → `ClientIp.of`
-- `th:utext` → `th:text` (값 출처가 DB 로 바뀌면 저장형 XSS)
-- `${param.x == 'v'}` → `${param.x != null and param.x[0] == 'v'}` (`param.x` 는 `String[]` 이라 직접 비교는 항상 false)
-- admin 패키지 빈의 `@ConditionalOnAdminEnabled` 누락
+경로 판정·CSRF·세션 고정·permitAll·SSR 예외 처리·필터 순서·브라우저 폴링·CDN SRI 에서 실제로 났던 결함과 그 교정은 `.claude/rules/web-request-boundary.md` 에 있다. `SecurityConfig`·필터·admin 패키지·템플릿을 다룰 때 자동 로드되고, 그 파일들을 열지 않는 경로로 보안 설정을 바꿀 때는 직접 읽는다. 기계가 판정할 수 있는 것(X-Forwarded-For 직접 읽기·`th:utext`·`param.x` 직접 비교·admin 빈의 조건 어노테이션 누락)은 `.claude/settings.json` 훅이 차단한다.
 
 ## PR 생성·갱신
 
