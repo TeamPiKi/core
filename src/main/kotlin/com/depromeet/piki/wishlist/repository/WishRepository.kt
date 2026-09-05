@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import java.util.UUID
@@ -49,4 +50,10 @@ interface WishRepository {
     fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID>
 
     fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView>
+
+    // 이 아이템의 지정 상태 버전을 가리키는 위시의 (주인, 위시 id) — 해소 통지 수신자 역조회(#1028).
+    fun findOwnerWishIdsByItemIdAndStatuses(
+        itemId: Long,
+        statuses: Collection<ItemStatus>,
+    ): List<WishOwnerView>
 }

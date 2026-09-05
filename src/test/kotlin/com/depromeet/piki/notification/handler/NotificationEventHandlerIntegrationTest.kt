@@ -30,6 +30,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemParsingFailedHandler: ItemParsingFailedHandler
 
+    @Autowired private lateinit var itemParsingRecoveredHandler: ItemParsingRecoveredHandler
+
     @Autowired private lateinit var tournamentItemAddedHandler: TournamentItemAddedHandler
 
     @Autowired private lateinit var tournamentItemDeletedHandler: TournamentItemDeletedHandler
@@ -50,6 +52,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     fun `각 핸들러의 eventType 이 제네릭 인자에서 올바르게 도출된다`() {
         assertEquals(ItemParsingCompleted::class, itemParsingCompletedHandler.eventType)
         assertEquals(ItemParsingFailed::class, itemParsingFailedHandler.eventType)
+        // 해소 통지는 완료와 **같은 이벤트** 를 구독한다 — 한 사실에서 수신자가 배타적인 두 알림이 갈린다(#1028).
+        assertEquals(ItemParsingCompleted::class, itemParsingRecoveredHandler.eventType)
         assertEquals(TournamentItemAdded::class, tournamentItemAddedHandler.eventType)
         assertEquals(TournamentItemDeleted::class, tournamentItemDeletedHandler.eventType)
         assertEquals(TournamentJoined::class, tournamentJoinedHandler.eventType)
@@ -60,18 +64,21 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     fun `notificationType 이 생성자로 주입돼 핸들러와 짝이 맞는다`() {
         assertEquals(NotificationType.ITEM_PARSING_COMPLETED, itemParsingCompletedHandler.notificationType)
         assertEquals(NotificationType.ITEM_PARSING_FAILED, itemParsingFailedHandler.notificationType)
+        assertEquals(NotificationType.ITEM_PARSING_RECOVERED, itemParsingRecoveredHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_ITEM_ADDED, tournamentItemAddedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_ITEM_DELETED, tournamentItemDeletedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_JOINED, tournamentJoinedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_STARTED, tournamentStartedHandler.notificationType)
     }
 
-    // Dispatcher 는 eventType 으로 라우팅하므로 키가 유일해야 한다(중복이면 associateBy 가 조용히 덮어쓴다).
-    // 등록된 모든 핸들러 빈을 받아 검사하므로, 새 핸들러가 같은 eventType 으로 끼면 여기서 잡힌다.
+    // Dispatcher 는 eventType 으로 라우팅하되 매칭된 핸들러를 **전부** 돌린다(#1028) — 한 사실에서 수신자가 배타적인
+    // 알림 둘이 갈릴 수 있어서다(파싱 완료 → 완료 알림 + 해소 통지). 그래서 eventType 중복 자체는 금지가 아니고,
+    // 금지는 (eventType, notificationType) 쌍의 중복이다: 같은 이벤트로 같은 타입을 두 번 보내면 한 수신자가
+    // 같은 알림을 두 벌 받는다. 등록된 모든 핸들러 빈을 받아 검사하므로 새 핸들러가 그렇게 끼면 여기서 잡힌다.
     @Test
-    fun `모든 핸들러의 eventType 은 서로 겹치지 않는다`() {
-        val eventTypes = handlers.map { it.eventType }
-        assertEquals(eventTypes.size, eventTypes.toSet().size)
+    fun `한 이벤트에 같은 알림 타입 핸들러가 둘 이상 붙지 않는다`() {
+        val pairs = handlers.map { it.eventType to it.notificationType }
+        assertEquals(pairs.size, pairs.toSet().size)
     }
 
     // 파싱 완료 알림 문구에 담을 itemName 변수를 그 버전(snapshot)의 이름에서 채운다(#895).

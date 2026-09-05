@@ -34,6 +34,9 @@ class NotificationPushPolicySeedIntegrationTest : IntegrationTestSupport() {
             // 사용자가 나머지를 채워야 등록이 끝나므로, 앱이 닫혀 있어도 알린다(완료·실패와 같은 결).
             NotificationType.ITEM_PARSING_INCOMPLETE to true,
             NotificationType.ITEM_PARSING_FAILED to true,
+            // 실패로 멈춰 있던 카드가 남의 성공으로 채워진 해소 통지(#1028) — 낡은 실패 알림을 이미 받아 둔
+            // 사람에게 가므로, 앱이 닫혀 있어도 알려야 어긋남이 그대로 남지 않는다.
+            NotificationType.ITEM_PARSING_RECOVERED to true,
             NotificationType.ANNOUNCEMENT to true,
         )
 

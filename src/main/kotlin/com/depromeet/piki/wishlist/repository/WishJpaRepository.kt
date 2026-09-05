@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Limit
@@ -29,6 +30,18 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
     )
     fun findOwnerWishIdsBySnapshotId(
         @Param("snapshotId") snapshotId: Long,
+    ): List<WishOwnerView>
+
+    // 위와 같은 (주인, 위시 id) 이되 **버전이 아니라 아이템** 으로 찾고, 지정한 상태의 버전을 가리키는 위시만 고른다(#1028).
+    // 해소 통지의 수신자는 "방금 성공한 그 버전" 이 아니라 **다른 미완성 버전**(FAILED·INCOMPLETE)에 멈춰 있던 사람이라,
+    // 버전 역조회로는 닿지 않는다. 어떤 상태를 미완성으로 볼지는 알림 쪽(ItemParsingRecipientResolver)이 정한다.
+    @Query(
+        "SELECT w.userId AS userId, w.id AS wishId FROM Wish w, ItemSnapshot s " +
+            "WHERE w.snapshotId = s.id AND s.itemId = :itemId AND s.status IN :statuses AND w.deletedAt IS NULL",
+    )
+    fun findOwnerWishIdsByItemIdAndStatuses(
+        @Param("itemId") itemId: Long,
+        @Param("statuses") statuses: Collection<ItemStatus>,
     ): List<WishOwnerView>
 
     fun countByIdInAndUserId(
