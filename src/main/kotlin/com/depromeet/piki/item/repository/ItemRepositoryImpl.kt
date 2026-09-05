@@ -15,6 +15,9 @@ class ItemRepositoryImpl(
 
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
 
+    override fun findBySourceImageKeys(keys: Collection<String>): List<Item> =
+        if (keys.isEmpty()) emptyList() else itemJpaRepository.findBySourceImageKeyInAndDeletedAtIsNull(keys)
+
     override fun claimCanonicalIfAbsent(
         id: Long,
         canonicalUrl: String,

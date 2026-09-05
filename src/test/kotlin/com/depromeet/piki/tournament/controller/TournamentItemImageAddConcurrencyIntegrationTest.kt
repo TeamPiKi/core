@@ -161,12 +161,10 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             }
 
             assertTrue(unexpectedResponses.isEmpty(), "200/400 외 응답이 있었다 — 증거: $unexpectedResponses")
-            // 키마다 잠그고 세므로 두 요청이 5장을 나눠 가질 수 있다(둘 다 200). 사이에 찼으면 한쪽이 400 이다.
-            assertEquals(
-                2,
-                status200.get() + status400.get(),
-                "두 요청 모두 200 또는 400 으로 끝나야 한다",
-            )
+            assertEquals(1, status200.get(), "정확히 하나만 성공이어야 한다 (5장 담기 성공)")
+            assertEquals(1, status400.get(), "나머지 하나는 락 대기 후 32개 초과로 400 이어야 한다")
+
+            // 상한을 넘겨 저장된 것이 없어야 한다 — 성공한 5장까지만 반영되어 정확히 32개다.
             assertEquals(32, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
         } finally {
             stubImageParsingWorker.enabled = previousWorkerEnabled

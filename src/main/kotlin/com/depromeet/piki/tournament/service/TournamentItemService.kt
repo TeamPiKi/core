@@ -1,19 +1,16 @@
 package com.depromeet.piki.tournament.service
 
-import com.depromeet.piki.common.exception.isDuplicateKey
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
@@ -81,21 +78,9 @@ class TournamentItemService(
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         imagePresignService.verifyUploaded(imageKeys)
-        tournamentItemPersistenceService.rejectIfWontFit(userId, tournamentId, imageKeys.size)
-        val added = mutableListOf<Long>()
-        for (key in imageKeys) {
-            val persisted =
-                try {
-                    tournamentItemPersistenceService
-                        .registerImage(key, userId, tournamentId, announce = added.isEmpty())
-                } catch (e: DataIntegrityViolationException) {
-                    if (!e.isDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE)) throw e
-                    continue
-                }
-            if (persisted == null) break
-            added += persisted.tournamentItemId
-        }
-        return added
+        return tournamentItemPersistenceService
+            .registerImages(imageKeys, userId, tournamentId)
+            .map { it.tournamentItemId }
     }
 
     // recoverWishItem 과 동일한 패턴(#825 결정 4) — 수기 수정은 상태 무관 허용이며 MANUAL 새 버전 + pin 이동으로

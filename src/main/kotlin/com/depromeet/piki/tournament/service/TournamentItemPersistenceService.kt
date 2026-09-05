@@ -133,21 +133,21 @@ class TournamentItemPersistenceService(
         if (!hasRoomFor(tournamentId, incomingCount)) throw TournamentException.tooManyTournamentItems()
     }
 
-    // 정원이 사이에 찼으면 null. 호출자는 그 키부터 담기를 멈춘다.
-    // 참여자 검증은 rejectIfWontFit 이 같은 요청에서 방금 끝냈으므로 반복하지 않는다. 잠근 행의 상태만 다시 본다.
-    // announce 는 첫 성공에만 true 로 넘긴다. AFTER_COMMIT 리스너가 타려면 발행이 트랜잭션 안이어야 해서 여기서 쏜다.
+    // 토너먼트 행 잠금이 첫 문장이어야 한다. 같은 토너먼트로 오는 confirm 이 여기서 줄을 서므로, 뒤이은 사전 필터가
+    // 앞선 confirm 이 커밋한 item 을 정확히 본다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이 잠금 전에 고정된다.
     @Transactional
-    fun registerImage(
-        imageKey: String,
+    fun registerImages(
+        imageKeys: List<String>,
         userId: UUID,
         tournamentId: Long,
-        announce: Boolean,
-    ): PersistedTournamentItem? {
-        val tournament = lockTournament(tournamentId)
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        if (!hasRoomFor(tournamentId, 1)) return null
-        val persisted = persistNew(Item(sourceImageKey = imageKey), userId, tournamentId)
-        if (announce) eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
+    ): List<PersistedTournamentItem> {
+        validateAddable(lockTournament(tournamentId), userId, tournamentId)
+        val registered = itemRepository.findBySourceImageKeys(imageKeys).mapNotNull { it.sourceImageKey }.toSet()
+        val newKeys = imageKeys - registered
+        if (newKeys.isEmpty()) return emptyList()
+        if (!hasRoomFor(tournamentId, newKeys.size)) throw TournamentException.tooManyTournamentItems()
+        val persisted = newKeys.map { persistNew(Item(sourceImageKey = it), userId, tournamentId) }
+        eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
         return persisted
     }
 
