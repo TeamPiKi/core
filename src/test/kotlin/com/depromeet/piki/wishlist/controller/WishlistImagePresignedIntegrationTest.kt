@@ -383,8 +383,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }
-        // presign 만 하고 confirm 을 안 한(또는 confirm 이 400 인) 케이스의 pending_uploads 가 남지 않게 함께 지운다(FK 는 없음, orphan 위생).
-        jdbcTemplate.update("DELETE FROM pending_uploads WHERE user_id = ?", uuidToBytes(userId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 

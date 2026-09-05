@@ -132,6 +132,45 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `같은 key 로 confirm 을 두 번 하면 두 번째는 빈 목록 200 이고 아이템이 중복 생기지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val ownerId = UUID.randomUUID()
+        insertMember(ownerId)
+        var tournamentId = 0L
+        try {
+            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
+            tournamentId = createTournament(mockMvc, ownerId)
+            val keys = presignAndGetKeys(mockMvc, ownerId, tournamentId, listOf("image/png", "image/jpeg"))
+            val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
+            val confirm =
+                post("/api/v1/tournaments/$tournamentId/items/images/confirm")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(ownerId)}")
+                    .content(body)
+
+            mockMvc
+                .perform(confirm)
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.tournamentItemIds.length()").value(2))
+            mockMvc
+                .perform(confirm)
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.tournamentItemIds.length()").value(0))
+
+            val count =
+                jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM tournament_items WHERE tournament_id = ?",
+                    Int::class.java,
+                    tournamentId,
+                )
+            assertEquals(2, count, "같은 업로드를 두 번 확정해도 아이템은 한 번만 생긴다")
+            awaitDispatchSettled(tournamentId)
+        } finally {
+            cleanup(ownerId, tournamentId)
+        }
+    }
+
+    @Test
     fun `업로드하지 않은 key 로 confirm 하면 400 으로 거부되고 아이템이 생기지 않는다`() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
@@ -319,8 +358,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
                 jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
             }
         }
-        // presign 만 하고 confirm 을 안 한(또는 confirm 이 400 인) 케이스의 pending_uploads 가 남지 않게 함께 지운다(FK 는 없음, orphan 위생).
-        jdbcTemplate.update("DELETE FROM pending_uploads WHERE user_id = ?", uuidToBytes(ownerId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
     }
 

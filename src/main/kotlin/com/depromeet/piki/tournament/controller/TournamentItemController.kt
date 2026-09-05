@@ -63,7 +63,7 @@ class TournamentItemController(
         return ApiResponseBody.ok(AddTournamentItemFromLinkResponse(tournamentItemId))
     }
 
-    // 이미지 등록 v2 1단계 — presigned 발급. pending_uploads 에 발급 기록만 남기고 tournament_item 은 아직 만들지 않으므로 200 OK.
+    // 발급 단계에선 tournament_item 을 만들지 않아 201 이 아니다.
     @PostMapping("/{tournamentId}/items/images/presigned")
     override fun presignImageUploads(
         @AuthenticationPrincipal userId: UUID,

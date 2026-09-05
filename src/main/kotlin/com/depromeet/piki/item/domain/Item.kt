@@ -28,7 +28,7 @@ class Item(
     val link: ProductLink? = null,
     // 이미지 등록 경로의 입력 — S3 에 durable 적재한 raw 이미지 object key. link 와 대칭이라 둘 중 하나만 채워진다.
     // 워커가 이 key 로 S3 에서 원본을 다시 읽어 파싱하므로, 메모리 ByteArray 와 달리 유실돼도 recover 가 재실행할 수 있다.
-    @Column(name = "source_image_key", nullable = true, length = 1024)
+    @Column(name = "source_image_key", nullable = true, length = 255, unique = true)
     val sourceImageKey: String? = null,
 ) : LongBaseEntity() {
     // 정규화된 귀결점(#825 정체성 키). 파싱 성공 시점에 claimCanonical 로 확정되므로 그 전(PENDING·FAILED)엔 null 이다.

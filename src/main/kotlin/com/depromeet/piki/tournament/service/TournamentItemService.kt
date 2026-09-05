@@ -2,7 +2,6 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
-import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
@@ -68,9 +67,7 @@ class TournamentItemService(
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         val formats = contentTypes.map { UploadFormat.of(it) }
         itemQuotaGuard.consume(ownerIdOf(tournamentId), formats.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(formats) { key, expiresAt ->
-            PendingUpload.tournament(key, userId, tournamentId, expiresAt)
-        }
+        return imagePresignService.presignRawUploads(formats)
     }
 
     fun confirmImageRegistration(
@@ -82,7 +79,7 @@ class TournamentItemService(
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         imagePresignService.verifyUploaded(imageKeys)
         return tournamentItemPersistenceService
-            .registerClaimedImages(imageKeys, userId, tournamentId)
+            .registerImages(imageKeys, userId, tournamentId)
             .map { it.tournamentItemId }
     }
 

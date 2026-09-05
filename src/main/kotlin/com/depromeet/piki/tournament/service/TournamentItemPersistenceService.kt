@@ -1,7 +1,5 @@
 package com.depromeet.piki.tournament.service
 
-import com.depromeet.piki.image.domain.PendingUploadContext
-import com.depromeet.piki.image.service.PendingUploadClaimer
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -34,7 +32,6 @@ class TournamentItemPersistenceService(
     private val tournamentItemRepository: TournamentItemRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
@@ -135,29 +132,20 @@ class TournamentItemPersistenceService(
         return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
     }
 
-    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
-    // 잠가 삭제(claim)하고, claim 에 성공한 TOURNAMENT 매핑(해당 user·tournament)만 적재한다 — confirm·폴링이 같은 key 를
-    // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 맥락 매핑은 걸러낸다.
     @Transactional
-    fun registerClaimedImages(
+    fun registerImages(
         imageKeys: List<String>,
         userId: UUID,
         tournamentId: Long,
     ): List<PersistedTournamentItem> {
-        val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.TOURNAMENT, userId, tournamentId)
-        if (claimedKeys.isEmpty()) return emptyList()
-        return persistImageItemsInternal(userId, tournamentId, claimedKeys)
-    }
-
-    // 이미지 key 들을 정원 검증(FOR UPDATE) 후 item → PENDING snapshot → tournament_item 으로 배치 적재하는 공통 코어.
-    // 트랜잭션은 호출부가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
-    private fun persistImageItemsInternal(
-        userId: UUID,
-        tournamentId: Long,
-        imageKeys: List<String>,
-    ): List<PersistedTournamentItem> {
-        validateAndCheckCapacity(userId, tournamentId, imageKeys.size)
-        val items = itemRepository.saveAll(imageKeys.map { Item(sourceImageKey = it) })
+        // 토너먼트 행 잠금이 이 트랜잭션의 첫 읽기여야 한다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이
+        // 잠금 전에 고정돼, 아래 정원 COUNT 가 다른 트랜잭션이 방금 커밋한 행을 못 본다.
+        lockForItemAdd(userId, tournamentId)
+        val registered = itemRepository.findBySourceImageKeys(imageKeys).mapNotNull { it.sourceImageKey }.toSet()
+        val newKeys = imageKeys - registered
+        if (newKeys.isEmpty()) return emptyList()
+        checkCapacity(tournamentId, newKeys.size)
+        val items = itemRepository.saveAll(newKeys.map { Item(sourceImageKey = it) })
         // snapshot·tournament_item 을 itemId·snapshotId 로 되짚어 saveAll 반환 순서에 의존하지 않는다(순서 보존은 공식 계약이 아니다 — WishPersistenceService 와 동일).
         // 입력(imageKey)이 durable 하므로 link 경로처럼 PENDING 으로 적재한다 — 디스패처가 집어 파싱한다.
         val snapshotByItemId = itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
@@ -283,6 +271,14 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
         incomingCount: Int,
     ) {
+        lockForItemAdd(userId, tournamentId)
+        checkCapacity(tournamentId, incomingCount)
+    }
+
+    private fun lockForItemAdd(
+        userId: UUID,
+        tournamentId: Long,
+    ) {
         val tournament =
             tournamentRepository.findTournamentByIdForUpdate(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
@@ -290,10 +286,14 @@ class TournamentItemPersistenceService(
         tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
+    }
+
+    private fun checkCapacity(
+        tournamentId: Long,
+        incomingCount: Int,
+    ) {
         val existingCount = tournamentItemRepository.countByTournamentId(tournamentId)
-        if (existingCount + incomingCount >
-            TOURNAMENT_MAX_ITEM_COUNT
-        ) {
+        if (existingCount + incomingCount > TOURNAMENT_MAX_ITEM_COUNT) {
             throw TournamentException.tooManyTournamentItems()
         }
     }
