@@ -31,8 +31,6 @@ interface ItemJpaRepository : JpaRepository<Item, Long> {
 
     fun findByCanonicalHashAndDeletedAtIsNull(canonicalHash: String): Item?
 
-    fun findBySourceImageKeyInAndDeletedAtIsNull(keys: Collection<String>): List<Item>
-
     // 공유 등록(#825)의 attach 판정(합류/재사용/새 작업)을 item 행 락으로 직렬화한다 — 동시 등록 두 건이 각자
     // 새 PENDING 을 만들어 같은 item 을 중복 파싱하는 낭비를 막는다(#826).
     @Lock(LockModeType.PESSIMISTIC_WRITE)

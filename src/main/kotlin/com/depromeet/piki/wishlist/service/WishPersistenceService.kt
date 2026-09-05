@@ -91,22 +91,14 @@ class WishPersistenceService(
     }
 
     @Transactional
-    fun registerImages(
-        imageKeys: List<String>,
+    fun registerImage(
+        imageKey: String,
         userId: UUID,
-    ): List<WishWithItem> {
-        val registered = itemRepository.findBySourceImageKeys(imageKeys).mapNotNull { it.sourceImageKey }.toSet()
-        val newKeys = imageKeys - registered
-        if (newKeys.isEmpty()) return emptyList()
-        val items = itemRepository.saveAll(newKeys.map { Item(sourceImageKey = it) })
-        // itemId 로 매핑한다 - saveAll 반환 순서는 공식 계약이 아니다.
-        val snapshotsByItemId =
-            itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
-        return items.map { item ->
-            val snapshot = snapshotsByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-            val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
-            WishWithItem(wish = wish, item = item, snapshot = snapshot)
-        }
+    ): WishWithItem {
+        val item = itemRepository.save(Item(sourceImageKey = imageKey))
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
+        val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
+        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
     }
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.

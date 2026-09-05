@@ -133,37 +133,41 @@ class TournamentItemPersistenceService(
     }
 
     @Transactional
-    fun registerImages(
-        imageKeys: List<String>,
+    fun rejectIfBatchWontFit(
         userId: UUID,
         tournamentId: Long,
-    ): List<PersistedTournamentItem> {
-        // 토너먼트 행 잠금이 이 트랜잭션의 첫 읽기여야 한다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이
-        // 잠금 전에 고정돼, 아래 정원 COUNT 가 다른 트랜잭션이 방금 커밋한 행을 못 본다.
+        incomingCount: Int,
+    ) = validateAndCheckCapacity(userId, tournamentId, incomingCount)
+
+    // 정원이 사이에 찼으면 null. 호출자는 그 키부터 담기를 멈춘다.
+    @Transactional
+    fun registerImage(
+        imageKey: String,
+        userId: UUID,
+        tournamentId: Long,
+    ): PersistedTournamentItem? {
         lockForItemAdd(userId, tournamentId)
-        val registered = itemRepository.findBySourceImageKeys(imageKeys).mapNotNull { it.sourceImageKey }.toSet()
-        val newKeys = imageKeys - registered
-        if (newKeys.isEmpty()) return emptyList()
-        checkCapacity(tournamentId, newKeys.size)
-        val items = itemRepository.saveAll(newKeys.map { Item(sourceImageKey = it) })
-        // snapshot·tournament_item 을 itemId·snapshotId 로 되짚어 saveAll 반환 순서에 의존하지 않는다(순서 보존은 공식 계약이 아니다 — WishPersistenceService 와 동일).
-        // 입력(imageKey)이 durable 하므로 link 경로처럼 PENDING 으로 적재한다 — 디스패처가 집어 파싱한다.
-        val snapshotByItemId = itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
-        val tournamentItemBySnapshotId =
-            tournamentItemRepository
-                .saveAll(
-                    items.map { item ->
-                        val snapshot = snapshotByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-                        TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())
-                    },
-                ).associateBy { it.snapshotId }
-        // 이미지를 여러 장 한 번에 올려도 "아이템이 추가됐다"는 사실은 1건이라 이벤트도 1회만 발행한다.
-        eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
-        return items.map { item ->
-            val snapshot = snapshotByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-            val tournamentItem = tournamentItemBySnapshotId[snapshot.getId()] ?: error("snapshot ${snapshot.getId()} 의 tournament_item 이 없다")
-            PersistedTournamentItem(itemId = item.getId(), snapshotId = tournamentItem.snapshotId, tournamentItemId = tournamentItem.getId())
-        }
+        if (!hasRoomFor(tournamentId, 1)) return null
+        val item = itemRepository.save(Item(sourceImageKey = imageKey))
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
+        val tournamentItem =
+            tournamentItemRepository.save(
+                TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
+            )
+        return PersistedTournamentItem(
+            itemId = item.getId(),
+            snapshotId = snapshot.getId(),
+            tournamentItemId = tournamentItem.getId(),
+        )
+    }
+
+    // AFTER_COMMIT 리스너가 타려면 트랜잭션이 필요해서, 발행만 하는 트랜잭션을 연다.
+    @Transactional
+    fun recordItemsAdded(
+        tournamentId: Long,
+        actorId: UUID,
+    ) {
+        eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = actorId))
     }
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 출전 pin 을 옮긴다(repinSnapshot).
@@ -292,11 +296,13 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
         incomingCount: Int,
     ) {
-        val existingCount = tournamentItemRepository.countByTournamentId(tournamentId)
-        if (existingCount + incomingCount > TOURNAMENT_MAX_ITEM_COUNT) {
-            throw TournamentException.tooManyTournamentItems()
-        }
+        if (!hasRoomFor(tournamentId, incomingCount)) throw TournamentException.tooManyTournamentItems()
     }
+
+    private fun hasRoomFor(
+        tournamentId: Long,
+        incomingCount: Int,
+    ): Boolean = tournamentItemRepository.countByTournamentId(tournamentId) + incomingCount <= TOURNAMENT_MAX_ITEM_COUNT
 }
 
 // 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.

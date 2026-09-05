@@ -21,8 +21,6 @@ interface ItemRepository {
 
     fun findByCanonicalHash(canonicalHash: String): Item?
 
-    fun findBySourceImageKeys(keys: Collection<String>): List<Item>
-
     // 공유 등록 attach 판정 직렬화용 행 락 조회(#826).
     fun findByIdForUpdate(id: Long): Item?
 
