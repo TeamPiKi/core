@@ -17,6 +17,10 @@ enum class NotificationType {
     // 완료와 문구가 갈려야 해 타입을 따로 둔다 (템플릿은 타입당 하나).
     ITEM_PARSING_INCOMPLETE,
     ITEM_PARSING_FAILED,
+    // 실패·미완으로 멈춰 있던 사람의 카드가 **다른 사람의 성공 파싱**으로 채워진 사실 — 해소 통지다(#1028).
+    // 같은 파싱 완료 사실에서 갈라지지만 수신자가 배타적이라(그 버전을 기다린 사람 vs 다른 버전에 멈춰 있던 사람)
+    // 문구가 달라야 해 타입을 따로 둔다.
+    ITEM_PARSING_RECOVERED,
     // 전체 공지(#391/#250). 트리거·발행은 후속 — 지금은 분류/필터용 enum 만 선반영한다.
     ANNOUNCEMENT,
 }

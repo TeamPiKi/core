@@ -1,6 +1,7 @@
 package com.depromeet.piki.notification.handler
 
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -59,6 +60,8 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     @Autowired private lateinit var parsingCompletedHandler: ItemParsingCompletedHandler
 
     @Autowired private lateinit var parsingFailedHandler: ItemParsingFailedHandler
+
+    @Autowired private lateinit var parsingRecoveredHandler: ItemParsingRecoveredHandler
 
     @Autowired private lateinit var tournamentUserRepository: TournamentUserRepository
 
@@ -506,6 +509,85 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         assertEquals(ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE, adderNoti.body)
     }
 
+    // ── 해소 통지(#1028): 남의 성공이 내 실패·미완을 풀었을 때 ──────────────────────────
+
+    @Test
+    fun `해소 통지 수신자 - 미완성 버전(FAILED·INCOMPLETE)을 가리키던 사람들이고, 이 파싱을 기다린 사람과 배타적이다`() {
+        // 같은 링크는 한 item 을 공유하므로(#825) 남이 성공시키면 멈춰 있던 카드가 표시값 파생으로 채워진다.
+        // 갈리는 근거는 포인터 위치 하나뿐이다 — 성공한 버전을 가리키면 완료 알림, 다른 미완성 버전이면 해소 통지.
+        val itemId = 4001L
+        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
+        val failedOwner = UUID.randomUUID()
+        val incompleteOwner = UUID.randomUUID()
+        val waitingOwner = UUID.randomUUID()
+        wishRepository.save(Wish(failedOwner, snapshotWithStatus(itemId, ItemStatus.FAILED)))
+        wishRepository.save(Wish(incompleteOwner, snapshotWithStatus(itemId, ItemStatus.INCOMPLETE, name = "나이키")))
+        wishRepository.save(Wish(waitingOwner, succeeded))
+
+        val event = ItemParsingCompleted(itemId, succeeded)
+
+        assertEquals(setOf(failedOwner, incompleteOwner), parsingRecoveredHandler.resolveRecipients(event))
+        assertEquals(setOf(waitingOwner), parsingCompletedHandler.resolveRecipients(event))
+    }
+
+    @Test
+    fun `해소 통지 수신자 - 진행 중이거나 옛 READY 를 가리키는 사람은 제외된다 (negative control)`() {
+        // 옛 READY 는 흔한 실제 케이스다 — 남이 새로고침해 새 성공본을 만들면 나는 옛 성공본을 가리킨 채 남는다.
+        // 이미 값을 보고 있으니 "해소" 라 부를 것이 없다. 상태를 안 가리고 item 으로만 역조회하면 여기서 깨진다.
+        //
+        // 진행 중은 순차 흐름에선 도달 불가능하다(등록·새로고침 둘 다 진행 중이 있으면 합류하므로 item 당 하나로
+        // 수렴하고, 그 하나가 성공한 것이 이 이벤트다). 새로고침이 item 행 락을 안 잡아 생기는 경합 창만 남아,
+        // 여기선 그 창에서도 상태 화이트리스트가 버티는지를 함께 못 박는다.
+        val itemId = 4002L
+        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
+        wishRepository.save(Wish(UUID.randomUUID(), snapshotIdFor(itemId)))
+        wishRepository.save(Wish(UUID.randomUUID(), snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")))
+
+        assertTrue(parsingRecoveredHandler.resolveRecipients(ItemParsingCompleted(itemId, succeeded)).isEmpty())
+    }
+
+    @Test
+    fun `해소 통지 라우팅 - 위시 주인은 자기 wishId 를 실은 WISH, 토너먼트 등록자는 자기 출전 좌표를 받는다`() {
+        val itemId = 4003L
+        val tournamentId = 1300L
+        val wishOwner = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
+        val wishId = wishRepository.save(Wish(wishOwner, snapshotWithStatus(itemId, ItemStatus.FAILED))).getId()
+        val tournamentItemId =
+            tournamentItemRepository
+                .saveAll(listOf(TournamentItem(tournamentId, adder, snapshotWithStatus(itemId, ItemStatus.FAILED))))
+                .first()
+                .getId()
+
+        val contexts =
+            parsingRecoveredHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, succeeded), setOf(wishOwner, adder))
+
+        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
+    }
+
+    @Test
+    fun `dispatch 가 한 파싱 완료 이벤트를 완료 알림과 해소 통지로 갈라 저장한다 - end-to-end`() {
+        // 핸들러를 이벤트당 하나만 두던 이전 dispatcher(associateBy)에선 둘 중 한 핸들러가 통째로 사라져
+        // 한쪽 수신자가 알림을 아예 못 받는다 — 이 단언이 반드시 깨진다.
+        val itemId = 4100L
+        val waitingOwner = UUID.randomUUID()
+        val stuckOwner = UUID.randomUUID()
+        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
+        wishRepository.save(Wish(waitingOwner, succeeded))
+        wishRepository.save(Wish(stuckOwner, snapshotWithStatus(itemId, ItemStatus.FAILED)))
+
+        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, succeeded))
+
+        val waiting = notificationRepository.findPage(waitingOwner, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_COMPLETED), waiting.map { it.type })
+        val stuck = notificationRepository.findPage(stuckOwner, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_RECOVERED), stuck.map { it.type })
+        // 제목은 방금 성공한 버전의 이름 — 수신자가 지금 카드에서 보게 되는 그 값이다.
+        assertEquals("나이키", stuck.first().title)
+    }
+
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────
 
     @Test
@@ -599,6 +681,13 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     // 알림 역조회는 wish/tournament_item→item_snapshots 를 snapshot_id 로 조인해 s.item_id 로 매칭한다.
     // 따라서 그 itemId 로 시딩한 snapshot 의 id 를 wish/tournament_item 의 snapshotId 로 넘겨야 역조회가 맞아떨어진다.
     private fun snapshotIdFor(itemId: Long): Long = itemSnapshotRepository.save(ItemSnapshot.pending(itemId).apply { markProcessing() }).getId()
+
+    // 해소 통지(#1028)는 포인터가 가리키는 **상태** 로 수신자를 가르므로, 상태를 지정해 버전을 깐다.
+    private fun snapshotWithStatus(
+        itemId: Long,
+        status: ItemStatus,
+        name: String? = null,
+    ): Long = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = name, status = status)).getId()
 
     private var inviteSeq = 0
 

@@ -51,6 +51,9 @@ object NotificationTemplateVariables {
             // 실패 알림은 현재 고정 문구라 ${itemName} 을 안 쓰지만, 핸들러가 itemName 을 채우므로(다른 파싱 알림과
             // 동일) 선언해 둔다 — 어드민이 실패 문구에도 아이템 이름을 넣어 편집할 수 있다.
             NotificationType.ITEM_PARSING_FAILED to listOf(ITEM_NAME),
+            // 해소 통지(#1028)도 title=${itemName} 이고 핸들러가 같은 방식으로 채운다 — 다만 이름의 출처는
+            // 방금 성공한 버전이라, 실패로 비어 있던 이름 대신 실제 상품명이 제목에 뜬다.
+            NotificationType.ITEM_PARSING_RECOVERED to listOf(ITEM_NAME),
             NotificationType.ANNOUNCEMENT to
                 listOf(
                     TemplateVariable("title", "피키 v1.0.1 출시"),
