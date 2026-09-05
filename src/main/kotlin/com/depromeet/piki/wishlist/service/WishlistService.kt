@@ -1,6 +1,6 @@
 package com.depromeet.piki.wishlist.service
 
-import com.depromeet.piki.common.exception.isDuplicateKey
+import com.depromeet.piki.common.exception.skippingDuplicateKey
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.domain.ProductImage
@@ -26,7 +26,6 @@ import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.WishDetail
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import com.depromeet.piki.wishlist.service.dto.WishlistPage
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
@@ -82,12 +81,7 @@ class WishlistService(
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         imagePresignService.verifyUploaded(imageKeys)
         return imageKeys.mapNotNull { key ->
-            try {
-                wishPersistenceService.registerImage(key, userId)
-            } catch (e: DataIntegrityViolationException) {
-                if (!e.isDuplicateKey()) throw e
-                null
-            }
+            skippingDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE) { wishPersistenceService.registerImage(key, userId) }
         }
     }
 

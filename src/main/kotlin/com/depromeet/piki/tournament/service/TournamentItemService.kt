@@ -7,6 +7,7 @@ import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
+import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
@@ -80,20 +81,20 @@ class TournamentItemService(
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         imagePresignService.verifyUploaded(imageKeys)
-        tournamentItemPersistenceService.rejectIfBatchWontFit(userId, tournamentId, imageKeys.size)
+        tournamentItemPersistenceService.rejectIfWontFit(userId, tournamentId, imageKeys.size)
         val added = mutableListOf<Long>()
         for (key in imageKeys) {
             val persisted =
                 try {
-                    tournamentItemPersistenceService.registerImage(key, userId, tournamentId)
+                    tournamentItemPersistenceService
+                        .registerImage(key, userId, tournamentId, announce = added.isEmpty())
                 } catch (e: DataIntegrityViolationException) {
-                    if (!e.isDuplicateKey()) throw e
+                    if (!e.isDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE)) throw e
                     continue
                 }
-            persisted ?: break
+            if (persisted == null) break
             added += persisted.tournamentItemId
         }
-        if (added.isNotEmpty()) tournamentItemPersistenceService.recordItemsAdded(tournamentId, userId)
         return added
     }
 

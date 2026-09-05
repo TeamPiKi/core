@@ -67,4 +67,8 @@ class Item(
         canonicalUrl = canonical.url
         canonicalHash = canonical.hash
     }
+
+    companion object {
+        const val SOURCE_IMAGE_KEY_UNIQUE = "uk_items_source_image_key"
+    }
 }

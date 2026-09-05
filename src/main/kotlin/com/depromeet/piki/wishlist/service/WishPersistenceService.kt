@@ -54,7 +54,7 @@ class WishPersistenceService(
     fun persist(
         userId: UUID,
         link: ProductLink,
-    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, link)
+    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, Item(link))
 
     // 이미 아는 링크 모양에 붙는 길(#825). 모르는 모양이면 null 을 돌려 새로 만드는 길로 넘긴다.
     private fun attachToShared(
@@ -81,9 +81,9 @@ class WishPersistenceService(
     // 처음 보는 링크를 새 정체성으로 세우는 길. snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다.
     private fun createFresh(
         userId: UUID,
-        link: ProductLink,
+        item: Item,
     ): WishWithItem {
-        val saved = itemRepository.save(Item(link))
+        val saved = itemRepository.save(item)
         itemIdentityRecorder.recordRegistrationAlias(saved)
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
@@ -94,12 +94,7 @@ class WishPersistenceService(
     fun registerImage(
         imageKey: String,
         userId: UUID,
-    ): WishWithItem {
-        val item = itemRepository.save(Item(sourceImageKey = imageKey))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
-        val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
-        return WishWithItem(wish = wish, item = item, snapshot = snapshot)
-    }
+    ): WishWithItem = createFresh(userId, Item(sourceImageKey = imageKey))
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
     // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든

@@ -9,6 +9,7 @@ import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
@@ -85,7 +86,7 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
         link: ProductLink,
     ): PersistedTournamentItem {
-        validateAndCheckCapacity(userId, tournamentId, 1)
+        rejectIfWontFit(userId, tournamentId, 1)
         // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 기존 item 에 붙는다. 중복 검사도 정체성(itemId) 기준으로
         // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
         val shared = itemSharingService.resolveExistingItem(link)
@@ -102,9 +103,14 @@ class TournamentItemPersistenceService(
             existingByItemId[attachment.item.getId()]?.let {
                 throw AlreadyRegisteredException.tournamentItem(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM, it)
             }
-            val tournamentItem = tournamentItemRepository.saveAll(
-                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = attachment.snapshot.getId())),
-            ).first()
+            val tournamentItem =
+                tournamentItemRepository.save(
+                    TournamentItem(
+                        tournamentId = tournamentId,
+                        userId = userId,
+                        snapshotId = attachment.snapshot.getId(),
+                    ),
+                )
             eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
             return PersistedTournamentItem(
                 itemId = attachment.item.getId(),
@@ -112,62 +118,57 @@ class TournamentItemPersistenceService(
                 tournamentItemId = tournamentItem.getId(),
             )
         }
-        val item = itemRepository.save(Item(link))
-        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다(위시 등록과 같은 결).
-        itemIdentityRecorder.recordRegistrationAlias(item)
-        // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
-        // URL 경로는 PENDING 으로 작업 큐에 적재하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
-        val tournamentItem = tournamentItemRepository.saveAll(
-            listOf(
-                TournamentItem(
-                    tournamentId = tournamentId,
-                    userId = userId,
-                    snapshotId = snapshot.getId(),
-                ),
-            ),
-        ).first()
-        // 링크 1개 추가. 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
+        val persisted = persistNew(Item(link), userId, tournamentId)
         eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
-        return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
+        return persisted
     }
 
     @Transactional
-    fun rejectIfBatchWontFit(
+    fun rejectIfWontFit(
         userId: UUID,
         tournamentId: Long,
         incomingCount: Int,
-    ) = validateAndCheckCapacity(userId, tournamentId, incomingCount)
+    ) {
+        validateAddable(lockTournament(tournamentId), userId, tournamentId)
+        if (!hasRoomFor(tournamentId, incomingCount)) throw TournamentException.tooManyTournamentItems()
+    }
 
     // 정원이 사이에 찼으면 null. 호출자는 그 키부터 담기를 멈춘다.
+    // 참여자 검증은 rejectIfWontFit 이 같은 요청에서 방금 끝냈으므로 반복하지 않는다. 잠근 행의 상태만 다시 본다.
+    // announce 는 첫 성공에만 true 로 넘긴다. AFTER_COMMIT 리스너가 타려면 발행이 트랜잭션 안이어야 해서 여기서 쏜다.
     @Transactional
     fun registerImage(
         imageKey: String,
         userId: UUID,
         tournamentId: Long,
+        announce: Boolean,
     ): PersistedTournamentItem? {
-        lockForItemAdd(userId, tournamentId)
+        val tournament = lockTournament(tournamentId)
+        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         if (!hasRoomFor(tournamentId, 1)) return null
-        val item = itemRepository.save(Item(sourceImageKey = imageKey))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
+        val persisted = persistNew(Item(sourceImageKey = imageKey), userId, tournamentId)
+        if (announce) eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
+        return persisted
+    }
+
+    // 새 정체성을 세우는 절차. 링크·이미지 두 경로가 이 한 벌을 쓴다.
+    private fun persistNew(
+        item: Item,
+        userId: UUID,
+        tournamentId: Long,
+    ): PersistedTournamentItem {
+        val saved = itemRepository.save(item)
+        itemIdentityRecorder.recordRegistrationAlias(saved)
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val tournamentItem =
             tournamentItemRepository.save(
                 TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
             )
         return PersistedTournamentItem(
-            itemId = item.getId(),
+            itemId = saved.getId(),
             snapshotId = snapshot.getId(),
             tournamentItemId = tournamentItem.getId(),
         )
-    }
-
-    // AFTER_COMMIT 리스너가 타려면 트랜잭션이 필요해서, 발행만 하는 트랜잭션을 연다.
-    @Transactional
-    fun recordItemsAdded(
-        tournamentId: Long,
-        actorId: UUID,
-    ) {
-        eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = actorId))
     }
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 출전 pin 을 옮긴다(repinSnapshot).
@@ -255,7 +256,7 @@ class TournamentItemPersistenceService(
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.
-    // 정원은 동시성 때문에 persist 의 FOR UPDATE(validateAndCheckCapacity)가 최종 판정하므로 여기선 제외한다(다층 방어).
+    // 정원은 동시성 때문에 persist 의 FOR UPDATE(rejectIfWontFit)가 최종 판정하므로 여기선 제외한다(다층 방어).
     @Transactional(readOnly = true)
     fun verifyCanAddItems(
         userId: UUID,
@@ -264,39 +265,22 @@ class TournamentItemPersistenceService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
+        validateAddable(tournament, userId, tournamentId)
+    }
+
+    private fun lockTournament(tournamentId: Long): Tournament =
+        tournamentRepository.findTournamentByIdForUpdate(tournamentId)
+            ?: throw TournamentException.notFoundTournament()
+
+    private fun validateAddable(
+        tournament: Tournament,
+        userId: UUID,
+        tournamentId: Long,
+    ) {
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
-    }
-
-    private fun validateAndCheckCapacity(
-        userId: UUID,
-        tournamentId: Long,
-        incomingCount: Int,
-    ) {
-        lockForItemAdd(userId, tournamentId)
-        checkCapacity(tournamentId, incomingCount)
-    }
-
-    private fun lockForItemAdd(
-        userId: UUID,
-        tournamentId: Long,
-    ) {
-        val tournament =
-            tournamentRepository.findTournamentByIdForUpdate(tournamentId)
-                ?: throw TournamentException.notFoundTournament()
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
-        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
-            ?: throw TournamentException.forbiddenTournament()
-    }
-
-    private fun checkCapacity(
-        tournamentId: Long,
-        incomingCount: Int,
-    ) {
-        if (!hasRoomFor(tournamentId, incomingCount)) throw TournamentException.tooManyTournamentItems()
     }
 
     private fun hasRoomFor(
