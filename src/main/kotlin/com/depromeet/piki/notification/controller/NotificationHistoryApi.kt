@@ -59,7 +59,8 @@ interface NotificationHistoryApi {
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> **등록과 새로고침은 `type` 으로 갈린다(#1036).** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 " +
                 "`ITEM_PARSING_*` 이 아니라 `ITEM_REFRESH_COMPLETED` / `ITEM_REFRESH_FAILED` 로 온다. 새로고침은 위시에서만 일어나 `kind` 는 항상 `WISH` 고 " +
-                "`wishId` 가 실린다. 새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로(표시값 파생) 클라가 값을 지우지 않는다.\n\n" +
+                "`wishId` 가 실린다. 일부 필드만 채워진 결과는 갈리지 않는다 — 새로고침이든 등록이든 `ITEM_PARSING_INCOMPLETE` 로 온다(일부만 빈 상태로 수기를 기다린다). " +
+                "새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로(표시값 파생) 클라가 값을 지우지 않는다.\n\n" +
                 "> **딥링크 좌표는 `kind` 별로 다른 키를 쓴다.** `kind`=WISH 인 파싱 알림은 `wishId` 로 위시 상세(`GET /api/v1/wishlists/{wishId}`)로 간다 — " +
                 "`refId`(itemId)로는 그 화면에 갈 수 없으므로 `wishId` 가 있으면 그것을 쓴다. `wishId` 는 **수신자별로 다르고**, 컬럼 도입(#933) 이전에 발송된 " +
                 "과거 알림에는 값이 없다. 값이 없을 때만 종전처럼 `refId` 로 역추적한다. " +

@@ -24,7 +24,7 @@ class ItemParsingRecipientResolver(
     private val tournamentItemRepository: TournamentItemRepository,
 ) {
     fun resolve(snapshotId: Long): Set<UUID> {
-        val wishOwners = wishRepository.findUserIdsBySnapshotId(snapshotId)
+        val wishOwners = wishRepository.findOwnerWishIdsBySnapshotId(snapshotId).map { it.userId }
         val tournamentAdders = tournamentItemRepository.findUserIdsBySnapshotId(snapshotId)
         return (wishOwners + tournamentAdders).toSet()
     }
@@ -32,17 +32,22 @@ class ItemParsingRecipientResolver(
     // 위 집합에서 **새로고침한 사람** 을 뺀 등록 출처 수신자(#1036). 완료·실패 알림은 등록/새로고침으로 타입이 갈려
     // 이쪽을 쓰고, 미완 알림은 갈리지 않아 resolve 그대로 쓴다. 한 사람이 위시를 새로고침하면서 같은 버전을
     // 토너먼트에도 올린 경우는 WISH 우선 규칙과 같은 결로 새로고침 쪽이 가져간다.
-    fun resolveRegistered(snapshotId: Long): Set<UUID> = resolve(snapshotId) - resolveRefreshRoutings(snapshotId).keys
+    fun resolveRegistered(snapshotId: Long): Set<UUID> {
+        val wishOwners = wishRepository.findOwnerWishIdsBySnapshotId(snapshotId)
+        val tournamentAdders = tournamentItemRepository.findUserIdsBySnapshotId(snapshotId)
+        val refreshers = wishOwners.filter { it.refreshed }.map { it.userId }
+        return (wishOwners.map { it.userId } + tournamentAdders).toSet() - refreshers.toSet()
+    }
 
-    // 새로고침 알림(#1036)의 수신자와 라우팅. "이 버전으로 새로고침한 위시" 는 생성 시각이 버전보다 앞선 위시다 —
-    // 위시는 늘 이미 있는 버전을 가리키며 태어나므로, 버전이 위시보다 뒤에 생겼다는 것은 생성 후 포인터가 스왑됐다는
-    // 뜻이고 파싱 대상 버전으로의 스왑은 새로고침(진행 중 합류 #826 포함)뿐이다(WishJpaRepository 참고).
-    // 등록 파싱과 수신자가 배타적인 근거도 이 한 비교다 — 등록·공유 합류로 태어난 위시는 버전보다 뒤라 여기 안 걸린다.
-    // 새로고침은 위시에서만 일어나 라우팅은 항상 Wish(wishId) 다.
-    fun resolveRefreshRoutings(snapshotId: Long): Map<UUID, NotificationRouting> =
+    // 새로고침 알림(#1036)의 수신자별 컨텍스트 — 그 버전으로 새로고침한 위시 주인(WishOwnerView.refreshed)에게
+    // 자기 위시(wishId) 라우팅. 등록 파싱과 수신자가 배타적인 근거는 그 플래그 하나다 — 등록·공유 합류로 태어난 위시는
+    // 버전보다 뒤라 refreshed 가 아니다. 새로고침은 위시에서만 일어나 라우팅은 항상 Wish(wishId) 고, 문구는 템플릿이
+    // 소유해 수신자별 변수는 없다. 완료·실패 두 핸들러가 수신자 도출(keys)과 컨텍스트 해석에 공유한다.
+    fun resolveRefreshContexts(snapshotId: Long): Map<UUID, RecipientContext> =
         wishRepository
-            .findOwnerWishIdsRefreshedToSnapshot(snapshotId)
-            .associate { it.userId to NotificationRouting.Wish(it.wishId) }
+            .findOwnerWishIdsBySnapshotId(snapshotId)
+            .filter { it.refreshed }
+            .associate { it.userId to RecipientContext(routing = NotificationRouting.Wish(it.wishId)) }
 
     // 파싱 알림의 딥링크 라우팅을 **수신자별로** 배치 해석한다(#933·#408·#576). 위시 주인 → Wish(그 유저의 wishId),
     // 토너먼트 등록자 → 자기 Tournament(tournamentId, tournamentItemId). 한 유저가 양쪽이면 WISH 우선 — 파싱은

@@ -21,15 +21,13 @@ class ItemRefreshFailedHandler(
     override fun resolveRefId(event: ItemParsingFailed): Long = event.itemId
 
     override fun resolveRecipients(event: ItemParsingFailed): Set<UUID> =
-        recipientResolver.resolveRefreshRoutings(event.snapshotId).keys
+        recipientResolver.resolveRefreshContexts(event.snapshotId).keys
 
     override fun resolveRecipientContexts(
         event: ItemParsingFailed,
         recipients: Set<UUID>,
     ): Map<UUID, RecipientContext> {
-        val routings = recipientResolver.resolveRefreshRoutings(event.snapshotId)
-        return recipients.associateWith { userId ->
-            RecipientContext(routing = routings[userId] ?: NotificationRouting.Wish(null))
-        }
+        val contexts = recipientResolver.resolveRefreshContexts(event.snapshotId)
+        return recipients.associateWith { userId -> contexts[userId] ?: RecipientContext(routing = NotificationRouting.Wish(null)) }
     }
 }

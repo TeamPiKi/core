@@ -46,13 +46,8 @@ interface WishRepository {
         userId: UUID,
     ): List<Wish>
 
-    // 이 아이템을 위시에 담은 유저들 (알림 수신자 역조회). 같은 아이템을 여러 유저가 담을 수 있다.
-    fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID>
-
+    // 이 버전을 담은 위시의 (주인, 위시 id, 새로고침 여부) — 파싱 알림 수신자·라우팅 역조회. 같은 버전을 여러 유저가 담을 수 있다.
     fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView>
-
-    // 이 버전으로 새로고침한(생성 후 포인터를 스왑한) 위시의 (주인, 위시 id) — 새로고침 알림 수신자 역조회(#1036).
-    fun findOwnerWishIdsRefreshedToSnapshot(snapshotId: Long): List<WishOwnerView>
 
     // 이 아이템의 지정 상태 버전을 가리키는 위시의 (주인, 위시 id) — 해소 통지 수신자 역조회(#1028).
     fun findOwnerWishIdsByItemIdAndStatuses(

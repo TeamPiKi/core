@@ -185,7 +185,7 @@ data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1}
 
 > `kind` 는 파싱 알림(`ITEM_PARSING_*`)만 발행 출처에 따라 갈린다 — 같은 `type` 이 위시 등록·토너먼트 추가 두 플로우에서 발행되기 때문. 나머지 타입은 위 표의 값 하나로 고정이다.
 
-> **등록과 새로고침은 `type` 으로 갈린다.** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 `ITEM_PARSING_*` 이 아니라 `ITEM_REFRESH_COMPLETED` / `ITEM_REFRESH_FAILED` 로 온다. 새로고침은 위시에서만 일어나므로 `kind` 는 항상 `WISH` 고 `wishId` 로 위시 상세에 간다. 새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로 값을 지우지 않는다.
+> **등록과 새로고침은 `type` 으로 갈린다.** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 `ITEM_PARSING_*` 이 아니라 `ITEM_REFRESH_COMPLETED` / `ITEM_REFRESH_FAILED` 로 온다. 새로고침은 위시에서만 일어나므로 `kind` 는 항상 `WISH` 고 `wishId` 로 위시 상세에 간다. 일부 필드만 채워진 결과는 갈리지 않는다: 새로고침이든 등록이든 `ITEM_PARSING_INCOMPLETE` 로 오고, 카드는 일부만 빈 상태로 수기를 기다린다. 새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로 값을 지우지 않는다.
 
 ### 파싱 알림(`ITEM_PARSING_*`)의 출처별 라우팅
 

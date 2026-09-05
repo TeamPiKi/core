@@ -50,13 +50,8 @@ class WishRepositoryImpl(
         userId: UUID,
     ): List<Wish> = wishJpaRepository.findByItemIdInAndUserIdAndDeletedAtIsNull(itemIds, userId)
 
-    override fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID> = wishJpaRepository.findUserIdsBySnapshotId(snapshotId)
-
     override fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView> =
         wishJpaRepository.findOwnerWishIdsBySnapshotId(snapshotId)
-
-    override fun findOwnerWishIdsRefreshedToSnapshot(snapshotId: Long): List<WishOwnerView> =
-        wishJpaRepository.findOwnerWishIdsRefreshedToSnapshot(snapshotId)
 
     override fun findOwnerWishIdsByItemIdAndStatuses(
         itemId: Long,
