@@ -8,8 +8,6 @@ import org.springframework.context.annotation.Import
 // - admin.local-bypass=true: /admin 게이트(AdminAccessFilter)를 우회해 컨트롤러 흐름을 슬랙 세션 없이 호출한다.
 // - admin.scheduler-auto-dispatch=false: 스케줄러 주기 폴링을 꺼 테스트 중 예약이 백그라운드로 발사돼 flaky 해지는 걸 막는다
 //   (예약/overdue 로직은 dispatchDue() 를 테스트가 직접 호출해 결정적으로 검증한다).
-// - image.upload-polling-enabled=false: 이미지 등록 v2 폴링 백스톱의 @Scheduled 자동 실행을 꺼, stub exists(기본 true)로
-//   발급 매핑이 조용히 등록돼 테스트가 오염되는 걸 막는다(폴링 테스트는 pollOnce() 를 직접 호출해 결정적으로 검증한다).
 // - admin.discord-metrics-channel-id·admin.discord-bot-token: 주간 리포트 엔드포인트가 채널 id·토큰 공백 skip(SKIPPED)을
 //   타지 않고 실제 게시 경로(SENT)를 검증하게 한다. 실제 Discord 호출은 StubDiscordMessageSender(@Primary)가 막는다.
 // - admin.grant-signing-key: 키가 공백이면 GrantTokenCodec.verify 가 항상 null 이라 grant 링크 흐름(토큰 소비 →
@@ -19,7 +17,6 @@ import org.springframework.context.annotation.Import
         "admin.enabled=true",
         "admin.local-bypass=true",
         "admin.scheduler-auto-dispatch=false",
-        "image.upload-polling-enabled=false",
         "admin.discord-metrics-channel-id=test-metrics-channel",
         "admin.discord-bot-token=test-bot-token",
         "admin.grant-signing-key=test-grant-signing-key",

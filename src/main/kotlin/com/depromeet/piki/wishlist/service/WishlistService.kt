@@ -1,8 +1,8 @@
 package com.depromeet.piki.wishlist.service
 
+import com.depromeet.piki.common.exception.skippingDuplicateKey
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
-import com.depromeet.piki.image.domain.PendingUpload
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
@@ -70,9 +70,7 @@ class WishlistService(
         if (contentTypes.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         val formats = contentTypes.map { UploadFormat.of(it) }
         itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(formats) { key, expiresAt ->
-            PendingUpload.wish(key, userId, expiresAt)
-        }
+        return imagePresignService.presignRawUploads(formats)
     }
 
     fun confirmImageRegistration(
@@ -82,7 +80,9 @@ class WishlistService(
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         imagePresignService.verifyUploaded(imageKeys)
-        return wishPersistenceService.registerClaimedImages(imageKeys, userId)
+        return imageKeys.mapNotNull { key ->
+            skippingDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE) { wishPersistenceService.registerImage(key, userId) }
+        }
     }
 
     @Transactional(readOnly = true)

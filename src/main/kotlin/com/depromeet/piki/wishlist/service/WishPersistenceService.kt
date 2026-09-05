@@ -1,8 +1,6 @@
 package com.depromeet.piki.wishlist.service
 
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
-import com.depromeet.piki.image.domain.PendingUploadContext
-import com.depromeet.piki.image.service.PendingUploadClaimer
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -11,13 +9,11 @@ import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.WishWithItem
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -28,14 +24,10 @@ class WishPersistenceService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val pendingUploadClaimer: PendingUploadClaimer,
-    private val userService: UserService,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
     private val itemDisplayService: ItemDisplayService,
 ) {
-    private val log = LoggerFactory.getLogger(javaClass)
-
     // 등록 전 사전 확인 — 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973).
     //
     // 락 밖 조회라 근사치다: 병합 경합 창에서는 여기서 본 item 과 persist 가 실제로 붙는 item(승자)이 다를 수 있다.
@@ -62,7 +54,7 @@ class WishPersistenceService(
     fun persist(
         userId: UUID,
         link: ProductLink,
-    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, link)
+    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, Item(link))
 
     // 이미 아는 링크 모양에 붙는 길(#825). 모르는 모양이면 null 을 돌려 새로 만드는 길로 넘긴다.
     private fun attachToShared(
@@ -89,51 +81,20 @@ class WishPersistenceService(
     // 처음 보는 링크를 새 정체성으로 세우는 길. snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다.
     private fun createFresh(
         userId: UUID,
-        link: ProductLink,
+        item: Item,
     ): WishWithItem {
-        val saved = itemRepository.save(Item(link))
+        val saved = itemRepository.save(item)
         itemIdentityRecorder.recordRegistrationAlias(saved)
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
         val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
         return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
     }
 
-    // confirm 과 폴링 백스톱이 공유하는 진입점.
     @Transactional
-    fun registerClaimedImages(
-        imageKeys: List<String>,
+    fun registerImage(
+        imageKey: String,
         userId: UUID,
-    ): List<WishWithItem> {
-        // claim 보다 **먼저** user 행을 잠가 락 순서 규약 "user 다음 자식" 을 지킨다(#776). 지금은 역순 교차가
-        // 성립하지 않지만, 탈퇴 cascade 가 이 유저의 pending_uploads 를 함께 정리하는 순간 교차 데드락이 된다.
-        //
-        // 예외가 아니라 boolean 으로 받는다 - 이 경로는 스케줄러 공용이라, tombstone 에 예외를 던지면
-        // 롤백이 claim 을 되살려 무한 재시도가 된다. claim 은 소비하고 wish 생성만 건너뛴다.
-        val active = userService.isActiveForUpdate(userId)
-        val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.WISH, userId, tournamentId = null)
-        if (claimedKeys.isEmpty()) return emptyList()
-        if (!active) {
-            log.info("탈퇴 유저의 지연 이미지 등록 건너뜀(claim 은 소비) userId={} keys={}", userId, claimedKeys.size)
-            return emptyList()
-        }
-        return persistImagesInternal(userId, claimedKeys)
-    }
-
-    // 트랜잭션은 호출부가 연다 - self-invocation 으로 무력화되지 않게 private.
-    private fun persistImagesInternal(
-        userId: UUID,
-        imageKeys: List<String>,
-    ): List<WishWithItem> {
-        val items = itemRepository.saveAll(imageKeys.map { Item(sourceImageKey = it) })
-        // itemId 로 매핑한다 - saveAll 반환 순서는 공식 계약이 아니다.
-        val snapshotsByItemId =
-            itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
-        return items.map { item ->
-            val snapshot = snapshotsByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-            val wish = wishRepository.save(Wish(userId = userId, snapshotId = snapshot.getId()))
-            WishWithItem(wish = wish, item = item, snapshot = snapshot)
-        }
-    }
+    ): WishWithItem = createFresh(userId, Item(sourceImageKey = imageKey))
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
     // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든

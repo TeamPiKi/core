@@ -1,7 +1,5 @@
 package com.depromeet.piki.tournament.service
 
-import com.depromeet.piki.image.domain.PendingUploadContext
-import com.depromeet.piki.image.service.PendingUploadClaimer
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -11,6 +9,7 @@ import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
@@ -34,7 +33,6 @@ class TournamentItemPersistenceService(
     private val tournamentItemRepository: TournamentItemRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val pendingUploadClaimer: PendingUploadClaimer,
     private val eventPublisher: ApplicationEventPublisher,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
@@ -88,7 +86,7 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
         link: ProductLink,
     ): PersistedTournamentItem {
-        validateAndCheckCapacity(userId, tournamentId, 1)
+        rejectIfWontFit(userId, tournamentId, 1)
         // 공유 정체성(#825 활성화) — 이미 아는 링크 모양이면 기존 item 에 붙는다. 중복 검사도 정체성(itemId) 기준으로
         // 올라가, 같은 상품을 다른 링크 모양(단축 vs 정식)으로 담는 중복까지 잡는다. 처음 보는 모양은 raw link 비교(기존)로 남긴다.
         val shared = itemSharingService.resolveExistingItem(link)
@@ -105,9 +103,14 @@ class TournamentItemPersistenceService(
             existingByItemId[attachment.item.getId()]?.let {
                 throw AlreadyRegisteredException.tournamentItem(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM, it)
             }
-            val tournamentItem = tournamentItemRepository.saveAll(
-                listOf(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = attachment.snapshot.getId())),
-            ).first()
+            val tournamentItem =
+                tournamentItemRepository.save(
+                    TournamentItem(
+                        tournamentId = tournamentId,
+                        userId = userId,
+                        snapshotId = attachment.snapshot.getId(),
+                    ),
+                )
             eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
             return PersistedTournamentItem(
                 itemId = attachment.item.getId(),
@@ -115,67 +118,57 @@ class TournamentItemPersistenceService(
                 tournamentItemId = tournamentItem.getId(),
             )
         }
-        val item = itemRepository.save(Item(link))
-        // 처음 보는 링크 모양 — 원본 입력을 별칭(item_links)으로 기록한다(위시 등록과 같은 결).
-        itemIdentityRecorder.recordRegistrationAlias(item)
-        // 저장한 snapshot 의 id 를 tournament_item 에 고정한다. 출전 시점 버전이 박혀 위시 갱신과 격리된다.
-        // URL 경로는 PENDING 으로 작업 큐에 적재하고 디스패처가 집어 파싱한다 — 워커를 여기서 트리거하지 않는다.
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId()))
-        val tournamentItem = tournamentItemRepository.saveAll(
-            listOf(
-                TournamentItem(
-                    tournamentId = tournamentId,
-                    userId = userId,
-                    snapshotId = snapshot.getId(),
-                ),
-            ),
-        ).first()
-        // 링크 1개 추가. 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
+        val persisted = persistNew(Item(link), userId, tournamentId)
         eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
-        return PersistedTournamentItem(itemId = item.getId(), snapshotId = snapshot.getId(), tournamentItemId = tournamentItem.getId())
+        return persisted
     }
 
-    // 이미지 등록 — confirm 또는 폴링 백스톱이 "업로드 확인된" key 들을 등록한다. pending_uploads 를 FOR UPDATE 로
-    // 잠가 삭제(claim)하고, claim 에 성공한 TOURNAMENT 매핑(해당 user·tournament)만 적재한다 — confirm·폴링이 같은 key 를
-    // 다퉈도 삭제는 한쪽만 성공하므로 중복 등록되지 않는다(멱등). 다른 맥락 매핑은 걸러낸다.
     @Transactional
-    fun registerClaimedImages(
-        imageKeys: List<String>,
+    fun rejectIfWontFit(
         userId: UUID,
         tournamentId: Long,
-    ): List<PersistedTournamentItem> {
-        val claimedKeys = pendingUploadClaimer.claim(imageKeys, PendingUploadContext.TOURNAMENT, userId, tournamentId)
-        if (claimedKeys.isEmpty()) return emptyList()
-        return persistImageItemsInternal(userId, tournamentId, claimedKeys)
+        incomingCount: Int,
+    ) {
+        validateAddable(lockTournament(tournamentId), userId, tournamentId)
+        if (!hasRoomFor(tournamentId, incomingCount)) throw TournamentException.tooManyTournamentItems()
     }
 
-    // 이미지 key 들을 정원 검증(FOR UPDATE) 후 item → PENDING snapshot → tournament_item 으로 배치 적재하는 공통 코어.
-    // 트랜잭션은 호출부가 연다 — self-invocation 으로 트랜잭션이 무력화되지 않게 private.
-    private fun persistImageItemsInternal(
+    // 토너먼트 행 잠금이 첫 문장이어야 한다. 같은 토너먼트로 오는 confirm 이 여기서 줄을 서므로, 뒤이은 사전 필터가
+    // 앞선 confirm 이 커밋한 item 을 정확히 본다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이 잠금 전에 고정된다.
+    @Transactional
+    fun registerImages(
+        imageKeys: List<String>,
         userId: UUID,
         tournamentId: Long,
-        imageKeys: List<String>,
     ): List<PersistedTournamentItem> {
-        validateAndCheckCapacity(userId, tournamentId, imageKeys.size)
-        val items = itemRepository.saveAll(imageKeys.map { Item(sourceImageKey = it) })
-        // snapshot·tournament_item 을 itemId·snapshotId 로 되짚어 saveAll 반환 순서에 의존하지 않는다(순서 보존은 공식 계약이 아니다 — WishPersistenceService 와 동일).
-        // 입력(imageKey)이 durable 하므로 link 경로처럼 PENDING 으로 적재한다 — 디스패처가 집어 파싱한다.
-        val snapshotByItemId = itemSnapshotRepository.saveAll(items.map { ItemSnapshot.pending(it.getId()) }).associateBy { it.itemId }
-        val tournamentItemBySnapshotId =
-            tournamentItemRepository
-                .saveAll(
-                    items.map { item ->
-                        val snapshot = snapshotByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-                        TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId())
-                    },
-                ).associateBy { it.snapshotId }
-        // 이미지를 여러 장 한 번에 올려도 "아이템이 추가됐다"는 사실은 1건이라 이벤트도 1회만 발행한다.
+        validateAddable(lockTournament(tournamentId), userId, tournamentId)
+        val registered = itemRepository.findBySourceImageKeys(imageKeys).mapNotNull { it.sourceImageKey }.toSet()
+        val newKeys = imageKeys - registered
+        if (newKeys.isEmpty()) return emptyList()
+        if (!hasRoomFor(tournamentId, newKeys.size)) throw TournamentException.tooManyTournamentItems()
+        val persisted = newKeys.map { persistNew(Item(sourceImageKey = it), userId, tournamentId) }
         eventPublisher.publishEvent(TournamentItemAdded(tournamentId = tournamentId, actorId = userId))
-        return items.map { item ->
-            val snapshot = snapshotByItemId[item.getId()] ?: error("item ${item.getId()} 의 snapshot 이 없다")
-            val tournamentItem = tournamentItemBySnapshotId[snapshot.getId()] ?: error("snapshot ${snapshot.getId()} 의 tournament_item 이 없다")
-            PersistedTournamentItem(itemId = item.getId(), snapshotId = tournamentItem.snapshotId, tournamentItemId = tournamentItem.getId())
-        }
+        return persisted
+    }
+
+    // 새 정체성을 세우는 절차. 링크·이미지 두 경로가 이 한 벌을 쓴다.
+    private fun persistNew(
+        item: Item,
+        userId: UUID,
+        tournamentId: Long,
+    ): PersistedTournamentItem {
+        val saved = itemRepository.save(item)
+        itemIdentityRecorder.recordRegistrationAlias(saved)
+        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId()))
+        val tournamentItem =
+            tournamentItemRepository.save(
+                TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
+            )
+        return PersistedTournamentItem(
+            itemId = saved.getId(),
+            snapshotId = snapshot.getId(),
+            tournamentItemId = tournamentItem.getId(),
+        )
     }
 
     // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 출전 pin 을 옮긴다(repinSnapshot).
@@ -263,7 +256,7 @@ class TournamentItemPersistenceService(
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.
-    // 정원은 동시성 때문에 persist 의 FOR UPDATE(validateAndCheckCapacity)가 최종 판정하므로 여기선 제외한다(다층 방어).
+    // 정원은 동시성 때문에 persist 의 FOR UPDATE(rejectIfWontFit)가 최종 판정하므로 여기선 제외한다(다층 방어).
     @Transactional(readOnly = true)
     fun verifyCanAddItems(
         userId: UUID,
@@ -272,31 +265,28 @@ class TournamentItemPersistenceService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
+        validateAddable(tournament, userId, tournamentId)
+    }
+
+    private fun lockTournament(tournamentId: Long): Tournament =
+        tournamentRepository.findTournamentByIdForUpdate(tournamentId)
+            ?: throw TournamentException.notFoundTournament()
+
+    private fun validateAddable(
+        tournament: Tournament,
+        userId: UUID,
+        tournamentId: Long,
+    ) {
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
     }
 
-    private fun validateAndCheckCapacity(
-        userId: UUID,
+    private fun hasRoomFor(
         tournamentId: Long,
         incomingCount: Int,
-    ) {
-        val tournament =
-            tournamentRepository.findTournamentByIdForUpdate(tournamentId)
-                ?: throw TournamentException.notFoundTournament()
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
-        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
-            ?: throw TournamentException.forbiddenTournament()
-        val existingCount = tournamentItemRepository.countByTournamentId(tournamentId)
-        if (existingCount + incomingCount >
-            TOURNAMENT_MAX_ITEM_COUNT
-        ) {
-            throw TournamentException.tooManyTournamentItems()
-        }
-    }
+    ): Boolean = tournamentItemRepository.countByTournamentId(tournamentId) + incomingCount <= TOURNAMENT_MAX_ITEM_COUNT
 }
 
 // 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.

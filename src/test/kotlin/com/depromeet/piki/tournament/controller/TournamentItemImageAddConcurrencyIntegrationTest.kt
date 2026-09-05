@@ -166,20 +166,10 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
             // 상한을 넘겨 저장된 것이 없어야 한다 — 성공한 5장까지만 반영되어 정확히 32개다.
             assertEquals(32, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
-
-            // 거부된 요청은 트랜잭션이 통째로 롤백돼 claim(pending_uploads 삭제)도 되살아난다 — 그 5장은 폴링이
-            // 다시 집을 수 있도록 매핑이 남아 있어야 하고, 성공분 5장만 소비돼 사라진다.
-            val remainingPending = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM pending_uploads WHERE tournament_id = ?",
-                Int::class.java,
-                tournamentId,
-            )
-            assertEquals(5, remainingPending, "거부된 요청의 pending 매핑은 롤백으로 남아야 한다")
         } finally {
             stubImageParsingWorker.enabled = previousWorkerEnabled
             // @Transactional 자동 롤백이 없으므로 직접 지운다. 추가된 item/snapshot 은 id 하한으로 일괄 정리한다.
             if (tournamentId != 0L) {
-                jdbcTemplate.update("DELETE FROM pending_uploads WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)

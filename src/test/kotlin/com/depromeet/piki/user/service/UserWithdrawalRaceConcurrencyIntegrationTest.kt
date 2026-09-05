@@ -1,53 +1,43 @@
 package com.depromeet.piki.user.service
 
-import com.depromeet.piki.image.domain.PendingUpload
-import com.depromeet.piki.image.repository.PendingUploadRepository
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.fcm.service.UserDeviceService
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
-import com.depromeet.piki.wishlist.service.WishPersistenceService
-import com.depromeet.piki.wishlist.service.dto.WishWithItem
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
-import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 // 활성 유저 확인과 쓰기 사이의 check-then-use 경합 차단(#776) 검증.
-// 탈퇴(WithdrawalService.withdraw) cascade 와 유저 쓰기 경로(프로필 수정·지연 이미지 등록·FCM 등록)가
+// 탈퇴(WithdrawalService.withdraw) cascade 와 유저 쓰기 경로(프로필 수정·FCM 등록)가
 // user 행 비관락(findActiveByIdForUpdate)으로 직렬화돼, 어느 인터리빙이든 종단 상태가 tombstone 이고
-// 죽은 유저를 가리키는 자식 행이 남지 않음(계정 부활·PII 복원·orphan 자식 금지)을 확인한다.
+// 죽은 유저를 가리키는 자식 행이 남지 않음(계정 부활·PII 복원·orphan 기기 금지)을 확인한다.
 //
 // @Transactional 자동 롤백을 쓰지 않는다 — 탈퇴와 쓰기가 별도 트랜잭션으로 각자 커밋돼야 race 가 재현되기 때문.
 // 만든 행은 매 반복 끝에서 userId 로 직접 정리한다. (CLAUDE.md "동시성·시간 의존 통합 테스트" 분류)
 //
 // 이 동시성 테스트들은 fix 의 negative control 이다: 잠금(FOR UPDATE)을 걷어내 findActiveById(비잠금)로
 // 되돌리면, updateProfile 이 stale 스냅샷(deletedAt=null)을 full-column UPDATE 로 되써 계정이 부활하거나
-// (deleted_at NULL + 원본 닉네임), 탈퇴 후 wish/기기 행이 orphan 으로 남아 아래 단언들이 깨진다.
+// (deleted_at NULL + 원본 닉네임), 탈퇴 후 기기 행이 orphan 으로 남아 아래 단언들이 깨진다.
 class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var userService: UserService
 
     @Autowired private lateinit var withdrawalService: WithdrawalService
 
-    @Autowired private lateinit var wishPersistenceService: WishPersistenceService
-
     @Autowired private lateinit var userDeviceService: UserDeviceService
 
     @Autowired private lateinit var userDeviceRepository: UserDeviceRepository
-
-    @Autowired private lateinit var pendingUploadRepository: PendingUploadRepository
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -65,16 +55,6 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
     private fun userRow(userId: UUID): UserRow =
         jdbcTemplate.queryForMap("SELECT deleted_at, nickname FROM users WHERE id = ?", uuidToBytes(userId))
             .let { UserRow(it["deleted_at"], it["nickname"] as String) }
-
-    private fun wishCount(userId: UUID): Int =
-        jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId)) ?: 0
-
-    private fun pendingUploadCount(imageKey: String): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM pending_uploads WHERE image_key = ?",
-            Int::class.java,
-            imageKey,
-        ) ?: 0
 
     // 탈퇴와 writeAction 을 동시 출발시키고 둘 다 끝날 때까지 기다린다. 예외는 흡수(어느 쪽이 이기든 유효한 결과).
     private fun raceWithWithdrawal(
@@ -129,46 +109,6 @@ class UserWithdrawalRaceConcurrencyIntegrationTest : IntegrationTestSupport() {
     // URL 등록(persist) 경합은 더는 덮지 않는다. 그 경로의 user 행 락을 걷어냈기 때문이다 - 창을 좁힐 뿐
     // 파싱 실행·한도 차감·고아 snapshot 은 어차피 못 막아, 보장 범위가 실제보다 넓게 읽히는 값이 컸다.
     // 탈퇴 후 남는 wish 행은 배치 정리로 푼다.
-
-    // 지연 이미지 등록(스케줄러·confirm 공용)만 예외 대신 boolean(isActiveForUpdate)으로 조용히 skip 하는 유일한 분기라
-    // 별도로 덮는다 — 회귀해도 예외가 안 터져 발견이 늦는 지점이다. 두 계약을 동시에 본다:
-    // (1) tombstone 유저의 wish 가 남지 않는다, (2) claim 은 어느 인터리빙에서도 소비된다(롤백으로 되살아나면 스케줄러 무한 재시도).
-    @Test
-    fun `탈퇴와 지연 이미지 등록이 동시에 일어나도 wish 가 남지 않고 claim 은 소비된다`() {
-        val pool = Executors.newFixedThreadPool(2)
-        try {
-            repeat(ITERATIONS) { i ->
-                val userId = newMember()
-                val imageKey = "items/raw/${UUID.randomUUID()}.jpg"
-                val expiresAt = LocalDateTime.now().plusMinutes(10)
-                pendingUploadRepository.saveAll(listOf(PendingUpload.wish(imageKey, userId, expiresAt)))
-                val created = AtomicReference<List<WishWithItem>>(emptyList())
-                try {
-                    raceWithWithdrawal(pool, userId) {
-                        created.set(wishPersistenceService.registerClaimedImages(listOf(imageKey), userId))
-                    }
-                    val row = userRow(userId)
-                    assertNotNull(row.deletedAt, "탈퇴가 관여했으면 종단은 tombstone (iter=$i)")
-                    assertEquals(0, wishCount(userId), "tombstone 유저의 wish 행이 남으면 안 된다 (iter=$i)")
-                    assertEquals(
-                        0,
-                        pendingUploadCount(imageKey),
-                        "claim 은 어느 쪽이 이기든 소비돼야 한다 — 되살아나면 스케줄러가 무한 재시도한다 (iter=$i)",
-                    )
-                } finally {
-                    created.get().forEach {
-                        jdbcTemplate.update("DELETE FROM wishes WHERE snapshot_id = ?", it.snapshot.getId())
-                        jdbcTemplate.update("DELETE FROM item_snapshots WHERE id = ?", it.snapshot.getId())
-                        jdbcTemplate.update("DELETE FROM items WHERE id = ?", it.item.getId())
-                    }
-                    jdbcTemplate.update("DELETE FROM pending_uploads WHERE image_key = ?", imageKey)
-                    cleanupUser(userId)
-                }
-            }
-        } finally {
-            pool.shutdownNow()
-        }
-    }
 
     @Test
     fun `탈퇴와 FCM 등록이 동시에 일어나도 종단적으로 tombstone 유저의 기기가 남지 않는다`() {

@@ -5,6 +5,8 @@ import com.depromeet.piki.tournament.domain.TournamentItem
 import java.util.UUID
 
 interface TournamentItemRepository {
+    fun save(item: TournamentItem): TournamentItem
+
     fun saveAll(items: List<TournamentItem>): List<TournamentItem>
 
     fun countByTournamentId(tournamentId: Long): Int
