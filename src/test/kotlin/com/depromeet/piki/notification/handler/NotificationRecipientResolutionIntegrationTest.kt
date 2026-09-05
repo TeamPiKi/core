@@ -63,6 +63,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Autowired private lateinit var parsingRecoveredHandler: ItemParsingRecoveredHandler
 
+    @Autowired private lateinit var refreshCompletedHandler: ItemRefreshCompletedHandler
+
+    @Autowired private lateinit var refreshFailedHandler: ItemRefreshFailedHandler
+
     @Autowired private lateinit var tournamentUserRepository: TournamentUserRepository
 
     @Autowired private lateinit var tournamentItemRepository: TournamentItemRepository
@@ -588,6 +592,137 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         assertEquals("나이키", stuck.first().title)
     }
 
+    // ── 새로고침 알림(#1036): 등록과 갱신을 타입으로 가른다 ──────────────────────────
+
+    @Test
+    fun `새로고침 수신자 - 버전보다 먼저 있던 위시 주인이고, 그 버전으로 등록한 사람과 배타적이다`() {
+        // 등록/새로고침을 적는 컬럼은 없다. 위시는 늘 이미 있는 버전을 가리키며 태어나므로 위시가 버전보다 먼저라는
+        // 사실 자체가 "생성 후 포인터를 이 버전으로 스왑했다" 를 뜻하고, 그 스왑은 새로고침뿐이다.
+        val itemId = 5001L
+        val refresher = UUID.randomUUID()
+        val registrant = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId)))
+        val newVersion = snapshotIdFor(itemId)
+        refresherWish.swapSnapshot(newVersion)
+        wishRepository.save(Wish(registrant, newVersion))
+
+        val event = ItemParsingCompleted(itemId, newVersion)
+
+        assertEquals(setOf(refresher), refreshCompletedHandler.resolveRecipients(event))
+        assertEquals(setOf(registrant), parsingCompletedHandler.resolveRecipients(event))
+    }
+
+    @Test
+    fun `새로고침 실패 수신자도 같은 규칙이고 등록 실패 알림과 배타적이다`() {
+        val itemId = 5002L
+        val refresher = UUID.randomUUID()
+        val registrant = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId)))
+        val newVersion = snapshotIdFor(itemId)
+        refresherWish.swapSnapshot(newVersion)
+        wishRepository.save(Wish(registrant, newVersion))
+
+        val event = ItemParsingFailed(itemId, newVersion)
+
+        assertEquals(setOf(refresher), refreshFailedHandler.resolveRecipients(event))
+        assertEquals(setOf(registrant), parsingFailedHandler.resolveRecipients(event))
+    }
+
+    @Test
+    fun `새로고침 수신자 - 남의 진행 중 버전에 합류한 새로고침도 새로고침이고, 합류한 등록은 등록이다 (#826 negative control)`() {
+        // 진행 중 합류는 두 방향이 있다. 새로고침이 남의 진행 중 버전으로 스왑하면 위시가 그 버전보다 먼저라 새로고침,
+        // 등록이 남의 진행 중 버전에 붙으면 위시가 그 버전보다 뒤라 등록이다. 버전을 누가 만들었는지는 판정에 안 끼어든다.
+        val itemId = 5003L
+        val refresher = UUID.randomUUID()
+        val joiner = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId)))
+        val othersInProgress = snapshotIdFor(itemId)
+        refresherWish.swapSnapshot(othersInProgress)
+        wishRepository.save(Wish(joiner, othersInProgress))
+
+        val event = ItemParsingCompleted(itemId, othersInProgress)
+
+        assertEquals(setOf(refresher), refreshCompletedHandler.resolveRecipients(event))
+        assertEquals(setOf(joiner), parsingCompletedHandler.resolveRecipients(event))
+    }
+
+    @Test
+    fun `새로고침 수신자 - 토너먼트 등록자는 새로고침이 없어 등록 완료 쪽에 남는다`() {
+        val itemId = 5004L
+        val adder = UUID.randomUUID()
+        val snapshotId = snapshotIdFor(itemId)
+        tournamentItemRepository.saveAll(listOf(TournamentItem(1500L, adder, snapshotId)))
+
+        val event = ItemParsingCompleted(itemId, snapshotId)
+
+        assertTrue(refreshCompletedHandler.resolveRecipients(event).isEmpty())
+        assertEquals(setOf(adder), parsingCompletedHandler.resolveRecipients(event))
+    }
+
+    @Test
+    fun `새로고침 라우팅 - 자기 wishId 를 실은 WISH 다`() {
+        val itemId = 5005L
+        val refresher = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId)))
+        val newVersion = snapshotIdFor(itemId)
+        refresherWish.swapSnapshot(newVersion)
+
+        val completed =
+            refreshCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, newVersion), setOf(refresher))
+        val failed =
+            refreshFailedHandler.resolveRecipientContexts(ItemParsingFailed(itemId, newVersion), setOf(refresher))
+
+        assertEquals(NotificationRouting.Wish(refresherWish.getId()), completed.getValue(refresher).routing)
+        assertEquals(NotificationRouting.Wish(refresherWish.getId()), failed.getValue(refresher).routing)
+        // 새로고침 알림은 출처별 문구가 없다 — 수신자별 변수를 싣지 않는다(문구는 템플릿이 소유).
+        assertTrue(completed.getValue(refresher).variables.isEmpty())
+        assertTrue(failed.getValue(refresher).variables.isEmpty())
+    }
+
+    @Test
+    fun `dispatch 가 한 파싱 완료 이벤트를 새로고침 완료와 등록 완료로 갈라 저장한다 - end-to-end`() {
+        // 새로고침을 등록 완료 핸들러가 그대로 삼키던 이전 구조에선 새로고침한 사람이 ITEM_PARSING_COMPLETED 를 받아
+        // 이 단언이 반드시 깨진다.
+        val itemId = 5100L
+        val refresher = UUID.randomUUID()
+        val registrant = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId, name = "옛 이름")))
+        val newVersion = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
+        refresherWish.swapSnapshot(newVersion)
+        val registrantWishId = wishRepository.save(Wish(registrant, newVersion)).getId()
+
+        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, newVersion))
+
+        val refreshed = notificationRepository.findPage(refresher, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_REFRESH_COMPLETED), refreshed.map { it.type })
+        assertEquals(NotificationRouting.Wish(refresherWish.getId()), refreshed.first().routing())
+        // 제목은 새로고침으로 방금 성공한 버전의 이름 — 새로고침된 카드에서 보게 되는 그 값이다.
+        assertEquals("나이키", refreshed.first().title)
+
+        val registered = notificationRepository.findPage(registrant, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_COMPLETED), registered.map { it.type })
+        assertEquals(NotificationRouting.Wish(registrantWishId), registered.first().routing())
+    }
+
+    @Test
+    fun `dispatch 가 한 파싱 실패 이벤트를 새로고침 실패와 등록 실패로 갈라 저장한다 - end-to-end`() {
+        val itemId = 5101L
+        val refresher = UUID.randomUUID()
+        val registrant = UUID.randomUUID()
+        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId)))
+        val newVersion = snapshotWithStatus(itemId, ItemStatus.FAILED)
+        refresherWish.swapSnapshot(newVersion)
+        wishRepository.save(Wish(registrant, newVersion))
+
+        notificationDispatcher.dispatch(ItemParsingFailed(itemId, newVersion))
+
+        val refreshed = notificationRepository.findPage(refresher, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_REFRESH_FAILED), refreshed.map { it.type })
+        assertEquals(NotificationRouting.Wish(refresherWish.getId()), refreshed.first().routing())
+        val registered = notificationRepository.findPage(registrant, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_FAILED), registered.map { it.type })
+    }
+
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────
 
     @Test
@@ -688,6 +823,12 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         status: ItemStatus,
         name: String? = null,
     ): Long = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = name, status = status)).getId()
+
+    // 새로고침 알림(#1036) fixture — 새로고침은 성공(READY) 항목에서만 시작되므로, 새로고침 전 위시가 가리키던 버전이다.
+    private fun readyVersion(
+        itemId: Long,
+        name: String = "나이키",
+    ): Long = snapshotWithStatus(itemId, ItemStatus.READY, name = name)
 
     private var inviteSeq = 0
 

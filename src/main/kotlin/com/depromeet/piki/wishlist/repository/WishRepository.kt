@@ -51,6 +51,9 @@ interface WishRepository {
 
     fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView>
 
+    // 이 버전으로 새로고침한(생성 후 포인터를 스왑한) 위시의 (주인, 위시 id) — 새로고침 알림 수신자 역조회(#1036).
+    fun findOwnerWishIdsRefreshedToSnapshot(snapshotId: Long): List<WishOwnerView>
+
     // 이 아이템의 지정 상태 버전을 가리키는 위시의 (주인, 위시 id) — 해소 통지 수신자 역조회(#1028).
     fun findOwnerWishIdsByItemIdAndStatuses(
         itemId: Long,

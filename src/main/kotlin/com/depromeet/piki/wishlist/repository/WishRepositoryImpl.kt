@@ -55,6 +55,9 @@ class WishRepositoryImpl(
     override fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView> =
         wishJpaRepository.findOwnerWishIdsBySnapshotId(snapshotId)
 
+    override fun findOwnerWishIdsRefreshedToSnapshot(snapshotId: Long): List<WishOwnerView> =
+        wishJpaRepository.findOwnerWishIdsRefreshedToSnapshot(snapshotId)
+
     override fun findOwnerWishIdsByItemIdAndStatuses(
         itemId: Long,
         statuses: Collection<ItemStatus>,

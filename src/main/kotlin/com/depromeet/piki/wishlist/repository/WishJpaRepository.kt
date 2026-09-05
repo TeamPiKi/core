@@ -32,6 +32,18 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("snapshotId") snapshotId: Long,
     ): List<WishOwnerView>
 
+    // 이 버전으로 **새로고침한** 위시의 (주인, 위시 id)(#1036). 위시는 생성 시 이미 있는 버전을 가리키므로
+    // (등록·공유 합류 모두 snapshot 저장 뒤 wish 저장) 위시가 버전보다 먼저 만들어졌다는 것은 곧 생성 후 포인터가
+    // 그 버전으로 스왑됐다는 뜻이고, 파싱 대상 버전으로 스왑하는 경로는 새로고침(진행 중 합류 포함)뿐이다.
+    // 등록/새로고침을 구분하는 컬럼을 두지 않고 이 시각 비교로 판정한다. created_at 은 DATETIME(6).
+    @Query(
+        "SELECT w.userId AS userId, w.id AS wishId FROM Wish w, ItemSnapshot s " +
+            "WHERE w.snapshotId = s.id AND s.id = :snapshotId AND w.createdAt < s.createdAt AND w.deletedAt IS NULL",
+    )
+    fun findOwnerWishIdsRefreshedToSnapshot(
+        @Param("snapshotId") snapshotId: Long,
+    ): List<WishOwnerView>
+
     // 위와 같은 (주인, 위시 id) 이되 **버전이 아니라 아이템** 으로 찾고, 지정한 상태의 버전을 가리키는 위시만 고른다(#1028).
     // 해소 통지의 수신자는 "방금 성공한 그 버전" 이 아니라 **다른 미완성 버전**(FAILED·INCOMPLETE)에 멈춰 있던 사람이라,
     // 버전 역조회로는 닿지 않는다. 어떤 상태를 미완성으로 볼지는 알림 쪽(ItemParsingRecipientResolver)이 정한다.

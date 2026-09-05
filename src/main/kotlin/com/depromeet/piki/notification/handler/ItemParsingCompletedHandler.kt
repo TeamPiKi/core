@@ -9,7 +9,8 @@ import org.springframework.stereotype.Component
 import java.util.UUID
 
 // 아이템 파싱 완료 알림. 수신자는 snapshotId(버전)를 역조회해 위시 주인 ∪ 토너먼트 참가자로 모은다
-// (ItemParsingRecipientResolver, 실패·미완 알림과 공유).
+// (ItemParsingRecipientResolver, 실패·미완 알림과 공유). 단 그 버전으로 **새로고침한** 위시 주인은 뺀다 — 같은 사실이
+// ITEM_REFRESH_COMPLETED(#1036)로 따로 가고, 둘은 수신자가 배타적이다(ItemRefreshCompletedHandler).
 //
 // 문구는 title=아이템 이름 / body=상태 로 나뉜다(#913). OS 푸시 제목은 줄바꿈 없이 뒤가 잘려서, 이름과 상태를 한
 // 줄에 담으면 이름이 길 때 정작 무슨 일인지가 사라진다. 이름만 제목에 두면 잘려도 잃는 게 없고, body 는 두 줄까지
@@ -27,7 +28,8 @@ class ItemParsingCompletedHandler(
 ) : NotificationEventHandler<ItemParsingCompleted>(NotificationType.ITEM_PARSING_COMPLETED) {
     override fun resolveRefId(event: ItemParsingCompleted): Long = event.itemId
 
-    override fun resolveRecipients(event: ItemParsingCompleted): Set<UUID> = recipientResolver.resolve(event.snapshotId)
+    override fun resolveRecipients(event: ItemParsingCompleted): Set<UUID> =
+        recipientResolver.resolveRegistered(event.snapshotId)
 
     // title 변수 itemName 은 전 수신자 공유 — 같은 아이템이라 동일하다. (버전이 없거나 이름이 비면 기본값, best-effort)
     override fun resolveActorContext(event: ItemParsingCompleted): ActorContext =
