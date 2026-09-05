@@ -532,8 +532,12 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Test
     fun `해소 통지 수신자 - 진행 중이거나 옛 READY 를 가리키는 사람은 제외된다 (negative control)`() {
-        // 진행 중인 사람은 곧 자기 결과 알림을 받고, 옛 READY 를 가리키는 사람은 이미 값을 보고 있다 —
-        // 둘 다 "해소" 라 부를 것이 없다. 상태를 안 가리고 item 으로만 역조회하면 이 단언이 깨진다.
+        // 옛 READY 는 흔한 실제 케이스다 — 남이 새로고침해 새 성공본을 만들면 나는 옛 성공본을 가리킨 채 남는다.
+        // 이미 값을 보고 있으니 "해소" 라 부를 것이 없다. 상태를 안 가리고 item 으로만 역조회하면 여기서 깨진다.
+        //
+        // 진행 중은 순차 흐름에선 도달 불가능하다(등록·새로고침 둘 다 진행 중이 있으면 합류하므로 item 당 하나로
+        // 수렴하고, 그 하나가 성공한 것이 이 이벤트다). 새로고침이 item 행 락을 안 잡아 생기는 경합 창만 남아,
+        // 여기선 그 창에서도 상태 화이트리스트가 버티는지를 함께 못 박는다.
         val itemId = 4002L
         val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
         wishRepository.save(Wish(UUID.randomUUID(), snapshotIdFor(itemId)))

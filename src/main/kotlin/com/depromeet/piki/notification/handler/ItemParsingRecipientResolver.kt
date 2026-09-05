@@ -68,8 +68,13 @@ class ItemParsingRecipientResolver(
     }
 
     companion object {
-        // "아직 사람 손이 필요한 상태" — 이 버전을 가리키고 있으면 카드가 비어 있다. 진행 중(PENDING·PROCESSING)은
-        // 곧 자기 결과 알림을 받으므로 제외하고, 옛 READY 를 가리키는 사람도 이미 값을 보고 있어 제외된다.
+        // "아직 사람 손이 필요한 상태" — 이 버전을 가리키고 있으면 카드가 비어 있다. 남이 새로고침해 새 성공본이
+        // 생겼는데 나는 옛 READY 를 가리키는 경우가 제외되는 것이 이 목록의 실질적 역할이다(이미 값을 보고 있다).
+        //
+        // 진행 중(PENDING·PROCESSING)이 빠진 것은 사실상 도달 불가능한 상태에 대한 방어다. 기존 item 에 새 PENDING 을
+        // 만드는 길은 공유 등록과 새로고침 둘뿐이고 둘 다 진행 중이 있으면 합류하므로, 한 item 의 진행 중은 하나로
+        // 수렴하고 그 하나가 성공한 것이 이 이벤트다. 다만 새로고침은 item 행 락을 잡지 않아(wish 행 락) 등록과
+        // 동시에 돌면 진행 중이 둘 생길 수 있다 — 상태 화이트리스트라 그 창에서도 옳게 동작한다.
         private val UNRESOLVED_STATUSES = listOf(ItemStatus.FAILED, ItemStatus.INCOMPLETE)
     }
 }
