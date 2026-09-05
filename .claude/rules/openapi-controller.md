@@ -16,9 +16,9 @@ paths: ["src/main/**/*Api.kt", "src/main/**/*Controller.kt", "src/main/**/*ApiEx
 - 새 엔드포인트 추가 / 시그니처 변경 시 인터페이스 + example 빈을 함께 갱신한다. 한쪽만 바꾸면 OpenAPI 문서가 실제 응답과 어긋난다.
 - **예외 둘**: `AppleCallbackApi` 는 303 리다이렉트(`ResponseEntity<Void>`)라 `ApiResponseBody` 로 감싸지 않으므로 대응하는 `AppleCallbackApiExamples` 가 없다. `DevAuthApi` 는 별도 `*ApiExamples` 없이 그 example 이 `AuthApiExamples` 에 함께 등록된다.
 
-## 응답 전수 문서화 — 절대 규칙
+## 응답 전수 문서화
 
-**`*Api.kt` 의 각 메서드는 멀쩡한 클라이언트가 정상 요청으로 받을 수 있는 모든 응답을 빠짐없이 문서화한다 — 성공 응답과 모든 실패 응답 전부.** 위반을 허용하지 않는 절대 규칙이다. 성공 코드만 달거나 일부 실패를 생략하면 클라이언트가 docs 만 보고 에러 처리를 설계할 수 없다.
+**`*Api.kt` 의 각 메서드는 멀쩡한 클라이언트가 정상 요청으로 받을 수 있는 모든 응답을 빠짐없이 문서화한다 — 성공 응답과 모든 실패 응답 전부.** 성공 코드만 달거나 일부 실패를 생략하면 클라이언트가 docs 만 보고 에러 처리를 설계할 수 없다.
 
 **판단 기준은 `CLAUDE.md` 의 `## 도메인 예외 정책` 의 그 한 줄과 같다.**
 - 닿는다 → 계약 응답 → **문서화 대상**. 성공 2xx · 계약 실패 4xx · 외부 의존성 실패 5xx 전부.
@@ -34,7 +34,7 @@ paths: ["src/main/**/*Api.kt", "src/main/**/*Controller.kt", "src/main/**/*ApiEx
 
 3. **도메인 예외** (`*Exception.kt`) — 서비스·도메인에서 throw 되는 `HttpMappable` 커스텀 예외의 `httpStatus` 를 따른다. 400 / 403 / 404 / 409 등 예외마다 다르므로 실제 throw 지점을 추적한다.
 
-4. **외부 의존성 실패 5xx** — 외부 호출 경계(LLM · HTTP fetch · 결제 등 우리 바깥 의존성)가 던지는 `HttpMappable` 예외. 클라이언트 요청이 정상이어도 우리 밖의 의존성 때문에 떨어지므로 도달 가능한 계약 응답이며, 클라이언트가 재시도 등으로 처리해야 한다. 예: `GeminiApiException` → **502 Bad Gateway** (Gemini 링크 추출 · OCR 실패).
+4. **외부 의존성 실패 5xx** — 외부 호출 경계(LLM · HTTP fetch · 결제 등 우리 바깥 의존성)가 던지는 `HttpMappable` 예외. 클라이언트 요청이 정상이어도 우리 밖의 의존성 때문에 떨어지므로 도달 가능한 계약 응답이며, 클라이언트가 재시도 등으로 처리해야 한다. 예: `ImageStorageException` → **502 Bad Gateway** (S3 등 외부 스토리지 실패, `RETRYABLE` category 가 502 를 소유).
 
 5. **Bean Validation** — 요청 DTO 의 `@NotBlank` · `@Size` 등 위반은 `MethodArgumentNotValidException` → **400** 으로 매핑된다.
 
