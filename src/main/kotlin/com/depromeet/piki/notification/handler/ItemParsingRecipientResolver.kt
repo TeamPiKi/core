@@ -24,10 +24,30 @@ class ItemParsingRecipientResolver(
     private val tournamentItemRepository: TournamentItemRepository,
 ) {
     fun resolve(snapshotId: Long): Set<UUID> {
-        val wishOwners = wishRepository.findUserIdsBySnapshotId(snapshotId)
+        val wishOwners = wishRepository.findOwnerWishIdsBySnapshotId(snapshotId).map { it.userId }
         val tournamentAdders = tournamentItemRepository.findUserIdsBySnapshotId(snapshotId)
         return (wishOwners + tournamentAdders).toSet()
     }
+
+    // 위 집합에서 **새로고침한 사람** 을 뺀 등록 출처 수신자(#1036). 완료·실패 알림은 등록/새로고침으로 타입이 갈려
+    // 이쪽을 쓰고, 미완 알림은 갈리지 않아 resolve 그대로 쓴다. 한 사람이 위시를 새로고침하면서 같은 버전을
+    // 토너먼트에도 올린 경우는 WISH 우선 규칙과 같은 결로 새로고침 쪽이 가져간다.
+    fun resolveRegistered(snapshotId: Long): Set<UUID> {
+        val wishOwners = wishRepository.findOwnerWishIdsBySnapshotId(snapshotId)
+        val tournamentAdders = tournamentItemRepository.findUserIdsBySnapshotId(snapshotId)
+        val refreshers = wishOwners.filter { it.refreshed }.map { it.userId }
+        return (wishOwners.map { it.userId } + tournamentAdders).toSet() - refreshers.toSet()
+    }
+
+    // 새로고침 알림(#1036)의 수신자별 컨텍스트 — 그 버전으로 새로고침한 위시 주인(WishOwnerView.refreshed)에게
+    // 자기 위시(wishId) 라우팅. 등록 파싱과 수신자가 배타적인 근거는 그 플래그 하나다 — 등록·공유 합류로 태어난 위시는
+    // 버전보다 뒤라 refreshed 가 아니다. 새로고침은 위시에서만 일어나 라우팅은 항상 Wish(wishId) 고, 문구는 템플릿이
+    // 소유해 수신자별 변수는 없다. 완료·실패 두 핸들러가 수신자 도출(keys)과 컨텍스트 해석에 공유한다.
+    fun resolveRefreshContexts(snapshotId: Long): Map<UUID, RecipientContext> =
+        wishRepository
+            .findOwnerWishIdsBySnapshotId(snapshotId)
+            .filter { it.refreshed }
+            .associate { it.userId to RecipientContext(routing = NotificationRouting.Wish(it.wishId)) }
 
     // 파싱 알림의 딥링크 라우팅을 **수신자별로** 배치 해석한다(#933·#408·#576). 위시 주인 → Wish(그 유저의 wishId),
     // 토너먼트 등록자 → 자기 Tournament(tournamentId, tournamentItemId). 한 유저가 양쪽이면 WISH 우선 — 파싱은
@@ -46,7 +66,7 @@ class ItemParsingRecipientResolver(
     //
     // 두 알림의 수신자가 배타적인 것도 여기서 나온다: 성공한 버전을 가리키면 READY 라 이 조회에 안 걸리고,
     // 다른 미완성 버전을 가리키면 완료 알림의 버전 역조회에 안 걸린다. 본인이 새로고침해 성공한 경우는 포인터가
-    // 새 버전으로 옮겨 가 있어 자동으로 완료 알림 쪽이 된다 — "남 때문에" 를 판정하는 별도 플래그가 필요 없다.
+    // 새 버전으로 옮겨 가 있어 자동으로 새로고침 완료 알림(#1036) 쪽이 된다 — "남 때문에" 를 판정하는 별도 플래그가 필요 없다.
     fun resolveRecoveredRoutingsByItem(itemId: Long): Map<UUID, NotificationRouting> =
         routingsOf(
             wishRepository.findOwnerWishIdsByItemIdAndStatuses(itemId, UNRESOLVED_STATUSES),

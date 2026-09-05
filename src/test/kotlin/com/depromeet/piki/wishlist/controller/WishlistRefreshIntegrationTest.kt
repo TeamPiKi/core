@@ -334,9 +334,10 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `위시를 새로고침해 파싱이 완료되면 본인에게 완료 알림이 발행된다`() {
-        // refresh 도 등록과 동일한 markReady→ItemParsingCompleted 경로를 타므로, 갱신 완료 시 위시 주인(본인)에게
-        // 완료 알림(ITEM_PARSING_COMPLETED, 등록·갱신 공용 문구)이 발행된다. 그 발행을 end-to-end 로 고정한다.
+    fun `위시를 새로고침해 파싱이 완료되면 본인에게 새로고침 완료 알림이 발행된다`() {
+        // refresh 도 등록과 동일한 markReady→ItemParsingCompleted 경로를 타지만, 위시가 새 버전보다 먼저 있었다는
+        // 사실로 등록과 갈려(#1036) 위시 주인(본인)에게 ITEM_REFRESH_COMPLETED 가 발행되고 등록 완료 알림은 오지 않는다.
+        // 그 갈림을 실제 HTTP→디스패처→리스너 경로로 end-to-end 고정한다(수신자 해석 단위는 NotificationRecipientResolutionIntegrationTest).
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -353,12 +354,17 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
 
             await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            // 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
+            // 새로고침 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
             await().atMost(Duration.ofSeconds(5)).until {
                 notificationRepository
                     .findPage(userId, cursor = null, limit = 10)
-                    .any { it.type == NotificationType.ITEM_PARSING_COMPLETED }
+                    .any { it.type == NotificationType.ITEM_REFRESH_COMPLETED }
             }
+            // 등록 완료 알림은 오지 않는다 — 둘은 수신자가 배타적이다.
+            assertEquals(
+                listOf(NotificationType.ITEM_REFRESH_COMPLETED),
+                notificationRepository.findPage(userId, cursor = null, limit = 10).map { it.type },
+            )
         } finally {
             cleanup(userId)
         }

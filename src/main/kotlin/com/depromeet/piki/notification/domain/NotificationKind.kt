@@ -36,6 +36,10 @@ enum class NotificationKind {
                 NotificationType.ITEM_PARSING_INCOMPLETE,
                 NotificationType.ITEM_PARSING_FAILED,
                 NotificationType.ITEM_PARSING_RECOVERED,
+                // 새로고침 알림(#1036)은 위시에서만 발행돼 실질 WISH 지만, 라우팅 컬럼이 가리키는 출처를 따르는 규칙을
+                // 같이 타서 kind 와 payload 셰입이 어긋날 여지를 없앤다.
+                NotificationType.ITEM_REFRESH_COMPLETED,
+                NotificationType.ITEM_REFRESH_FAILED,
                 -> routingKind ?: WISH
 
                 NotificationType.ANNOUNCEMENT -> SYSTEM

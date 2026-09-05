@@ -177,11 +177,15 @@ data: {"type":"UNREAD_COUNT_CHANGED","unreadCount":1}
 | `TOURNAMENT_RESULT_READY` | `TOURNAMENT` | 주최자가 ROOT 완료(결과 나옴) | `참여하신 {주최자}님의 토너먼트 결과가 나왔어요` | **ROOT 토너먼트 id** | 없음 | 참여자 (주최자 제외) |
 | `ITEM_PARSING_COMPLETED` | 출처에 따라 `WISH` \| `TOURNAMENT` | 내 상품 정보 추출 성공 | `상품 정보가 저장됐어요` | **itemId** | `TOURNAMENT` 출처면 있음 | 본인(위시 주인/등록자) |
 | `ITEM_PARSING_FAILED` | 출처에 따라 `WISH` \| `TOURNAMENT` | 내 상품 정보 추출 실패 | `상품 정보를 가져오지 못했어요` | **itemId** | `TOURNAMENT` 출처면 있음 | 본인(위시 주인/등록자) |
+| `ITEM_REFRESH_COMPLETED` | `WISH` | 내 위시 새로고침(재추출) 성공 | `{아이템 이름}` (+ body `최신 상품 정보로 새로고침했어요`) | **itemId** | 없음 (`wishId` 있음) | 새로고침한 본인 |
+| `ITEM_REFRESH_FAILED` | `WISH` | 내 위시 새로고침(재추출) 실패 | `새로고침에 실패했어요` (+ body `기존 상품 정보는 그대로 남아 있어요`) | **itemId** | 없음 (`wishId` 있음) | 새로고침한 본인 |
 | `ANNOUNCEMENT` | `SYSTEM` | 전체 공지(관리자, 후속) | (관리자 입력) | **공지 id/0** | 없음 | 토큰 보유 유저(후속) |
 
 > `title` 문구는 서버 템플릿에서 렌더된 값이라 바뀔 수 있다. 클라이언트는 **문구가 아니라 `type` 으로 분기**할 것.
 
 > `kind` 는 파싱 알림(`ITEM_PARSING_*`)만 발행 출처에 따라 갈린다 — 같은 `type` 이 위시 등록·토너먼트 추가 두 플로우에서 발행되기 때문. 나머지 타입은 위 표의 값 하나로 고정이다.
+
+> **등록과 새로고침은 `type` 으로 갈린다.** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 `ITEM_PARSING_*` 이 아니라 `ITEM_REFRESH_COMPLETED` / `ITEM_REFRESH_FAILED` 로 온다. 새로고침은 위시에서만 일어나므로 `kind` 는 항상 `WISH` 고 `wishId` 로 위시 상세에 간다. 일부 필드만 채워진 결과는 갈리지 않는다: 새로고침이든 등록이든 `ITEM_PARSING_INCOMPLETE` 로 오고, 카드는 일부만 빈 상태로 수기를 기다린다. 새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로 값을 지우지 않는다.
 
 ### 파싱 알림(`ITEM_PARSING_*`)의 출처별 라우팅
 
@@ -273,6 +277,11 @@ es.addEventListener("notification", (e) => {
       // 파싱 알림에 한해 출처(kind)로 분기 — refId(itemId)는 이동에 직접 쓰지 않는다.
       if (n.kind === "TOURNAMENT") goToTournamentItem(n.tournamentId, n.tournamentItemId); // 입장 후 그 아이템 지목
       else goToArchiveWish();  // kind === "WISH" → /archive/wish
+      break;
+    case "ITEM_REFRESH_COMPLETED":
+    case "ITEM_REFRESH_FAILED":
+      // 새로고침 결과는 위시 전용 — kind 분기 없이 wishId 로 그 위시 상세에 간다.
+      goToWishDetail(n.wishId);
       break;
   }
   showToast(n.title);

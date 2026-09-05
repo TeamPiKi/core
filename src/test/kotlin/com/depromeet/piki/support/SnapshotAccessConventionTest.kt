@@ -23,6 +23,8 @@ class SnapshotAccessConventionTest {
             "notification/handler/ItemParsingIncompleteHandler.kt" to "버전 자체 — 위와 동일",
             "notification/handler/ItemParsingRecoveredHandler.kt" to
                 "버전 자체 — 방금 성공한 그 버전의 이름. 수신자의 표시값이 곧 이 버전이라(최신 기계 READY) 파생과 결과가 같다",
+            "notification/handler/ItemRefreshCompletedHandler.kt" to
+                "버전 자체 — 새로고침으로 방금 성공한 그 버전의 이름. 수신자의 포인터가 곧 이 버전이라 파생과 결과가 같다",
             "notification/handler/TournamentItemDeletedHandler.kt" to "버전 자체 — 삭제된 출전 카드가 보던 버전의 이름",
             "tournament/service/TournamentService.kt" to
                 "정체성(itemId 추출)·표시값 입력. 출전 판정은 requireEntryEligible(표시값)이 진다",

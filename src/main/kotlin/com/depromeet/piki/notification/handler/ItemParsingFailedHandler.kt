@@ -7,7 +7,8 @@ import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.stereotype.Component
 import java.util.UUID
 
-// 아이템 파싱 실패 알림. 수신자 규칙은 완료 알림과 동일 — snapshotId 역조회로 위시 주인 ∪ 토너먼트 참가자.
+// 아이템 파싱 실패 알림. 수신자 규칙은 완료 알림과 동일 — snapshotId 역조회로 위시 주인 ∪ 토너먼트 참가자에서
+// 새로고침한 위시 주인을 뺀 집합(ITEM_REFRESH_FAILED #1036 로 따로 간다).
 // (ItemParsingRecipientResolver 를 완료·미완 핸들러와 공유해 동일 로직 중복을 없앤다.)
 //
 // 라우팅은 수신자별로 갈린다(#933) — 각 수신자가 자기 위시(wishId)/자기 토너먼트 딥링크를 받는다. 다만 body 문구는
@@ -24,7 +25,8 @@ class ItemParsingFailedHandler(
 ) : NotificationEventHandler<ItemParsingFailed>(NotificationType.ITEM_PARSING_FAILED) {
     override fun resolveRefId(event: ItemParsingFailed): Long = event.itemId
 
-    override fun resolveRecipients(event: ItemParsingFailed): Set<UUID> = recipientResolver.resolve(event.snapshotId)
+    override fun resolveRecipients(event: ItemParsingFailed): Set<UUID> =
+        recipientResolver.resolveRegistered(event.snapshotId)
 
     override fun resolveActorContext(event: ItemParsingFailed): ActorContext =
         ActorContext(variables = mapOf("itemName" to ItemDisplayName.of(itemSnapshotRepository.findById(event.snapshotId)?.name)))

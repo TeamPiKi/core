@@ -32,6 +32,10 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemParsingRecoveredHandler: ItemParsingRecoveredHandler
 
+    @Autowired private lateinit var itemRefreshCompletedHandler: ItemRefreshCompletedHandler
+
+    @Autowired private lateinit var itemRefreshFailedHandler: ItemRefreshFailedHandler
+
     @Autowired private lateinit var tournamentItemAddedHandler: TournamentItemAddedHandler
 
     @Autowired private lateinit var tournamentItemDeletedHandler: TournamentItemDeletedHandler
@@ -54,6 +58,9 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         assertEquals(ItemParsingFailed::class, itemParsingFailedHandler.eventType)
         // 해소 통지는 완료와 **같은 이벤트** 를 구독한다 — 한 사실에서 수신자가 배타적인 두 알림이 갈린다(#1028).
         assertEquals(ItemParsingCompleted::class, itemParsingRecoveredHandler.eventType)
+        // 새로고침 알림(#1036)도 등록 완료·실패와 **같은 이벤트** 를 구독한다 — 위시 생성시각으로 수신자가 배타적으로 갈린다.
+        assertEquals(ItemParsingCompleted::class, itemRefreshCompletedHandler.eventType)
+        assertEquals(ItemParsingFailed::class, itemRefreshFailedHandler.eventType)
         assertEquals(TournamentItemAdded::class, tournamentItemAddedHandler.eventType)
         assertEquals(TournamentItemDeleted::class, tournamentItemDeletedHandler.eventType)
         assertEquals(TournamentJoined::class, tournamentJoinedHandler.eventType)
@@ -65,6 +72,8 @@ class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
         assertEquals(NotificationType.ITEM_PARSING_COMPLETED, itemParsingCompletedHandler.notificationType)
         assertEquals(NotificationType.ITEM_PARSING_FAILED, itemParsingFailedHandler.notificationType)
         assertEquals(NotificationType.ITEM_PARSING_RECOVERED, itemParsingRecoveredHandler.notificationType)
+        assertEquals(NotificationType.ITEM_REFRESH_COMPLETED, itemRefreshCompletedHandler.notificationType)
+        assertEquals(NotificationType.ITEM_REFRESH_FAILED, itemRefreshFailedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_ITEM_ADDED, tournamentItemAddedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_ITEM_DELETED, tournamentItemDeletedHandler.notificationType)
         assertEquals(NotificationType.TOURNAMENT_JOINED, tournamentJoinedHandler.notificationType)

@@ -37,6 +37,9 @@ class NotificationPushPolicySeedIntegrationTest : IntegrationTestSupport() {
             // 실패로 멈춰 있던 카드가 남의 성공으로 채워진 해소 통지(#1028) — 낡은 실패 알림을 이미 받아 둔
             // 사람에게 가므로, 앱이 닫혀 있어도 알려야 어긋남이 그대로 남지 않는다.
             NotificationType.ITEM_PARSING_RECOVERED to true,
+            // 새로고침 결과(#1036)는 등록 완료·실패와 같은 결 — 사용자가 직접 누른 재추출의 끝을 앱이 닫혀 있어도 알린다.
+            NotificationType.ITEM_REFRESH_COMPLETED to true,
+            NotificationType.ITEM_REFRESH_FAILED to true,
             NotificationType.ANNOUNCEMENT to true,
         )
 
