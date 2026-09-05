@@ -13,7 +13,7 @@ resource "aws_eip" "app" {
   depends_on = [aws_internet_gateway.main]
 
   tags = {
-    Name = "team3-prod-app-eip"
+    Name = "piki-prod-app-eip"
   }
 }
 
@@ -33,7 +33,7 @@ resource "aws_eip" "dev_app" {
   depends_on = [aws_internet_gateway.main]
 
   tags = {
-    Name = "team3-dev-app-eip"
+    Name = "piki-dev-app-eip"
   }
 }
 

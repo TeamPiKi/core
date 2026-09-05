@@ -50,22 +50,22 @@ else
 fi
 grep -q '^/swapfile2[[:space:]]' /etc/fstab || echo '/swapfile2 none swap sw 0 0' | sudo tee -a /etc/fstab
 
-# 2) redis — RefreshToken 저장소(RedisRefreshTokenStore). 없을 때만 named 볼륨(team3-redis-data)으로 기동.
+# 2) redis — RefreshToken 저장소(RedisRefreshTokenStore). 없을 때만 named 볼륨(piki-redis-data)으로 기동.
 #    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
 #    이후 컨테이너 재생성에도 refresh token 이 유지된다.
-if docker ps -a --format '{{.Names}}' | grep -qx 'team3-redis'; then
-  echo "[redis] team3-redis 이미 존재 — skip"
+if docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
+  echo "[redis] piki-redis 이미 존재 — skip"
 else
-  echo "[redis] team3-redis named 볼륨으로 기동"
+  echo "[redis] piki-redis named 볼륨으로 기동"
   docker run -d \
-    --name team3-redis \
+    --name piki-redis \
     --restart unless-stopped \
     -p 172.17.0.1:6379:6379 \
-    -v team3-redis-data:/data \
+    -v piki-redis-data:/data \
     redis:7-alpine
 fi
 
-# 3) mysql (dev 전용) — prod 는 RDS 를 쓰므로 dev 일 때만 로컬 컨테이너로 기동.
+# 3) mysql (dev 전용) — prod 는 전용 DB 박스(provision-db.sh)를 쓰므로 dev 일 때만 로컬 컨테이너로 기동.
 #    redis 와 동일하게 named 볼륨 + 있으면 skip 패턴. 초기 자격증명은 앱이 쓰는 것과 같은 SSM 값에서 읽는다.
 #    포트는 172.17.0.1:3306 바인딩 — 앱 컨테이너가 docker bridge 를 통해 접근하고 외부엔 노출 안 함.
 if [ "${ENVIRONMENT:-}" = "dev" ]; then
@@ -87,15 +87,15 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
   # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
   # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
   # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
-  if docker ps -a --format '{{.Names}}' | grep -qx 'team3-mysql'; then
-    echo "[mysql] team3-mysql 이미 존재 — skip"
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql'; then
+    echo "[mysql] piki-mysql 이미 존재 — skip"
   else
-    echo "[mysql] team3-mysql named 볼륨으로 기동"
+    echo "[mysql] piki-mysql named 볼륨으로 기동"
     docker run -d \
-      --name team3-mysql \
+      --name piki-mysql \
       --restart unless-stopped \
       -p 172.17.0.1:3306:3306 \
-      -v team3-mysql-data:/var/lib/mysql \
+      -v piki-mysql-data:/var/lib/mysql \
       -e MYSQL_DATABASE="${DB_NAME}" \
       -e MYSQL_USER="${DB_USERNAME}" \
       -e MYSQL_PASSWORD="${DB_PASSWORD}" \
@@ -108,7 +108,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
   # ping 으로 준비를 확인해 race 를 제거한다. ping 은 서버가 응답하면 성공(인증과 무관).
   echo "[mysql] readiness 대기"
   for i in $(seq 1 30); do
-    if docker exec team3-mysql mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
+    if docker exec piki-mysql mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
       echo "[mysql] ready (attempt $i)"
       break
     fi
@@ -140,15 +140,6 @@ fi
 #    필수 5종(metrics·logs URL/USER, token) 실패는 즉시 중단, traces 2종은 빈 값 허용 — 블록이 판정한다.
 #    수집 대상은 컨테이너 label opt-in(piki.observe 등, contracts/observability.md) — 서비스 열거 regex 와
 #    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
-# 전환기 잔재 정리: 구 수집기(team3-alloy)·구 config 경로가 남으면 새 수집기(piki-alloy, 블록이 기동)와
-# 이중 수집된다. 없으면 no-op 라 유지 비용이 없고, 전 환경 개편 배포가 한 바퀴 돈 뒤 제거 가능.
-# 제거 실패는 조용히 넘기지 않는다 - 새 수집기가 다른 이름이라 docker run 의 이름 충돌 안전망이 없어,
-# rm 이 조용히 실패하면 두 수집기가 같은 신호를 이중 전송하는 상태가 소리 없이 성립하기 때문.
-if docker inspect team3-alloy >/dev/null 2>&1; then
-  timeout 30 docker rm -f team3-alloy \
-    || { echo "[alloy] 구 수집기(team3-alloy) 제거 실패 - 이중 수집 방지를 위해 중단"; exit 1; }
-fi
-sudo rm -rf /etc/alloy-team3
 bash /tmp/piki-deploy/alloy/provision-alloy-ssm.sh \
   --config /tmp/piki-deploy/alloy/config.alloy \
   --name piki-alloy \

@@ -115,12 +115,6 @@ variable "db_engine_version" {
   default = "8.4.8"
 }
 
-variable "db_name" {
-  description = "초기 생성할 데이터베이스 이름"
-  type        = string
-  default     = "team3"
-}
-
 variable "db_username" {
   description = "RDS 마스터 사용자 이름"
   type        = string

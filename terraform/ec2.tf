@@ -59,7 +59,7 @@ resource "aws_instance" "app" {
   }
 
   tags = {
-    Name = "team3-prod-app"
+    Name = "piki-prod-app"
   }
 }
 
@@ -115,7 +115,7 @@ resource "aws_instance" "dev_app" {
   }
 
   tags = {
-    Name = "team3-dev-app"
+    Name = "piki-dev-app"
   }
 }
 
