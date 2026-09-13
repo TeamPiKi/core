@@ -95,18 +95,47 @@ class SocialAccountService(
     // email 은 부가 정보라 upsert 실패(락 경합·일시 DB 오류 등)가 로그인 자체를 막아선 안 된다 — updateEmail 은
     // REQUIRED 새 트랜잭션(호출자 비트랜잭션)이라 실패해도 rollback-only 오염 없이 흡수한다. 실패는 warn 으로
     // 남기고(email 값은 PII 라 미기록) 기존 user 로그인은 그대로 성공시킨다.
-    // 승계 실패가 로그인을 막지 않게 감싼다(#1081). 승계는 로그인의 부수 작업이고, 여기서 던지면
-    // "로그인 자체가 안 되는" 더 나쁜 실패가 된다 — 실패해도 지금까지의 동작(게스트 플레이 유실)으로 돌아갈 뿐이다.
-    // 대신 warn 으로 관측한다. 빈발하면 승계 로직 자체를 의심해야 하는 신호다.
+    // 게스트 플레이 승계(#1081). 실패가 로그인을 막지 않게 감싸되, 참여 경합은 재시도로 되살린다.
+    //
+    // 왜 재시도인가: 승계는 "회원이 이미 자리 잡은 방" 을 미리 조회해 건너뛰는데, 그 조회와 이관 사이에 회원이
+    // 어느 방에 참여하면 uk_tournament_users 위반으로 트랜잭션이 통째로 롤백된다. 충돌한 방 하나 때문에
+    // 무관한 토너먼트까지 전부 못 옮기고, 로그인 뒤엔 게스트 토큰을 다시 안 보내므로 **재시도 기회가 없어
+    // 그 한 번이 영구 유실**이 된다. 재조회하면 새로 생긴 회원 행이 점유 목록에 잡혀 그 방은 건너뛰게 되므로
+    // 재시도는 반드시 수렴한다.
+    //
+    // 락으로 막지 않은 이유: 대상 토너먼트를 전부 잠그면 그 방의 정상 참여·시작·매치 기록이 남의 로그인 뒤에서
+    // 대기한다. 무관한 사용자에게 확실한 지연을 지우는 대신, 드문 경합을 재시도로 흡수하는 쪽을 택했다.
+    // 이 클래스가 비트랜잭션인 덕에 catch 후 재시도가 성립한다(소셜 선점 충돌·닉네임 충돌과 같은 구조).
     private fun takeOverGuestPlay(
         guestId: UUID,
         memberId: UUID,
         provider: String,
     ) {
-        runCatching { guestPlayTakeover.takeOver(guestId, memberId) }
-            .onFailure { e ->
+        repeat(TAKEOVER_MAX_ATTEMPTS) { attempt ->
+            try {
+                guestPlayTakeover.takeOver(guestId, memberId)
+                return
+            } catch (e: DataIntegrityViolationException) {
+                // 승계 도중 회원이 그 방에 참여해 유니크 충돌. 재조회하면 건너뛰기로 갈린다.
+                log.warn(
+                    "게스트 플레이 승계 중 참여 경합 → 재시도 guestId={} memberId={} provider={} 시도={}",
+                    guestId,
+                    memberId,
+                    provider,
+                    attempt + 1,
+                )
+            } catch (e: Exception) {
+                // 경합이 아닌 실패는 재시도해도 같은 결과다. 로그인은 완료시키고 관측만 남긴다.
                 log.warn("게스트 플레이 승계 실패 guestId={} memberId={} provider={}", guestId, memberId, provider, e)
+                return
             }
+        }
+        log.warn(
+            "게스트 플레이 승계 재시도 소진 — 플레이가 넘어오지 않았다 guestId={} memberId={} provider={}",
+            guestId,
+            memberId,
+            provider,
+        )
     }
 
     private fun loginExisting(userInfo: OAuthUserInfo): User? {
@@ -129,5 +158,9 @@ class SocialAccountService(
         // 소셜 가입 닉네임 충돌 재시도 횟수. 게스트(UserService.GUEST_NICKNAME_MAX_ATTEMPTS)와 같은 값으로 둔다 —
         // 같은 race 를 같은 방식으로 흡수하므로 두 경로의 내구성이 달라질 이유가 없다.
         private const val SOCIAL_NICKNAME_MAX_ATTEMPTS = 5
+
+        // 승계 중 참여 경합 재시도 횟수(#1081). 재조회 한 번이면 충돌한 방이 건너뛰기로 갈려 수렴하므로 2회면 충분하고,
+        // 여유 1회만 더 둔다. 로그인 경로라 길게 매달리는 것이 사용자에게 더 나쁘다.
+        private const val TAKEOVER_MAX_ATTEMPTS = 3
     }
 }
