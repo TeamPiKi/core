@@ -9,7 +9,7 @@ interface ImageParsingWorker {
     // 워커는 이 값으로 조건부 +1 을 시도해 소유권을 얻고, 그렇게 얻은 토큰(expectedAttempt + 1)을 박동·전이에 실어 좀비 결과를 걸러낸다.
     fun parse(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         imageKey: String,
         expectedAttempt: Int,
     )

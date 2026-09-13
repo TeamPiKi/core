@@ -6,8 +6,11 @@ import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.remote.ProductExtractorException
@@ -38,6 +41,8 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var parsingOwnership: ParsingOwnership
 
+    @Autowired private lateinit var parsingHeartbeat: ParsingHeartbeat
+
     @Autowired private lateinit var asyncItemParsingWorker: AsyncItemParsingWorker
 
     @Autowired private lateinit var asyncImageParsingWorker: AsyncImageParsingWorker
@@ -52,31 +57,32 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
+    @Autowired private lateinit var parseRequestRepository: ParseRequestRepository
+
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
     @Test
     fun `claim attempt 와 어긋난 결과는 markExtracted 가 전이하지 않고 폐기한다`() {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/fence-${UUID.randomUUID()}")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
-        val snapshotId = snapshot.getId()
+        val queued = enqueueProcessing(item.getId()) // attempt 0 (집기는 예산 미소모)
         try {
             // 소유권이 다른 시도로 넘어가 attempt 2 가 된 상황을 DB 에 반영.
-            jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
+            takeOverOwnership(queued.requestId)
 
             // 옛 시도(attempt 1)의 결과로 markExtracted → fencing 으로 전이 없이 폐기(좀비 결과).
             val settled =
                 itemParsingService.markExtracted(
-                    snapshotId,
+                    queued.requestId,
                     ProductSnapshot(link = item.link, name = "좀비결과", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/z.png"),
                     expectedAttempt = 1,
                 )
 
             // 반환값이 계약이다 — 호출부(특히 이미지 워커의 raw 회수)가 이 값으로 갈리므로, DB 상태와 함께 고정한다.
             assertNull(settled, "좀비 결과는 '적용되지 않음'(null)으로 보고돼야 한다")
-            val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
+            val reloaded = itemSnapshotRepository.findById(queued.snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.PROCESSING, reloaded.status, "좀비 결과는 READY 로 전이하면 안 된다")
             assertNull(reloaded.name, "좀비 결과의 추출값이 반영되면 안 된다")
-            assertEquals(2, reloaded.attemptCount, "소유권을 쥔 새 시도(attempt 2)는 그대로여야 한다")
+            assertEquals(2, attemptOf(queued.requestId), "소유권을 쥔 새 시도(attempt 2)는 그대로여야 한다")
         } finally {
             deleteItem(item.getId())
         }
@@ -86,19 +92,19 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     fun `소유권 attempt 가 일치하면 markExtracted 가 정상 전이한다`() {
         // fencing 대조군 — 어긋날 때만 막고, 일치하면 그대로 전이함을 함께 고정한다. 워커를 태우지 않으므로 stub 세팅은 불필요하다.
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/match-${UUID.randomUUID()}")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
-        val snapshotId = snapshot.getId()
+        val queued = enqueueProcessing(item.getId()) // attempt 0 (집기는 예산 미소모)
         try {
-            val attempt = parsingOwnership.acquire(snapshotId, 0) ?: error("소유권 획득 실패")
+            // 실제 흐름대로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
+            val attempt = parsingOwnership.acquire(queued.requestId, 0) ?: error("소유권 획득 실패")
             val settled =
                 itemParsingService.markExtracted(
-                    snapshotId,
+                    queued.requestId,
                     ProductSnapshot(link = item.link, name = "정상결과", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/ok.png"),
                     expectedAttempt = attempt,
                 )
 
             assertEquals(ItemStatus.READY, settled, "소유권이 일치하면 확정된 상태(READY)로 보고돼야 한다")
-            val reloaded = itemSnapshotRepository.findById(snapshotId) ?: error("행 없음")
+            val reloaded = itemSnapshotRepository.findById(queued.snapshotId) ?: error("행 없음")
             assertEquals(ItemStatus.READY, reloaded.status)
             assertEquals("정상결과", reloaded.name)
         } finally {
@@ -114,8 +120,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             ProductSnapshot(link = it, name = "호출됨", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/c.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/guard-${UUID.randomUUID()}")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
-        val snapshotId = snapshot.getId()
+        val queued = enqueueProcessing(item.getId()) // attempt 0 (집기는 예산 미소모)
 
         // 워커의 스킵은 부수효과가 없어 로그가 유일한 완료 신호다 — 그 로그로 완료를 관측해 "ext 미호출"을 결정적으로 단언한다.
         val workerLogger = LoggerFactory.getLogger(AsyncItemParsingWorker::class.java) as Logger
@@ -123,18 +128,21 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         workerLogger.addAppender(appender)
         try {
             // 소유권이 넘어가 attempt 2 가 된 뒤, 옛 시도(attempt 1)의 지목이 뒤늦게 워커에 도착한 상황.
-            jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
+            takeOverOwnership(queued.requestId)
 
             // 옛 시도(attempt 1)로 워커 실행 — 시작 가드의 fenced touch 가 0행이라 ext 호출 없이 스킵해야 한다.
-            asyncItemParsingWorker.parse(item.getId(), snapshotId, item.link ?: error("link 없음"), 1)
+            asyncItemParsingWorker.parse(item.getId(), queued.requestId, item.link ?: error("link 없음"), 1)
 
             // 스킵 완료(로그)를 기다린 뒤 ext 가 한 번도 안 불렸음을 단언한다. list 동시 접근 CME 는 ignoreExceptions 로 흡수.
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
-                appender.list.any { it.formattedMessage.contains("item.parse.skip") && it.formattedMessage.contains("snapshot=$snapshotId") }
+                appender.list.any {
+                    it.formattedMessage.contains("item.parse.skip") &&
+                        it.formattedMessage.contains("request=${queued.requestId}")
+                }
             }
             assertEquals(0, extCalls.get(), "소유권을 잃은 좀비 워커는 ext 를 호출하면 안 된다")
             // 소유권을 쥔 attempt 2 는 여전히 PROCESSING (좀비가 아무 전이도 안 함).
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(snapshotId)?.status)
+            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(queued.snapshotId)?.status)
         } finally {
             workerLogger.detachAppender(appender)
             deleteItem(item.getId())
@@ -147,29 +155,35 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         // raw 를 회수해버린다 — 재클레임된 새 시도가 재실행할 원본을 잃는 데이터 유실 경로다. 그 회귀를 고정한다.
         val imageKey = "items/raw/zombie-${UUID.randomUUID()}.jpg"
         val item = itemRepository.save(Item(sourceImageKey = imageKey))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
-        val snapshotId = snapshot.getId()
+        val queued = enqueueProcessing(item.getId()) // attempt 0 (집기는 예산 미소모)
 
         // 추출이 도는 사이 소유권이 다른 시도로 넘어간(attempt 2) 상황을 stub 안에서 재현한다 — 시작 시 획득은 성공하고
         // (0 -> 1) 결과 전이 시점에만 소유권이 어긋나는, 죽은 줄 알고 되살린 뒤 옛 워커가 뒤늦게 돌아온 상황의 재현이다.
         stubImageSnapshotExtractor.build = {
-            jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
+            takeOverOwnership(queued.requestId)
             StubImageSnapshotExtractor.defaultSnapshot()
         }
         val workerLogger = LoggerFactory.getLogger(AsyncImageParsingWorker::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         workerLogger.addAppender(appender)
         try {
-            asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 0)
+            asyncImageParsingWorker.parse(item.getId(), queued.requestId, imageKey, 0)
 
             // 좀비 폐기 로그가 유일한 완료 신호다(전이·회수를 둘 다 안 하므로 관측할 부수효과가 없다).
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
                 appender.list.any { it.formattedMessage.contains("item ${item.getId()} 이미지 좀비 결과") }
             }
             assertFalse(imageKey in stubImageStorage.deletedKeys, "좀비 워커가 raw 를 지우면 재클레임된 새 시도가 재실행할 원본을 잃는다")
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(snapshotId)?.status, "좀비는 전이도 하지 않아야 한다")
+            assertEquals(
+                ItemStatus.PROCESSING,
+                itemSnapshotRepository.findById(queued.snapshotId)?.status,
+                "좀비는 전이도 하지 않아야 한다",
+            )
         } finally {
             workerLogger.detachAppender(appender)
+            // 좀비 폐기 로그는 전이 트랜잭션 안에서 찍힌다 — 그 커밋 전에 정리하면 요청 행 락과 부딪쳐 정리가 타임아웃난다.
+            // 워커가 등록을 지우는 시점은 그 커밋 이후라, 이 대기가 안전한 정리 시점의 하한이다.
+            await().atMost(Duration.ofSeconds(5)).until { !parsingHeartbeat.isTracking(queued.requestId) }
             deleteItem(item.getId())
         }
     }
@@ -184,18 +198,28 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         // 예산이 소진된 행을 PENDING 으로 되돌리면 디스패처가 다시 집어 무한 재큐잉이 된다. 반납 경로도 되살림 경로와
         // 같은 상한 판정을 거치는지 고정한다.
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhaust-${UUID.randomUUID()}")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
-        val snapshotId = snapshot.getId()
+        val queued = enqueueProcessing(item.getId())
         // 마지막 실행 예산만 남긴 상태에서 진입시킨다 — 워커가 획득하며 +1 해 상한(MAX_ATTEMPTS)에 닿는다.
-        jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = ? WHERE id = ?", ItemParsingService.MAX_ATTEMPTS - 1, snapshotId)
+        jdbcTemplate.update(
+            "UPDATE parse_requests SET attempt_count = ? WHERE id = ?",
+            ItemParsingService.MAX_ATTEMPTS - 1,
+            queued.requestId,
+        )
         stubProductLinkExtractor.build = { throw ProductExtractorException.transientFailure(null) }
         try {
-            asyncItemParsingWorker.parse(item.getId(), snapshotId, item.link!!, ItemParsingService.MAX_ATTEMPTS - 1)
+            asyncItemParsingWorker.parse(
+                item.getId(),
+                queued.requestId,
+                item.link!!,
+                ItemParsingService.MAX_ATTEMPTS - 1,
+            )
 
-            await().atMost(Duration.ofSeconds(5)).until { itemSnapshotRepository.findById(snapshotId)?.status == ItemStatus.FAILED }
+            await().atMost(Duration.ofSeconds(5)).until {
+                itemSnapshotRepository.findById(queued.snapshotId)?.status == ItemStatus.FAILED
+            }
             assertEquals(
                 ItemParsingService.MAX_ATTEMPTS,
-                itemSnapshotRepository.findById(snapshotId)?.attemptCount,
+                attemptOf(queued.requestId),
                 "상한에 닿은 실행이므로 예산은 소진된 채 종결돼야 한다",
             )
         } finally {
@@ -203,8 +227,40 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         }
     }
 
+    // 요청 + 결과 버전 한 벌을 집힌 직후(PROCESSING, attempt 0)로 적재한다. 큐 상태는 요청 행에 있으므로 이후 조작도 거기서 한다.
+    private fun enqueueProcessing(itemId: Long): Queued {
+        val snapshot =
+            itemSnapshotRepository.save(
+                ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()).apply { markProcessing() },
+            )
+        val request =
+            parseRequestRepository.save(
+                ParseRequest(itemId, UUID.randomUUID(), ParseTrigger.REGISTER, snapshot.getId()).apply { claim() },
+            )
+        return Queued(request.getId(), snapshot.getId())
+    }
+
+    // 소유권이 다른 시도(attempt 2)로 넘어간 상황. heartbeat_at 을 now 로 함께 밀어 배경 recover 의 stale 스캔이 가로채지 않게 한다.
+    private fun takeOverOwnership(requestId: Long) {
+        jdbcTemplate.update(
+            "UPDATE parse_requests SET attempt_count = 2, heartbeat_at = ? WHERE id = ?",
+            LocalDateTime.now(),
+            requestId,
+        )
+    }
+
+    private fun attemptOf(requestId: Long): Int =
+        jdbcTemplate.queryForObject("SELECT attempt_count FROM parse_requests WHERE id = ?", Int::class.java, requestId)
+            ?: error("request $requestId 이 없다")
+
     private fun deleteItem(itemId: Long) {
+        jdbcTemplate.update("DELETE FROM parse_requests WHERE item_id = ?", itemId)
         jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
         jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
     }
+
+    private data class Queued(
+        val requestId: Long,
+        val snapshotId: Long,
+    )
 }

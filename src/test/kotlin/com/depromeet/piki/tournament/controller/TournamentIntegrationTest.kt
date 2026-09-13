@@ -5,8 +5,11 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.item.repository.ParseRequestJpaRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
@@ -95,6 +98,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
 
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
+
+    @Autowired private lateinit var parseRequestJpaRepository: ParseRequestJpaRepository
 
     @Autowired private lateinit var jwtProvider: JwtProvider
 
@@ -3215,6 +3220,18 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ),
         )
 
+    // 전이 API 는 작업 큐 행(요청)의 id 를 받는다(#1073 2단계). 등록 API 를 타지 않는 시딩이라 요청도 집힌 상태로 함께 심는다.
+    private fun claimedRequestFor(snapshot: ItemSnapshot): Long =
+        parseRequestJpaRepository
+            .save(
+                ParseRequest(
+                    itemId = snapshot.itemId,
+                    requestedBy = snapshot.createdBy ?: UUID.randomUUID(),
+                    triggerType = ParseTrigger.REGISTER,
+                    resultSnapshotId = snapshot.getId(),
+                ).apply { claim() },
+            ).getId()
+
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
     // 등록 API 를 타지 않고 행을 직접 심는다 — 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이고,
     // 등록 경로 자체(발급·확정)는 TournamentItemImagePresignedIntegrationTest 가 따로 덮는다.
@@ -3227,7 +3244,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            claimedRequestFor(snapshot),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
@@ -3245,7 +3262,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
         snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            claimedRequestFor(snapshot),
             // extractionMethod 를 실어야 source 가 SERVER 로 남는다 - 표시값 파생은 출처가 기계인 READY 만 후보로
             // 보므로, 이걸 빼면 status 만 READY 인 "출처 불명" 버전이 되어 파생에 안 걸린다(실제 추출은 항상 싣는다).
             ProductSnapshot(
@@ -3267,7 +3284,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
         snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            claimedRequestFor(snapshot),
             ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )

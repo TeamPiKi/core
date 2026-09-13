@@ -3,8 +3,11 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.item.repository.ParseRequestJpaRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
@@ -49,6 +52,8 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var tournamentHistoryJpaRepository: TournamentHistoryJpaRepository
 
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
+
+    @Autowired private lateinit var parseRequestJpaRepository: ParseRequestJpaRepository
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
@@ -471,12 +476,24 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
         snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            claimedRequestFor(snapshot),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
             expectedAttempt = 0,
         )
         return item.getId()
     }
+
+    // 전이 API 는 작업 큐 행(요청)의 id 를 받는다(#1073 2단계). 등록 API 를 타지 않는 시딩이라 요청도 집힌 상태로 함께 심는다.
+    private fun claimedRequestFor(snapshot: ItemSnapshot): Long =
+        parseRequestJpaRepository
+            .save(
+                ParseRequest(
+                    itemId = snapshot.itemId,
+                    requestedBy = snapshot.createdBy ?: UUID.randomUUID(),
+                    triggerType = ParseTrigger.REGISTER,
+                    resultSnapshotId = snapshot.getId(),
+                ).apply { claim() },
+            ).getId()
 
     private fun tournamentItemIdsOf(tournamentId: Long): List<Long> =
         tournamentItemJpaRepository

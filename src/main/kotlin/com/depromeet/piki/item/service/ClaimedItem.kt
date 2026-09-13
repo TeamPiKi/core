@@ -9,12 +9,14 @@ import com.depromeet.piki.product.domain.ProductLink
 sealed interface ClaimedItem {
     val itemId: Long
 
-    // 워커가 전이시킬 정확한 snapshot id. 갱신(5단계)으로 한 item 에 여러 버전이 공존하므로, 전이 대상을
-    // findLatestByItemId(최신)로 재해석하지 않고 claim 시점에 고정한 이 id 로 짚는다(stale·좀비 워커의 오전이 방지).
+    // 작업의 정체(#1073 2단계). 큐 상태·소유권·박동이 전부 이 요청에 달려 있어, 워커의 박동·전이가 이 id 로 짚는다.
+    val requestId: Long
+
+    // 워커가 결과를 채울 버전. 요청과 1:1 이지만 지목 시점에 고정해 나른다 — 결과 쓰기는 여전히 버전 테이블이다.
     val snapshotId: Long
 
     // 소유권 획득 시 기대하는 **직전** attemptCount (지목 시점의 현재값). 워커가 실행에 진입하며 이 값으로 조건부 +1 을
-    // 시도해, 성공하면 토큰 expectedAttempt + 1 을 갖는다. 같은 행에 두 워커가 지목돼도 하나만 성공한다.
+    // 시도해, 성공하면 토큰 expectedAttempt + 1 을 갖는다. 같은 요청에 두 워커가 지목돼도 하나만 성공한다.
     // 지목 자체는 attemptCount 를 건드리지 않으므로, 제출이 거부돼 실행이 0회면 예산도 소모되지 않는다.
     val expectedAttempt: Int
 }
@@ -22,6 +24,7 @@ sealed interface ClaimedItem {
 // URL 등록 경로의 지목 — 원본 link 로 파싱한다(AsyncItemParsingWorker).
 data class LinkClaim(
     override val itemId: Long,
+    override val requestId: Long,
     override val snapshotId: Long,
     val link: ProductLink,
     override val expectedAttempt: Int,
@@ -30,6 +33,7 @@ data class LinkClaim(
 // 이미지 등록 경로의 지목 — S3 raw object key 로 원본을 다시 읽어 파싱한다(AsyncImageParsingWorker).
 data class ImageClaim(
     override val itemId: Long,
+    override val requestId: Long,
     override val snapshotId: Long,
     val imageKey: String,
     override val expectedAttempt: Int,

@@ -6,7 +6,10 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.item.service.ParsingOwnership
@@ -60,6 +63,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
+
+    @Autowired
+    private lateinit var parseRequestRepository: ParseRequestRepository
 
     @Autowired
     private lateinit var wishRepository: WishRepository
@@ -380,11 +386,17 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
             val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
 
+            // 전이 대상인 v1 에만 요청 행을 둔다 — v2 는 이 테스트에서 전이하지 않으므로 큐에 없어도 된다.
+            val v1Request =
+                parseRequestRepository
+                    .save(ParseRequest(item.getId(), userId, ParseTrigger.REFRESH, v1.getId()).apply { claim() })
+                    .getId()
+
             // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
             // 집기는 attempt 를 안 올리므로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
-            val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
+            val attempt = parsingOwnership.acquire(v1Request, 0) ?: error("소유권 획득 실패")
             itemParsingService.markExtracted(
-                v1.getId(),
+                v1Request,
                 ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
                 expectedAttempt = attempt,
             )
@@ -395,6 +407,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(v2.getId())?.status)
             assertNull(itemSnapshotRepository.findById(v2.getId())?.name)
         } finally {
+            jdbcTemplate.update("DELETE FROM parse_requests WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))

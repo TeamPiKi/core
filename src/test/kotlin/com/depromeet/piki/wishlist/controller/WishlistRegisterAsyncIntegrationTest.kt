@@ -7,8 +7,11 @@ import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.item.service.AsyncItemParsingWorker
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
@@ -78,6 +81,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
+
+    @Autowired
+    private lateinit var parseRequestRepository: ParseRequestRepository
 
     @Autowired
     private lateinit var itemParsingScheduler: ItemParsingScheduler
@@ -322,7 +328,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
                 latestSnapshot(itemId)?.status == ItemStatus.FAILED
             }
-            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, attemptOf(itemId))
         } finally {
             cleanup(userId)
         }
@@ -410,16 +416,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             ProductSnapshot(link = it, name = "되살아난 상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/revive")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
+        val queued = enqueueProcessing(item.getId())
         val itemId = item.getId()
         try {
-            // 이 행의 updated_at 만 과거로 밀어 stale 로 만든다. 현실적 threshold(스케줄러의 now-60초)라
+            // 이 요청의 heartbeat_at 만 과거로 밀어 stale 로 만든다. 현실적 threshold(스케줄러의 now-60초)라
             // 다른 테스트가 막 만든 최근 PROCESSING 은 안 건드리고, 이 행만 대상이 된다(공유 컨텍스트 격리).
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
+            makeStale(queued.requestId)
 
             itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
@@ -427,10 +429,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 상품", recovered.name)
             // 실행은 되살림으로 시작한 이 한 번뿐이다 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았다.
-            assertEquals(1, recovered.attemptCount)
+            assertEquals(1, attemptOf(itemId))
         } finally {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+            deleteItem(itemId)
         }
     }
 
@@ -438,7 +439,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     fun `재시도 상한에 도달한 stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
         // 이미 상한(2회)까지 **실행**된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지).
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhausted")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
+        val queued = enqueueProcessing(item.getId())
         val itemId = item.getId()
         // 종결 구조화 로그(#902)는 알림 룰·대시보드가 소비하는 계약이라 라인 모양까지 여기서 고정한다.
         val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
@@ -446,9 +447,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         serviceLogger.addAppender(terminalLogs)
         try {
             jdbcTemplate.update(
-                "UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?",
+                "UPDATE parse_requests SET attempt_count = 2, heartbeat_at = ? WHERE id = ?",
                 LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
+                queued.requestId,
             )
 
             val exhaustedBefore = parseCount("failed", "retry_exhausted")
@@ -468,8 +469,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             )
         } finally {
             serviceLogger.detachAppender(terminalLogs)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+            deleteItem(itemId)
         }
     }
 
@@ -481,14 +481,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             ProductSnapshot(link = null, name = "되살아난 이미지", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
         }
         val item = itemRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
+        val queued = enqueueProcessing(item.getId())
         val itemId = item.getId()
         try {
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
+            makeStale(queued.requestId)
 
             itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
 
@@ -496,10 +492,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("되살아난 이미지", recovered.name)
             // link 경로와 대칭 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았으므로 실행은 한 번뿐이다.
-            assertEquals(1, recovered.attemptCount)
+            assertEquals(1, attemptOf(itemId))
         } finally {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+            deleteItem(itemId)
         }
     }
 
@@ -507,18 +502,14 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     fun `link·imageKey 둘 다 없는 orphan stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
         // 정상 흐름엔 없는 "입력 없는 행"(영속화 경로가 깨진 신호) — 되살릴 입력이 없으므로 attempt 와 무관하게 종결한다.
         val item = itemRepository.save(Item(link = null))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
+        val queued = enqueueProcessing(item.getId())
         val itemId = item.getId()
         // 종결 구조화 로그(#902) — url 없는(입력 부재) 종결도 같은 계약의 라인을 남긴다.
         val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
         val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
         serviceLogger.addAppender(terminalLogs)
         try {
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
+            makeStale(queued.requestId)
 
             val noSourceBefore = parseCount("failed", "no_source")
             itemParsingScheduler.recover() // 입력 없음 → FAILED
@@ -536,8 +527,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             )
         } finally {
             serviceLogger.detachAppender(terminalLogs)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+            deleteItem(itemId)
         }
     }
 
@@ -568,7 +558,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
                 latestSnapshot(itemId)?.status == ItemStatus.FAILED
             }
-            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
+            assertEquals(ItemParsingService.MAX_ATTEMPTS, attemptOf(itemId))
             assertTrue(
                 terminalLogs.list.any {
                     it.formattedMessage.contains("item.parse.result") &&
@@ -772,6 +762,47 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     // 표시값·상태는 item 의 활성(최신) snapshot 이 보유한다(4a). 폴링·단언이 이 snapshot 을 읽는다.
     private fun latestSnapshot(itemId: Long): ItemSnapshot? = itemSnapshotRepository.findLatestByItemId(itemId)
 
+    // 등록 API 를 거치지 않는 시딩 — 요청 + 결과 버전을 집힌 직후(PROCESSING, attempt 0)로 한 벌 만든다.
+    // 큐 상태(집기·attempt·박동)는 요청 행에 있으므로 버전만 만들면 스케줄러 눈에 아예 안 보인다.
+    private fun enqueueProcessing(itemId: Long): Queued {
+        val snapshot =
+            itemSnapshotRepository.save(
+                ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()).apply { markProcessing() },
+            )
+        val request =
+            parseRequestRepository.save(
+                ParseRequest(itemId, UUID.randomUUID(), ParseTrigger.REGISTER, snapshot.getId()).apply { claim() },
+            )
+        return Queued(request.getId(), snapshot.getId())
+    }
+
+    // 박동을 과거로 밀어 "프로세스가 죽어 박동이 끊긴" stale 상태를 만든다.
+    private fun makeStale(requestId: Long) {
+        jdbcTemplate.update(
+            "UPDATE parse_requests SET heartbeat_at = ? WHERE id = ?",
+            LocalDateTime.now().minusSeconds(120),
+            requestId,
+        )
+    }
+
+    // 실행 예산(attempt)은 요청 행이 쥔다 — 활성 버전을 만든 요청을 되짚어 읽는다.
+    private fun attemptOf(itemId: Long): Int {
+        val snapshotId = latestSnapshot(itemId)?.getId() ?: error("item $itemId 의 snapshot 이 없다")
+        return parseRequestRepository.findBySnapshotId(snapshotId)?.attemptCount
+            ?: error("snapshot $snapshotId 의 요청이 없다")
+    }
+
+    private fun deleteItem(itemId: Long) {
+        jdbcTemplate.update("DELETE FROM parse_requests WHERE item_id = ?", itemId)
+        jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
+        jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
+    }
+
+    private data class Queued(
+        val requestId: Long,
+        val snapshotId: Long,
+    )
+
     // item.parsing 카운터의 현재 값. 공유 컨텍스트라 누적되므로 호출 전후 증가분(delta)으로 단언한다(#468 패턴).
     private fun parseCount(
         result: String,
@@ -792,6 +823,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 별칭(item_links)도 함께 지운다 — 남기면 다음 실행에서 stale 별칭이 삭제된 item 을 가리켜
             // 공유 정체성 매칭(resolveExistingItem)이 null 로 빠지고 재등록 409 계약 검증이 어긋난다.
             jdbcTemplate.update("DELETE FROM item_links WHERE item_id IN (${it.joinToString(",")})")
+            jdbcTemplate.update("DELETE FROM parse_requests WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }
