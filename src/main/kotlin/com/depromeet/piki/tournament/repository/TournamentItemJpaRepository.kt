@@ -96,14 +96,16 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     )
 
     // 담은 사람만 갈아끼운다(#1081). 유니크 키가 (tournament_id, item_id)라 user_id 는 키에 없어 충돌하지 않는다.
+    // 참여가 회원에게 넘어간 방으로 범위를 좁힌다 — 넘어가지 않은 방까지 옮기면 그 방에 없는 사람이 아이템 주인이 된다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
         "UPDATE TournamentItem t SET t.userId = :toUserId, t.updatedAt = :now " +
-            "WHERE t.userId = :fromUserId AND t.deletedAt IS NULL",
+            "WHERE t.userId = :fromUserId AND t.tournamentId IN :tournamentIds AND t.deletedAt IS NULL",
     )
     fun transferToUser(
         @Param("fromUserId") fromUserId: UUID,
         @Param("toUserId") toUserId: UUID,
+        @Param("tournamentIds") tournamentIds: Collection<Long>,
         @Param("now") now: LocalDateTime,
     ): Int
 }

@@ -56,5 +56,11 @@ class TournamentItemRepositoryImpl(
     override fun transferToUser(
         fromUserId: UUID,
         toUserId: UUID,
-    ): Int = tournamentItemJpaRepository.transferToUser(fromUserId, toUserId, LocalDateTime.now())
+        tournamentIds: List<Long>,
+    ): Int =
+        if (tournamentIds.isEmpty()) {
+            0
+        } else {
+            tournamentItemJpaRepository.transferToUser(fromUserId, toUserId, tournamentIds, LocalDateTime.now())
+        }
 }

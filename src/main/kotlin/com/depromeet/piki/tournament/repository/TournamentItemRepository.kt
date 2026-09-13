@@ -45,5 +45,6 @@ interface TournamentItemRepository {
     fun transferToUser(
         fromUserId: UUID,
         toUserId: UUID,
+        tournamentIds: List<Long>,
     ): Int
 }

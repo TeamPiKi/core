@@ -61,13 +61,18 @@ class GuestPlayTakeover(
         val occupied = tournamentUserRepository.findTournamentIdsByUserIdIncludingDeleted(memberId).toSet()
         val (conflicting, movableTUs) = guestTUs.partition { it.tournamentId in occupied }
 
-        val moved = tournamentUserRepository.transferToUser(guestId, memberId, movableTUs.map { it.tournamentId })
+        val movable = movableTUs.map { it.tournamentId }
+        val moved = tournamentUserRepository.transferToUser(guestId, memberId, movable)
         // 충돌한 방 전부를 접지는 않는다 — 회원의 활성 참여 행이 있는 방만 접고, 접기 전에 방장 자리도 넘긴다.
         val foldable = foldableConflicts(conflicting, memberId)
         tournamentUserRepository.softDeleteByUserIdAndTournamentIds(guestId, foldable)
-        // 아이템은 건너뛴 토너먼트 것까지 함께 옮긴다. 담은 사람은 결국 같은 사람이고, 유니크 키에 user_id 가
-        // 없어 충돌하지 않는다. 남겨 두면 그 상품의 주인이 버려진 게스트를 가리켜 itemCount 가 어긋난다.
-        val movedItems = tournamentItemRepository.transferToUser(guestId, memberId)
+        // 아이템은 충돌해 접은 방 것까지 함께 옮겨 합친다. 게스트로 한 "선택"(플레이·히스토리)은 회원 행이 정본이라
+        // 버려지지만, 담아 둔 상품은 같은 사람이 담은 것이라 합쳐지는 게 맞다 — 회원 3개 + 게스트 2개면 5개가 된다.
+        // 유니크 키가 (tournament_id, item_id)라 같은 상품이 두 번 담길 수 없어 합쳐도 충돌하지 않는다.
+        //
+        // 접지 않고 남긴 방은 제외한다. 그 방의 참여는 여전히 게스트 것이라, 아이템만 옮기면 그 방에 없는 사람이
+        // 상품 주인이 되어 참가자별 개수가 어디에도 안 잡힌다.
+        val movedItems = tournamentItemRepository.transferToUser(guestId, memberId, movable + foldable)
 
         // 계정 생애 이벤트라 정상 흐름도 남긴다(승격 로그와 같은 결). 건너뛴 방이 있으면 함께 드러낸다.
         log.info(

@@ -703,6 +703,20 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"inviteCode":null}"""),
             ).andExpect(status().isOk)
+        // 충돌한 방에 회원 3개 · 게스트 2개를 담아 둔다. 선택(플레이)은 회원 행이 정본이라 버려지지만
+        // 담은 상품은 같은 사람이 담은 것이라 합쳐져야 한다 — 합치지 않으면 회원에게 3개만 보인다.
+        val memberId = UUID.fromString(firstLogin.at("/data/user/id").asString())
+        val guestId = UUID.fromString(guest.userId)
+        listOf(memberId to 9101L, memberId to 9102L, memberId to 9103L, guestId to 9104L, guestId to 9105L)
+            .forEach { (owner, itemId) ->
+                val snapshotId =
+                    itemSnapshotRepository
+                        .save(ItemSnapshot.pending(itemId = itemId, requestedBy = owner).apply { markProcessing() })
+                        .getId()
+                tournamentItemRepository.save(
+                    TournamentItem(tournamentId = sharedId, userId = owner, snapshotId = snapshotId),
+                )
+            }
         // 충돌과 무관한 게스트 전용 토너먼트도 하나 만든다.
         val guestOnlyId = createTournament(guest.accessToken, "게스트만 있는 방")
 
@@ -716,6 +730,9 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.isOwner").value(true))
             // 게스트 행이 접혀 참여자가 회원 하나만 남는다 — 안 접으면 같은 사람이 둘로 보인다.
             .andExpect(jsonPath("$.data.pending.participants.length()").value(1))
+            // 담은 상품은 합쳐진다: 회원 3개 + 게스트 2개 = 5개.
+            .andExpect(jsonPath("$.data.pending.participants[0].itemCount").value(5))
+            .andExpect(jsonPath("$.data.pending.items.length()").value(5))
         mockMvc()
             .perform(get("/api/v1/tournaments/$guestOnlyId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
             .andExpect(status().isOk)
