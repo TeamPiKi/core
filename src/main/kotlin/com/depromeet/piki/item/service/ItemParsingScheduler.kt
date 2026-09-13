@@ -73,8 +73,8 @@ class ItemParsingScheduler(
     private fun dispatchToWorker(claimed: ClaimedItem) {
         runCatching {
             when (claimed) {
-                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.expectedAttempt)
-                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.expectedAttempt)
+                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.requestId, claimed.link, claimed.expectedAttempt)
+                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.requestId, claimed.imageKey, claimed.expectedAttempt)
             }
         }.onFailure { e -> log.warn("item {} 워커 디스패치 거부 → PROCESSING 유지, recover 가 재실행: {}", claimed.itemId, e.message) }
     }
