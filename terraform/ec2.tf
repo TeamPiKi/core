@@ -52,7 +52,8 @@ resource "aws_instance" "app" {
   }
 
   root_block_device {
-    volume_size           = 20
+    # 크기 근거는 TeamPiKi/infra#94. 배포 게이트가 요구하는 여유 10GB + 박스 실사용 최대.
+    volume_size           = 25
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true
@@ -108,7 +109,8 @@ resource "aws_instance" "dev_app" {
   }
 
   root_block_device {
-    volume_size           = 20
+    # 크기 근거는 TeamPiKi/infra#94. 배포 게이트가 요구하는 여유 10GB + 박스 실사용 최대.
+    volume_size           = 25
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true
