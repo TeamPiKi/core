@@ -54,6 +54,39 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
         @Param("tournamentIds") tournamentIds: Collection<Long>,
     ): List<TournamentUser>
 
+    fun findByUserIdAndDeletedAtIsNull(userId: UUID): List<TournamentUser>
+
+    // 유니크 키(tournament_id, user_id)에 deleted_at 이 없어 soft-delete 된 행도 자리를 계속 점유한다 —
+    // 승계 충돌 판정은 활성 행만 봐서는 안 되므로 deletedAt 필터를 두지 않는다(#1081).
+    @Query("SELECT tu.tournamentId FROM TournamentUser tu WHERE tu.userId = :userId")
+    fun findTournamentIdsByUserId(
+        @Param("userId") userId: UUID,
+    ): List<Long>
+
+    // 참여 행의 주인만 갈아끼운다(#1081). 행 id 가 유지되므로 히스토리·방장 지정이 그대로 따라온다.
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        "UPDATE TournamentUser tu SET tu.userId = :toUserId, tu.updatedAt = :now " +
+            "WHERE tu.userId = :fromUserId AND tu.tournamentId IN :tournamentIds AND tu.deletedAt IS NULL",
+    )
+    fun transferToUser(
+        @Param("fromUserId") fromUserId: UUID,
+        @Param("toUserId") toUserId: UUID,
+        @Param("tournamentIds") tournamentIds: Collection<Long>,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        "UPDATE TournamentUser tu SET tu.deletedAt = :now " +
+            "WHERE tu.userId = :userId AND tu.tournamentId IN :tournamentIds AND tu.deletedAt IS NULL",
+    )
+    fun softDeleteByUserIdAndTournamentIdIn(
+        @Param("userId") userId: UUID,
+        @Param("tournamentIds") tournamentIds: Collection<Long>,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
     @Modifying
     @Query("UPDATE TournamentUser tu SET tu.deletedAt = :now WHERE tu.tournamentId = :tournamentId AND tu.userId = :userId AND tu.deletedAt IS NULL")
     fun softDeleteByTournamentIdAndUserId(
