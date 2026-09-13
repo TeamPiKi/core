@@ -142,8 +142,13 @@ class TournamentService(
         tournamentId: Long,
         nickname: String,
     ) {
+        // 클론 id 로 와도 ROOT 로 해소한다(#1027) — 백필 후 클론 shell 엔 참여 행이 없어, 옛 클론 URL 로 닉네임을
+        // 바꾸면 ROOT 참여자여도 못 찾는다. 존재하는 토너먼트의 sourceTournamentId 로만 해소해 미존재는 기존대로
+        // forbidden(403) 을 유지한다(신규 404 계약을 만들지 않음).
+        val effectiveTournamentId =
+            tournamentRepository.findTournamentById(tournamentId)?.sourceTournamentId ?: tournamentId
         val tournamentUser =
-            tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
+            tournamentUserRepository.findByTournamentIdAndUserId(effectiveTournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
         ensureNicknameAvailable(nickname, userId)
         tournamentUser.rename(nickname)
@@ -471,18 +476,20 @@ class TournamentService(
                     { it.getId() != ownerTournamentUserId },
                     { it.getId() },
                 ),
-            ).mapNotNull { tu ->
-                userById[tu.userId]?.let { user ->
-                    TournamentDetail.ParticipantDetail(
-                        userId = user.id,
-                        // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임 폴백(#1018)
-                        nickname = tu.nickname ?: user.nickname,
-                        profileImage = user.profileImage,
-                        isWithdrawn = !user.isActive(),
-                        isHost = tu.getId() == ownerTournamentUserId,
-                        itemCount = itemCountByUserId[tu.userId] ?: 0,
-                    )
-                }
+            ).map { tu ->
+                // users 행이 없어도(인증됐으나 users 행 부재 — rejectIfDeleted 가 허용) 참여 행은 응답에 남긴다(#1027).
+                // mapNotNull 로 떨구면 참가자 수(DB 카운트, #1062)와 목록이 어긋나고 본인도 대기실에서 사라진다.
+                // 행이 없으면 알 수 없는 유저로 간주 — 마스킹 프사 + isWithdrawn=true 로 FE 가 "유저 알수없음" 을 렌더한다.
+                val user = userById[tu.userId]
+                TournamentDetail.ParticipantDetail(
+                    userId = tu.userId,
+                    // 토너먼트 닉네임 우선, 레거시(NULL)면 프로필 닉네임, 그것도 없으면 알 수 없음(#1018)
+                    nickname = tu.nickname ?: user?.nickname ?: UNKNOWN_PARTICIPANT_NICKNAME,
+                    profileImage = user?.profileImage ?: defaultProfileImages.masked(),
+                    isWithdrawn = user?.isActive()?.not() ?: true,
+                    isHost = tu.getId() == ownerTournamentUserId,
+                    itemCount = itemCountByUserId[tu.userId] ?: 0,
+                )
             }
     }
 
@@ -1438,6 +1445,10 @@ class TournamentService(
         error("invite_code $INVITE_CODE_MAX_ATTEMPTS 회 생성 실패 — DB 포화 또는 keyspace 고갈 가능성")
     }
 }
+
+// users 행이 없는 참여자의 표시명 폴백(#1027). 실제로는 isWithdrawn=true 라 FE 가 "유저 알수없음" 을 렌더하므로
+// 이 값은 화면에 거의 노출되지 않지만, ParticipantDetail.nickname 이 non-null 이라 안전한 기본값을 둔다.
+private const val UNKNOWN_PARTICIPANT_NICKNAME = "알 수 없음"
 
 // 두 서비스(TournamentService.join, TournamentSocialPersistenceService.createGuestAndJoin)가
 // 공유하는 초대 참여 검증. 링크 접근은 inviteCode=null, 코드 입력 경로는 inviteCode 포함.

@@ -24,6 +24,10 @@ class CloneFlattenBackfill(
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun run() {
+        // #1027: 완료 판정을 status 로 일원화하므로, 먼저 "completed_at 있으면 status=COMPLETED" 불변식을 세운다.
+        // Phase 1 컬럼 추가는 기존 완료 행도 PENDING 으로 채웠다. 이후 소유자·클론 승계가 대부분을 덮지만, 어느 승계에도
+        // 안 걸리는 잔재 완료 행(레거시 비-소유자 ROOT 완료 등)까지 여기서 확정해 status 기반 완료 조회가 빠뜨리지 않게 한다.
+        val completedFixed = ensureCompletedStatusForCompletedAt()
         val ownerStatus = backfillRootOwnerStatus()
         val clones = loadLiveClones()
 
@@ -48,7 +52,8 @@ class CloneFlattenBackfill(
         }
 
         log.info(
-            "CLONE 평탄화 백필 완료(#1027 Phase 2): rootOwnerStatus={} clones={} merged(멤버)={} repointed(링크게스트)={} selfCloneSkipped={}",
+            "CLONE 평탄화 백필 완료(#1027 Phase 2): completedStatusFixed={} rootOwnerStatus={} clones={} merged(멤버)={} repointed(링크게스트)={} selfCloneSkipped={}",
+            completedFixed,
             ownerStatus,
             clones.size,
             merged,
@@ -56,6 +61,17 @@ class CloneFlattenBackfill(
             selfCloneSkipped,
         )
     }
+
+    // 완료 판정 단일화(#1027) — completed_at 이 있는데 status 가 COMPLETED 가 아닌 행을 COMPLETED 로 맞춘다.
+    // 이후 status 기반 완료 조회(find/countCompletedByTournamentId)가 completedAt 기반과 어긋나지 않게 하는 불변식 세팅.
+    private fun ensureCompletedStatusForCompletedAt(): Int =
+        conn.prepareStatement(
+            """
+            UPDATE tournament_users
+            SET status = 'COMPLETED', updated_at = NOW(6)
+            WHERE completed_at IS NOT NULL AND status <> 'COMPLETED'
+            """.trimIndent(),
+        ).use { it.executeUpdate() }
 
     // ROOT 주최자의 참여 status = ROOT 토너먼트 status. (주최자는 ROOT 를 직접 플레이하므로 그 진행이 곧 참여 진행.)
     // ROOT 에 참여만 하고 안 논 멤버는 status='PENDING' 기본값 그대로 둔다(플레이 없음). 멤버가 플레이했으면

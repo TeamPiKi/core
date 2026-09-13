@@ -56,7 +56,10 @@ class TournamentUser(
 
     fun isPlaying() = status == TournamentStatus.IN_PROGRESS
 
-    fun isCompleted() = completedAt?.let { true } ?: false
+    // 완료 판정의 단일 출처는 status 다(#1027) — completedAt 은 완료 "시각" 기록 전용. 두 필드를 각각 읽으면
+    // 백필 누락·부분 갱신 시 같은 행이 완료/대기로 갈리는 split-brain 이 생겨, complete() 가 항상 둘을 함께 세팅하고
+    // 판정은 status 하나로 통일한다.
+    fun isCompleted() = status == TournamentStatus.COMPLETED
 
     fun softDelete() {
         deletedAt = LocalDateTime.now()
