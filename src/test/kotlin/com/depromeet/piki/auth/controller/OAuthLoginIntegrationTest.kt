@@ -19,6 +19,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -491,5 +492,128 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
         val detail = userDetailRepository.findByProviderAndSocialId("GOOGLE", "google_keep")
         assertEquals("keep@gmail.com", detail?.email)
+    }
+
+    // ── 게스트 플레이 승계(#1081) ────────────────────────────────────────
+
+    private fun bearer(token: String) = "Bearer $token"
+
+    private fun createTournament(
+        accessToken: String,
+        name: String,
+    ): Long {
+        val json =
+            mockMvc()
+                .perform(
+                    post("/api/v1/tournaments")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"name":"$name"}"""),
+                ).andExpect(status().isCreated)
+                .andReturn()
+                .response.contentAsString
+        return objectMapper.readTree(json).at("/data/tournamentId").asLong()
+    }
+
+    private fun loginWithGuestToken(
+        guestAccessToken: String,
+        body: String,
+    ): String =
+        mockMvc()
+            .perform(
+                post("/api/v1/auth/login/kakao")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("X-Client-Type", "app")
+                    .header(HttpHeaders.AUTHORIZATION, bearer(guestAccessToken))
+                    .content(body),
+            ).andExpect(status().isOk)
+            .andReturn()
+            .response.contentAsString
+
+    @Test
+    fun `게스트가 이미 회원인 소셜로 로그인하면 게스트로 하던 토너먼트가 회원 계정으로 넘어온다`() {
+        // 이 소셜에 회원 계정이 이미 있으면 로그인은 "게스트 포기" 갈래를 탄다 — 승격과 달리 userId 가 바뀌어
+        // 게스트로 하던 판이 회원에겐 "참여자가 아님"(403)이 된다. 승계가 그 구멍을 메운다(#1081).
+        kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_takeover", null) }
+        val body = loginBody("accessToken" to "t")
+
+        // 1. 그 소셜로 이미 가입해 둔 회원이 있다.
+        val firstLogin = objectMapper.readTree(
+            mockMvc()
+                .perform(
+                    post("/api/v1/auth/login/kakao")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Client-Type", "app")
+                        .content(body),
+                ).andExpect(status().isOk)
+                .andReturn()
+                .response.contentAsString,
+        )
+        val memberId = firstLogin.at("/data/user/id").asString()
+
+        // 2. 게스트로 토너먼트를 만든다(= 게스트 참여 행이 생긴다).
+        val guest = createGuest()
+        val tournamentId = createTournament(guest.accessToken, "게스트가 만든 토너먼트")
+
+        // 3. 게스트 토큰을 들고 같은 소셜로 로그인 → 게스트를 버리고 기존 회원으로 합류한다.
+        val loginJson = loginWithGuestToken(guest.accessToken, body)
+        val loggedInId = objectMapper.readTree(loginJson).at("/data/user/id").asString()
+        assertEquals(memberId, loggedInId, "게스트가 아니라 기존 회원으로 로그인돼야 이 시나리오가 성립한다")
+        assertNotEquals(guest.userId, loggedInId)
+
+        // 4. 그 회원 토큰으로 방금까지 하던 토너먼트가 열린다 — 승계 전이면 403 이다.
+        val memberToken = objectMapper.readTree(loginJson).at("/data/accessToken").asString()
+        mockMvc()
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.isOwner").value(true))
+    }
+
+    @Test
+    fun `회원이 이미 참여한 토너먼트는 승계에서 건너뛰고 나머지는 넘어온다`() {
+        // uk_tournament_users(tournament_id, user_id) 충돌 케이스. 회원 행을 정본으로 두고 게스트 행은 접는다.
+        // 충돌 하나 때문에 무관한 토너먼트까지 잃으면 안 되므로, 건너뛴 방 외에는 정상 이관돼야 한다.
+        kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_conflict", null) }
+        val body = loginBody("accessToken" to "t")
+
+        val firstLogin = objectMapper.readTree(
+            mockMvc()
+                .perform(
+                    post("/api/v1/auth/login/kakao")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Client-Type", "app")
+                        .content(body),
+                ).andExpect(status().isOk)
+                .andReturn()
+                .response.contentAsString,
+        )
+        val memberTokenBefore = firstLogin.at("/data/accessToken").asString()
+
+        // 회원이 만든 토너먼트에 게스트도 참여해 둔다 → 같은 방에 두 행.
+        val sharedId = createTournament(memberTokenBefore, "둘 다 참여한 방")
+        val guest = createGuest()
+        mockMvc()
+            .perform(
+                post("/api/v1/tournaments/$sharedId/join")
+                    .header(HttpHeaders.AUTHORIZATION, bearer(guest.accessToken))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":null}"""),
+            ).andExpect(status().isOk)
+        // 충돌과 무관한 게스트 전용 토너먼트도 하나 만든다.
+        val guestOnlyId = createTournament(guest.accessToken, "게스트만 있는 방")
+
+        val loginJson = loginWithGuestToken(guest.accessToken, body)
+        val memberToken = objectMapper.readTree(loginJson).at("/data/accessToken").asString()
+
+        // 충돌한 방은 회원 행이 살아 있어 그대로 열리고, 게스트 전용 방도 승계돼 열린다.
+        mockMvc()
+            .perform(get("/api/v1/tournaments/$sharedId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.isOwner").value(true))
+            // 게스트 행이 접혀 참여자가 회원 하나만 남는다 — 안 접으면 같은 사람이 둘로 보인다.
+            .andExpect(jsonPath("$.data.pending.participants.length()").value(1))
+        mockMvc()
+            .perform(get("/api/v1/tournaments/$guestOnlyId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
+            .andExpect(status().isOk)
     }
 }

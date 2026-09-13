@@ -40,4 +40,10 @@ interface TournamentItemRepository {
     ): Int
 
     fun softDeleteAllByTournamentId(tournamentId: Long)
+
+    // 담은 사람을 옮긴다(#1081). 유니크 키가 (tournament_id, item_id)라 user_id 는 키에 없어 충돌하지 않는다.
+    fun transferToUser(
+        fromUserId: UUID,
+        toUserId: UUID,
+    ): Int
 }

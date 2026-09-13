@@ -52,4 +52,9 @@ class TournamentItemRepositoryImpl(
     override fun softDeleteAllByTournamentId(tournamentId: Long) {
         tournamentItemJpaRepository.softDeleteAllByTournamentId(tournamentId, LocalDateTime.now())
     }
+
+    override fun transferToUser(
+        fromUserId: UUID,
+        toUserId: UUID,
+    ): Int = tournamentItemJpaRepository.transferToUser(fromUserId, toUserId, LocalDateTime.now())
 }

@@ -94,4 +94,16 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
         @Param("tournamentId") tournamentId: Long,
         @Param("now") now: LocalDateTime,
     )
+
+    // 담은 사람만 갈아끼운다(#1081). 유니크 키가 (tournament_id, item_id)라 user_id 는 키에 없어 충돌하지 않는다.
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        "UPDATE TournamentItem t SET t.userId = :toUserId, t.updatedAt = :now " +
+            "WHERE t.userId = :fromUserId AND t.deletedAt IS NULL",
+    )
+    fun transferToUser(
+        @Param("fromUserId") fromUserId: UUID,
+        @Param("toUserId") toUserId: UUID,
+        @Param("now") now: LocalDateTime,
+    ): Int
 }

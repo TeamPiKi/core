@@ -18,6 +18,7 @@ class SocialAccountService(
     private val userService: UserService,
     private val userDetailRepository: UserDetailRepository,
     private val socialAccountWriter: SocialAccountWriter,
+    private val guestPlayTakeover: GuestPlayTakeover,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -26,7 +27,12 @@ class SocialAccountService(
         currentUserId: UUID?,
     ): User {
         // 1. 이미 가입된 소셜 → 그 user 로 로그인. (재방문 / 게스트의 소셜이 이미 타계정 → 그 계정 로그인 = 게스트 포기)
-        loginExisting(userInfo)?.let { return it }
+        //    게스트를 포기하더라도 그 세션의 토너먼트 플레이는 회원 계정으로 옮긴다(#1081) — 승격 갈래와 달리
+        //    userId 가 바뀌어, 안 옮기면 방금까지 하던 판이 "참여자가 아님" 이 된다.
+        loginExisting(userInfo)?.let { member ->
+            currentUserId?.let { guestId -> takeOverGuestPlay(guestId, member.id, userInfo.provider.name) }
+            return member
+        }
 
         // 2. 신규 소셜 + 현재 게스트면 → 게스트 계정에 연결 + 승격 (위시·토너먼트 데이터 이어줌)
         currentUserId?.let { guestId ->
@@ -40,7 +46,10 @@ class SocialAccountService(
                 // 동시 충돌: 다른 요청이 이 소셜을 먼저 선점 → 그 계정으로 합류 (게스트 포기).
                 // 방어적으로 복구한 비정상 경합이라 warn — 빈발하면 동시 로그인 경합 신호다.
                 log.warn("게스트 승격 중 소셜 선점 충돌 → 기존 계정 합류 guestId={} provider={}", guestId, userInfo.provider)
-                return loginExisting(userInfo) ?: throw e
+                // 합류도 게스트를 포기하는 것이라 1번과 같은 결과가 된다 — 여기서도 플레이를 옮긴다(#1081).
+                val joined = loginExisting(userInfo) ?: throw e
+                takeOverGuestPlay(guestId, joined.id, userInfo.provider.name)
+                return joined
             }
         }
 
@@ -86,6 +95,20 @@ class SocialAccountService(
     // email 은 부가 정보라 upsert 실패(락 경합·일시 DB 오류 등)가 로그인 자체를 막아선 안 된다 — updateEmail 은
     // REQUIRED 새 트랜잭션(호출자 비트랜잭션)이라 실패해도 rollback-only 오염 없이 흡수한다. 실패는 warn 으로
     // 남기고(email 값은 PII 라 미기록) 기존 user 로그인은 그대로 성공시킨다.
+    // 승계 실패가 로그인을 막지 않게 감싼다(#1081). 승계는 로그인의 부수 작업이고, 여기서 던지면
+    // "로그인 자체가 안 되는" 더 나쁜 실패가 된다 — 실패해도 지금까지의 동작(게스트 플레이 유실)으로 돌아갈 뿐이다.
+    // 대신 warn 으로 관측한다. 빈발하면 승계 로직 자체를 의심해야 하는 신호다.
+    private fun takeOverGuestPlay(
+        guestId: UUID,
+        memberId: UUID,
+        provider: String,
+    ) {
+        runCatching { guestPlayTakeover.takeOver(guestId, memberId) }
+            .onFailure { e ->
+                log.warn("게스트 플레이 승계 실패 guestId={} memberId={} provider={}", guestId, memberId, provider, e)
+            }
+    }
+
     private fun loginExisting(userInfo: OAuthUserInfo): User? {
         // 탈퇴(tombstone) 유저는 없는 것으로 취급해 신규 가입 경로를 타게 한다. 탈퇴 시 user_details 는 하드삭제되므로
         // 보통 detail 자체가 안 잡히지만, 파기 전 잔존·경합을 방어해 isActive 로 한 번 더 거른다 — tombstone 을
