@@ -59,6 +59,33 @@ class TournamentUserRepositoryImpl(
     override fun findCompletedByTournamentId(tournamentId: Long): List<TournamentUser> =
         tournamentUserJpaRepository.findCompletedByTournamentId(tournamentId)
 
+    override fun findByUserId(userId: UUID): List<TournamentUser> =
+        tournamentUserJpaRepository.findByUserIdAndDeletedAtIsNull(userId)
+
+    override fun findTournamentIdsByUserIdIncludingDeleted(userId: UUID): List<Long> =
+        tournamentUserJpaRepository.findTournamentIdsByUserId(userId)
+
+    override fun transferToUser(
+        fromUserId: UUID,
+        toUserId: UUID,
+        tournamentIds: List<Long>,
+    ): Int =
+        if (tournamentIds.isEmpty()) {
+            0
+        } else {
+            tournamentUserJpaRepository.transferToUser(fromUserId, toUserId, tournamentIds, LocalDateTime.now())
+        }
+
+    override fun softDeleteByUserIdAndTournamentIds(
+        userId: UUID,
+        tournamentIds: List<Long>,
+    ): Int =
+        if (tournamentIds.isEmpty()) {
+            0
+        } else {
+            tournamentUserJpaRepository.softDeleteByUserIdAndTournamentIdIn(userId, tournamentIds, LocalDateTime.now())
+        }
+
     override fun findCompletedByTournamentIds(tournamentIds: List<Long>): List<TournamentUser> =
         if (tournamentIds.isEmpty()) {
             emptyList()
