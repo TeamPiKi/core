@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -52,6 +53,9 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired
+    private lateinit var parseRequestRepository: ParseRequestRepository
 
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
@@ -111,7 +115,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            result.snapshot.getId(),
+            requestIdOf(result.snapshot.getId()),
             ProductSnapshot(
                 link = ProductLink.parse(url),
                 name = name,
@@ -135,9 +139,13 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         itemParsingService.claimDuePending(100)
         // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
         // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
-        itemParsingService.markFailed(result.snapshot.getId(), expectedAttempt = 0)
+        itemParsingService.markFailed(requestIdOf(result.snapshot.getId()), expectedAttempt = 0)
         return result.wish.getId()
     }
+
+    // 전이 API 는 작업 큐 행(요청)의 id 를 받는다(#1073 2단계). 등록이 요청과 결과 버전을 한 벌로 만들어 두므로 버전으로 되짚는다.
+    private fun requestIdOf(snapshotId: Long): Long =
+        parseRequestRepository.findBySnapshotId(snapshotId)?.getId() ?: error("snapshot $snapshotId 의 요청이 없다")
 
     // PROCESSING 상태 item+wish 시딩 — 파싱 중 항목에 클라이언트가 끼어드는(409) 시나리오용.
     // 등록(PENDING) 후 디스패처 claim 만 재현해 PROCESSING 까지 전이하고(워커 미제출) 그 상태에 멈춰 둔다.
