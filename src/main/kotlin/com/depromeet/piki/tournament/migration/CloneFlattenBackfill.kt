@@ -30,6 +30,10 @@ class CloneFlattenBackfill(
         // 안 걸리는 잔재 완료 행(레거시 비-소유자 ROOT 완료 등)까지 여기서 확정해 status 기반 완료 조회가 빠뜨리지 않게 한다.
         val completedFixed = ensureCompletedStatusForCompletedAt()
         val ownerStatus = backfillRootOwnerStatus()
+        // 레거시 이력(V20260608015856 이전)은 tournament_user_id 가 NULL 일 수 있다. 아래 평탄화는 tuId 기준으로
+        // 이력을 옮기므로, NULL 이력을 먼저 그 클론의 유일 참여자 TU 로 귀속시키지 않으면 클론에 남아(Phase 4 유실)된다.
+        // 단일 참여 클론은 소유자가 그 참여자로 확정되므로 귀속 가능하고, 다중 참여+NULL 은 귀속 불가라 가드가 중단한다.
+        val nullTuAttributed = attributeNullTuHistoriesToSoleParticipant()
         val participants = loadCloneParticipants()
 
         var merged = 0
@@ -55,14 +59,67 @@ class CloneFlattenBackfill(
         }
 
         log.info(
-            "CLONE 평탄화 백필 완료(#1027 Phase 2): completedStatusFixed={} rootOwnerStatus={} cloneParticipants={} merged(멤버)={} repointed(링크게스트)={} selfCloneSkipped={}",
+            "CLONE 평탄화 백필 완료(#1027 Phase 2): completedStatusFixed={} rootOwnerStatus={} nullTuAttributed={} cloneParticipants={} merged(멤버)={} repointed(링크게스트)={} selfCloneSkipped={}",
             completedFixed,
             ownerStatus,
+            nullTuAttributed,
             participants.size,
             merged,
             repointed,
             selfCloneSkipped,
         )
+    }
+
+    // NULL tournament_user_id 활성 클론 이력을 그 클론의 유일 참여자 TU 로 귀속한다(#1027). 이후 tuId 기준 평탄화가
+    // 이 이력도 함께 ROOT 로 옮기게 되어, NULL 이력이 클론에 남아 유실되는 것을 막는다.
+    //   - 단일 참여 클론: 그 참여자가 유일 소유자라 귀속 가능.
+    //   - 다중/무참여 클론에 NULL 이력: 소유자를 확정할 수 없어 fail-fast 로 중단(소유자 매핑 확보 후 재개).
+    private fun attributeNullTuHistoriesToSoleParticipant(): Int {
+        val targets =
+            conn.prepareStatement(
+                """
+                SELECT c.id AS clone_id,
+                       (SELECT COUNT(*) FROM tournament_users tu
+                        WHERE tu.tournament_id = c.id AND tu.deleted_at IS NULL) AS participant_count,
+                       (SELECT MIN(tu.id) FROM tournament_users tu
+                        WHERE tu.tournament_id = c.id AND tu.deleted_at IS NULL) AS sole_tu_id
+                FROM tournaments c
+                WHERE c.source_tournament_id IS NOT NULL
+                  AND c.deleted_at IS NULL
+                  AND EXISTS (
+                    SELECT 1 FROM tournament_histories h
+                    WHERE h.tournament_id = c.id AND h.tournament_user_id IS NULL AND h.deleted_at IS NULL
+                  )
+                """.trimIndent(),
+            ).use { stmt ->
+                stmt.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(Triple(rs.getLong("clone_id"), rs.getInt("participant_count"), rs.getLong("sole_tu_id")))
+                        }
+                    }
+                }
+            }
+
+        var attributed = 0
+        for ((cloneId, participantCount, soleTuId) in targets) {
+            check(participantCount == 1) {
+                "클론 $cloneId 에 NULL tournament_user_id 이력이 있으나 참여자가 ${participantCount}명이라 소유자 귀속 불가 — 매핑 확보 후 재개(#1027 백필 중단)"
+            }
+            attributed +=
+                conn.prepareStatement(
+                    """
+                    UPDATE tournament_histories
+                    SET tournament_user_id = ?, updated_at = NOW(6)
+                    WHERE tournament_id = ? AND tournament_user_id IS NULL AND deleted_at IS NULL
+                    """.trimIndent(),
+                ).use { stmt ->
+                    stmt.setLong(1, soleTuId)
+                    stmt.setLong(2, cloneId)
+                    stmt.executeUpdate()
+                }
+        }
+        return attributed
     }
 
     // 완료 판정 단일화(#1027) — completed_at 이 있는데 status 가 COMPLETED 가 아닌 행을 COMPLETED 로 맞춘다.
