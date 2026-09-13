@@ -1,6 +1,8 @@
 package com.depromeet.piki.auth.service
 
+import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
+import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.repository.UserRepository
@@ -24,6 +26,7 @@ import java.util.UUID
 @Service
 class GuestPlayTakeover(
     private val userRepository: UserRepository,
+    private val tournamentRepository: TournamentRepository,
     private val tournamentUserRepository: TournamentUserRepository,
     private val tournamentItemRepository: TournamentItemRepository,
 ) {
@@ -49,17 +52,20 @@ class GuestPlayTakeover(
         if (guest.identityType != IdentityType.GUEST) return 0
         guest.deletedAt?.let { return 0 }
 
-        val guestTournamentIds = tournamentUserRepository.findByUserId(guestId).map { it.tournamentId }
-        if (guestTournamentIds.isEmpty()) return 0
+        val guestTUs = tournamentUserRepository.findByUserId(guestId)
+        if (guestTUs.isEmpty()) return 0
 
         // 회원이 이미 자리를 잡은 토너먼트는 건너뛴다 — uk_tournament_users(tournament_id, user_id) 충돌이다.
         // 한 사람이 같은 방에 회원·게스트로 두 번 참여한 비정상 상태라, 회원 행을 정본으로 두고 게스트 행은 접는다.
         // 병합(진행이 앞선 쪽 살리기)은 히스토리 재지향까지 필요해 비용이 이득을 넘는다.
         val occupied = tournamentUserRepository.findTournamentIdsByUserIdIncludingDeleted(memberId).toSet()
-        val (skipped, movable) = guestTournamentIds.partition { it in occupied }
+        val (conflicting, movableTUs) = guestTUs.partition { it.tournamentId in occupied }
 
-        val moved = tournamentUserRepository.transferToUser(guestId, memberId, movable)
-        tournamentUserRepository.softDeleteByUserIdAndTournamentIds(guestId, skipped)
+        val moved = tournamentUserRepository.transferToUser(guestId, memberId, movableTUs.map { it.tournamentId })
+        // 접기 전에 방장 자리를 넘긴다. 방장 지정은 tournaments.owner_tournament_user_id 가 참여 행 id 를 직접
+        // 가리키는 구조라, 게스트가 방장인 방에서 그 행을 접으면 토너먼트가 방장을 영구히 잃는다 (CodeRabbit).
+        val foldable = handOverHostSeat(conflicting, memberId)
+        tournamentUserRepository.softDeleteByUserIdAndTournamentIds(guestId, foldable)
         // 아이템은 건너뛴 토너먼트 것까지 함께 옮긴다. 담은 사람은 결국 같은 사람이고, 유니크 키에 user_id 가
         // 없어 충돌하지 않는다. 남겨 두면 그 상품의 주인이 버려진 게스트를 가리켜 itemCount 가 어긋난다.
         val movedItems = tournamentItemRepository.transferToUser(guestId, memberId)
@@ -71,8 +77,44 @@ class GuestPlayTakeover(
             memberId,
             moved,
             movedItems,
-            skipped.size,
+            conflicting.size,
         )
         return moved
+    }
+
+    // 충돌한 방 중 게스트 행이 방장인 곳의 방장 자리를 회원 행으로 넘기고, 접어도 되는 토너먼트 id 를 돌려준다.
+    //
+    // 게스트도 토너먼트를 만들 수 있어(회원 전용 게이트가 임시 해제된 상태) 게스트 참여 행이 방장일 수 있다.
+    // 방장 판정은 전부 "내 참여 행 id == tournaments.owner_tournament_user_id" 라, 그 행을 접으면 아무도
+    // 방장이 아니게 되어 시작·플레이링크·아이템 삭제가 전부 막힌 방이 남는다. FK·트리거가 없어 DB 도 안 잡아준다.
+    //
+    // 회원의 활성 참여 행이 없으면(회원도 그 방을 떠난 상태) 넘길 자리가 없다. 그때는 게스트 방장 행을 접지 않고
+    // 남겨 방장을 유지한다 — 같은 사람이 둘로 보이는 것보다 방장 없는 방이 더 나쁘다.
+    private fun handOverHostSeat(
+        conflicting: List<TournamentUser>,
+        memberId: UUID,
+    ): List<Long> {
+        if (conflicting.isEmpty()) return emptyList()
+        val memberTUByTournamentId = tournamentUserRepository
+            .findByTournamentIds(conflicting.map { it.tournamentId })
+            .filter { it.userId == memberId }
+            .associateBy { it.tournamentId }
+        // 충돌 방은 보통 0~1개라 단건 조회 루프로 둔다 — 배치 조회를 새로 뚫을 만큼의 N 이 아니다.
+        return conflicting.mapNotNull { guestTU ->
+            val tournament = tournamentRepository.findTournamentById(guestTU.tournamentId) ?: return@mapNotNull null
+            if (tournament.ownerTournamentUserId != guestTU.getId()) return@mapNotNull guestTU.tournamentId
+            val memberTU = memberTUByTournamentId[guestTU.tournamentId]
+                ?: run {
+                    log.warn(
+                        "게스트가 방장인 방에 회원 활성 참여 행이 없어 방장 자리를 못 넘긴다 — 게스트 행을 남긴다 tournamentId={}",
+                        guestTU.tournamentId,
+                    )
+                    return@mapNotNull null
+                }
+            tournament.assignOwner(memberTU.getId())
+            tournamentRepository.saveTournament(tournament)
+            log.info("게스트 방장 자리를 회원에게 넘김 tournamentId={} memberId={}", guestTU.tournamentId, memberId)
+            guestTU.tournamentId
+        }
     }
 }

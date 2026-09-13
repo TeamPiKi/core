@@ -5,6 +5,8 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubOAuthClient
 import com.depromeet.piki.user.service.WithdrawalService
@@ -64,6 +66,9 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var withdrawalService: WithdrawalService
+
+    @Autowired
+    private lateinit var tournamentItemRepository: TournamentItemRepository
 
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
@@ -551,9 +556,15 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         )
         val memberId = firstLogin.at("/data/user/id").asString()
 
-        // 2. 게스트로 토너먼트를 만든다(= 게스트 참여 행이 생긴다).
+        // 2. 게스트로 토너먼트를 만들고(= 게스트 참여 행), 상품도 하나 담아 둔다(= 게스트가 주인인 출전 아이템).
         val guest = createGuest()
+        val guestId = UUID.fromString(guest.userId)
         val tournamentId = createTournament(guest.accessToken, "게스트가 만든 토너먼트")
+        val snapshotId =
+            itemSnapshotRepository
+                .save(ItemSnapshot.pending(itemId = 9001L, requestedBy = guestId).apply { markProcessing() })
+                .getId()
+        tournamentItemRepository.save(TournamentItem(tournamentId = tournamentId, userId = guestId, snapshotId = snapshotId))
 
         // 3. 게스트 토큰을 들고 같은 소셜로 로그인 → 게스트를 버리고 기존 회원으로 합류한다.
         val loginJson = loginWithGuestToken(guest.accessToken, body)
@@ -567,6 +578,55 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.isOwner").value(true))
+            // 게스트가 담은 상품의 주인도 함께 넘어온다. 안 옮기면 내가 담은 상품이 죽은 계정을 가리켜
+            // 참가자별 itemCount 가 어긋난다 — 아이템 이관이 빠져도 위 단언은 통과하므로 따로 못박는다.
+            .andExpect(jsonPath("$.data.pending.items[0].userId").value(memberId))
+            .andExpect(jsonPath("$.data.pending.participants[0].itemCount").value(1))
+    }
+
+    @Test
+    fun `게스트가 방장인 방이 충돌하면 방장 자리를 회원에게 넘기고 게스트 행을 접는다`() {
+        // 방장 지정은 tournaments.owner_tournament_user_id 가 참여 행 id 를 직접 가리키는 구조라,
+        // 게스트 방장 행을 그냥 접으면 아무도 방장이 아닌 방이 남아 시작·플레이링크가 전부 막힌다.
+        kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_host_conflict", null) }
+        val body = loginBody("accessToken" to "t")
+
+        val firstLogin = objectMapper.readTree(
+            mockMvc()
+                .perform(
+                    post("/api/v1/auth/login/kakao")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Client-Type", "app")
+                        .content(body),
+                ).andExpect(status().isOk)
+                .andReturn()
+                .response.contentAsString,
+        )
+        val memberId = firstLogin.at("/data/user/id").asString()
+        val memberTokenBefore = firstLogin.at("/data/accessToken").asString()
+
+        // 게스트가 방을 만들어 방장이 되고, 그 방에 회원도 참여한다 → 승계 시 충돌 방이 된다.
+        val guest = createGuest()
+        val tournamentId = createTournament(guest.accessToken, "게스트가 방장인 방")
+        mockMvc()
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join")
+                    .header(HttpHeaders.AUTHORIZATION, bearer(memberTokenBefore))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":null}"""),
+            ).andExpect(status().isOk)
+
+        val loginJson = loginWithGuestToken(guest.accessToken, body)
+        val memberToken = objectMapper.readTree(loginJson).at("/data/accessToken").asString()
+
+        mockMvc()
+            .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
+            .andExpect(status().isOk)
+            // 방장 자리가 회원에게 넘어왔다 — 안 넘기면 false 가 되어 방장 전용 동작이 전부 막힌다.
+            .andExpect(jsonPath("$.data.isOwner").value(true))
+            .andExpect(jsonPath("$.data.pending.participants.length()").value(1))
+            .andExpect(jsonPath("$.data.pending.participants[0].userId").value(memberId))
+            .andExpect(jsonPath("$.data.pending.participants[0].isHost").value(true))
     }
 
     @Test
