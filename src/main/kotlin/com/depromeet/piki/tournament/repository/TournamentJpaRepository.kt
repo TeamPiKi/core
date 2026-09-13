@@ -26,27 +26,16 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // createdAt 동률 시 어느 행이 LIMIT 에 잘릴지 비결정적이므로 생성 순서와 일치하는 id 로 tie-break 한다.
     // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
     //
-    // 가시성은 "나에게 이 토너먼트가 어떤 상태냐"(per-user effective status)로 판정한다(#882).
-    //  (owner) 내가 owner 인 것 — 내가 만든 ROOT 와 내가 플레이해 소유한 CLONE. 전역 status 그대로 필터한다.
-    //      소유 판정은 CLONE 여부가 아니라 _ownerTournamentUserId 로만 한다. 초대코드 join 은 ROOT 를 강제하지
-    //      않아 남의 CLONE 에 참여자로 들어갈 수 있고(POST /tournaments/{id}/join), "CLONE 이면 내 것" 으로 보면
-    //      그 방이 ownedOnly=true(홈, 내가 생성한 것) 결과에 섞인다. 남의 CLONE 은 (참여) 갈래도 ROOT 한정이라
-    //      목록에서 빠진다 — 남의 개인 브래킷이라 내 카드로 보일 자리가 없다.
-    //  (참여) 내가 참여자지만 owner 가 아니고 아직 내 CLONE 이 없는 ROOT: 그 방은 나에겐 '완주 안 함' 이라
-    //      완료로 치지 않는다. 완료된 ROOT 도 나에겐 IN_PROGRESS(진행중)로 캡해 노출한다 — 방장이 완료해도
-    //      진행중 탭에서 사라지지 않고, 완료 탭엔 안 뜬다. 내가 이미 내 CLONE 을 만들었으면(NOT EXISTS 실패)
-    //      이 ROOT 는 숨고 그 CLONE 이 (owner)로 표시된다(카드 중복 방지).
-    // ownedOnly — 홈(내가 생성한 것만)은 TRUE 로 (참여) 갈래를 끈다. 탭은 미지정(FALSE)이라 참여까지 본다.
-    //  status 를 대체하지 않고 AND 로 함께 걸린다 — 홈이 상태 무관인 것은 status 를 안 보내기 때문이다.
-    // includeInProgress — 요청 statuses 에 IN_PROGRESS 가 포함되는지(서비스가 계산). (참여)의 완료 ROOT 를
-    //  IN_PROGRESS 로 캡해 노출할지 판단하는 플래그. nullable enum 을 쿼리에 넣지 않는 boolean 패턴(#837 과 동일).
+    // #1027: CLONE 이 사라지고 모든 참여자가 ROOT 참여 행(tournament_users) 하나를 가진다. 그래서 가시성·상태는
+    // 전역 tournament.status 가 아니라 "내 참여 행 status"(tu.status) 로 판정한다 — 주최자·멤버·게스트가 같은
+    // 토너먼트를 각자의 진행 상태로 본다(방장이 완료해도 아직 안 끝낸 멤버에겐 진행중). CLONE 행은 참여 행이
+    // 없어(백필로 평탄화) 이 조인에 걸리지 않으므로 자연히 목록에서 빠진다.
+    //  ownedOnly — 홈(내가 생성한 것만)은 TRUE 로 참여만 한 방을 끈다(_ownerTournamentUserId = tu.id 만). 탭은 FALSE.
     //
     // playType(솔로/소셜)은 저장된 컬럼이 아니라 참가 결과로 파생되는 상태다(TournamentPlayType 참고).
     // 파생값이라 앱에서 거르면 limit 이 파생 필터보다 먼저 걸려 "SOCIAL 3개" 를 요구했는데 그보다 적게 나오므로,
-    // status·정렬·limit 과 같은 자리에서 DB 가 함께 판정해야 한다.
-    // SOLO 와 SOCIAL 은 서로 여집합이지만(참가자 수는 조인 때문에 항상 1 이상) 각 갈래를 그대로 적어 의도를 남긴다.
-    // 미지정이면 includeSolo·includeSocial 이 둘 다 TRUE 라 이 술어가 항상 성립한다(= 필터 없음) —
-    // statuses 를 "전체 IN" 으로 바인딩해 쿼리를 2벌로 나누지 않는 것과 같은 방식.
+    // status·정렬·limit 과 같은 자리에서 DB 가 함께 판정해야 한다. 참가자 2명 이상이면 SOCIAL, 혼자면 SOLO.
+    // 미지정이면 includeSolo·includeSocial 이 둘 다 TRUE 라 이 술어가 항상 성립한다(= 필터 없음).
     @Query(
         """
         SELECT t FROM Tournament t
@@ -54,39 +43,18 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
         WHERE tu.userId = :userId
           AND tu.deletedAt IS NULL
           AND t.deletedAt IS NULL
-          AND (
-            (t._ownerTournamentUserId = tu.id AND t.status IN :statuses)
-            OR (
-              :ownedOnly = FALSE
-              AND t.sourceTournamentId IS NULL
-              AND t._ownerTournamentUserId <> tu.id
-              AND NOT EXISTS (
-                SELECT 1 FROM Tournament c
-                JOIN TournamentUser ctu ON ctu.id = c._ownerTournamentUserId
-                WHERE c.sourceTournamentId = t.id
-                  AND ctu.userId = :userId
-                  AND c.deletedAt IS NULL
-              )
-              AND (
-                (t.status <> com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED AND t.status IN :statuses)
-                OR (t.status = com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED AND :includeInProgress = TRUE)
-              )
-            )
-          )
+          AND tu.status IN :statuses
+          AND (:ownedOnly = FALSE OR t._ownerTournamentUserId = tu.id)
           AND (
             (
               :includeSocial = TRUE
               AND (
-                t.sourceTournamentId IS NOT NULL
-                OR (
-                  SELECT COUNT(tu2.id) FROM TournamentUser tu2
-                  WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL
-                ) > 1
-              )
+                SELECT COUNT(tu2.id) FROM TournamentUser tu2
+                WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL
+              ) > 1
             )
             OR (
               :includeSolo = TRUE
-              AND t.sourceTournamentId IS NULL
               AND (
                 SELECT COUNT(tu2.id) FROM TournamentUser tu2
                 WHERE tu2.tournamentId = t.id AND tu2.deletedAt IS NULL
@@ -100,7 +68,6 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
         @Param("userId") userId: UUID,
         @Param("statuses") statuses: Collection<TournamentStatus>,
         @Param("ownedOnly") ownedOnly: Boolean,
-        @Param("includeInProgress") includeInProgress: Boolean,
         @Param("includeSolo") includeSolo: Boolean,
         @Param("includeSocial") includeSocial: Boolean,
         pageable: Pageable,
@@ -108,13 +75,6 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
 
     fun findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId: Long): List<Tournament>
 
-    // 목록 카드가 여러 ROOT 의 완료된 클론을 한 번에 읽는다(#1062) — 카드마다 위 단건 조회를 돌면 N+1 이 된다.
-    // 완주 집계가 유일한 용도라 status 필터를 쿼리에 둔다. 전부 읽어와 메모리에서 거르면 진행 중 클론이 많은
-    // 토너먼트에서 버릴 엔티티를 그만큼 로드한다 (CodeRabbit).
-    fun findBySourceTournamentIdInAndStatusAndDeletedAtIsNull(
-        sourceTournamentIds: Collection<Long>,
-        status: TournamentStatus,
-    ): List<Tournament>
 
     // 활성 초대코드 조회는 base 컬럼 invite_code 가 아니라 generated 컬럼 active_invite_code 로 한다.
     // uk_tournaments_active_invite_code 유니크 인덱스가 이 컬럼에만 걸려 있어, invite_code 로 조회하면

@@ -50,11 +50,11 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
     @Test
-    fun `같은 유저가 from-play-link 를 동시에 두 번 요청해도 클론은 하나만 생성되고 둘 다 200 으로 같은 id 를 받는다`() {
+    fun `같은 유저가 from-play-link 를 동시에 두 번 요청해도 참여 행은 하나만 생기고 둘 다 200 으로 같은 ROOT id 를 받는다`() {
         val ownerId = UUID.randomUUID()
         val clonerId = UUID.randomUUID()
         // owner 는 소스 토너먼트를 만들어야 해서 MEMBER 다(토너먼트 생성은 회원 전용, #339).
-        // cloner 는 GUEST 로 둔다 — 플레이 링크로 클론을 만드는 경로는 아이템 추가가 막힌 CLONE 이라 비용이 0 이고,
+        // cloner 는 GUEST 로 둔다 — #1027: 플레이 링크로 참여하는 경로는 ROOT 참여 행 하나를 붙일 뿐 비용이 0 이라
         // 게스트에게 그대로 열려 있다. 이 조합이 곧 "게스트도 플레이 링크로 참여할 수 있다" 는 계약 검증이 된다.
         userJpaRepository.save(User(id = ownerId, nickname = "race-owner", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER))
         userJpaRepository.save(User(id = clonerId, nickname = "race-clone", profileImage = "https://cdn.example.com/c.jpg", identityType = IdentityType.GUEST))
@@ -135,7 +135,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
         }
 
         // idempotent get-or-create: 동시 두 호출 모두 200 이고, source 행 FOR UPDATE 락으로 직렬화되어
-        // 먼저 들어온 쪽이 클론을 만들고 뒤이은 쪽은 그 클론 id 를 그대로 받는다.
+        // 먼저 들어온 쪽이 ROOT 참여 행을 만들고 뒤이은 쪽은 그 ROOT id 를 그대로 받는다(#1027, 클론 미생성).
         val status200 = AtomicInteger(0)
         val returnedIds = java.util.concurrent.ConcurrentLinkedQueue<Long>()
         val executor = Executors.newFixedThreadPool(2)
@@ -168,41 +168,36 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
         executor.shutdown()
 
         assertEquals(2, status200.get(), "두 호출 모두 200 이어야 한다")
-        assertEquals(1, returnedIds.toSet().size, "두 호출이 같은 클론 id 를 받아야 한다")
+        assertEquals(1, returnedIds.toSet().size, "두 호출이 같은 ROOT id 를 받아야 한다")
+        // #1027: 클론을 만들지 않고 ROOT id(=source)를 돌려준다.
+        assertEquals(sourceTournamentId, returnedIds.first(), "두 호출 모두 source(ROOT) id 를 받아야 한다")
 
-        val cloneCount = jdbcTemplate.queryForObject(
-            """SELECT COUNT(*) FROM tournaments t
-               JOIN tournament_users tu ON tu.tournament_id = t.id
-               WHERE t.source_tournament_id = ? AND tu.user_id = ? AND tu.deleted_at IS NULL""",
+        // #1027: 게스트의 ROOT 참여 행이 정확히 1개만 생겨야 한다 (동시 호출이 중복 행을 만들지 않는다).
+        val guestParticipationCount = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM tournament_users WHERE tournament_id = ? AND user_id = ? AND deleted_at IS NULL",
             Long::class.java, sourceTournamentId, uuidToBytes(clonerId),
         )
-        assertEquals(1L, cloneCount, "복제본은 정확히 1개여야 한다")
+        assertEquals(1L, guestParticipationCount, "게스트 참여 행은 정확히 1개여야 한다")
 
-        // Design B: CLONE 은 아이템을 DB 에 복사하지 않는다. sourceTournamentId 로 원본 아이템을 참조한다.
+        // 클론은 아예 생기지 않는다.
+        val cloneCount = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM tournaments WHERE source_tournament_id = ?",
+            Long::class.java, sourceTournamentId,
+        )
+        assertEquals(0L, cloneCount, "#1027: 클론은 생성되지 않는다")
+
+        // 원본에는 아이템이 있어야 한다.
         val sourceItemCount = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM tournament_items WHERE tournament_id = ?",
             Long::class.java, sourceTournamentId,
         )!!
-        val cloneItemCount = jdbcTemplate.queryForObject(
-            """SELECT COUNT(*) FROM tournament_items ti
-               JOIN tournaments t ON t.id = ti.tournament_id
-               WHERE t.source_tournament_id = ?""",
-            Long::class.java, sourceTournamentId,
-        )!!
-        assertEquals(0L, cloneItemCount, "CLONE 은 아이템을 DB 에 갖지 않는다")
         assertTrue(sourceItemCount > 0, "원본에는 아이템이 있어야 한다")
 
         // 정리
         jdbcTemplate.update("DELETE FROM tournament_histories WHERE tournament_id = ?", sourceTournamentId)
-        jdbcTemplate.update(
-            "DELETE FROM tournament_items WHERE tournament_id IN (SELECT id FROM tournaments WHERE source_tournament_id = ? OR id = ?)",
-            sourceTournamentId, sourceTournamentId,
-        )
-        jdbcTemplate.update(
-            "DELETE FROM tournament_users WHERE tournament_id IN (SELECT id FROM tournaments WHERE source_tournament_id = ? OR id = ?)",
-            sourceTournamentId, sourceTournamentId,
-        )
-        jdbcTemplate.update("DELETE FROM tournaments WHERE source_tournament_id = ? OR id = ?", sourceTournamentId, sourceTournamentId)
+        jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", sourceTournamentId)
+        jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", sourceTournamentId)
+        jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", sourceTournamentId)
         jdbcTemplate.update("DELETE FROM users WHERE id = ? OR id = ?", uuidToBytes(ownerId), uuidToBytes(clonerId))
     }
 }
