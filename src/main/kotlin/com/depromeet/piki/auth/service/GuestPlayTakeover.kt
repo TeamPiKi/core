@@ -62,9 +62,8 @@ class GuestPlayTakeover(
         val (conflicting, movableTUs) = guestTUs.partition { it.tournamentId in occupied }
 
         val moved = tournamentUserRepository.transferToUser(guestId, memberId, movableTUs.map { it.tournamentId })
-        // 접기 전에 방장 자리를 넘긴다. 방장 지정은 tournaments.owner_tournament_user_id 가 참여 행 id 를 직접
-        // 가리키는 구조라, 게스트가 방장인 방에서 그 행을 접으면 토너먼트가 방장을 영구히 잃는다 (CodeRabbit).
-        val foldable = handOverHostSeat(conflicting, memberId)
+        // 충돌한 방 전부를 접지는 않는다 — 회원의 활성 참여 행이 있는 방만 접고, 접기 전에 방장 자리도 넘긴다.
+        val foldable = foldableConflicts(conflicting, memberId)
         tournamentUserRepository.softDeleteByUserIdAndTournamentIds(guestId, foldable)
         // 아이템은 건너뛴 토너먼트 것까지 함께 옮긴다. 담은 사람은 결국 같은 사람이고, 유니크 키에 user_id 가
         // 없어 충돌하지 않는다. 남겨 두면 그 상품의 주인이 버려진 게스트를 가리켜 itemCount 가 어긋난다.
@@ -82,38 +81,45 @@ class GuestPlayTakeover(
         return moved
     }
 
-    // 충돌한 방 중 게스트 행이 방장인 곳의 방장 자리를 회원 행으로 넘기고, 접어도 되는 토너먼트 id 를 돌려준다.
+    // 충돌한 방 중 게스트 행을 접어도 되는 토너먼트 id 를 가려낸다. 접기 전에 필요한 방장 자리 인계도 여기서 한다.
     //
-    // 게스트도 토너먼트를 만들 수 있어(회원 전용 게이트가 임시 해제된 상태) 게스트 참여 행이 방장일 수 있다.
-    // 방장 판정은 전부 "내 참여 행 id == tournaments.owner_tournament_user_id" 라, 그 행을 접으면 아무도
+    // **접기의 전제는 "회원의 활성 참여 행이 그 방에 있다" 이다.** 충돌 판정은 deletedAt 무관이라(유니크 키에
+    // deleted_at 이 없어 삭제된 행도 자리를 점유) 회원이 나간 방도 충돌로 잡힌다. 그 방까지 접으면 회원 행은 삭제된
+    // 채로, 살아 있던 게스트 행까지 삭제돼 그 참여가 통째로 사라진다 — 승계가 오히려 데이터를 지우는 셈이다
+    // (CodeRabbit). 그래서 활성 회원 행이 없으면 접지 않고 게스트 행을 그대로 남긴다.
+    //
+    // 남은 게스트 행은 버려진 계정에 묶여 사용자 눈에는 안 보이지만, 지워지지는 않아 나중에 손쓸 여지가 남는다.
+    // 삭제된 회원 행을 되살려 병합하는 쪽이 의미상 더 맞을 수 있으나, 히스토리 재지향까지 필요해 이 PR 범위를 넘는다.
+    //
+    // 방장 인계: 게스트도 토너먼트를 만들 수 있어(회원 전용 게이트가 임시 해제된 상태) 게스트 참여 행이 방장일 수
+    // 있다. 방장 판정이 전부 "내 참여 행 id == tournaments.owner_tournament_user_id" 라, 그 행을 접으면 아무도
     // 방장이 아니게 되어 시작·플레이링크·아이템 삭제가 전부 막힌 방이 남는다. FK·트리거가 없어 DB 도 안 잡아준다.
-    //
-    // 회원의 활성 참여 행이 없으면(회원도 그 방을 떠난 상태) 넘길 자리가 없다. 그때는 게스트 방장 행을 접지 않고
-    // 남겨 방장을 유지한다 — 같은 사람이 둘로 보이는 것보다 방장 없는 방이 더 나쁘다.
-    private fun handOverHostSeat(
+    private fun foldableConflicts(
         conflicting: List<TournamentUser>,
         memberId: UUID,
     ): List<Long> {
         if (conflicting.isEmpty()) return emptyList()
-        val memberTUByTournamentId = tournamentUserRepository
+        val activeMemberTUByTournamentId = tournamentUserRepository
             .findByTournamentIds(conflicting.map { it.tournamentId })
             .filter { it.userId == memberId }
             .associateBy { it.tournamentId }
         // 충돌 방은 보통 0~1개라 단건 조회 루프로 둔다 — 배치 조회를 새로 뚫을 만큼의 N 이 아니다.
         return conflicting.mapNotNull { guestTU ->
-            val tournament = tournamentRepository.findTournamentById(guestTU.tournamentId) ?: return@mapNotNull null
-            if (tournament.ownerTournamentUserId != guestTU.getId()) return@mapNotNull guestTU.tournamentId
-            val memberTU = memberTUByTournamentId[guestTU.tournamentId]
+            val memberTU = activeMemberTUByTournamentId[guestTU.tournamentId]
                 ?: run {
                     log.warn(
-                        "게스트가 방장인 방에 회원 활성 참여 행이 없어 방장 자리를 못 넘긴다 — 게스트 행을 남긴다 tournamentId={}",
+                        "충돌한 방에 회원 활성 참여 행이 없어 게스트 행을 접지 않는다 tournamentId={} memberId={}",
                         guestTU.tournamentId,
+                        memberId,
                     )
                     return@mapNotNull null
                 }
-            tournament.assignOwner(memberTU.getId())
-            tournamentRepository.saveTournament(tournament)
-            log.info("게스트 방장 자리를 회원에게 넘김 tournamentId={} memberId={}", guestTU.tournamentId, memberId)
+            val tournament = tournamentRepository.findTournamentById(guestTU.tournamentId) ?: return@mapNotNull null
+            if (tournament.ownerTournamentUserId == guestTU.getId()) {
+                tournament.assignOwner(memberTU.getId())
+                tournamentRepository.saveTournament(tournament)
+                log.info("게스트 방장 자리를 회원에게 넘김 tournamentId={} memberId={}", guestTU.tournamentId, memberId)
+            }
             guestTU.tournamentId
         }
     }

@@ -6,7 +6,9 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
+import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubOAuthClient
 import com.depromeet.piki.user.service.WithdrawalService
@@ -69,6 +71,9 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var tournamentItemRepository: TournamentItemRepository
+
+    @Autowired
+    private lateinit var tournamentUserRepository: TournamentUserRepository
 
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
@@ -582,6 +587,45 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
             // 참가자별 itemCount 가 어긋난다 — 아이템 이관이 빠져도 위 단언은 통과하므로 따로 못박는다.
             .andExpect(jsonPath("$.data.pending.items[0].userId").value(memberId))
             .andExpect(jsonPath("$.data.pending.participants[0].itemCount").value(1))
+    }
+
+    @Test
+    fun `회원이 나간 방은 충돌로 잡혀도 게스트 행을 접지 않는다`() {
+        // 충돌 판정은 deletedAt 무관이라(유니크 키에 deleted_at 이 없어 삭제된 행도 자리를 점유) 회원이 나간 방도
+        // 충돌로 잡힌다. 그 방까지 접으면 회원 행은 삭제된 채 살아 있던 게스트 행까지 지워져 참여가 통째로 사라진다 —
+        // 승계가 오히려 데이터를 지우는 셈이다.
+        kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_left_room", null) }
+        val body = loginBody("accessToken" to "t")
+
+        val memberId =
+            UUID.fromString(
+                objectMapper
+                    .readTree(
+                        mockMvc()
+                            .perform(
+                                post("/api/v1/auth/login/kakao")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .header("X-Client-Type", "app")
+                                    .content(body),
+                            ).andExpect(status().isOk)
+                            .andReturn()
+                            .response.contentAsString,
+                    ).at("/data/user/id")
+                    .asString(),
+            )
+
+        // 게스트가 방을 만들고, 회원이 참여했다가 나간다(참여 행 soft-delete → 유니크 자리는 계속 점유).
+        val guest = createGuest()
+        val guestId = UUID.fromString(guest.userId)
+        val tournamentId = createTournament(guest.accessToken, "회원이 나간 방")
+        tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = memberId))
+        tournamentUserRepository.softDeleteByTournamentIdAndUserId(tournamentId, memberId)
+
+        loginWithGuestToken(guest.accessToken, body)
+
+        // 게스트 행이 살아 있어야 한다. 접혔다면 이 방의 참여 기록이 아무 계정에도 안 남는다.
+        val guestRows = tournamentUserRepository.findByUserId(guestId).map { it.tournamentId }
+        assertEquals(listOf(tournamentId), guestRows, "회원 활성 행이 없는 충돌 방의 게스트 행은 남아 있어야 한다")
     }
 
     @Test
