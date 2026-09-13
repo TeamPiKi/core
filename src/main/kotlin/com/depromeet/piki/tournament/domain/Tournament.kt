@@ -61,8 +61,11 @@ class Tournament(
         this.status = TournamentStatus.COMPLETED
     }
 
+    // #1027: 토너먼트 status 는 정의(구성) 상태만 담고 완료는 참여 행이 갖는다. "주최자가 자기 플레이를 완료했나"
+    // 는 서비스가 owner 참여 행(status)으로 판정하고, 도메인은 "구성 단계는 지났나(PENDING 아님)" 불변식만 지킨다.
+    // 레거시 데이터(status=COMPLETED)도 PENDING 이 아니므로 그대로 통과한다.
     fun createPlayLink(expiresAt: LocalDateTime) {
-        check(isCompleted()) { "createPlayLink는 COMPLETED 상태에서만 호출 가능" }
+        check(!isPending()) { "createPlayLink는 시작된 토너먼트에서만 호출 가능" }
         playLinkExpiresAt = expiresAt
     }
 

@@ -35,20 +35,12 @@ class TournamentNotificationVariables(
     }
 
     // 알림 문구에 쓸 토너먼트 전용 닉네임(#1018). 참여자 표시명은 유저 프로필이 아니라 토너먼트에서 정한 이름을 쓴다.
-    // 루트 참여자(주최자·멤버·게스트 join)는 루트 TU 에서, 플레이링크 게스트는 루트의 클론 중 자기 소유 클론 TU 에서 푼다.
+    // #1027: 클론이 사라져 주최자·멤버·게스트 모두 ROOT 참여 행 하나를 가지므로, ROOT TU 에서 바로 푼다.
     // TU 를 못 찾거나 닉네임이 NULL(레거시)이면 null 을 돌려 호출부가 프로필 닉네임으로 폴백하게 한다.
     private fun tournamentNicknameOrNull(
         tournamentId: Long,
         actorId: UUID,
-    ): String? {
-        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, actorId)?.let { return it.nickname }
-        val clones = tournamentRepository.findBySourceTournamentId(tournamentId)
-        if (clones.isEmpty()) return null
-        return tournamentUserRepository
-            .findByIds(clones.map { it.ownerTournamentUserId }.toSet())
-            .firstOrNull { it.userId == actorId }
-            ?.nickname
-    }
+    ): String? = tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, actorId)?.nickname
 
     companion object {
         private const val FALLBACK_NAME = "토너먼트"

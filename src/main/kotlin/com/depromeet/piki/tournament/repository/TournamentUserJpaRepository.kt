@@ -41,15 +41,16 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
     // deletedAt 필터 없음 — 주최자가 토너먼트를 삭제(TU soft-delete)해도 그룹 결과에서 오너를 역조회할 수 있어야 한다.
     fun findByIdIn(ids: Collection<Long>): List<TournamentUser>
 
-    // completedAt 기준 — deletedAt 무관. 삭제한 주최자의 완료 내역도 그룹 결과에 반영해야 한다.
-    @Query("SELECT tu FROM TournamentUser tu WHERE tu.tournamentId = :tournamentId AND tu.completedAt IS NOT NULL")
+    // status = COMPLETED 기준 — deletedAt 무관(#1027). 완료 판정의 단일 출처를 status 로 통일한다(TournamentUser.isCompleted 와 동일 기준).
+    // 삭제한 주최자의 완료 내역도 그룹 결과에 반영해야 하므로 deletedAt 은 안 건다.
+    @Query("SELECT tu FROM TournamentUser tu WHERE tu.tournamentId = :tournamentId AND tu.status = com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED")
     fun findCompletedByTournamentId(@Param("tournamentId") tournamentId: Long): List<TournamentUser>
 
-    @Query("SELECT COUNT(tu) FROM TournamentUser tu WHERE tu.tournamentId = :tournamentId AND tu.completedAt IS NOT NULL")
+    @Query("SELECT COUNT(tu) FROM TournamentUser tu WHERE tu.tournamentId = :tournamentId AND tu.status = com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED")
     fun countCompletedByTournamentId(@Param("tournamentId") tournamentId: Long): Int
 
-    // 목록 카드의 "플레이한 N" 배치 조회(#1062). 단건 findCompletedByTournamentId 와 같은 기준(completedAt, deletedAt 무관)이다.
-    @Query("SELECT tu FROM TournamentUser tu WHERE tu.tournamentId IN :tournamentIds AND tu.completedAt IS NOT NULL")
+    // 목록 카드의 "플레이한 N" 배치 조회(#1062). 단건 findCompletedByTournamentId 와 같은 기준(status=COMPLETED, deletedAt 무관)이다.
+    @Query("SELECT tu FROM TournamentUser tu WHERE tu.tournamentId IN :tournamentIds AND tu.status = com.depromeet.piki.tournament.domain.TournamentStatus.COMPLETED")
     fun findCompletedByTournamentIdIn(
         @Param("tournamentIds") tournamentIds: Collection<Long>,
     ): List<TournamentUser>
