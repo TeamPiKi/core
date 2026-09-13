@@ -11,7 +11,6 @@ import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
 import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
@@ -100,16 +99,32 @@ class CloneFlattenBackfillIntegrationTest : IntegrationTestSupport() {
         assertTrue(historyDeleted(cloneHistoryId))
     }
 
+    // 옛 모델이 허용한 다중 참가 클론(초대코드로 클론 직접 참여 / 루트 소유자가 자기 클론에도 참여 — #1027 dev
+    // 클론 202 실데이터 형태). 가드로 중단하지 않고 참가자 전원을 각자 평탄화한다.
     @Test
-    fun `백필은 클론당 참가자가 1 이 아니면 중단한다(방어 가드)`() {
-        val ownerId = UUID.randomUUID()
-        val (rootId, _) = seedRoot(TournamentStatus.IN_PROGRESS, ownerId)
-        val guestId = UUID.randomUUID()
-        val (cloneId, _) = seedClone(rootId, guestId, TournamentStatus.IN_PROGRESS, completed = false)
-        // 예상 못한 데이터: 클론에 참가자 하나 더.
-        seedTournamentUser(cloneId, UUID.randomUUID())
+    fun `백필은 다중 참가 클론을 참가자별로 평탄화한다(링크게스트 재지향 + 루트소유자 스킵)`() {
+        val ownerId = UUID.randomUUID() // 루트 소유자
+        val (rootId, ownerRootTuId) = seedRoot(TournamentStatus.COMPLETED, ownerId)
+        completeTournamentUser(ownerRootTuId) // 루트 소유자는 ROOT 를 직접 완주
 
-        assertFailsWith<IllegalStateException> { runBackfill() }
+        val guestId = UUID.randomUUID() // 클론 소유자 — ROOT 참여 행 없음(링크 게스트)
+        val (cloneId, guestCloneTuId) = seedClone(rootId, guestId, TournamentStatus.IN_PROGRESS, completed = false)
+        // 다중 참가: 루트 소유자가 자기 클론에도 참여자로 들어간 형태.
+        val ownerCloneTuId = seedTournamentUser(cloneId, ownerId).getId()
+
+        runBackfill()
+
+        // 클론 소유자(게스트): ROOT 참여 행이 없으므로 재지향 — tournament_id → ROOT, status = 클론 status, 삭제 안 됨.
+        assertEquals(rootId, tournamentIdOf(guestCloneTuId))
+        assertEquals("IN_PROGRESS", statusOf(guestCloneTuId))
+        assertFalse(deleted(guestCloneTuId))
+
+        // 루트 소유자의 클론 참여 행: 이미 완주한 ROOT 참여 행이 있어 스킵(soft-delete).
+        assertTrue(deleted(ownerCloneTuId))
+        // 루트 소유자 ROOT 플레이는 정본으로 보존.
+        assertFalse(deleted(ownerRootTuId))
+        assertTrue(completedAtSet(ownerRootTuId))
+        assertEquals("COMPLETED", statusOf(ownerRootTuId))
     }
 
     // ---- 실행·시딩 헬퍼 ----
