@@ -127,6 +127,27 @@ class CloneFlattenBackfillIntegrationTest : IntegrationTestSupport() {
         assertEquals("COMPLETED", statusOf(ownerRootTuId))
     }
 
+    // 레거시 이력(V20260608015856 이전)은 tournament_user_id 가 NULL 일 수 있다. 단일 참여 클론이면 그 이력을
+    // 유일 참여자에게 귀속해 ROOT 로 함께 옮겨야 한다(안 그러면 클론에 남아 Phase 4 때 유실). tuId 기준 이관의 사각.
+    @Test
+    fun `백필은 단일 참여 클론의 NULL tuId 이력을 그 참여자에게 귀속해 ROOT 로 옮긴다`() {
+        val ownerId = UUID.randomUUID()
+        val (rootId, _) = seedRoot(TournamentStatus.COMPLETED, ownerId)
+        val guestId = UUID.randomUUID() // 링크 게스트 — ROOT 참여 행 없음
+        val (cloneId, guestCloneTuId) = seedClone(rootId, guestId, TournamentStatus.COMPLETED, completed = true)
+        // 레거시 형태: tuId 가 NULL 인 클론 이력.
+        val histId = seedHistory(cloneId, guestCloneTuId).getId()
+        jdbcTemplate.update("UPDATE tournament_histories SET tournament_user_id = NULL WHERE id = ?", histId)
+
+        runBackfill()
+
+        // 게스트는 ROOT 참여 행이 없어 재지향된다. NULL 이력은 그 게스트 TU 로 귀속돼 ROOT 로 이동(스트랜딩 X).
+        assertEquals(rootId, tournamentIdOf(guestCloneTuId))
+        assertFalse(deleted(guestCloneTuId))
+        assertEquals(rootId, historyTournamentId(histId))
+        assertEquals(guestCloneTuId, historyTournamentUserId(histId))
+    }
+
     // ---- 실행·시딩 헬퍼 ----
 
     private fun runBackfill() {
