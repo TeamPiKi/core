@@ -316,7 +316,6 @@ interface TournamentItemApi {
             원본 바이트가 서버를 경유하지 않아 서버 대역·메모리를 쓰지 않는다.
             참여자·PENDING·비복제 권한을 사전 검증하며, 정원(최대 32개) 최종 판정은 저장이 일어나는 2단계(/images/confirm)로 미룬다.
             content-type 과 contentLength 는 서명에 묶인다 — 클라는 각 uploadUrl 로 같은 Content-Type·Content-Length 로만 PUT 할 수 있고(S3 가 강제),
-            contentLength 를 생략하면 크기 없이 발급한다(과도기 — 구버전 contentTypes 형식도 같은 취급, 이후 필수로 전환).
             imageKey 들을 confirm 으로 되돌려준다. 한 장의 상한은 5MB 다.
         """,
     )
@@ -337,7 +336,7 @@ interface TournamentItemApi {
                 description =
                     "잘못된 요청 (이미지 개수 1~5 위반 · content-type 미지정 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003 · " +
-                        "contentLength 5MB 초과 — code: UPLOAD-003 · contentLength 0 이하 — code: UPLOAD-004)",
+                        "contentLength 5MB 초과 — code: UPLOAD-003 · contentLength 미지정 또는 0 이하 — code: UPLOAD-004)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

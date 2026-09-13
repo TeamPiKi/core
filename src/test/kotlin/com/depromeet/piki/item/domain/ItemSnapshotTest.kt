@@ -205,7 +205,7 @@ class ItemSnapshotTest {
         assertEquals(79_000, manual.price)
         assertEquals("https://img.example.com/a.png", manual.imageUrl)
         assertEquals(ItemSnapshotSource.MANUAL, manual.source)
-        assertEquals(editor, manual.editedBy)
+        assertEquals(editor, manual.createdBy)
         assertNotNull(manual.extractedAt)
         // 기계 버전 불변 — 이력 보존의 핵심.
         assertEquals(99_000, base.price)

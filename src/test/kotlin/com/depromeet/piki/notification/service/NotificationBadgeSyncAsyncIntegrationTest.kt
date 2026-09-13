@@ -189,7 +189,7 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
                     assertNull(node.get("unreadCountByCategory"))
                 }
             } finally {
-                registry.unregister(userId, emitter)
+                registry.removeAll(userId)
             }
         } finally {
             cleanup(userId)

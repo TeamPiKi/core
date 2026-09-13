@@ -15,6 +15,7 @@ import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -43,7 +44,10 @@ class WishlistService(
     private val itemDisplayService: ItemDisplayService,
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
+    private val sourcePlatformResolver: SourcePlatformResolver,
 ) {
+
+    private fun WishWithItem.withSourcePlatform(): WishWithItem = copy(sourcePlatform = sourcePlatformResolver.resolve(item.link))
 
     // TODO AOP
     private fun requireMember(userId: UUID) {
@@ -59,7 +63,7 @@ class WishlistService(
         val link = ProductLink.parse(rawUrl)
         wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
         itemRegistrar.accept(link, userId)
-        return wishPersistenceService.persist(userId, link)
+        return wishPersistenceService.persist(userId, link).withSourcePlatform()
     }
 
     fun presignImageUploads(
@@ -79,9 +83,10 @@ class WishlistService(
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         imagePresignService.verifyUploaded(imageKeys)
-        return imageKeys.mapNotNull { key ->
-            skippingDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE) { wishPersistenceService.registerImage(key, userId) }
-        }
+        return imageKeys
+            .mapNotNull { key ->
+                skippingDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE) { wishPersistenceService.registerImage(key, userId) }
+            }.map { it.withSourcePlatform() }
     }
 
     @Transactional(readOnly = true)
@@ -106,7 +111,11 @@ class WishlistService(
             pageWishes.map { wish ->
                 // item 은 wish 와 함께 영속화되며 병합 시 함께 옮겨진다(WishItemMergeListener). 없으면 영속화 경로가 깨진 코드 버그다.
                 val item = itemsById[wish.itemId] ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
-                WishWithItem(wish = wish, item = item, snapshot = displayByCard.getValue(wish.displayCard()))
+                WishWithItem(
+                    wish = wish,
+                    item = item,
+                    snapshot = displayByCard.getValue(wish.displayCard()),
+                ).withSourcePlatform()
             }
 
         val nextCursor =
@@ -141,6 +150,7 @@ class WishlistService(
             item = item,
             snapshot = itemDisplayService.resolveDisplay(wish.displayCard()),
             history = history,
+            sourcePlatform = sourcePlatformResolver.resolve(item.link),
         )
     }
 
@@ -163,7 +173,7 @@ class WishlistService(
         if (listOfNotNull(name, price, currency, image).isEmpty()) {
             memo?.let {
                 // 응답의 item 은 updateMemo 가 행 락 안에서 표시값(#857)으로 맞춰 돌려준다.
-                return wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = it)
+                return wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = it).withSourcePlatform()
             }
         }
         // 이미지 형식 검증(빈 바이트·미지원 MIME) — 외부 호출 전에 동기로 거른다(400).
@@ -186,7 +196,7 @@ class WishlistService(
             imageUrl = imageUrl,
             currency = currency,
             memo = memo,
-        )
+        ).withSourcePlatform()
     }
 
     // 위시 item 의 상품 정보를 원본 링크로 재추출해 최신화한다(수동 새로고침). 추출(Gemini)은 디스패처가 비동기로
@@ -201,7 +211,7 @@ class WishlistService(
         // refresh 계약 검증(링크 없음·FAILED 항목 등)은 persistence 안쪽이라 여기선 앞서 깎이는데, 그 두 사유는
         // 클라가 refresh 버튼을 띄우지 않는 상태라 정상 흐름에서 반복 호출되지 않는다.
         itemQuotaGuard.consume(userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
-        return wishPersistenceService.refresh(userId = userId, wishId = wishId)
+        return wishPersistenceService.refresh(userId = userId, wishId = wishId).withSourcePlatform()
     }
 
     // 멱등 삭제: 없거나 이미 삭제됐으면 "이미 목표 상태(없음)"이므로 성공으로 본다(no-op).

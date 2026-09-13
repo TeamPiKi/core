@@ -16,4 +16,5 @@ data class WishDetail(
     val item: Item,
     val snapshot: ItemSnapshot,
     val history: List<ItemSnapshot>,
+    val sourcePlatform: String?,
 )

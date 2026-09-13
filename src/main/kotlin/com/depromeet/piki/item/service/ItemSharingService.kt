@@ -2,6 +2,7 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemLinkRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -18,6 +19,7 @@ class ItemSharingService(
     private val itemRepository: ItemRepository,
     private val itemLinkRepository: ItemLinkRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val parsingEnqueuer: ParsingEnqueuer,
 ) {
     // 정규화된 입력이 이미 아는 링크 모양이면 그 item(공유 대상)을 돌려준다. 처음 보는 모양·저장 상한 초과는 null —
     // 그 경우 호출부가 기존 신규 경로(새 item + 별칭 기록 + PENDING)로 간다. 별칭은 병합 시 승자에게 이관되므로
@@ -71,7 +73,7 @@ class ItemSharingService(
         }
         return SharedAttachment(
             item = item,
-            snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy)),
+            snapshot = parsingEnqueuer.enqueue(itemId, requestedBy, ParseTrigger.REGISTER),
             reused = false,
             refreshNeeded = false,
         )

@@ -110,11 +110,11 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val other = UUID.randomUUID()
         insertMember(me)
         val itemId = saveItem("https://shop.example.com/products/source-labels")
-        saveVersion(itemId, "출처 미상", 90_000, source = null, editedBy = null)
-        val machine = saveVersion(itemId, "기계 추출", 95_000, source = ItemSnapshotSource.SERVER, editedBy = null)
-        saveVersion(itemId, "타인 수기", 80_000, source = ItemSnapshotSource.MANUAL, editedBy = other)
-        saveVersion(itemId, "LLM 추출", 97_000, source = ItemSnapshotSource.SERVER_LLM, editedBy = null)
-        saveVersion(itemId, "내 수기", 99_000, source = ItemSnapshotSource.MANUAL, editedBy = me)
+        saveVersion(itemId, "출처 미상", 90_000, source = null, createdBy = null)
+        val machine = saveVersion(itemId, "기계 추출", 95_000, source = ItemSnapshotSource.SERVER, createdBy = null)
+        saveVersion(itemId, "타인 수기", 80_000, source = ItemSnapshotSource.MANUAL, createdBy = other)
+        saveVersion(itemId, "LLM 추출", 97_000, source = ItemSnapshotSource.SERVER_LLM, createdBy = null)
+        saveVersion(itemId, "내 수기", 99_000, source = ItemSnapshotSource.MANUAL, createdBy = me)
         val wishId = saveWish(me, machine)
 
         mockMvc
@@ -151,7 +151,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val itemId = saveItem("https://shop.example.com/products/manual-display")
         saveMachineReady(itemId, "기계 값", 109_000, LocalDateTime.of(2026, 6, 1, 10, 0))
         // 기계 READY 보다 뒤에 쌓인 내 수기 — 표시값이 되고(수기 존중) 이력에도 맨 앞에 온다.
-        val myEdit = saveVersion(itemId, "내가 고친 값", 99_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
+        val myEdit = saveVersion(itemId, "내가 고친 값", 99_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
         val wishId = saveWish(userId, myEdit)
 
         mockMvc
@@ -178,8 +178,8 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/never-parsed")
         itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, status = ItemStatus.FAILED))
-        saveVersion(itemId, "직접 입력 1차", 120_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
-        val second = saveVersion(itemId, "직접 입력 2차", 110_000, source = ItemSnapshotSource.MANUAL, editedBy = userId)
+        saveVersion(itemId, "직접 입력 1차", 120_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
+        val second = saveVersion(itemId, "직접 입력 2차", 110_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
         val wishId = saveWish(userId, second)
 
         mockMvc
@@ -337,7 +337,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         name: String,
         price: Int,
         source: ItemSnapshotSource?,
-        editedBy: UUID?,
+        createdBy: UUID?,
     ): Long =
         itemSnapshotRepository
             .save(
@@ -350,7 +350,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                     status = ItemStatus.READY,
                     extractedAt = LocalDateTime.now(),
                     source = source,
-                    editedBy = editedBy,
+                    createdBy = createdBy,
                 ),
             ).getId()
 

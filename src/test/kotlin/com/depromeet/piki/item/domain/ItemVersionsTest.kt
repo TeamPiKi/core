@@ -284,7 +284,6 @@ class ItemVersionsTest {
                 status = status,
                 extractedAt = if (hasValue) LocalDateTime.now() else null,
                 source = source,
-                editedBy = by.takeIf { source == ItemSnapshotSource.MANUAL },
                 createdBy = by,
             )
         ItemSnapshot::class.java.superclass

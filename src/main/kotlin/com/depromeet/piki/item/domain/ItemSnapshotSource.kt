@@ -13,7 +13,7 @@ enum class ItemSnapshotSource {
     // LLM(Gemini) 추출 — 비결정성이 있어 신뢰 정책이 다를 수 있다.
     SERVER_LLM,
 
-    // 사용자 수기 입력. edited_by 에 편집자 userId 가 함께 기록된다.
+    // 사용자 수기 입력. created_by 에 편집자 userId 가 기록된다.
     MANUAL,
     ;
 

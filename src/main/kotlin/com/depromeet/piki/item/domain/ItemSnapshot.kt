@@ -31,15 +31,13 @@ class ItemSnapshot(
     extractedAt: LocalDateTime? = null,
     attemptCount: Int = 0,
     source: ItemSnapshotSource? = null,
-    editedBy: UUID? = null,
     createdBy: UUID? = null,
 ) : LongBaseEntity() {
     // 이 버전을 만든 맥락의 사람(#1051) — 서버 행은 파싱을 시킨 사람(등록자·새로고침한 사람), MANUAL 행은 고친 사람.
     // 카드 표시값(ItemVersions)이 "내 맥락의 행" 을 가르는 유일한 근거다. 도입 전 행은 추정 백필로 채우되 아무도
-    // 가리키지 않던 옛 이력은 null(모름)로 남는다. edited_by 는 이 컬럼에 흡수된다(제거는 후속 단계, 지금은 둘 다 쓴다).
-    // MANUAL 행은 편집자가 곧 만든 사람이라 createdBy 를 따로 안 줘도 editedBy 로 채운다(백필과 같은 규칙).
+    // 가리키지 않던 옛 이력은 null(모름)로 남는다. 옛 edited_by 컬럼은 여기에 흡수돼 제거됐다(V20260909171435).
     @Column(name = "created_by", columnDefinition = "BINARY(16)")
-    var createdBy: UUID? = createdBy ?: editedBy
+    var createdBy: UUID? = createdBy
         protected set
 
     // 이 버전의 출처(#825 결정 4) — SERVER(파서)/SERVER_LLM(LLM)/MANUAL(수기). 카드·가격 추적은 마지막
@@ -49,10 +47,6 @@ class ItemSnapshot(
     var source: ItemSnapshotSource? = source
         protected set
 
-    // MANUAL 버전의 편집자. "타인이 고친 값" 표시의 근거이며 SERVER* 버전은 null 이다.
-    @Column(name = "edited_by", columnDefinition = "BINARY(16)")
-    var editedBy: UUID? = editedBy
-        protected set
 
     // 추출 필드 — setter 직접 노출 대신, 의도가 박힌 명령(markReady·markFailed·recover)으로만 바꾼다.
     @Column(name = "name", length = 512)
@@ -319,8 +313,6 @@ class ItemSnapshot(
                 status = ItemStatus.READY,
                 extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.MANUAL,
-                // edited_by 는 created_by 에 흡수됐고 컬럼 제거(3단계)까지 같은 값을 함께 적는다 — 쓰는 곳은 여기 하나다.
-                editedBy = createdBy,
                 createdBy = createdBy,
             )
         }

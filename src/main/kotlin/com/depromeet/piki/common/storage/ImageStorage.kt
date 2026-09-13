@@ -15,7 +15,7 @@ interface ImageStorage {
     fun presignUpload(
         key: String,
         contentType: String,
-        contentLength: Long?,
+        contentLength: Long,
         expiry: Duration,
     ): String
 

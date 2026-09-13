@@ -108,8 +108,8 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
                     assertTrue(fcmCalls.none { it.first.contains(tokenB) })
                 }
             } finally {
-                registry.unregister(userA, emitterA)
-                registry.unregister(userB, emitterB)
+                registry.removeAll(userA)
+                registry.removeAll(userB)
             }
         } finally {
             cleanupRows(userA, userB)

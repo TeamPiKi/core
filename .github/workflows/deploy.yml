@@ -11,6 +11,10 @@ on:
         description: "prod 릴리즈 semver 태그 (예: v1.0.1). 비우면 release-<sha7> 로 폴백. Promote 워크플로가 채운다."
         required: false
         type: string
+      sha:
+        description: "배포할 커밋(40자 hex). 비우면 --ref 가 가리키는 브랜치 끝. Promote 워크플로가 승격한 커밋을 채운다."
+        required: false
+        type: string
 
 jobs:
   # 트리거 브랜치 → 배포 환경(dev/prod)·도메인·nginx conf 를 한 곳에서 결정한다.
@@ -18,6 +22,9 @@ jobs:
   # dev EC2 와 prod EC2 는 같은 워크플로 코드를 쓰되, deploy job 의 environment 키로 secret 이 갈린다.
   resolve:
     runs-on: ubuntu-latest
+    # prod 배포 커밋 검증이 compare API 를 친다.
+    permissions:
+      contents: read
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
@@ -32,9 +39,27 @@ jobs:
       jvm_opts: ${{ steps.r.outputs.jvm_opts }}
     steps:
       - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+          INPUT_SHA: ${{ inputs.sha }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          REF="${{ github.event.workflow_run.head_sha || github.sha }}"
+          if [ -n "$RUN_SHA" ]; then
+            REF="$RUN_SHA"
+          elif [ -n "$INPUT_SHA" ]; then
+            # 아래 API 경로에 그대로 실리므로 형태를 먼저 닫는다. 줄 단위 매칭(grep)은 개행이 섞인 입력을
+            # 통과시키고 그 개행이 $GITHUB_OUTPUT 의 뒤 키를 덮어쓴다.
+            [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              || { echo "::error::sha 입력이 40자 hex 가 아니다. 짧은 sha·브랜치명은 받지 않는다."; exit 1; }
+            REF="$INPUT_SHA"
+          else
+            # github.sha 는 dispatch 시점에 굳은 --ref 해석값이라 승격 직후면 옛 커밋이다(#1084).
+            # run 시작은 그보다 한참 뒤라, 여기서 다시 물으면 수렴한 값을 받는다.
+            REF=$(gh api "repos/$R/commits/$BRANCH" --jq '.sha') \
+              || { echo "::error::$BRANCH 의 커밋을 해석하지 못했다."; exit 1; }
+          fi
           if [ "$BRANCH" = "main" ]; then
             echo "environment=prod" >> "$GITHUB_OUTPUT"
             echo "domain=api.piki.day" >> "$GITHUB_OUTPUT"
@@ -67,6 +92,22 @@ jobs:
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: prod 배포 커밋 검증
+        if: ${{ steps.r.outputs.environment == 'prod' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+          REF: ${{ steps.r.outputs.ref }}
+        run: |
+          STATUS=$(gh api "repos/$R/compare/$REF...main" --jq '.status') \
+            || { echo "::error::compare 조회에 실패해 배포 대상을 확인할 수 없다."; exit 1; }
+          case "$STATUS" in
+            identical) echo "::notice::배포 대상 $REF 는 main tip 과 동일하다" ;;
+            # 롤백·지연 배포라 막지는 않되, 옛 커밋이 나가는 것은 #1084 의 얼굴이기도 해 로그에 남긴다.
+            ahead) echo "::warning::배포 대상 $REF 는 main tip 이 아닌 옛 커밋이다 (롤백·지연 배포)" ;;
+            *) echo "::error::배포 대상($REF)이 main 히스토리에 없다(compare=$STATUS). 승격되지 않은 커밋이므로 중단한다."; exit 1 ;;
+          esac
 
   deploy:
     needs: resolve

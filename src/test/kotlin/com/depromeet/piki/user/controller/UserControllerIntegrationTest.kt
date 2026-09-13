@@ -298,7 +298,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST users me profile-image - contentLength 를 생략하면 크기 없이 발급된다 (과도기 호환)`() {
+    fun `POST users me profile-image - contentLength 를 생략하면 UPLOAD-004 로 400 이 반환된다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -306,7 +306,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                 .build()
         val userId = UUID.randomUUID()
         insertUser(userId, identityType = IdentityType.MEMBER)
-        val presignedBefore = stubImageStorage.presignedContentLengths.size
+        val presignedBefore = stubImageStorage.presignedKeys.size
 
         mockMvc
             .perform(
@@ -314,8 +314,9 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"contentType":"image/png"}""")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
-            ).andExpect(status().isOk)
-        assertEquals(listOf<Long?>(null), stubImageStorage.presignedContentLengths.drop(presignedBefore))
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("UPLOAD-004"))
+        assertEquals(presignedBefore, stubImageStorage.presignedKeys.size)
     }
 
     @Test

@@ -25,10 +25,10 @@ class ImagePresignService(
     fun presignRawUpload(
         extension: String,
         contentType: String,
-        size: UploadSize?,
+        size: UploadSize,
     ): PresignedRawUpload {
         val key = "$RAW_PREFIX${UUID.randomUUID()}.$extension"
-        val url = imageStorage.presignUpload(key, contentType, size?.bytes, s3Properties.presignedUploadExpiry)
+        val url = imageStorage.presignUpload(key, contentType, size.bytes, s3Properties.presignedUploadExpiry)
         return PresignedRawUpload(imageKey = key, uploadUrl = url, contentType = contentType)
     }
 

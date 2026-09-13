@@ -60,7 +60,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
         val snapshotId = snapshot.getId()
         try {
-            // 소유권이 다른 시도로 넘어가 attempt 2 가 된 상황을 DB 에 반영. updated_at=now 라 배경 recover 가 안 건드린다.
+            // 소유권이 다른 시도로 넘어가 attempt 2 가 된 상황을 DB 에 반영.
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
             // 옛 시도(attempt 1)의 결과로 markExtracted → fencing 으로 전이 없이 폐기(좀비 결과).
@@ -89,7 +89,6 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }) // attempt 0 (집기는 예산 미소모)
         val snapshotId = snapshot.getId()
         try {
-            // 실제 흐름대로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
             val attempt = parsingOwnership.acquire(snapshotId, 0) ?: error("소유권 획득 실패")
             val settled =
                 itemParsingService.markExtracted(
@@ -175,12 +174,10 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // 반납의 "PENDING 으로 되돌아간다" 자체는 여기서 통합으로 관측하지 않는다 — 반납된 행은 배경 디스패처가 다음
-    // tick(1s)에 곧바로 다시 집어 PROCESSING 으로 만들기 때문에, PENDING 을 보는 창이 스케줄러와 경합해 닫힌다.
-    // (그 경합이 곧 반납이 의도대로 동작한다는 방증이다.) 대신 세 곳이 나눠 고정한다:
+    // 반납의 "PENDING 으로 되돌아간다" 자체는 여기서 통합으로 관측하지 않는다 — 세 곳이 나눠 고정한다:
     //   - 전이·예산 규칙   → ItemSnapshotTest 의 release 단위 테스트
     //   - 워커 경로의 효과 → WishlistRegisterAsyncIntegrationTest 의 "곧바로 재실행되고" (반납이 없으면 그 대기 안에 2회차가 안 온다)
-    //   - 상한 분기        → 바로 아래 테스트 (FAILED 는 터미널이라 스케줄러와 경합하지 않는다)
+    //   - 상한 분기        → 바로 아래 테스트
 
     @Test
     fun `실행 예산을 다 쓴 뒤의 일시 오류는 반납 대신 FAILED 로 종결된다`() {

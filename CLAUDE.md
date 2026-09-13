@@ -107,7 +107,7 @@ YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위�
 
 ### 기존 의존성 버전 변경 시
 - **버전 옆에 주석으로 고정 이유가 적혀 있으면 함부로 만지지 않는다.** 의도된 down-pin 일 가능성이 높다. 사용자에게 변경 이유와 호환성 확인 후 진행.
-- 예: Testcontainers BOM 의 `// ... 모듈이 따라올 때까지 testcontainers BOM 을 1.21.4 로 명시 고정.` 주석.
+- 예: Testcontainers BOM 라인에 달린 고정 이유 주석(`build.gradle.kts`). 숫자는 그쪽이 정본이라 여기 옮기지 않는다.
 
 ## DB 스키마
 
@@ -121,7 +121,7 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: extractor 원격 추출 호출) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
 
 - 외부 호출은 트랜잭션 바깥에서 끝내고, **영속화만 별도 빈에 위임**해 짧은 트랜잭션으로 묶는다.
-- 예: `WishlistService.register` 는 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임.
+- 예: `WishlistService.registerFromUrl` 은 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임.
 
 ### self-invocation 주의
 같은 빈 안에서 `@Transactional` 메서드를 직접 호출하면 Spring AOP proxy 를 거치지 않아 트랜잭션이 무력화된다. 경계를 분리하려면 **별도 빈으로 추출**해 proxy 를 거치게 한다.
@@ -134,7 +134,7 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 ### 민감 정보는 마스킹해서 찍는다
 URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대로 남기지 않는다. URL 은 `ProductLink.safeLogString()` (host + path 만, 쿼리스트링 제외) 처럼 마스킹 헬퍼를 거친다.
 
-- 이유: URL 쿼리스트링에 인증 토큰이 실릴 수 있어 raw 로깅 시 누출된다. (`## 도메인 예외 정책` 의 "메시지 톤: 응답 detail 은 전부 사용자 대면, 개발자 구분은 로그로" 와 같은 결)
+- 이유: URL 쿼리스트링에 인증 토큰이 실릴 수 있어 raw 로깅 시 누출된다. (`.claude/rules/domain-exception.md` 의 "메시지 톤: 응답 detail 은 전부 사용자 대면, 개발자 구분은 로그로" 와 같은 결)
 
 ### 레벨 기준
 - **info** — 정상 흐름·지표 (latency 등), 클라이언트 계약 위반 (검증 실패·도메인 예외). 클라이언트 잘못은 서버 입장에선 정상 동작이라 info.
@@ -146,7 +146,7 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 도메인 용어
 
-- **product** — 외부 상품(쇼핑몰 페이지)과 그 추출 파이프라인. `ProductLink`(외부 URL) · `ProductExtractor` · `ProductSnapshot`(추출 시점 결과).
+- **product** — 외부 상품(쇼핑몰 페이지)과 그 추출 파이프라인. `ProductLink`(외부 URL) · `ProductLinkExtractor` · `ProductSnapshot`(추출 시점 결과).
 - **item** — 상품의 정체성(`link`). 추출값·상태·이력은 버전(`ItemSnapshot`)이 들고, item 은 wish · tournament 가 참조하는 안정적 식별 단위다.
 - **item_snapshot** (`ItemSnapshot`) — item 의 한 추출 버전(name · price · image · currency · status · extracted_at · created_by). item 갱신 때마다 새 행이 쌓여 가격·이름 이력을 보존한다. 화면값은 버전들에서 계산한다(`ItemVersions`, 내 맥락의 값 vs 공유 READY). wish 는 item 을 참조하고 "기다리는 행"(`waitingSnapshotId`)만 따로 들며, tournament_item 은 출전 시점 고정 버전(pin)을 가리킨다.
 - **wish** — user 가 item 을 위시리스트에 담은 기록 (`user_id` + `item_id`).
@@ -173,12 +173,12 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 **매핑 로직은 DTO 자신에 둔다. 별도 Mapper 클래스/빈을 만들지 않는다.** "받는 쪽이 매핑을 책임진다" 가 기준:
 
-- **도메인 → 응답 DTO**: 응답 DTO 의 `companion object` 에 `from(도메인)` 정적 팩토리. 예: `UserResponse.from(user)`, `TournamentInfoResponse.from(info)`.
+- **도메인 → 응답 DTO**: 응답 DTO 의 `companion object` 에 `from(도메인)` 정적 팩토리. 예: `UserResponse.from(user)`, `WishItemResponse.WishView.from(wish)`.
 - **요청 DTO → 도메인/커맨드**: 요청 DTO 의 `toXxx()` 인스턴스 메서드. 예: `CreateTournamentRequest.toCreateTournament()`.
 - **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 원격 추출 응답 DTO 의 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
-- **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `from()`. 예: `Item.from(snapshot)`.
+- **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `companion object` 정적 팩토리. 예: `ItemSnapshot.pending(...)`, `ItemSnapshot.manual(...)`.
 
-매핑 분기·정규화는 단위 테스트로 검증한다 (`## 테스트 분류` 의 매퍼 함수 분기).
+매핑 분기·정규화는 단위 테스트로 검증한다 (`.claude/rules/testing-principles.md` 의 "테스트 분류" 가 말하는 매퍼 함수 분기).
 
 ## 컨트롤러 / OpenAPI 문서
 

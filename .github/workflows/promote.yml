@@ -258,11 +258,24 @@ jobs:
           # gh workflow run 은 repo 를 로컬 .git 에서 추론하려 한다. GH_REPO 로 대상 repo 를 명시해 git 의존을 끊는다.
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.plan.outputs.version }}
+          SRC_SHA: ${{ needs.plan.outputs.sha }}
         run: |
           # GITHUB_TOKEN 으로 한 ref 업데이트는 CI(on: push)를 자동 트리거하지 않는다(Actions recursion 방지).
           # ff 라 대상 SHA 는 dev 에서 이미 CI 를 통과한 동일 커밋이므로, CI 재실행 없이 배포만 직접 dispatch 한다.
-          gh workflow run deploy.yml --ref main -f version="$VERSION"
-          echo "::notice::deploy.yml dispatch → main (version=$VERSION)"
+          # sha 를 넘겨도 실행될 deploy.yml 정의 자체는 --ref main 해석분이라, 방금 올린 main 이 아직
+          # 안 퍼졌으면 옛 정의로 돈다(sha 입력이 없던 정의면 422). 관측되는 값이 수렴할 때까지 기다린다.
+          # 읽기와 dispatch 가 같은 복제본을 본다는 보장은 없어 휴리스틱이고, 배포 산출물은 sha 가 지킨다.
+          for ATTEMPT in $(seq 1 5); do
+            OBSERVED=$(gh api "repos/$GH_REPO/commits/main" --jq '.sha' 2>/dev/null || true)
+            [ "$OBSERVED" = "$SRC_SHA" ] && break
+            echo "::warning::main 관측값이 아직 ${OBSERVED:-조회 실패} — 3초 후 재확인 ($ATTEMPT/5)"
+            sleep 3
+          done
+          [ "$OBSERVED" = "$SRC_SHA" ] || echo "::warning::main 수렴 미확인 — sha 고정에 기대 그대로 진행"
+
+          gh workflow run deploy.yml --ref main -f version="$VERSION" -f sha="$SRC_SHA" \
+            || { echo "::error::deploy dispatch 실패. main 은 $SRC_SHA 로 승격됐으나 배포가 시작되지 않았다 — Actions 에서 Deploy 를 sha=$SRC_SHA 로 직접 실행하라."; exit 1; }
+          echo "::notice::deploy.yml dispatch → main ($SRC_SHA, version=$VERSION)"
 
       - name: 요약
         if: ${{ always() }}

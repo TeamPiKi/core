@@ -4,12 +4,14 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.enums.ParameterIn
 import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
@@ -151,6 +153,16 @@ interface WishlistApi {
     fun registerFromUrl(
         @Parameter(hidden = true) userId: UUID,
         request: WishlistRegisterRequest,
+        @Parameter(
+            `in` = ParameterIn.HEADER,
+            name = ExternalEntry.HEADER,
+            required = false,
+            description = "외부에서 넘어온 담기일 때만 보낸다. SHARE_SHEET 는 타앱 공유 시트로 링크가 전달된 경우다. " +
+                "앱이나 웹에서 직접 담는 경우는 기본이라 보내지 않는다. 집계 전용이라 등록 결과는 달라지지 않고, " +
+                "모르는 값을 보내도 400 이 아니라 집계에서 빠질 뿐이다.",
+            schema = Schema(type = "string", allowableValues = ["SHARE_SHEET"]),
+        )
+        rawEntryPoint: String?,
     ): ApiResponseBody<WishItemResponse>
 
     @Operation(
@@ -652,7 +664,6 @@ interface WishlistApi {
             이미지 등록의 1단계. 올릴 이미지들의 content-type·바이트 수(1~5개)를 받아, 클라가 S3 에 직접 PUT 할 presigned URL 을 발급한다.
             원본 바이트가 서버를 경유하지 않아 서버 대역·메모리를 쓰지 않는다.
             content-type 과 contentLength 는 서명에 묶인다 — 클라는 각 uploadUrl 로 같은 Content-Type·Content-Length 로만 PUT 할 수 있고(S3 가 강제),
-            contentLength 를 생략하면 크기 없이 발급한다(과도기 — 구버전 contentTypes 형식도 같은 취급, 이후 필수로 전환).
             imageKey 들을 2단계(/images/confirm)로 되돌려준다. 한 장의 상한은 5MB 다.
             발급 시점에는 Wish·Item 을 만들지 않는다(확정 단계에서 생성).
             확정이 오지 않은 업로드는 등록되지 않고 S3 lifecycle 이 지운다.
@@ -675,7 +686,7 @@ interface WishlistApi {
                 description =
                     "잘못된 요청 (이미지 개수 1~5 위반 · content-type 미지정 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003 · " +
-                        "contentLength 5MB 초과 — code: UPLOAD-003 · contentLength 0 이하 — code: UPLOAD-004)",
+                        "contentLength 5MB 초과 — code: UPLOAD-003 · contentLength 미지정 또는 0 이하 — code: UPLOAD-004)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

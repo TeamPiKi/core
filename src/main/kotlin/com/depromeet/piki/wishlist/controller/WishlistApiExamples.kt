@@ -232,7 +232,7 @@ class WishlistApiExamples(
                     add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
                     add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                     add(ImageUploadException.tooLarge(), name = "contentLength 5MB 초과")
-                    add(ImageUploadException.invalidSize(), name = "contentLength 0 이하")
+                    add(ImageUploadException.invalidSize(), name = "contentLength 미지정 또는 0 이하")
                     add(ImageStorageException.presignFailed(), name = "presigned URL 발급 실패 (스토리지 장애)")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")

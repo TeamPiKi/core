@@ -79,8 +79,7 @@ interface UserApi {
         description =
             "프로필 이미지를 올릴 **presigned URL** 을 발급한다. 바이트는 서버를 거치지 않고 클라가 S3 로 직접 PUT 한다.\n\n" +
                 "**흐름**\n\n" +
-                "1. 이 API 로 `contentType` · `contentLength`(바이트 수) 를 보내 `uploadUrl` · `imageKey` 를 받는다. " +
-                "`contentLength` 를 생략하면 크기 없이 발급한다(과도기, 이후 필수로 전환).\n" +
+                "1. 이 API 로 `contentType` · `contentLength`(바이트 수) 를 보내 `uploadUrl` · `imageKey` 를 받는다.\n" +
                 "2. `uploadUrl` 에 이미지를 PUT 한다 (`Content-Type` 헤더는 응답의 `contentType` 과, `Content-Length` 는 " +
                 "요청의 `contentLength` 와 같아야 한다 — 둘 다 서명에 박혀 있어 다르면 S3 가 거부).\n" +
                 "3. `PATCH /users/me` 에 `imageKey` 를 실어 확정한다. 서버가 그 원본을 읽어 검증하고 최종 경로에 저장한다.\n\n" +
@@ -107,7 +106,7 @@ interface UserApi {
                         "- `contentType` 이 비어 있음 (형식 검증 400, COMMON-INVALID-INPUT)\n" +
                         "- 지원하지 않는 형식 (`png`/`jpeg`/`webp`/`heic`/`heif` 만 허용) (USER-010)\n" +
                         "- `contentLength` 가 5MB 를 넘음 (UPLOAD-003)\n" +
-                        "- `contentLength` 가 0 이하 (UPLOAD-004)",
+                        "- `contentLength` 가 없거나 0 이하 (UPLOAD-004)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

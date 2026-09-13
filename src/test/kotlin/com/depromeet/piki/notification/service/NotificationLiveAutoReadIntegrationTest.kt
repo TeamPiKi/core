@@ -61,7 +61,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
             assertTrue(saved.first().isRead)
         } finally {
             // 레지스트리는 인메모리 싱글턴이라 @Transactional 롤백 대상이 아니다 — 다음 테스트로 누수 안 되게 명시 해제.
-            sseEmitterRegistry.unregister(userId, emitter)
+            sseEmitterRegistry.removeAll(userId)
         }
     }
 
@@ -81,7 +81,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
             assertEquals(1, saved.size)
             assertTrue(saved.first().isRead)
         } finally {
-            sseEmitterRegistry.unregister(userId, emitter)
+            sseEmitterRegistry.removeAll(userId)
         }
     }
 
@@ -103,7 +103,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
             assertEquals(1, saved.size)
             assertFalse(saved.first().isRead, "전달 실패한 알림은 안읽음으로 남아 사용자가 결국 봐야 한다")
         } finally {
-            sseEmitterRegistry.unregister(userId, deadEmitter)
+            sseEmitterRegistry.removeAll(userId)
         }
     }
 
@@ -138,7 +138,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
             assertEquals(1, saved.size)
             assertTrue(saved.first().isRead)
         } finally {
-            sseEmitterRegistry.unregister(userId, emitter)
+            sseEmitterRegistry.removeAll(userId)
         }
     }
 }

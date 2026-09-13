@@ -2,12 +2,14 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.DisplayCard
 import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemIdentityRecorder
 import com.depromeet.piki.item.service.ItemSharingService
+import com.depromeet.piki.item.service.ParsingEnqueuer
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.Tournament
@@ -38,6 +40,7 @@ class TournamentItemPersistenceService(
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemSharingService: ItemSharingService,
     private val itemDisplayService: ItemDisplayService,
+    private val parsingEnqueuer: ParsingEnqueuer,
 ) {
     // 이 토너먼트에 이미 출전 중인 item → 그 tournament_item id. 중복 판정이 "무엇과 겹치는지"까지 답해야 해서(#973)
     // 존재 여부가 아니라 매핑으로 만든다. snapshot 을 못 찾는 행은 자연히 빠지는데, 그런 행은 정원·중복 어느 쪽에도 셀 수 없다.
@@ -160,7 +163,7 @@ class TournamentItemPersistenceService(
     ): PersistedTournamentItem {
         val saved = itemRepository.save(item)
         itemIdentityRecorder.recordRegistrationAlias(saved)
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(saved.getId(), requestedBy = userId))
+        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId, triggerType = ParseTrigger.REGISTER)
         val tournamentItem =
             tournamentItemRepository.save(
                 TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),

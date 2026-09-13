@@ -3,9 +3,10 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
-import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.metrics.registration.ExternalEntry
+import com.depromeet.piki.metrics.registration.WishExternalEntryRecorder
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
@@ -36,20 +38,21 @@ import java.util.UUID
 @RequestMapping("/api/v1/wishlists")
 class WishlistController(
     private val wishlistService: WishlistService,
-    private val sourcePlatformResolver: SourcePlatformResolver,
+    private val wishExternalEntryRecorder: WishExternalEntryRecorder,
 ) : WishlistApi {
-    private fun toResponse(result: WishWithItem): WishItemResponse =
-        WishItemResponse.from(result.wish, result.item, result.snapshot, sourcePlatformResolver.resolve(result.item.link))
+    private fun toResponse(result: WishWithItem): WishItemResponse = WishItemResponse.from(result)
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     override fun registerFromUrl(
         @AuthenticationPrincipal userId: UUID,
         @Valid @RequestBody request: WishlistRegisterRequest,
+        @RequestHeader(name = ExternalEntry.HEADER, required = false) rawEntryPoint: String?,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
+        wishExternalEntryRecorder.record(wishId = result.wish.getId(), rawEntryPoint = rawEntryPoint)
         return ApiResponseBody.created(
-            WishItemResponse.fromRegistration(result, sourcePlatformResolver.resolve(result.item.link)),
+            WishItemResponse.fromRegistration(result),
         )
     }
 
@@ -93,7 +96,7 @@ class WishlistController(
     ): ApiResponseBody<WishDetailResponse> {
         val result = wishlistService.getWish(userId = userId, wishId = wishId)
         return ApiResponseBody.ok(
-            WishDetailResponse.from(result, sourcePlatformResolver.resolve(result.item.link), requesterId = userId),
+            WishDetailResponse.from(result, requesterId = userId),
         )
     }
 

@@ -72,7 +72,7 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
             assertTrue(outsiderEmitter.payloads().isEmpty())
         } finally {
             listOf(adder to adderEmitter, participant to participantEmitter, outsider to outsiderEmitter)
-                .forEach { (userId, emitter) -> registry.unregister(userId, emitter) }
+                .forEach { (userId, _) -> registry.removeAll(userId) }
         }
     }
 
@@ -91,7 +91,7 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
 
             assertEquals(ItemStatus.FAILED, emitter.payloads().single().status)
         } finally {
-            registry.unregister(participant, emitter)
+            registry.removeAll(participant)
         }
     }
 
@@ -108,7 +108,7 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
 
             assertTrue(emitter.payloads().isEmpty())
         } finally {
-            registry.unregister(someUser, emitter)
+            registry.removeAll(someUser)
         }
     }
 
@@ -139,8 +139,8 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
             assertEquals(tournamentB, payloadB.tournamentId)
             assertEquals(itemIdB, payloadB.tournamentItemId)
         } finally {
-            registry.unregister(userA, emitterA)
-            registry.unregister(userB, emitterB)
+            registry.removeAll(userA)
+            registry.removeAll(userB)
         }
     }
 
@@ -169,8 +169,8 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
             assertEquals(cardB, emitterB.payloads().single().tournamentItemId)
             assertTrue(emitterA.payloads().isEmpty())
         } finally {
-            registry.unregister(userA, emitterA)
-            registry.unregister(userB, emitterB)
+            registry.removeAll(userA)
+            registry.removeAll(userB)
         }
     }
 

@@ -47,7 +47,7 @@ class S3ImageStorage(
     override fun presignUpload(
         key: String,
         contentType: String,
-        contentLength: Long?,
+        contentLength: Long,
         expiry: Duration,
     ): String =
         // 서명은 로컬 계산이라 네트워크 호출이 없지만, SDK 예외(자격증명 없음 등)는 계약 예외(502)로 변환한다.
@@ -63,7 +63,7 @@ class S3ImageStorage(
                                 .bucket(s3Properties.bucket)
                                 .key(key)
                                 .contentType(contentType)
-                                .apply { contentLength?.let { contentLength(it) } }
+                                .contentLength(contentLength)
                                 .build(),
                         ).build(),
                 ).url()

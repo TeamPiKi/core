@@ -115,7 +115,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.invalidImageCount(), name = "이미지 개수 위반 (1~5개)")
                         add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                         add(ImageUploadException.tooLarge(), name = "contentLength 5MB 초과")
-                        add(ImageUploadException.invalidSize(), name = "contentLength 0 이하")
+                        add(ImageUploadException.invalidSize(), name = "contentLength 미지정 또는 0 이하")
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "토너먼트 권한 없음")
                         add(TournamentException.clonedTournamentCannotAddItems(), name = "플레이링크 복제 토너먼트에는 아이템 추가 불가")

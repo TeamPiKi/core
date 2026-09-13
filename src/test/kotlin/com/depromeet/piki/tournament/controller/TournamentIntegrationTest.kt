@@ -2414,7 +2414,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         assertEquals("KRW", manual.currency)
         assertEquals(ItemStatus.READY, manual.status)
         assertEquals(ItemSnapshotSource.MANUAL, manual.source)
-        assertEquals(userId, manual.editedBy)
+        assertEquals(userId, manual.createdBy)
         // 기존 FAILED 행은 이력으로 불변.
         assertEquals(ItemStatus.FAILED, itemSnapshotJpaRepository.findById(snapshot.getId()).get().status)
     }

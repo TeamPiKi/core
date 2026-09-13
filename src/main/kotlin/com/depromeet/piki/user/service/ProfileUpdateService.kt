@@ -43,7 +43,7 @@ class ProfileUpdateService(
         return imagePresignService.presignRawUpload(
             extension = ProfileImageFile.extensionForMimeType(contentType),
             contentType = contentType,
-            size = UploadSize.ofOrNull(contentLength),
+            size = UploadSize.of(contentLength),
         )
     }
 

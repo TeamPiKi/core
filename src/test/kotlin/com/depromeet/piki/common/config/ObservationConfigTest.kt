@@ -48,6 +48,12 @@ class ObservationConfigTest {
     }
 
     @Test
+    fun `SSE 클라이언트 하트비트 요청 observation 은 제외되고 다른 알림 경로는 유지된다`() {
+        assertFalse(predicate.test("http.server.requests", serverRequest("/api/v1/notifications/heartbeat")))
+        assertTrue(predicate.test("http.server.requests", serverRequest("/api/v1/notifications")))
+    }
+
+    @Test
     fun `actuator 가 아닌 일반 observation(item_parse 등)은 유지된다`() {
         assertTrue(predicate.test("item.parse", Observation.Context()))
     }

@@ -15,12 +15,11 @@ data class ProfileImagePresignRequest(
     )
     val contentType: String,
     @field:Schema(
-        description =
-            "이미지 파일의 바이트 수 (1 이상 5MB 이하). 보내면 서명에 묶여 PUT 시 Content-Length 와 같아야 한다. " +
-                "생략하면 크기 없이 발급한다(과도기, 이후 필수로 전환).",
+        description = "이미지 파일의 바이트 수 (1 이상 5MB 이하). 서명에 묶여 PUT 시 Content-Length 와 같아야 한다.",
         example = "1048576",
+        requiredMode = Schema.RequiredMode.REQUIRED,
     )
-    val contentLength: Long? = null,
+    val contentLength: Long?,
 ) {
     // Bean Validation 위반 메시지의 single source (UserUpdateRequest 와 같은 규약).
     companion object {

@@ -322,3 +322,88 @@ resource "grafana_rule_group" "quota" {
     }
   }
 }
+
+# renderer 홉 상한 도달 알림. 렌더 응답이 홉 목록이 되면서 생긴 WARN 로그를 센다.
+# environment 로 거르지 않는다: renderer 박스 한 대가 prod·dev 를 같이 서빙해 라벨을 믿을 수 없다.
+# 라벨을 달지 않으니 루트 정책의 기본 경로인 discord-prod 로 나간다 (서버 에러 로그 룰과 같은 수신자).
+resource "grafana_rule_group" "renderer" {
+  name               = "renderer"
+  folder_uid         = grafana_folder.piki_alerts.uid
+  interval_seconds   = 60
+  disable_provenance = true
+
+  rule {
+    name           = "renderer 홉 상한 도달 (piki-renderer)"
+    condition      = "B"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    is_paused      = false
+    annotations = {
+      logs_url = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-renderer%5C%22%7D%20%7C%3D%20%5C%22render%20hop%20cap%20hit%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
+      summary  = "renderer 홉 상한 도달 - 브라우저가 10홉을 채워 렌더를 끊었습니다. 리다이렉트 루프인지 무한 내비게이션인지 로그의 trail 로 확인합니다."
+    }
+    data {
+      ref_id         = "A"
+      query_type     = "instant"
+      datasource_uid = "grafanacloud-logs"
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "expr": "sum(count_over_time({service=\"piki-renderer\"} |= \"render hop cap hit\" [10m]))",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "queryType": "instant",
+        "refId": "A"
+      }
+      EOT
+    }
+    data {
+      ref_id         = "B"
+      query_type     = ""
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "last"
+            }
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "expression": "A",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "refId": "B",
+        "type": "threshold"
+      }
+      EOT
+    }
+  }
+}

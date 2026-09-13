@@ -570,7 +570,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
                 status = ItemStatus.READY,
                 extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.MANUAL,
-                editedBy = fixedOwner,
+                createdBy = fixedOwner,
             ),
         )
         val stuckWaiting = snapshotWithStatus(itemId, ItemStatus.FAILED)

@@ -4,7 +4,7 @@ package com.depromeet.piki.image.domain
 data class UploadFormat private constructor(
     val contentType: String,
     val extension: String,
-    val size: UploadSize?,
+    val size: UploadSize,
 ) {
     companion object {
         fun of(
@@ -13,7 +13,7 @@ data class UploadFormat private constructor(
         ): UploadFormat {
             val extension = ProductImage.extensionForMimeType(contentType)
             // 선언값 그대로 서명한다 — 클라 PUT 헤더와 문자열이 같아야 한다.
-            return UploadFormat(requireNotNull(contentType), extension, UploadSize.ofOrNull(contentLength))
+            return UploadFormat(requireNotNull(contentType), extension, UploadSize.of(contentLength))
         }
     }
 }

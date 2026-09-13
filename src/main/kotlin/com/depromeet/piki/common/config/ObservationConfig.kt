@@ -47,6 +47,9 @@ class ObservationConfig {
                 isInfrastructure(name, context) -> hasParent(context)
                 context is ServerRequestObservationContext &&
                     (context.carrier?.requestURI?.startsWith("/actuator") ?: false) -> false
+                // 연결마다 30초에 한 번 오는 인메모리 갱신이라 가장 잦은 요청이 된다. 무료 한도에 실을 가치가 없다.
+                context is ServerRequestObservationContext &&
+                    context.carrier?.requestURI == "/api/v1/notifications/heartbeat" -> false
                 else -> true
             }
         }

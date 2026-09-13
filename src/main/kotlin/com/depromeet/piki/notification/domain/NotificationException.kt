@@ -16,5 +16,7 @@ class NotificationException private constructor(
 
     companion object {
         fun invalidCursor(): NotificationException = NotificationException(NotificationErrorCode.INVALID_CURSOR)
+
+        fun unknownConnection(): NotificationException = NotificationException(NotificationErrorCode.UNKNOWN_CONNECTION)
     }
 }

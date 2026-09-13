@@ -80,7 +80,7 @@ class UserApiExamples(
                         )
                         add(UserException.unsupportedProfileImageType(), name = "지원하지 않는 이미지 형식")
                         add(ImageUploadException.tooLarge(), name = "contentLength 5MB 초과")
-                        add(ImageUploadException.invalidSize(), name = "contentLength 0 이하")
+                        add(ImageUploadException.invalidSize(), name = "contentLength 미지정 또는 0 이하")
                         unauthorized()
                         add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 업로드 거부")
                         add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")

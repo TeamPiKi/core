@@ -35,17 +35,15 @@ data class WishDetailResponse(
     val priceHistory: List<PriceHistoryEntry>,
 ) {
     companion object {
-        // sourcePlatform 은 SourcePlatformResolver(빈)의 판정이라 호출부(컨트롤러)가 풀어 넘긴다.
         // requesterId 는 editedByMe(수기 버전을 내가 넣었는지) 파생용 — 편집자 식별자(UUID)는 응답에 노출하지 않는다.
         fun from(
             detail: WishDetail,
-            sourcePlatform: String?,
             requesterId: UUID,
         ): WishDetailResponse =
             WishDetailResponse(
                 wish = WishItemResponse.WishView.from(detail.wish),
                 memo = detail.wish.memo,
-                item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, sourcePlatform),
+                item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, detail.sourcePlatform),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
             )
     }

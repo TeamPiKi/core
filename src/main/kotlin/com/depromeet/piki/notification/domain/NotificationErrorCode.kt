@@ -16,4 +16,7 @@ enum class NotificationErrorCode(
     override val message: String,
 ) : ErrorCode {
     INVALID_CURSOR("NOTIFICATION-001", ErrorCategory.INVALID_INPUT, "페이지를 불러오지 못했어요. 새로고침 해주세요."),
+
+    // 클라이언트는 이 code 를 받으면 SSE 를 재연결한다.
+    UNKNOWN_CONNECTION("NOTIFICATION-002", ErrorCategory.CONFLICT, "연결이 끊겼어요. 다시 연결해 주세요."),
 }

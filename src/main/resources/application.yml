@@ -194,6 +194,10 @@ notification:
   retention-days: ${NOTIFICATION_RETENTION_DAYS:14}
   # 자동삭제 스케줄(cron, KST/Asia/Seoul). 기본 매일 04:00 KST. NotificationCleanupScheduler 의 @Scheduled(zone=Asia/Seoul) placeholder 가 참조한다.
   cleanup-cron: ${NOTIFICATION_CLEANUP_CRON:0 0 4 * * *}
+  sse:
+    client-heartbeat:
+      # 단위 없는 숫자는 초. ping 주기(30초) 이하면 부팅에 실패한다.
+      stale-after: ${SSE_CLIENT_HEARTBEAT_STALE_AFTER:60s}
 
 # API 레퍼런스 문서 노출 게이트 — dev 만 노출, prod 는 404 (deploy.yml 이 dev 만 SPRINGDOC_ENABLED=true).
 # spec(springdoc.api-docs.enabled)·static Stoplight UI·루트 리다이렉트(docs.enabled → WebConfig)가 이 플래그를 공유한다.

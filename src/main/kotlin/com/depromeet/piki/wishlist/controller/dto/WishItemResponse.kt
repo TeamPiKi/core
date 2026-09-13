@@ -33,25 +33,19 @@ data class WishItemResponse(
 ) {
     companion object {
         fun from(
-            wish: Wish,
-            item: Item,
-            snapshot: ItemSnapshot,
-            sourcePlatform: String?,
+            result: WishWithItem,
         ): WishItemResponse =
             WishItemResponse(
-                wish = WishView.from(wish),
-                item = ItemView.from(item, snapshot, sourcePlatform),
+                wish = WishView.from(result.wish),
+                item = ItemView.from(result),
             )
 
         // URL 등록 응답 전용 — 공유 attach 메타(#853)까지 싣는다. 등록만 이 오버로드를 쓰고,
         // 목록·수정 등 다른 경로는 위 기본 from(플래그 null)을 유지한다.
-        fun fromRegistration(
-            result: WishWithItem,
-            sourcePlatform: String?,
-        ): WishItemResponse =
+        fun fromRegistration(result: WishWithItem): WishItemResponse =
             WishItemResponse(
                 wish = WishView.from(result.wish),
-                item = ItemView.from(result.item, result.snapshot, sourcePlatform),
+                item = ItemView.from(result),
                 reused = result.reused,
                 refreshNeeded = result.refreshNeeded,
             )
@@ -123,7 +117,8 @@ data class WishItemResponse(
         companion object {
             // 표시값(status·name·price·currency·imageUrl)은 활성 snapshot 에서,
             // 정체성(id·sourceUrl=상품 링크)은 item 에서 읽는다. snapshot 은 5단계 갱신에서 새 버전으로 스왑된다.
-            // sourcePlatform 은 SourcePlatformResolver(빈)의 판정이라 호출부(컨트롤러)가 풀어 넘긴다.
+            fun from(result: WishWithItem): ItemView = from(result.item, result.snapshot, result.sourcePlatform)
+
             fun from(
                 item: Item,
                 snapshot: ItemSnapshot,
