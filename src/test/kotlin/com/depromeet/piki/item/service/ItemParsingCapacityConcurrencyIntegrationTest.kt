@@ -7,8 +7,11 @@ import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseRequest
+import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubItemParsingWorker
@@ -49,6 +52,8 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
+    @Autowired private lateinit var parseRequestRepository: ParseRequestRepository
+
     @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
@@ -77,15 +82,15 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
             val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/capacity-${UUID.randomUUID()}")))
             itemId = item.getId()
-            val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID())).getId()
+            val queued = enqueue(itemId, claimed = false)
 
             itemParsingScheduler.dispatch()
-            assertEquals(ItemStatus.PENDING, statusOf(snapshotId), "가용 슬롯이 없으면 claim 하지 않고 PENDING 으로 남겨야 한다")
+            assertEquals(ItemStatus.PENDING, statusOf(queued.snapshotId), "가용 슬롯이 없으면 claim 하지 않고 PENDING 으로 남겨야 한다")
 
             release.countDown()
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             itemParsingScheduler.dispatch()
-            await().atMost(Duration.ofSeconds(10)).until { statusOf(snapshotId) == ItemStatus.PROCESSING }
+            await().atMost(Duration.ofSeconds(10)).until { statusOf(queued.snapshotId) == ItemStatus.PROCESSING }
         } finally {
             release.countDown()
             stubItemParsingWorker.enabled = true
@@ -101,17 +106,19 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             val outcome = itemParsingService.reviveOrFailStale(LocalDateTime.now(), 100, 0)
 
             assertTrue(outcome.toRevive.isEmpty(), "슬롯이 없으면 되살림 대상을 지목하지 않아야 한다")
-            assertEquals(ItemStatus.FAILED, statusOf(exhausted.second), "종결은 슬롯과 무관하게 진행돼야 한다")
-            assertEquals(ItemStatus.PROCESSING, statusOf(revivable.second), "되살림 대상은 손대지 않고 남겨야 한다")
-            assertEquals(1, attemptOf(revivable.second), "지목을 미뤘으므로 실행 예산을 태우지 않아야 한다")
+            assertEquals(ItemStatus.FAILED, statusOf(exhausted.snapshotId), "종결은 슬롯과 무관하게 진행돼야 한다")
+            assertEquals(ItemStatus.PROCESSING, statusOf(revivable.snapshotId), "되살림 대상은 손대지 않고 남겨야 한다")
+            assertEquals(1, attemptOf(revivable.requestId), "지목을 미뤘으므로 실행 예산을 태우지 않아야 한다")
         } finally {
-            deleteItem(exhausted.first)
-            deleteItem(revivable.first)
+            deleteItem(exhausted.itemId)
+            deleteItem(revivable.itemId)
         }
     }
 
     @Test
     fun `마감을 넘긴 행은 attempt 가 남아 있어도 박동이 뛰어도 종결된다`() {
+        // 마감은 예산(attempt)이 아니라 벽시계(created_at)를 본다. 그래서 (a) 아직 집히지도 않은 PENDING 과
+        // (b) 실행 예산이 남아 있고 박동으로 heartbeat_at 이 신선한 PROCESSING 이 함께 종결된다 — 종결 보증의 최후 시계다.
         val pending = overdue(ItemStatus.PENDING)
         val beating = overdue(ItemStatus.PROCESSING)
         // 종결 구조화 로그(#902) — 알림 룰이 소비하는 계약. 특히 "한 번도 실행되지 않은 PENDING 의 마감 종결"이
@@ -123,13 +130,13 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             val expired = itemParsingService.failOverdue(LocalDateTime.now(), 100)
 
             assertTrue(expired >= 2, "마감 초과 행은 종결돼야 한다")
-            assertEquals(ItemStatus.FAILED, statusOf(pending.second), "집히지 못한 PENDING 도 마감 대상이다")
-            assertEquals(ItemStatus.FAILED, statusOf(beating.second), "박동이 신선해도 마감은 종결한다")
-            assertEquals(0, attemptOf(beating.second), "마감은 예산을 소모하지 않고 종결한다")
+            assertEquals(ItemStatus.FAILED, statusOf(pending.snapshotId), "집히지 못한 PENDING 도 마감 대상이다")
+            assertEquals(ItemStatus.FAILED, statusOf(beating.snapshotId), "박동이 신선해도 마감은 종결한다")
+            assertEquals(0, attemptOf(beating.requestId), "마감은 예산을 소모하지 않고 종결한다")
             assertTrue(
                 terminalLogs.list.any {
                     it.formattedMessage.contains("item.parse.result") &&
-                        it.formattedMessage.contains("item=${pending.first}") &&
+                        it.formattedMessage.contains("item=${pending.itemId}") &&
                         it.formattedMessage.contains("result=failed") &&
                         it.formattedMessage.contains("reason=deadline") &&
                         it.formattedMessage.contains("url=shop.example.com/products/overdue-")
@@ -138,46 +145,68 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             )
         } finally {
             serviceLogger.detachAppender(terminalLogs)
-            deleteItem(pending.first)
-            deleteItem(beating.first)
+            deleteItem(pending.itemId)
+            deleteItem(beating.itemId)
         }
     }
 
-    // created_at 을 과거로 민 마감 대상 행. updated_at 은 now 로 둬 "박동이 신선한데도 마감에 걸린다"를 재현한다.
-    private fun overdue(status: ItemStatus): Pair<Long, Long> {
+    // created_at 을 과거로 민 마감 대상 요청. heartbeat_at 은 now 로 둬 "박동이 신선한데도 마감에 걸린다"를 재현한다.
+    private fun overdue(status: ItemStatus): Queued {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/overdue-${UUID.randomUUID()}")))
-        val snapshot = ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { if (status == ItemStatus.PROCESSING) markProcessing() }
-        val snapshotId = itemSnapshotRepository.save(snapshot).getId()
+        val queued = enqueue(item.getId(), claimed = status == ItemStatus.PROCESSING)
         jdbcTemplate.update(
-            "UPDATE item_snapshots SET created_at = ?, updated_at = ? WHERE id = ?",
+            "UPDATE parse_requests SET created_at = ?, heartbeat_at = ? WHERE id = ?",
             LocalDateTime.now().minusSeconds(90),
             LocalDateTime.now(),
-            snapshotId,
+            queued.requestId,
         )
-        return item.getId() to snapshotId
+        return queued
     }
 
-    private fun staleProcessing(attempt: Int): Pair<Long, Long> {
+    private fun staleProcessing(attempt: Int): Queued {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/slot-${UUID.randomUUID()}")))
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }).getId()
+        val queued = enqueue(item.getId(), claimed = true)
         jdbcTemplate.update(
-            "UPDATE item_snapshots SET attempt_count = ?, updated_at = ? WHERE id = ?",
+            "UPDATE parse_requests SET attempt_count = ?, heartbeat_at = ? WHERE id = ?",
             attempt,
             LocalDateTime.now().minusSeconds(5),
-            snapshotId,
+            queued.requestId,
         )
-        return item.getId() to snapshotId
+        return queued
+    }
+
+    // 요청 + 결과 버전 한 벌을 적재한다. 큐 상태(집기·attempt·박동·마감 시계)는 요청 행에 있으므로 이후 조작도 거기서 한다.
+    private fun enqueue(
+        itemId: Long,
+        claimed: Boolean,
+    ): Queued {
+        val snapshot =
+            itemSnapshotRepository.save(
+                ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()).apply { if (claimed) markProcessing() },
+            )
+        val request =
+            ParseRequest(itemId, UUID.randomUUID(), ParseTrigger.REGISTER, snapshot.getId())
+                .apply { if (claimed) claim() }
+        return Queued(itemId, parseRequestRepository.save(request).getId(), snapshot.getId())
     }
 
     private fun statusOf(snapshotId: Long): ItemStatus =
         itemSnapshotRepository.findById(snapshotId)?.status ?: error("snapshot $snapshotId 이 없다")
 
-    private fun attemptOf(snapshotId: Long): Int =
-        itemSnapshotRepository.findById(snapshotId)?.attemptCount ?: error("snapshot $snapshotId 이 없다")
+    private fun attemptOf(requestId: Long): Int =
+        jdbcTemplate.queryForObject("SELECT attempt_count FROM parse_requests WHERE id = ?", Int::class.java, requestId)
+            ?: error("request $requestId 이 없다")
 
     private fun deleteItem(itemId: Long) {
         if (itemId == 0L) return
+        jdbcTemplate.update("DELETE FROM parse_requests WHERE item_id = ?", itemId)
         jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
         jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
     }
+
+    private data class Queued(
+        val itemId: Long,
+        val requestId: Long,
+        val snapshotId: Long,
+    )
 }
