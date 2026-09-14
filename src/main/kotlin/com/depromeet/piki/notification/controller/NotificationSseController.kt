@@ -32,8 +32,7 @@ class NotificationSseController(
         val connection = registry.register(userId, emitter)
         // 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로 ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아
         // AuthorizationDenied + "already committed" 서버 에러 두 줄이 난다(#1029). 같은 이유로 completeWithError 는 쓰지 않는다(#1024).
-        // 이 complete 는 sendOrEvict 가 먼저 결과를 설정한 뒤엔 무력화되므로(Spring 은 async 결과를 한 번만 받음) 경합을 완전히
-        // 막지는 못한다. 그래서 서버가 하트비트 결측으로 먼저 닫는 경로(evictStale)를 둔다.
+        // write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다 - sendOrEvict 는 IOException 이면 complete 하지 않는다.
         val unregisterAndComplete = {
             registry.unregister(connection)
             emitter.complete()

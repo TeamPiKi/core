@@ -34,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import tools.jackson.databind.ObjectMapper
+import java.io.IOException
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -203,6 +204,22 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         sseNotificationChannel.send(userId, notification)
 
         assertTrue(registry.connectionsOf(userId).isEmpty())
+    }
+
+    @Test
+    fun `IOException 으로 write 가 실패한 연결은 레지스트리에서만 빠지고 complete 는 호출되지 않는다`() {
+        val userId = UUID.randomUUID()
+        val broken = BrokenPipeSseEmitter()
+        registry.register(userId, broken)
+        val notification =
+            notificationRepository.save(
+                Notification(userId, NotificationType.ITEM_PARSING_FAILED, "제목", "본문", 1L),
+            )
+
+        sseNotificationChannel.send(userId, notification)
+
+        assertTrue(registry.connectionsOf(userId).isEmpty())
+        assertFalse(broken.completed)
     }
 
     @Test
@@ -474,6 +491,19 @@ private class RecordingSseEmitter : SseEmitter() {
     override fun send(builder: SseEmitter.SseEventBuilder) {
         builder.build().forEach { sentData.add(it.data) }
     }
+
+    override fun complete() {
+        completed = true
+        super.complete()
+    }
+}
+
+// 끊긴 소켓처럼 send 가 IOException 을 던진다.
+private class BrokenPipeSseEmitter : SseEmitter() {
+    @Volatile
+    var completed = false
+
+    override fun send(builder: SseEmitter.SseEventBuilder): Unit = throw IOException("Broken pipe")
 
     override fun complete() {
         completed = true

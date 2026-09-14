@@ -86,7 +86,9 @@ class LocalSseDelivery(
                     else -> log.warn("SSE write 실패로 연결 정리 userId={}", connection.userId, e)
                 }
                 registry.unregister(connection)
-                complete(connection, "write 실패")
+                // IOException 뒤 종료는 컨테이너가 넘기는 onError 몫이다. 여기서 complete 하면 Spring 의 1회용 결과를 먼저 차지해
+                // onError 쪽 complete 가 무력화되고 /error 두 줄이 난다(ResponseBodyEmitter.send·complete Javadoc).
+                if (e !is IOException) complete(connection, "write 실패")
             }.isSuccess
 
     // completeWithError 금지(#1024): 헤더가 나간 뒤의 에러 종료는 Tomcat 의 /error ERROR 디스패치를 부르고,
