@@ -507,8 +507,8 @@ jobs:
             # 옛 배포 이미지가 쌓여 디스크가 차면 새 이미지를 못 받아 배포가 실패한다(#336). 정리는 공용
             # 블록에 위임한다 - 세 repo 가 각자 관리하다 정책이 갈렸고 그중 둘이 틀려 renderer 가 같은
             # 실패를 다시 냈다(2026-09-13, TeamPiKi/infra#92). 블록은 정리 후 여유가 기준 미만이면 pull 앞에서
-            # 배포를 끊는다. 기준 10GB 는 네 앱 박스 공통이다(볼륨 25GB 통일, TeamPiKi/infra#94).
-            bash /tmp/piki-deploy/prune_images.sh --min-free-gb 10
+            # 배포를 끊는다. 기준값은 함대 정책이라 블록이 기본값으로 갖는다(TeamPiKi/infra conventions/infra.md).
+            bash /tmp/piki-deploy/prune_images.sh
 
             docker pull "$IMAGE"
 
