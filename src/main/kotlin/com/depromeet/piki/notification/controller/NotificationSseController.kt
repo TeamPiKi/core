@@ -30,22 +30,18 @@ class NotificationSseController(
     ): SseEmitter {
         val emitter = SseEmitter(SSE_TIMEOUT_MS)
         val connection = registry.register(userId, emitter)
-        // 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로 ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아
-        // AuthorizationDenied + "already committed" 서버 에러 두 줄이 난다(#1029). 같은 이유로 completeWithError 는 쓰지 않는다(#1024).
-        // write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다 - sendOrEvict 는 IOException 이면 complete 하지 않는다.
-        val unregisterAndComplete = {
-            registry.unregister(connection)
-            emitter.complete()
-        }
+        // 끝내는 건 complete, 정리는 onCompletion 한 곳. 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로
+        // ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아 AuthorizationDenied + "already committed" 두 줄이 난다(#1029).
+        // 같은 이유로 completeWithError 는 쓰지 않는다(#1024). write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다.
         emitter.onCompletion { registry.unregister(connection) }
-        emitter.onError { unregisterAndComplete() }
-        emitter.onTimeout { unregisterAndComplete() }
+        emitter.onError { emitter.complete() }
+        emitter.onTimeout { emitter.complete() }
         // 헤더를 즉시 flush 하는 첫 이벤트. data 는 연결 번호다.
         runCatching {
             emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
         }.onFailure { e ->
             log.warn("SSE 최초 connect 전송 실패 userId={}", userId, e)
-            unregisterAndComplete()
+            emitter.complete()
         }
         return emitter
     }
