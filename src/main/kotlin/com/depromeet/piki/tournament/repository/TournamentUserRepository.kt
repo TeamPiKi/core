@@ -44,4 +44,24 @@ interface TournamentUserRepository {
 
     // 위와 같은 기준의 배치 조회 — 목록 카드가 여러 토너먼트의 "플레이한 N" 을 한 번에 센다(#1062).
     fun findCompletedByTournamentIds(tournamentIds: List<Long>): List<TournamentUser>
+
+    // 이 유저의 활성 참여 행 전부 — 게스트 플레이 승계(#1081)가 옮길 대상을 모은다.
+    fun findByUserId(userId: UUID): List<TournamentUser>
+
+    // 이 유저가 이미 자리를 잡은 토너먼트 id — 승계 시 uk_tournament_users(tournament_id, user_id) 충돌을 미리 가른다.
+    // deletedAt 무관인 이유는 유니크 키에 deleted_at 이 없어 soft-delete 된 행도 그 자리를 계속 점유하기 때문이다.
+    fun findTournamentIdsByUserIdIncludingDeleted(userId: UUID): List<Long>
+
+    // 참여 행의 주인을 옮긴다(#1081). tournament_users.id 가 그대로라 히스토리(tournament_user_id)와
+    // 방장 지정(tournaments.owner_tournament_user_id)이 자동으로 따라온다 — 재지향할 자식이 없다.
+    fun transferToUser(
+        fromUserId: UUID,
+        toUserId: UUID,
+        tournamentIds: List<Long>,
+    ): Int
+
+    fun softDeleteByUserIdAndTournamentIds(
+        userId: UUID,
+        tournamentIds: List<Long>,
+    ): Int
 }
