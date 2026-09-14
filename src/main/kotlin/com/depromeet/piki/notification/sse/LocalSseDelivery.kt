@@ -19,6 +19,22 @@ class LocalSseDelivery(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // 연결 열기의 유일한 자리. 등록된 연결은 반드시 connect 이벤트를 보낸 연결이다 - 인사 뒤에 등록하므로 실패 시 정리할 것이 없다.
+    // 끝내는 건 complete, 정리는 onCompletion 한 곳. 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로
+    // ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아 AuthorizationDenied + "already committed" 두 줄이 난다(#1029).
+    // 같은 이유로 completeWithError 는 쓰지 않는다(#1024). write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다.
+    fun open(userId: UUID): SseEmitter {
+        val emitter = SseEmitter(SSE_TIMEOUT_MS)
+        val connection = SseConnection(userId, emitter)
+        emitter.onCompletion { registry.unregister(connection) }
+        emitter.onError { emitter.complete() }
+        emitter.onTimeout { emitter.complete() }
+        // 컨트롤러 반환 전이라 소켓이 아닌 버퍼에 쌓이고, 실제 쓰기와 그 실패 처리는 Spring 의 initialize 가 맡는다.
+        emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
+        registry.register(connection)
+        return emitter
+    }
+
     // write 에 성공한 연결 수를 돌려준다. 자동읽음(#812)의 근거라 "연결이 있었나" 가 아니라 "실제로 썼나" 여야 한다.
     fun deliver(
         userId: UUID,
@@ -104,6 +120,8 @@ class LocalSseDelivery(
     }
 
     companion object {
+        const val EVENT_CONNECT = "connect"
+        const val SSE_TIMEOUT_MS = 30 * 60 * 1000L
         const val EVENT_NOTIFICATION = "notification"
         const val EVENT_HEARTBEAT = "heartbeat"
         const val EVENT_SILENT_SYNC = "silent-sync"

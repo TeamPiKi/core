@@ -3,9 +3,9 @@ package com.depromeet.piki.notification.controller
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.notification.controller.dto.ClientHeartbeatRequest
 import com.depromeet.piki.notification.domain.NotificationException
+import com.depromeet.piki.notification.sse.LocalSseDelivery
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import jakarta.validation.Valid
-import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -21,30 +21,12 @@ import java.util.UUID
 @RequestMapping("/api/v1/notifications")
 class NotificationSseController(
     private val registry: SseEmitterRegistry,
+    private val localDelivery: LocalSseDelivery,
 ) : NotificationSseApi {
-    private val log = LoggerFactory.getLogger(javaClass)
-
     @GetMapping("/subscribe", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     override fun subscribe(
         @AuthenticationPrincipal userId: UUID,
-    ): SseEmitter {
-        val emitter = SseEmitter(SSE_TIMEOUT_MS)
-        val connection = registry.register(userId, emitter)
-        // 끝내는 건 complete, 정리는 onCompletion 한 곳. 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로
-        // ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아 AuthorizationDenied + "already committed" 두 줄이 난다(#1029).
-        // 같은 이유로 completeWithError 는 쓰지 않는다(#1024). write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다.
-        emitter.onCompletion { registry.unregister(connection) }
-        emitter.onError { emitter.complete() }
-        emitter.onTimeout { emitter.complete() }
-        // 헤더를 즉시 flush 하는 첫 이벤트. data 는 연결 번호다.
-        runCatching {
-            emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
-        }.onFailure { e ->
-            log.warn("SSE 최초 connect 전송 실패 userId={}", userId, e)
-            emitter.complete()
-        }
-        return emitter
-    }
+    ): SseEmitter = localDelivery.open(userId)
 
     @PostMapping("/heartbeat")
     override fun heartbeat(
@@ -53,10 +35,5 @@ class NotificationSseController(
     ): ApiResponseBody<Unit> {
         if (!registry.touch(userId, request.connectionId, Instant.now())) throw NotificationException.unknownConnection()
         return ApiResponseBody.ok()
-    }
-
-    companion object {
-        const val EVENT_CONNECT = "connect"
-        const val SSE_TIMEOUT_MS = 30 * 60 * 1000L
     }
 }
