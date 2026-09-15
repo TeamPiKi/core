@@ -191,23 +191,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `write 가 실패하는 죽은 emitter 는 전달 시 레지스트리에서 정리된다`() {
-        val userId = UUID.randomUUID()
-        // 이미 complete 된 emitter 는 send 시 IllegalStateException 을 던져 "죽은 연결" 을 시뮬레이션한다.
-        val dead = SseEmitter().apply { complete() }
-        registry.register(SseConnection(userId, dead))
-        val notification =
-            notificationRepository.save(
-                Notification(userId, NotificationType.ITEM_PARSING_FAILED, "제목", "본문", 1L),
-            )
-
-        sseNotificationChannel.send(userId, notification)
-
-        assertTrue(registry.connectionsOf(userId).isEmpty())
-    }
-
-    @Test
-    fun `IOException 으로 write 가 실패한 연결은 레지스트리에서만 빠지고 complete 는 호출되지 않는다`() {
+    fun `IOException 으로 write 가 실패한 연결은 서버가 닫지 않고 전달 성공 수에서만 빠진다`() {
         val userId = UUID.randomUUID()
         val broken = BrokenPipeSseEmitter()
         registry.register(SseConnection(userId, broken))
@@ -216,10 +200,14 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
                 Notification(userId, NotificationType.ITEM_PARSING_FAILED, "제목", "본문", 1L),
             )
 
-        sseNotificationChannel.send(userId, notification)
+        try {
+            val delivered = sseNotificationChannel.send(userId, notification)
 
-        assertTrue(registry.connectionsOf(userId).isEmpty())
-        assertFalse(broken.completed)
+            assertEquals(0, delivered)
+            assertFalse(broken.completed)
+        } finally {
+            registry.removeAll(userId)
+        }
     }
 
     @Test
@@ -431,15 +419,15 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `서버 ping 은 heartbeat 이벤트에 그 연결의 번호를 실어 보낸다`() {
+    fun `서버 ping 은 모든 연결에 heartbeat 이벤트를 보낸다`() {
         val userId = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        val connection = registry.register(SseConnection(userId, emitter))
+        registry.register(SseConnection(userId, emitter))
         try {
             localDelivery.ping()
 
             assertTrue(emitter.sentData.any { it is String && it.contains("event:heartbeat") })
-            assertTrue(emitter.sentData.contains(connection.id.toString()))
+            assertTrue(emitter.sentData.contains(LocalSseDelivery.HEARTBEAT_DATA))
         } finally {
             registry.removeAll(userId)
         }

@@ -28,6 +28,8 @@ class SseEmitterRegistry {
 
     fun connectionsOf(userId: UUID): List<SseConnection> = connectionsByUser[userId].orEmpty()
 
+    fun all(): List<SseConnection> = connectionsByUser.values.flatten()
+
     // 유저 파티션 안에서만 찾으므로 남의 번호는 모르는 번호와 같이 false 다.
     fun touch(
         userId: UUID,
