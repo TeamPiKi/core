@@ -712,13 +712,39 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "복제 토너먼트 생성 또는 기존 본인 클론 반환",
+                            name = "참여 생성 또는 기존 참여 반환",
                             payload = ApiResponseBody.ok(42L),
                         )
                         unauthorized()
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.playLinkNotCreated(), name = "플레이 링크가 생성되지 않은 토너먼트")
                         add(TournamentException.playLinkExpired(), name = "플레이 링크 만료")
+                        // 정원을 링크 경로에도 걸었다(#1013) — 코드 경로만 막으면 제한이 이름뿐이 된다.
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과")
+                    }
+
+                handlerMethod.binds(TournamentController::createFromPlayCode) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            name = "참여 생성 또는 기존 참여 반환",
+                            payload = ApiResponseBody.ok(42L),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "코드 형식 오류",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = JoinTournamentAsGuestRequest.INVITE_CODE_PATTERN_MESSAGE,
+                                ),
+                        )
+                        add(TournamentException.invalidInviteCode(), name = "해당 코드의 토너먼트 없음")
+                        unauthorized()
+                        add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트 (대기실은 join 을 쓴다)")
+                        add(TournamentException.playLinkNotCreated(), name = "공유를 켜지 않은 토너먼트")
+                        add(TournamentException.playLinkExpired(), name = "공유 링크 만료")
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과")
                     }
 
                 handlerMethod.binds(TournamentController::getGroupResult) ->
