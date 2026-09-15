@@ -19,10 +19,8 @@ class LocalSseDelivery(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 연결 열기의 유일한 자리. 등록된 연결은 반드시 connect 이벤트를 보낸 연결이다 - 인사 뒤에 등록하므로 실패 시 정리할 것이 없다.
-    // 끝내는 건 complete, 정리는 onCompletion 한 곳. 에러·타임아웃 뒤 아무도 complete 하지 않으면 Tomcat 이 /error 로
-    // ERROR 디스패치를 걸고, 거기엔 JWT 필터가 안 돌아 AuthorizationDenied + "already committed" 두 줄이 난다(#1029).
-    // 같은 이유로 completeWithError 는 쓰지 않는다(#1024). write 실패로 끊긴 연결의 종료도 이 onError 가 맡는다.
+    // 인사 뒤에 등록한다 - 등록된 연결은 반드시 connect 를 보낸 연결이고, 실패 시 정리할 것이 없다.
+    // onError·onTimeout 에서 아무도 complete 하지 않으면 Tomcat 이 /error 로 ERROR 디스패치를 걸고, JWT 필터가 없어 서버 에러 두 줄이 난다(#1029).
     fun open(userId: UUID): SseEmitter {
         val emitter = SseEmitter(SSE_TIMEOUT_MS)
         val connection = SseConnection(userId, emitter)
@@ -48,7 +46,6 @@ class LocalSseDelivery(
         return registry.connectionsOf(userId).count { sendOrEvict(it, event) }
     }
 
-    // 알림이 아닌 화면 갱신 신호. 알림센터·FCM 을 거치지 않고 SSE 로만 흐른다(SilentSyncPayload).
     fun deliverSilentSync(
         userIds: Collection<UUID>,
         payload: SilentSyncPayload,
