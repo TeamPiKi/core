@@ -3,6 +3,7 @@ package com.depromeet.piki.notification.sse
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.controller.dto.SilentSyncPayload
 import com.depromeet.piki.notification.domain.Notification
+import com.depromeet.piki.notification.domain.NotificationException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
@@ -31,6 +32,13 @@ class LocalSseDelivery(
         emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
         registry.register(connection)
         return emitter
+    }
+
+    fun heartbeat(
+        userId: UUID,
+        connectionId: UUID,
+    ) {
+        if (!registry.touch(userId, connectionId, Instant.now())) throw NotificationException.unknownConnection()
     }
 
     // write 에 성공한 연결 수를 돌려준다. 자동읽음(#812)의 근거라 "연결이 있었나" 가 아니라 "실제로 썼나" 여야 한다.
