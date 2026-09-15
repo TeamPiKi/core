@@ -3,6 +3,7 @@ package com.depromeet.piki.notification.sse
 import com.depromeet.piki.notification.controller.dto.NotificationSsePayload
 import com.depromeet.piki.notification.controller.dto.SilentSyncPayload
 import com.depromeet.piki.notification.domain.Notification
+import com.depromeet.piki.notification.domain.NotificationException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
@@ -19,6 +20,27 @@ class LocalSseDelivery(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // 인사 뒤에 등록한다 - 등록된 연결은 반드시 connect 를 보낸 연결이고, 실패 시 정리할 것이 없다.
+    // onError·onTimeout 뒤 Spring 은 예외를 결과로 실어 dispatch 한다. 먼저 complete 해 정상 완료로 끝낸다.
+    fun open(userId: UUID): SseEmitter {
+        val emitter = SseEmitter(SSE_TIMEOUT_MS)
+        val connection = SseConnection(userId, emitter)
+        emitter.onCompletion { registry.unregister(connection) }
+        emitter.onError { emitter.complete() }
+        emitter.onTimeout { emitter.complete() }
+        // 컨트롤러 반환 전이라 소켓이 아닌 버퍼에 쌓이고, 실제 쓰기와 그 실패 처리는 Spring 의 initialize 가 맡는다.
+        emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
+        registry.register(connection)
+        return emitter
+    }
+
+    fun heartbeat(
+        userId: UUID,
+        connectionId: UUID,
+    ) {
+        if (!registry.touch(userId, connectionId, Instant.now())) throw NotificationException.unknownConnection()
+    }
+
     // write 에 성공한 연결 수를 돌려준다. 자동읽음(#812)의 근거라 "연결이 있었나" 가 아니라 "실제로 썼나" 여야 한다.
     fun deliver(
         userId: UUID,
@@ -29,10 +51,9 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_NOTIFICATION)
                 .data(NotificationSsePayload.from(notification))
-        return registry.connectionsOf(userId).count { sendOrEvict(it, event) }
+        return send(registry.connectionsOf(userId), event)
     }
 
-    // 알림이 아닌 화면 갱신 신호. 알림센터·FCM 을 거치지 않고 SSE 로만 흐른다(SilentSyncPayload).
     fun deliverSilentSync(
         userIds: Collection<UUID>,
         payload: SilentSyncPayload,
@@ -42,18 +63,16 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_SILENT_SYNC)
                 .data(payload)
-        userIds.forEach { userId -> registry.connectionsOf(userId).forEach { sendOrEvict(it, event) } }
+        send(userIds.flatMap { registry.connectionsOf(it) }, event)
     }
 
     fun closeAll(userId: UUID) {
         registry.removeAll(userId).forEach { complete(it, "탈퇴") }
     }
 
-    // 주석(`: ping`)은 표준 EventSource 에 노출되지 않아 이름 붙은 이벤트로 보낸다. data 없는 event 는 디스패치되지 않는다.
+    // 주석(`: ping`)은 표준 EventSource 에 노출되지 않아 이름 붙은 이벤트로 보내고, data 없는 event 는 디스패치되지 않아 고정값을 싣는다.
     fun ping() {
-        registry.forEach { connection ->
-            sendOrEvict(connection, SseEmitter.event().name(EVENT_HEARTBEAT).data(connection.id.toString()))
-        }
+        send(registry.all(), SseEmitter.event().name(EVENT_HEARTBEAT).data(HEARTBEAT_DATA))
     }
 
     // 이 INFO 건수가 #1057 효과 판정 지표다.
@@ -74,20 +93,25 @@ class LocalSseDelivery(
         return stale.size
     }
 
-    private fun sendOrEvict(
-        connection: SseConnection,
+    // 한 연결의 실패가 나머지 연결로 번지지 않게 연결 단위로 격리하고, 성공한 연결 수를 돌려준다.
+    // 여기서 연결을 닫지 않는다 - 끊긴 연결(IOException)은 컨테이너가 onError 로 알려 오고, 여기서 complete 하면 Spring 의
+    // 1회용 결과를 먼저 차지해 onError 쪽 complete 가 무력화된다(ResponseBodyEmitter.send·complete Javadoc). 그 외 실패는
+    // payload 쪽 문제라 연결이 멀쩡하다.
+    private fun send(
+        connections: Collection<SseConnection>,
         event: SseEmitter.SseEventBuilder,
-    ): Boolean =
-        runCatching { connection.emitter.send(event) }
-            .onFailure { e ->
-                // 끊긴 클라이언트로의 write 실패(IOException 계열)는 일상이라 DEBUG. 그 외는 이상 신호.
-                when (e) {
-                    is IOException -> log.debug("SSE write 실패(연결 끊김)로 연결 정리 userId={}", connection.userId, e)
-                    else -> log.warn("SSE write 실패로 연결 정리 userId={}", connection.userId, e)
-                }
-                registry.unregister(connection)
-                complete(connection, "write 실패")
-            }.isSuccess
+    ): Int =
+        connections.count { connection ->
+            try {
+                connection.emitter.send(event)
+                true
+            } catch (e: IOException) {
+                false
+            } catch (e: Exception) {
+                log.warn("SSE write 실패 userId={}", connection.userId, e)
+                false
+            }
+        }
 
     // completeWithError 금지(#1024): 헤더가 나간 뒤의 에러 종료는 Tomcat 의 /error ERROR 디스패치를 부르고,
     // 그 디스패치엔 인증이 없어 AuthorizationDenied + "already committed" 서버 에러 두 줄이 된다.
@@ -102,8 +126,11 @@ class LocalSseDelivery(
     }
 
     companion object {
+        const val EVENT_CONNECT = "connect"
+        const val SSE_TIMEOUT_MS = 30 * 60 * 1000L
         const val EVENT_NOTIFICATION = "notification"
         const val EVENT_HEARTBEAT = "heartbeat"
+        const val HEARTBEAT_DATA = "ping"
         const val EVENT_SILENT_SYNC = "silent-sync"
     }
 }

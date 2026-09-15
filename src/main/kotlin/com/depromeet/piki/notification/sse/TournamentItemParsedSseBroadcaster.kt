@@ -67,7 +67,7 @@ class TournamentItemParsedSseBroadcaster(
     // (위시 주인은 ITEM_PARSING_* 알림으로 받음).
     // @Async 워커라 여기서 throw 를 삼키지 않으면 기본 핸들러가 맥락 없는 스택트레이스만 남겨 동기화 누락이 무음이 된다.
     // 전체를 runCatching 으로 감싸 itemId 맥락을 실어 warn 으로 남긴다(NotificationDispatcher 가 fan-out 실패를
-    // 격리·기록하는 결). emitter write 실패는 deliver 내부(sendOrEvict)가 연결 단위로 이미 격리한다.
+    // 격리·기록하는 결). emitter write 실패는 deliver 내부(send)가 연결 단위로 이미 격리한다.
     fun broadcast(
         snapshotId: Long,
         status: ItemStatus,

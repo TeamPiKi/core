@@ -5,6 +5,7 @@ import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
+import com.depromeet.piki.notification.sse.SseConnection
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.domain.TournamentUser
@@ -52,7 +53,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
         val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
         wishRepository.save(Wish(userId, snapshotId, itemId))
         val emitter = SseEmitter()
-        sseEmitterRegistry.register(userId, emitter)
+        sseEmitterRegistry.register(SseConnection(userId, emitter))
         try {
             notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
 
@@ -73,7 +74,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
         val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
         wishRepository.save(Wish(userId, snapshotId, itemId))
         val emitter = SseEmitter()
-        sseEmitterRegistry.register(userId, emitter)
+        sseEmitterRegistry.register(SseConnection(userId, emitter))
         try {
             notificationDispatcher.dispatch(ItemParsingFailed(itemId, snapshotId))
 
@@ -95,7 +96,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
         val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
         wishRepository.save(Wish(userId, snapshotId, itemId))
         val deadEmitter = SseEmitter().apply { complete() }
-        sseEmitterRegistry.register(userId, deadEmitter)
+        sseEmitterRegistry.register(SseConnection(userId, deadEmitter))
         try {
             notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
 
@@ -129,7 +130,7 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
         listOf(userId, actor).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
         userRepository.save(User(id = actor, nickname = "행위자", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
         val emitter = SseEmitter()
-        sseEmitterRegistry.register(userId, emitter)
+        sseEmitterRegistry.register(SseConnection(userId, emitter))
         try {
             // 수신자 = 참가자 - actor = {userId}. 인앱이면 타입 무관 자동읽음이라 토너먼트 알림도 읽음으로 저장된다(#812).
             notificationDispatcher.dispatch(TournamentItemAdded(tournamentId, actor))
