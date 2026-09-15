@@ -59,7 +59,11 @@ class HttpProductLinkExtractorTest {
         model: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpProductLinkExtractor {
-        val builder = RestClient.builder().baseUrl("http://extractor.test")
+        val builder =
+            RestClient
+                .builder()
+                .baseUrl("http://extractor.test")
+                .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
         return HttpProductLinkExtractor(

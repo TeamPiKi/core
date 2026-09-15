@@ -174,8 +174,10 @@ jobs:
           ref: main
           # 경로 별칭은 shared-infra - core 자신의 infra/(서비스 전용)와 "공용 정본" 이 이름으로 구분되게 한다.
           path: shared-infra
+          # contracts 는 수동 배포의 러너 빌드만 쓴다 - 자동 경로는 CI 가 빌드한 JAR 을 받아 빌드하지 않는다.
           sparse-checkout: |
             blocks
+            contracts
           sparse-checkout-cone-mode: true
 
       # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
