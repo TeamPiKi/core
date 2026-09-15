@@ -21,7 +21,7 @@ class LocalSseDelivery(
     private val log = LoggerFactory.getLogger(javaClass)
 
     // 인사 뒤에 등록한다 - 등록된 연결은 반드시 connect 를 보낸 연결이고, 실패 시 정리할 것이 없다.
-    // onError·onTimeout 에서 아무도 complete 하지 않으면 Tomcat 이 /error 로 ERROR 디스패치를 걸고, JWT 필터가 없어 서버 에러 두 줄이 난다(#1029).
+    // onError·onTimeout 뒤 Spring 은 예외를 결과로 실어 dispatch 한다. 먼저 complete 해 정상 완료로 끝낸다.
     fun open(userId: UUID): SseEmitter {
         val emitter = SseEmitter(SSE_TIMEOUT_MS)
         val connection = SseConnection(userId, emitter)
