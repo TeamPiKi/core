@@ -270,11 +270,11 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
     }
 
-    // #975(CodeRabbit): 참여자·완료자는 record 가 아니라 userId 로 센다. 주최자가 자기 플레이링크로 self-clone 을
-    // 만들 수 있는데(createFromPlayLink 에 가드 없음), ROOT·CLONE 을 모두 완주해도 실제 사용자는 1명이므로 solo 여야 한다.
-    // record 로 세던 옛 로직은 이 경우 2로 잡아 solo 를 그룹으로 오인했다(isGroupTournament·hasGroupResult 둘 다 true).
+    // #975/#1027: 참여자·완료자는 userId 로 센다. 주최자가 자기 플레이링크를 눌러도(from-play-link) 클론이 생기지
+    // 않고 get-or-create 로 기존 참여를 찾아 같은 ROOT id 를 돌려준다 — 실제 사용자 1명이라 solo 로 유지돼야 한다.
+    // (과거엔 self-clone 을 만들어 record 를 2로 세 solo 를 그룹으로 오인했다.)
     @Test
-    fun `주최자가 자기 플레이링크로 self-clone 을 만들어 둘 다 완주해도 solo 라 두 그룹 플래그가 false 다`() {
+    fun `주최자가 자기 플레이링크를 눌러도 self-clone 없이 solo 라 두 그룹 플래그가 false 다`() {
         val mockMvc = buildMockMvc()
         // 주최자가 ROOT 를 완주한다.
         val tournamentId = startTournament(mockMvc, itemCount = 2)
@@ -282,8 +282,11 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(recordMatch(tournamentId, rootItems[0], rootItems[1], winner = rootItems[0], round = 2))
             .andExpect(status().isOk)
+            // 완주 직후 solo 라 두 그룹 플래그 false.
+            .andExpect(jsonPath("$.data.completed.isGroupTournament").value(false))
+            .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
 
-        // 자기 토너먼트의 플레이링크를 만들고, 그 링크로 self-clone 을 생성한다(주최자 self-clone 가드 없음).
+        // 자기 토너먼트의 플레이링크를 만든다.
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/play-link")
@@ -291,27 +294,22 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{}"),
             ).andExpect(status().isOk)
-        val cloneResult =
+        // #1027: 주최자 본인이 from-play-link 를 눌러도 클론이 아니라 기존 참여(ROOT)를 그대로 돌려준다.
+        val selfResult =
             mockMvc
                 .perform(
                     post("/api/v1/tournaments/$tournamentId/from-play-link")
                         .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
                 ).andExpect(status().isOk)
                 .andReturn()
-        val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
+        assertEquals(tournamentId, objectMapper.readTree(selfResult.response.contentAsString)["data"].asLong())
 
-        // self-clone 을 시작해 완주한다.
+        // ROOT 를 다시 조회해도 여전히 solo(참여자 1명, 완료 1명) → 두 그룹 플래그 false 유지.
         mockMvc
             .perform(
-                post("/api/v1/tournaments/$cloneId/start")
+                get("/api/v1/tournaments/$tournamentId")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
-        val cloneMatch = currentMatchOf(mockMvc, cloneId)
-
-        mockMvc
-            .perform(recordMatch(cloneId, cloneMatch.first, cloneMatch.second, winner = cloneMatch.first, round = 2))
-            .andExpect(status().isOk)
-            // ROOT·CLONE 두 record 지만 같은 사용자 1명 → solo. 배너 미노출·비활성.
             .andExpect(jsonPath("$.data.completed.isGroupTournament").value(false))
             .andExpect(jsonPath("$.data.completed.hasGroupResult").value(false))
     }

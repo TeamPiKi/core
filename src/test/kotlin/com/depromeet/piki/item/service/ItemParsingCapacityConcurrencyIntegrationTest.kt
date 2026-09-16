@@ -75,7 +75,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             }
             await().atMost(Duration.ofSeconds(10)).until { itemParsingExecutor.activeCount >= slots }
 
-            // 풀이 가득 찬 뒤에 일감을 만든다 — 그전에 만들면 배경 디스패처가 먼저 집어 전제가 깨진다.
             val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/capacity-${UUID.randomUUID()}")))
             itemId = item.getId()
             val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID())).getId()
@@ -83,7 +82,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             itemParsingScheduler.dispatch()
             assertEquals(ItemStatus.PENDING, statusOf(snapshotId), "가용 슬롯이 없으면 claim 하지 않고 PENDING 으로 남겨야 한다")
 
-            // 슬롯이 나면 같은 행을 집는다 (배경 디스패처가 먼저 집을 수도 있어 상태로 확인한다).
             release.countDown()
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             itemParsingScheduler.dispatch()
@@ -100,7 +98,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
         val exhausted = staleProcessing(attempt = 2) // 실행 상한 도달 → 종결 대상
         val revivable = staleProcessing(attempt = 1) // 되살림 대상
         try {
-            // reviveSlots = 0 — 워커 슬롯이 하나도 없는 상황을 직접 재현한다.
             val outcome = itemParsingService.reviveOrFailStale(LocalDateTime.now(), 100, 0)
 
             assertTrue(outcome.toRevive.isEmpty(), "슬롯이 없으면 되살림 대상을 지목하지 않아야 한다")
@@ -115,8 +112,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `마감을 넘긴 행은 attempt 가 남아 있어도 박동이 뛰어도 종결된다`() {
-        // 마감은 예산(attempt)이 아니라 벽시계(created_at)를 본다. 그래서 (a) 아직 집히지도 않은 PENDING 과
-        // (b) 실행 예산이 남아 있고 박동으로 updated_at 이 신선한 PROCESSING 이 함께 종결된다 — 종결 보증의 최후 시계다.
         val pending = overdue(ItemStatus.PENDING)
         val beating = overdue(ItemStatus.PROCESSING)
         // 종결 구조화 로그(#902) — 알림 룰이 소비하는 계약. 특히 "한 번도 실행되지 않은 PENDING 의 마감 종결"이
@@ -125,7 +120,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
         val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
         serviceLogger.addAppender(terminalLogs)
         try {
-            // threshold 를 지금으로 잡으면 위에서 created_at 을 과거로 민 두 행이 마감 대상이 된다.
             val expired = itemParsingService.failOverdue(LocalDateTime.now(), 100)
 
             assertTrue(expired >= 2, "마감 초과 행은 종결돼야 한다")
@@ -150,10 +144,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     }
 
     // created_at 을 과거로 민 마감 대상 행. updated_at 은 now 로 둬 "박동이 신선한데도 마감에 걸린다"를 재현한다.
-    //
-    // created_at 은 배경 recover 의 마감 스캔(now - DEADLINE_MINUTES=3분)에는 **안 걸리고** 이 테스트가 넘기는
-    // threshold(now)에는 걸리도록 90초 전으로 둔다 — 배경 스케줄러가 먼저 종결해 테스트 호출의 반환 건수를 가로채는
-    // 경합을 없앤다(stale 쪽에서 updated_at 으로 쓰는 것과 같은 기법).
     private fun overdue(status: ItemStatus): Pair<Long, Long> {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/overdue-${UUID.randomUUID()}")))
         val snapshot = ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { if (status == ItemStatus.PROCESSING) markProcessing() }
@@ -167,8 +157,6 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
         return item.getId() to snapshotId
     }
 
-    // stale 판정 대상이 될 PROCESSING 행을 만든다. updated_at 은 배경 recover(threshold = now-60s)에는 안 걸리고
-    // 이 테스트가 넘기는 threshold(now)에는 걸리도록 몇 초 전으로 둔다 — 배경 스케줄러와의 경합을 제거한다.
     private fun staleProcessing(attempt: Int): Pair<Long, Long> {
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/slot-${UUID.randomUUID()}")))
         val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() }).getId()

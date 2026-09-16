@@ -22,8 +22,7 @@ import kotlin.test.assertEquals
 // 베이스 클래스의 제네릭 eventType 도출·notificationType·유일성을 검증한다(내부 모킹 없이 실제 빈으로).
 //
 // @Transactional 자동 롤백 — itemName 검증이 실제 snapshot 행을 쓰는데, 롤백이 없으면 items 행 없는
-// PROCESSING snapshot 이 공유 DB 에 남는다. 그걸 살아있는 ItemParsingScheduler.recover() 가 stale 로
-// 집어 markFailed·ItemParsingFailed 발행·log.error 를 내고, 정원 배치 스캔에도 유령 행으로 섞인다.
+// PROCESSING snapshot 이 공유 DB 에 남아 정원 배치 스캔에 유령 행으로 섞인다.
 @Transactional
 class NotificationEventHandlerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemParsingCompletedHandler: ItemParsingCompletedHandler

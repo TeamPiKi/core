@@ -25,12 +25,9 @@ class TournamentNotificationRecipientResolver(
             ?: emptySet()
     }
 
-    // 결과 알림 수신자 = ROOT 참가자(아이템 등록·합류) ∪ 플레이링크 클론 소유자(게스트 포함).
+    // 결과 알림 수신자 = ROOT 참가자 전원(아이템 등록·초대 합류·플레이링크 게스트 포함).
+    // #1027: 클론이 사라져 게스트도 ROOT 참여 행을 가지므로, ROOT 참여 행 전체가 곧 결과 수신 대상이다.
     // 토큰 있는 사람에게만 푸시가 가고, 없으면 히스토리에만 적재된다(#473 — GUEST 도 토너먼트 푸시 대상).
-    fun resultParticipants(rootTournamentId: Long): Set<UUID> {
-        val rootParticipants = tournamentUserRepository.findByTournamentId(rootTournamentId).map { it.userId }
-        val cloneOwnerTuIds = tournamentRepository.findBySourceTournamentId(rootTournamentId).map { it.ownerTournamentUserId }
-        val cloneOwners = tournamentUserRepository.findByIds(cloneOwnerTuIds.toSet()).map { it.userId }
-        return (rootParticipants + cloneOwners).toSet()
-    }
+    fun resultParticipants(rootTournamentId: Long): Set<UUID> =
+        tournamentUserRepository.findByTournamentId(rootTournamentId).map { it.userId }.toSet()
 }

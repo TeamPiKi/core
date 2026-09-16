@@ -4,14 +4,15 @@ import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
+import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
-import org.awaitility.Awaitility.await
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -27,14 +28,13 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.Duration
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // 이미지 등록 v2(presigned) 흐름 — 발급(POST /images/presigned) → 클라 직접 업로드(stub) → 확정(POST /images/confirm).
-// confirm 은 PENDING 을 실제 커밋하고 자동 dispatch(1s)가 파싱을 돌리므로, WishlistRegisterAsyncIntegrationTest 와 같은
-// @Transactional 없는(실제 커밋 + Awaitility) 비동기 패턴을 따른다. 격리 userId + cleanup 으로 공유 컨텍스트를 정리한다.
+// confirm 은 PENDING 을 실제 커밋하므로 WishlistRegisterAsyncIntegrationTest 와 같은 @Transactional 없는 비동기
+// 패턴을 따른다. 격리 userId + cleanup 으로 공유 컨텍스트를 정리한다.
 class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -52,12 +52,14 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
+    private lateinit var itemParsingScheduler: ItemParsingScheduler
+
+    @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
 
     @Autowired
     private lateinit var jwtProvider: JwtProvider
 
-    // ---- 발급 (presigned URL) ----
 
     @Test
     fun `presigned 발급하면 요청한 개수만큼 items_raw key 와 uploadUrl 을 받는다`() {
@@ -244,7 +246,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // ---- 확정 (confirm) ----
 
     @Test
     fun `발급받은 key 로 confirm 하면 PENDING 위시가 201 로 생성된다`() {
@@ -252,8 +253,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로, 깨끗한 추출 결과를 세팅해 둔다.
-            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 
@@ -265,7 +264,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .content(body),
                 ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.length()").value(2))
-                // 등록 직후 응답은 PENDING 이어야 한다(이미지도 link 처럼 작업 큐에 적재).
                 .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
                 // 이미지 등록은 원본 URL 이 없어 sourceUrl 도, 거기서 유도하는 sourcePlatform 도 null 이다.
                 .andExpect(jsonPath("$.data[0].item.sourceUrl").value(nullValue()))
@@ -274,7 +272,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             val wishCount =
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId))
             assertEquals(2, wishCount)
-            awaitDispatchSettled(userId)
         } finally {
             cleanup(userId)
         }
@@ -314,7 +311,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             val wishCount =
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishes WHERE user_id = ?", Int::class.java, uuidToBytes(userId))
             assertEquals(2, wishCount)
-            awaitDispatchSettled(userId)
         } finally {
             cleanup(userId)
         }
@@ -326,7 +322,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // S3 에 실제로 올라오지 않은 상황 재현 — HEAD 존재확인이 false 를 돌려준다.
             stubImageStorage.existsBehavior = { false }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -372,7 +367,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `confirm 후 자동 dispatch 로 파싱이 성공하면 item 이 READY 로 전이한다`() {
+    fun `confirm 후 dispatch 로 파싱이 성공하면 item 이 READY 로 전이한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -402,7 +397,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                     .path("id")
                     .asLong()
 
-            await().atMost(Duration.ofSeconds(5)).until {
+            itemParsingScheduler.awaitTicking {
                 itemSnapshotRepository.findLatestByItemId(itemId)?.status == ItemStatus.READY
             }
             val snapshot = itemSnapshotRepository.findLatestByItemId(itemId) ?: error("item $itemId 의 snapshot 이 없다")
@@ -412,7 +407,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // ---- 헬퍼 ----
 
     private fun presignAndGetKeys(
         mockMvc: MockMvc,
@@ -474,20 +468,5 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
-    }
-
-    // confirm 이 만든 PENDING 을 자동 dispatch(1s)가 파싱 중일 수 있어, 삭제-vs-워커 UPDATE 레이스를 피하려면
-    // 후속 처리가 terminal(READY/FAILED)로 끝난 뒤 cleanup 한다.
-    private fun awaitDispatchSettled(userId: UUID) {
-        await().atMost(Duration.ofSeconds(5)).until {
-            val inFlight =
-                jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM item_snapshots s JOIN wishes w ON w.snapshot_id = s.id " +
-                        "WHERE w.user_id = ? AND s.status IN ('PENDING', 'PROCESSING')",
-                    Int::class.java,
-                    uuidToBytes(userId),
-                ) ?: 0
-            inFlight == 0
-        }
     }
 }

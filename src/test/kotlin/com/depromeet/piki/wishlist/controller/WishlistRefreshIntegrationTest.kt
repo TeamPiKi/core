@@ -7,6 +7,7 @@ import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.item.service.ParsingOwnership
 import com.depromeet.piki.notification.domain.NotificationType
@@ -15,6 +16,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
@@ -43,8 +45,9 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
 // 위시 새로고침(#358)은 등록과 같은 비동기 작업 큐 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
-// 디스패처(@Scheduled)가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
-// 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 Awaitility 로 전이를 기다린다. 자기가 만든 행은 격리 userId 로 정리한다.
+// 디스패처가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
+// 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 전이를 기다린다(awaitTicking 이 디스패처 tick 을 직접 돌린다).
+// 자기가 만든 행은 격리 userId 로 정리한다.
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -72,6 +75,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired
+    private lateinit var itemParsingScheduler: ItemParsingScheduler
 
     @Autowired
     private lateinit var parsingOwnership: ParsingOwnership
@@ -102,8 +108,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.id").value(itemId))
                 .andExpect(jsonPath("$.data.item.status").value("PENDING"))
 
-            // 디스패처가 집어 추출 성공 → READY 전이, 새 값으로 채워진다.
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val active = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("새 상품", active.name)
             assertEquals(20_000, active.price)
@@ -114,7 +119,6 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.READY, preserved.status)
             assertEquals("옛 상품", preserved.name)
 
-            // wish 활성 포인터가 새 버전으로 스왑됐다.
             assertEquals(active.getId(), wishRepository.findById(wishId)?.waitingSnapshotId)
         } finally {
             cleanup(userId)
@@ -127,7 +131,6 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // PROCESSING 위시 시딩 — 디스패처는 PENDING 만 집고 recover 는 stale(60초)만 보므로 방금 만든 행은 PROCESSING 고정.
             val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/inprogress")))
             val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
             val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
@@ -141,7 +144,6 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
                 .andExpect(jsonPath("$.data.item.status").value("PROCESSING"))
 
-            // 멱등 — 새 snapshot 행이 생기지 않고 활성 포인터도 그대로다.
             assertEquals(before, countSnapshots(itemId))
             assertEquals(snapshot.getId(), wishRepository.findById(wish.getId())?.waitingSnapshotId)
         } finally {
@@ -312,11 +314,9 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
 
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
 
-            // wish 활성은 새 버전으로 스왑됐지만,
             assertNotEquals(oldSnapshotId, wishRepository.findById(wishId)?.waitingSnapshotId)
-            // tournament_item 은 출전 시점 snapshot 에 고정돼 그대로다.
             val fixedSnapshotId =
                 jdbcTemplate.queryForObject(
                     "SELECT snapshot_id FROM tournament_items WHERE id = ?",
@@ -324,7 +324,6 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     tournamentItem.getId(),
                 )
             assertEquals(oldSnapshotId, fixedSnapshotId)
-            // 옛 snapshot 행·값도 보존된다.
             val preserved = itemSnapshotRepository.findById(oldSnapshotId) ?: error("옛 snapshot 이 사라졌다")
             assertEquals("옛 상품", preserved.name)
             assertEquals(ItemStatus.READY, preserved.status)
@@ -353,7 +352,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
 
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
             // 새로고침 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
             await().atMost(Duration.ofSeconds(5)).until {
                 notificationRepository

@@ -3,20 +3,17 @@ package com.depromeet.piki.support
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 
-// 모든 통합 테스트가 공유하는 단일 컨텍스트(캐시 보존). admin 백오피스(#249/#489/#526) 흐름도 이 컨텍스트에서 검증한다:
-// - admin.enabled=true: admin 빈(서비스·스케줄러·게이트)을 로드해 테스트 가능하게 한다.
-// - admin.local-bypass=true: /admin 게이트(AdminAccessFilter)를 우회해 컨트롤러 흐름을 슬랙 세션 없이 호출한다.
-// - admin.scheduler-auto-dispatch=false: 스케줄러 주기 폴링을 꺼 테스트 중 예약이 백그라운드로 발사돼 flaky 해지는 걸 막는다
-//   (예약/overdue 로직은 dispatchDue() 를 테스트가 직접 호출해 결정적으로 검증한다).
-// - admin.discord-metrics-channel-id·admin.discord-bot-token: 주간 리포트 엔드포인트가 채널 id·토큰 공백 skip(SKIPPED)을
-//   타지 않고 실제 게시 경로(SENT)를 검증하게 한다. 실제 Discord 호출은 StubDiscordMessageSender(@Primary)가 막는다.
-// - admin.grant-signing-key: 키가 공백이면 GrantTokenCodec.verify 가 항상 null 이라 grant 링크 흐름(토큰 소비 →
-//   allowlist 등록 → 세션 확립)이 통째로 막힌다. 그 흐름을 실제로 태우는 테스트를 위해 더미 키를 채운다.
+// - scheduling.enabled=false: @Scheduled 등록 자체를 막는다(SchedulingConfig). 배경 tick 은 다른 테스트가 커밋한 전역 큐
+//   행을 선점해 결정적 검증을 깨뜨린다(#1080). 폴링이 필요한 테스트는 진입점을 직접 호출한다(awaitTicking).
+// - admin.discord-metrics-channel-id·admin.discord-bot-token: 공백이면 주간 리포트가 SKIPPED 로 빠져 실제 게시
+//   경로(SENT)를 타지 않는다. 실제 Discord 호출은 StubDiscordMessageSender(@Primary)가 막는다.
+// - admin.grant-signing-key: 공백이면 GrantTokenCodec.verify 가 항상 null 이라 grant 링크 흐름(토큰 소비 →
+//   allowlist 등록 → 세션 확립)이 통째로 막힌다.
 @SpringBootTest(
     properties = [
+        "scheduling.enabled=false",
         "admin.enabled=true",
         "admin.local-bypass=true",
-        "admin.scheduler-auto-dispatch=false",
         "admin.discord-metrics-channel-id=test-metrics-channel",
         "admin.discord-bot-token=test-bot-token",
         "admin.grant-signing-key=test-grant-signing-key",

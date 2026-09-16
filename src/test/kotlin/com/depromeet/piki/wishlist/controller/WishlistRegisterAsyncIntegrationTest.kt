@@ -20,6 +20,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
@@ -51,7 +52,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // 등록은 비동기(@Async)다. @Transactional 자동 롤백 패턴으로는 워커(별도 스레드·새 트랜잭션)가
-// 미커밋 데이터를 못 보므로, 여기서는 @Transactional 없이 실제 커밋하고 Awaitility 로 상태 전이를 기다린다.
+// 미커밋 데이터를 못 보므로, 여기서는 @Transactional 없이 실제 커밋하고 상태 전이를 기다린다(awaitTicking 이 디스패처 tick 을 돌린다).
 // (CLAUDE.md '동시성·시간 의존 통합 테스트' 별도 분류.) 자기가 만든 행은 격리 userId 로 구분해 메서드 끝에서 정리한다.
 class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -134,9 +135,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val readyBefore = parseCount("ready", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/42")
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.READY
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
             // 결과 메트릭(#506): 성공은 result=ready,reason=none 으로 +1 (워커 비동기라 메트릭 증가도 await).
             await().atMost(Duration.ofSeconds(2)).until { parseCount("ready", "none") - readyBefore >= 1.0 }
 
@@ -166,9 +165,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val notProductBefore = parseCount("failed", "not_product")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/not-a-product")
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
             // 결과 메트릭(#506): 상품 아님 확정 실패는 result=failed,reason=not_product 로 +1.
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "not_product") - notProductBefore >= 1.0 }
 
@@ -201,9 +198,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val incompleteBefore = parseCount("incomplete", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.INCOMPLETE
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.INCOMPLETE }
             // 결과 메트릭(#506): 부분 성공은 실패에 섞지 않고 result=incomplete,reason=none 으로 +1 한다.
             await().atMost(Duration.ofSeconds(2)).until { parseCount("incomplete", "none") - incompleteBefore >= 1.0 }
 
@@ -271,9 +266,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             }
             val itemId = registerImageAndGetItemId(mockMvc, userId)
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.READY
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
             assertEquals(99_000, snapshot.price)
@@ -296,9 +289,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val itemId = registerImageAndGetItemId(mockMvc, userId)
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
             assertNull(snapshot.name)
@@ -326,9 +317,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val itemId = registerImageAndGetItemId(mockMvc, userId)
             // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
-            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(20)) { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
             // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
-            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
+                latestSnapshot(itemId)?.status == ItemStatus.FAILED
+            }
             assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
@@ -382,9 +375,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                         .asLong()
                 }
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                itemIds.all { latestSnapshot(it)?.status == ItemStatus.READY }
-            }
+            itemParsingScheduler.awaitTicking { itemIds.all { latestSnapshot(it)?.status == ItemStatus.READY } }
         } finally {
             cleanup(userId)
         }
@@ -400,7 +391,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 ProductSnapshot(link = null, name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
             }
             val itemId = registerImageAndGetItemId(mockMvc, userId)
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
 
             // 파싱이 끝나면 등록 시 올린 raw 원본(items/raw/...)을 S3 에서 회수한다(누수 방지, best-effort 라 회수까지 await).
             // 자기 item 의 sourceImageKey 로 특정해 단언하므로 공유 stub 의 다른 테스트 회수와 섞이지 않는다.
@@ -572,9 +563,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
             // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
-            await().atMost(Duration.ofSeconds(20)).until { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(20)) { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
             // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
-            await().atMost(Duration.ofSeconds(10)).until { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
+                latestSnapshot(itemId)?.status == ItemStatus.FAILED
+            }
             assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
             assertTrue(
                 terminalLogs.list.any {
@@ -597,14 +590,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
-            // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다. recover 는 stale(60초) 후에야 돌므로 5초 내 FAILED 면 즉시 종결이다.
+            // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다.
             stubProductLinkExtractor.build = { throw ProductExtractorException.blockedByTarget() }
             val blockedBefore = parseCount("failed", "blocked")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 
-            await().atMost(Duration.ofSeconds(5)).until {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
-            }
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
             // 결과 메트릭(#506·#936): 대상이 막아 확정 실패한 건은 result=failed,reason=blocked 로 +1.
             // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 워커→메트릭 배선까지 함께 고정한다.
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }

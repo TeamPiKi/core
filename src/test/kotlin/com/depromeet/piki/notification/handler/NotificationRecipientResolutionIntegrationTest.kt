@@ -808,17 +808,18 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `결과 알림 수신자는 ROOT 참가자와 플레이링크 클론 소유자 합집합에서 주최자를 뺀 집합이다`() {
+    fun `결과 알림 수신자는 ROOT 참여 행 전원에서 주최자를 뺀 집합이다`() {
         val owner = UUID.randomUUID()
         val participant = UUID.randomUUID()
         val guest = UUID.randomUUID()
         val rootId = createRootWithOwner(owner)
-        tournamentUserRepository.save(TournamentUser(rootId, participant)) // ROOT 참가자(아이템 등록·합류)
-        createClone(rootId, guest) // 플레이링크 클론 소유자(게스트)
+        tournamentUserRepository.save(TournamentUser(rootId, participant)) // 초대 합류 참가자
+        // #1027: 플레이링크 게스트도 클론이 아니라 ROOT 참여 행을 가진다 — 결과 수신 대상이다.
+        tournamentUserRepository.save(TournamentUser(rootId, guest))
 
         val recipients = resultReadyHandler.resolveRecipients(TournamentResultReady(rootId, owner))
 
-        // 주최자(actor)는 빠지고, ROOT 참가자 + 클론 소유자만 남는다.
+        // 주최자(actor)는 빠지고, ROOT 참여 행 전원만 남는다.
         assertEquals(setOf(participant, guest), recipients)
     }
 
@@ -851,26 +852,6 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         root.assignOwner(ownerTu.getId())
         tournamentRepository.saveTournament(root)
         return root.getId()
-    }
-
-    // ROOT 의 CLONE(sourceTournamentId 연결) + 그 소유자(TournamentUser) fixture.
-    private fun createClone(
-        rootId: Long,
-        ownerUserId: UUID,
-    ): Long {
-        val clone = tournamentRepository.saveTournament(
-            Tournament(
-                ownerTournamentUserId = 0L,
-                name = "t",
-                inviteCode = nextInviteCode(),
-                inviteExpiresAt = LocalDateTime.now().plusDays(1),
-                sourceTournamentId = rootId,
-            ),
-        )
-        val tu = tournamentUserRepository.save(TournamentUser(clone.getId(), ownerUserId))
-        clone.assignOwner(tu.getId())
-        tournamentRepository.saveTournament(clone)
-        return clone.getId()
     }
 
     // 알림 역조회는 wish/tournament_item→item_snapshots 를 snapshot_id 로 조인해 s.item_id 로 매칭한다.

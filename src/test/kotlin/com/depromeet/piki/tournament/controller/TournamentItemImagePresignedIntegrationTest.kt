@@ -3,12 +3,10 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
-import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -23,13 +21,12 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.Duration
 import java.util.UUID
 import kotlin.test.assertEquals
 
 // 토너먼트 이미지 등록 v2(presigned) — 발급(POST .../images/presigned) → 클라 직접 업로드(stub) → 확정(POST .../images/confirm).
 // 위시와 같은 공통 ImagePresignService 를 쓰되, 권한이 requireMember 가 아니라 verifyCanAddItems(참여자·PENDING·비복제)다.
-// confirm 은 PENDING 을 실제 커밋하고 자동 dispatch(1s)가 파싱을 돌리므로 @Transactional 없이 실제 커밋 + finally 정리한다.
+// confirm 은 PENDING 을 실제 커밋하므로 @Transactional 없이 실제 커밋 + finally 정리한다.
 class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -45,9 +42,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
-
-    @Autowired
-    private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
     @Test
     fun `presigned 발급하면 요청한 개수만큼 uploadUrl 을 받는다`() {
@@ -105,8 +99,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(ownerId)
         var tournamentId = 0L
         try {
-            // 자동 dispatch(1s)가 PENDING 을 집어 워커를 돌리므로 깨끗한 추출 결과를 세팅해 둔다.
-            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             tournamentId = createTournament(mockMvc, ownerId)
             val keys = presignAndGetKeys(mockMvc, ownerId, tournamentId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -127,7 +119,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
                     tournamentId,
                 )
             assertEquals(2, count)
-            awaitDispatchSettled(tournamentId)
         } finally {
             cleanup(ownerId, tournamentId)
         }
@@ -140,7 +131,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(ownerId)
         var tournamentId = 0L
         try {
-            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
             tournamentId = createTournament(mockMvc, ownerId)
             val keys = presignAndGetKeys(mockMvc, ownerId, tournamentId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -166,7 +156,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
                     tournamentId,
                 )
             assertEquals(2, count, "같은 업로드를 두 번 확정해도 아이템은 한 번만 생긴다")
-            awaitDispatchSettled(tournamentId)
         } finally {
             cleanup(ownerId, tournamentId)
         }
@@ -179,7 +168,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
         insertMember(ownerId)
         var tournamentId = 0L
         try {
-            // S3 에 실제로 올라오지 않은 상황 재현 — HEAD 존재확인이 false 를 돌려준다.
             stubImageStorage.existsBehavior = { false }
             tournamentId = createTournament(mockMvc, ownerId)
             val keys = presignAndGetKeys(mockMvc, ownerId, tournamentId, listOf("image/png"))
@@ -299,7 +287,6 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // ---- 헬퍼 ----
 
     private fun createTournament(
         mockMvc: MockMvc,
@@ -384,20 +371,5 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
             }
         }
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
-    }
-
-    // confirm 이 만든 PENDING 을 자동 dispatch(1s)가 파싱 중일 수 있어, 삭제-vs-워커 UPDATE 레이스를 피하려면
-    // 후속 처리가 terminal(READY/FAILED)로 끝난 뒤 cleanup 한다.
-    private fun awaitDispatchSettled(tournamentId: Long) {
-        await().atMost(Duration.ofSeconds(5)).until {
-            val inFlight =
-                jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM item_snapshots s JOIN tournament_items ti ON ti.snapshot_id = s.id " +
-                        "WHERE ti.tournament_id = ? AND s.status IN ('PENDING', 'PROCESSING')",
-                    Int::class.java,
-                    tournamentId,
-                ) ?: 0
-            inFlight == 0
-        }
     }
 }

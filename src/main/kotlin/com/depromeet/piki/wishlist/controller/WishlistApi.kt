@@ -4,12 +4,14 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.enums.ParameterIn
 import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
@@ -151,6 +153,16 @@ interface WishlistApi {
     fun registerFromUrl(
         @Parameter(hidden = true) userId: UUID,
         request: WishlistRegisterRequest,
+        @Parameter(
+            `in` = ParameterIn.HEADER,
+            name = ExternalEntry.HEADER,
+            required = false,
+            description = "외부에서 넘어온 담기일 때만 보낸다. SHARE_SHEET 는 타앱 공유 시트로 링크가 전달된 경우다. " +
+                "앱이나 웹에서 직접 담는 경우는 기본이라 보내지 않는다. 집계 전용이라 등록 결과는 달라지지 않고, " +
+                "모르는 값을 보내도 400 이 아니라 집계에서 빠질 뿐이다.",
+            schema = Schema(type = "string", allowableValues = ["SHARE_SHEET"]),
+        )
+        rawEntryPoint: String?,
     ): ApiResponseBody<WishItemResponse>
 
     @Operation(

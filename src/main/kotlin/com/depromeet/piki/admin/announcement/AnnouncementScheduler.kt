@@ -25,10 +25,8 @@ class AnnouncementScheduler(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // 주기 폴링 진입점. 테스트는 schedulerAutoDispatch=false 로 자동 실행을 끄고 dispatchDue() 를 직접 호출해 결정적으로 검증한다.
     @Scheduled(fixedDelay = POLL_INTERVAL_MS)
     fun poll() {
-        if (!adminProperties.schedulerAutoDispatch) return
         dispatchDue()
     }
 
