@@ -481,23 +481,59 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: 덤프→복원→URL재작성→행수 대조
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: 신 계정 앱 박스 IP (terraform output)
+        id: tf
+        working-directory: terraform
         env:
-          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
+          APP_IP_OUTPUT: ${{ needs.config.outputs.app_ip_output }}
         run: |
           set -euo pipefail
-          # 이 job 은 migrate-cutover.sh(스크립트로 추출 예정)의 --rehearsal 모드에 해당한다. 흐름:
-          #   1) 소스(구 계정) DB 를 mysqldump --single-transaction(무락)으로 덤프 → gzip. (db-backup.sh 와 동일 방식)
-          #   2) 신 계정 DB 박스로 복원.
-          #   3) 이미지 URL 재작성 — 저장된 전체 URL 에 박힌 버킷 호스트를 신 버킷으로. 대상 컬럼(스키마 실측, 전부 S3 public-base-url 조립):
-          #        users.profile_image · notifications.actor_image_url · item_snapshots.image_url
-          #      UPDATE t SET col = REPLACE(col, 'piki-images-<OLD>', 'piki-images-<NEW>') WHERE col LIKE '%piki-images-<OLD>%';
-          #      (public-base-url 이 CloudFront 등 계정무관 도메인이면 OLD==NEW 라 no-op — 안전)
-          #   4) 신 계정 S3 이미지 sync: aws s3 sync s3://piki-images-<OLD> s3://$NEW_IMAGE_BUCKET (멱등, 델타만)
-          #   5) 행수 대조: 주요 테이블 COUNT(*) 를 덤프 전(소스)·복원 후(대상) 비교.
-          #
-          # 소스 DB 접근은 provision 과 같은 경로(dev=앱박스 SSH / prod=DB박스 SSM)로, 자격은 SSM_PREFIX 아래 db-* 파라미터에서.
-          echo "::notice::rehearsal — 위 5단계는 migrate-cutover.sh 로 추출해 dev 카나리에서 검증 후 확정한다"
+          printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          terraform init -backend-config=backend.hcl -input=false >/dev/null
+          echo "dst_ip=$(terraform output -raw "$APP_IP_OUTPUT")" >> "$GITHUB_OUTPUT"
+
+      - name: 덤프→복원→URL재작성→행수 대조 + S3 이미지 동기화
+        env:
+          DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }} # dev 카나리에서 실 스키마명 확정(레포 var 로 덮어쓰기)
+          DB_CONTAINER: ${{ needs.config.outputs.db_container }}
+          DST_HOST: ${{ steps.tf.outputs.dst_ip }}
+          SRC_HOST: ${{ secrets.OLD_APP_HOST }} # 구 계정 앱 박스 호스트
+          SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
+          ROOT_PW_PARAM: ${{ vars.MIGRATE_DB_ROOT_PW_PARAM || 'db-root-password' }} # dev 카나리에서 실 param 명 확정
+          OLD_IMAGE_BUCKET: piki-images-${{ env.OLD_ACCOUNT_ID }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          SRC_AWS_KEY: ${{ secrets.AWS_SOURCE_ACCESS_KEY_ID }}
+          SRC_AWS_SECRET: ${{ secrets.AWS_SOURCE_SECRET_ACCESS_KEY }}
+          DST_AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          DST_AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OLD_SSH_KEY: ${{ secrets.OLD_EC2_SSH_KEY }} # 구 계정 박스 키(신 계정과 키 재료가 다름)
+          NEW_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$OLD_SSH_KEY" > src.pem && chmod 600 src.pem
+          echo "$NEW_SSH_KEY" > dst.pem && chmod 600 dst.pem
+          # 루트 비번을 각 계정 SSM 에서 읽는다(구=source 자격, 신=target 자격). ssh 로 MYSQL_PWD 로만 넘겨 로그 비노출.
+          SRC_ROOT_PW=$(AWS_ACCESS_KEY_ID="$SRC_AWS_KEY" AWS_SECRET_ACCESS_KEY="$SRC_AWS_SECRET" \
+            aws ssm get-parameter --name "$SSM_PREFIX/$ROOT_PW_PARAM" --with-decryption --region "$AWS_REGION" --query Parameter.Value --output text)
+          DST_ROOT_PW=$(AWS_ACCESS_KEY_ID="$DST_AWS_KEY" AWS_SECRET_ACCESS_KEY="$DST_AWS_SECRET" \
+            aws ssm get-parameter --name "$SSM_PREFIX/$ROOT_PW_PARAM" --with-decryption --region "$AWS_REGION" --query Parameter.Value --output text)
+          MODE=rehearsal DB_NAME="$DB_NAME" DB_CONTAINER="$DB_CONTAINER" \
+            SRC_HOST="$SRC_HOST" DST_HOST="$DST_HOST" SRC_KEY=src.pem DST_KEY=dst.pem \
+            SRC_ROOT_PW="$SRC_ROOT_PW" DST_ROOT_PW="$DST_ROOT_PW" \
+            OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
+            bash infra/scripts/migrate-db.sh
+          # S3 이미지 델타 동기화 — 구 자격으로 러너에 받아 신 자격으로 업로드(cross-account 정책 불필요).
+          # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
+          if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
+            mkdir -p imgs
+            AWS_ACCESS_KEY_ID="$SRC_AWS_KEY" AWS_SECRET_ACCESS_KEY="$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            AWS_ACCESS_KEY_ID="$DST_AWS_KEY" AWS_SECRET_ACCESS_KEY="$DST_AWS_SECRET" aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
+            rm -rf imgs
+          fi
+          rm -f src.pem dst.pem
 
       - name: Discord — rehearsal 결과
         if: always()
@@ -523,23 +559,78 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: freeze→델타덤프/복원→배포→검증→DNS 전환
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: 신 계정 앱 박스 IP (terraform output)
+        id: tf
+        working-directory: terraform
         env:
+          TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
           APP_IP_OUTPUT: ${{ needs.config.outputs.app_ip_output }}
         run: |
           set -euo pipefail
-          # 순서(rehearsal 와 같은 스크립트의 --cutover 모드):
-          #   (a) freeze — 구 계정 앱 컨테이너 정지로 신규 쓰기 차단(SSH/SSM). 이것이 다운타임 시작.
-          #   (b) 최종 델타 덤프/복원 + S3 이미지 델타 sync(rehearsal 이후 변경분).
-          #   (c) 신 계정 앱 배포(기존 deploy 경로 재사용) + 스모크 검증(/actuator/health + 핵심 엔드포인트).
-          #   (d) DNS 전환 — 신 계정 EIP(terraform output "$APP_IP_OUTPUT")로.
-          #   (e) freeze 해제.
-          # 롤백: DNS 를 구 계정 EIP 로 원복(전환 전이면 freeze 해제만으로 원복).
-          #
-          # DNS 는 현재 가비아 수동(#1100 의 Cloudflare 이관 전까지 API 없음). 그래서 이 스텝은
-          # 신 EIP 로 A 레코드가 바뀌었는지 폴링 검증하고, 안 바뀌었으면 여기서 멈춘다(Discord 에 ❌ cutover 로 표시).
-          echo "::error::cutover 는 DNS 수동 전환(가비아)이 선행돼야 한다 — Cloudflare API 이관(#1100) 전까지 이 지점에서 사람 개입 필요"
-          exit 1
+          printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          terraform init -backend-config=backend.hcl -input=false >/dev/null
+          echo "dst_ip=$(terraform output -raw "$APP_IP_OUTPUT")" >> "$GITHUB_OUTPUT"
+
+      - name: freeze→델타덤프/복원→S3 sync→스모크→DNS 전환
+        env:
+          DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }}
+          DB_CONTAINER: ${{ needs.config.outputs.db_container }}
+          DST_HOST: ${{ steps.tf.outputs.dst_ip }}
+          SRC_HOST: ${{ secrets.OLD_APP_HOST }}
+          SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
+          ROOT_PW_PARAM: ${{ vars.MIGRATE_DB_ROOT_PW_PARAM || 'db-root-password' }}
+          OLD_IMAGE_BUCKET: piki-images-${{ env.OLD_ACCOUNT_ID }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          DOMAIN: ${{ vars.MIGRATE_DOMAIN }} # 이 env 의 서비스 도메인(가비아 A레코드 대상). 미설정이면 DNS 검증 생략
+          SRC_AWS_KEY: ${{ secrets.AWS_SOURCE_ACCESS_KEY_ID }}
+          SRC_AWS_SECRET: ${{ secrets.AWS_SOURCE_SECRET_ACCESS_KEY }}
+          DST_AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          DST_AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OLD_SSH_KEY: ${{ secrets.OLD_EC2_SSH_KEY }}
+          NEW_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$OLD_SSH_KEY" > src.pem && chmod 600 src.pem
+          echo "$NEW_SSH_KEY" > dst.pem && chmod 600 dst.pem
+          SRC_ROOT_PW=$(AWS_ACCESS_KEY_ID="$SRC_AWS_KEY" AWS_SECRET_ACCESS_KEY="$SRC_AWS_SECRET" \
+            aws ssm get-parameter --name "$SSM_PREFIX/$ROOT_PW_PARAM" --with-decryption --region "$AWS_REGION" --query Parameter.Value --output text)
+          DST_ROOT_PW=$(AWS_ACCESS_KEY_ID="$DST_AWS_KEY" AWS_SECRET_ACCESS_KEY="$DST_AWS_SECRET" \
+            aws ssm get-parameter --name "$SSM_PREFIX/$ROOT_PW_PARAM" --with-decryption --region "$AWS_REGION" --query Parameter.Value --output text)
+          # (a)freeze (b)덤프/복원 (c)URL재작성 (d)행수대조 — 스크립트가 처리(다운타임 시작).
+          MODE=cutover DB_NAME="$DB_NAME" DB_CONTAINER="$DB_CONTAINER" \
+            SRC_HOST="$SRC_HOST" DST_HOST="$DST_HOST" SRC_KEY=src.pem DST_KEY=dst.pem \
+            SRC_ROOT_PW="$SRC_ROOT_PW" DST_ROOT_PW="$DST_ROOT_PW" \
+            OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
+            bash infra/scripts/migrate-db.sh
+          # (e) S3 이미지 최종 델타 sync
+          if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
+            mkdir -p imgs
+            AWS_ACCESS_KEY_ID="$SRC_AWS_KEY" AWS_SECRET_ACCESS_KEY="$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            AWS_ACCESS_KEY_ID="$DST_AWS_KEY" AWS_SECRET_ACCESS_KEY="$DST_AWS_SECRET" aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
+            rm -rf imgs
+          fi
+          # (f) 스모크 — 신 계정 앱 헬스(블루/그린 8080·8081). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
+          SSHOPT=(-i dst.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
+          ssh "${SSHOPT[@]}" "ubuntu@$DST_HOST" \
+            'curl -fsS http://localhost:8080/actuator/health || curl -fsS http://localhost:8081/actuator/health' \
+            || { echo "::error::신 계정 앱 헬스 실패 — 배포 상태 확인 후 재실행(롤백=구 앱 재기동)"; exit 1; }
+          echo "::notice::신 계정 앱 헬스 OK"
+          # (g) DNS 전환 — 가비아 수동(#1100 Cloudflare 이관 전까지 API 없음). 신 EIP 로 A레코드가 바뀌었는지 폴링.
+          if [ -z "${DOMAIN:-}" ]; then
+            echo "::warning::MIGRATE_DOMAIN 미설정 — DNS 검증 생략. 수동으로 A레코드를 ${{ steps.tf.outputs.dst_ip }} 로 전환"
+          else
+            NEW_IP="${{ steps.tf.outputs.dst_ip }}"; CUR=""
+            for i in $(seq 1 30); do
+              CUR=$(dig +short "$DOMAIN" | tail -1 || true)
+              [ "$CUR" = "$NEW_IP" ] && { echo "::notice::DNS 전환 확인 — $DOMAIN → $NEW_IP"; break; }
+              echo "DNS 대기($i/30) — 현재 [$CUR], 목표 [$NEW_IP]. 가비아에서 $DOMAIN A레코드를 $NEW_IP 로 변경 필요"; sleep 20
+            done
+            [ "$CUR" = "$NEW_IP" ] || { echo "::error::DNS 미전환 — 가비아에서 $DOMAIN A레코드를 $NEW_IP 로 바꾼 뒤 only=cutover 로 재실행"; exit 1; }
+          fi
+          rm -f src.pem dst.pem
+          echo "::notice::cutover 완료 — freeze 해제는 신 서비스 안정 확인 후(구 앱은 정지 상태 유지=롤백 여지)"
 
       - name: Discord — cutover 결과
         if: always()
