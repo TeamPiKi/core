@@ -48,9 +48,11 @@ permissions:
   contents: read
   id-token: write
 
-# 같은 env 이관은 직렬화(재실행이 앞선 실행을 취소하지 않게 cancel-in-progress:false). dev/prod 는 그룹이 달라 서로 안 막는다.
+# 같은 대상 계정 이관은 직렬화(재실행이 앞선 실행을 취소하지 않게 cancel-in-progress:false).
+# 그룹을 env 로 잡지 않는다 — dev·prod 는 같은 계정을 공유하므로(단일 EC2 공존), env 로 그룹하면 같은 계정에
+# dev·prod 를 동시 딸깍했을 때 계정 단위 단계(tfstate 버킷 생성·core terraform state)가 서로 밟는다. 계정으로 묶어 직렬화한다.
 concurrency:
-  group: migrate-${{ inputs.env }}
+  group: migrate-${{ inputs.target_account_id }}
   cancel-in-progress: false
 
 env:
@@ -131,24 +133,31 @@ jobs:
           [ "$ACTUAL" = "$TARGET" ] || { echo "::error::접속 계정($ACTUAL) != target($TARGET) — 엉뚱한 계정 사고 차단"; exit 1; }
           echo "::notice::STS 확인 — 접속 계정=$ACTUAL"
 
-      - name: tfstate 버킷 (없으면 생성 + 버저닝). 3레포 terraform backend 의 전제. 멱등.
+      - name: tfstate 버킷 (생성은 조건부·보호설정은 항상). 3레포 terraform backend 의 전제.
         env:
           TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
         run: |
           set -euo pipefail
+          # dry_run 이어도 이 버킷은 만든다 — S3 backend 라 버킷이 없으면 infra 의 terraform init·plan 자체가 불가하다.
+          # dry_run 이 건너뛰는 건 "되돌리기 어려운 파괴적 변경(infra apply·cutover)"이고, 빈 tfstate 버킷은 그 범주가 아니다.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::dry_run — tfstate 버킷은 plan 전제라 예외적으로 생성/보정한다(빈 버킷, 저위험)"
+          fi
           if aws s3api head-bucket --bucket "$TFSTATE_BUCKET" 2>/dev/null; then
             echo "::notice::tfstate 버킷 이미 존재 — $TFSTATE_BUCKET"
           else
             aws s3api create-bucket --bucket "$TFSTATE_BUCKET" \
               --region "$AWS_REGION" \
               --create-bucket-configuration LocationConstraint="$AWS_REGION"
-            aws s3api put-bucket-versioning --bucket "$TFSTATE_BUCKET" \
-              --versioning-configuration Status=Enabled
-            aws s3api put-public-access-block --bucket "$TFSTATE_BUCKET" \
-              --public-access-block-configuration \
-              BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-            echo "::notice::tfstate 버킷 생성 — $TFSTATE_BUCKET (버저닝·퍼블릭차단 on)"
+            echo "::notice::tfstate 버킷 생성 — $TFSTATE_BUCKET"
           fi
+          # 보호설정은 생성 여부와 무관하게 항상 적용(멱등) — 기존 버킷에 버저닝이 없으면 state 덮어쓰기·삭제 후 이전 버전 복구가 불가하다.
+          aws s3api put-bucket-versioning --bucket "$TFSTATE_BUCKET" \
+            --versioning-configuration Status=Enabled
+          aws s3api put-public-access-block --bucket "$TFSTATE_BUCKET" \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          echo "::notice::tfstate 버킷 보호설정 적용(버저닝·퍼블릭차단) — $TFSTATE_BUCKET"
 
       - name: 키페어 2종 (app·db) — 없으면 생성. 프라이빗 키는 GH secret 으로.
         run: |
@@ -190,18 +199,66 @@ jobs:
           #   3) 치환 규칙: 구 계정번호 → $NEW_ACCOUNT (S3 버킷명·ARN 등에 박힌 값). 치환 후 값 검증.
           echo "::warning::SSM 이식 대상/소스자격은 런타임 확정 필요 — get-parameters-by-path 로 $SSM_PREFIX 인벤토리 실측 (#1094)"
 
-  # ── migrate-2: terraform 3레포 plan → apply (OIDC provider·역할 포함). 계정 단위. dry_run 이면 plan 까지만. ──
-  infra:
+  # ── migrate-2a: core terraform. VPC·subnet·SG·OIDC 등 계정 기반. extractor/renderer 가 이걸 data 소스로 참조하므로 먼저 선다. ──
+  # 계정 단위. dry_run 이면 plan 까지만.
+  infra_core:
     needs: [guard, config, ssm]
     if: ${{ always() && needs.guard.result == 'success' && (needs.ssm.result == 'success' || needs.ssm.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'infra') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (부트스트랩 키)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: backend.hcl 생성 (계정 파생) + init
+        working-directory: terraform
+        env:
+          TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
+        run: |
+          set -euo pipefail
+          # backend.hcl 은 gitignore(계정번호 포함) — backend.hcl.example 의 bucket 키를 대상 계정으로 채워 생성한다.
+          # providers.tf 의 backend "s3" 가 key/region/encrypt/use_lockfile 를 이미 갖고, bucket 만 -backend-config 로 주입.
+          printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          terraform init -backend-config=backend.hcl -input=false
+
+      - name: plan
+        working-directory: terraform
+        env:
+          ENV: ${{ inputs.env }}
+          IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+        run: |
+          set -euo pipefail
+          # TODO(런타임 확정): core 가 실제로 요구하는 TF_VAR 집합을 plan 출력으로 확정한다(누락 변수는 plan 이 물어본다).
+          export TF_VAR_environment="$ENV" TF_VAR_image_bucket_name="$IMAGE_BUCKET"
+          terraform plan -input=false -out=tfplan
+
+      - name: apply (dry_run 이면 건너뜀)
+        if: ${{ inputs.dry_run == false }}
+        working-directory: terraform
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve tfplan
+          echo "::notice::infra apply 완료 — core"
+
+  # ── migrate-2b: extractor·renderer terraform. core 의 VPC·subnet·SG 를 data 소스로 참조한다. ──
+  # needs: infra_core — core 의 plan/apply 가 실패하면 여기도 돌지 않는다(max-parallel 은 성공 의존을 만들지 못하므로 job 을 분리).
+  infra_apps:
+    needs: [guard, config, infra_core]
+    if: ${{ needs.infra_core.result == 'success' && (inputs.only == 'all' || inputs.only == 'infra') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
     strategy:
-      fail-fast: false # 한 레포 plan 실패가 다른 레포 plan 을 못 보게 막지 않는다(전체 그림 확보)
-      max-parallel: 1 # apply 는 직렬 — extractor/renderer 가 core 의 VPC/SG 를 data 소스로 참조하므로 core 가 먼저 서야 한다
+      fail-fast: false # extractor 실패가 renderer plan 을 못 보게 막지 않는다(둘은 서로 독립)
       matrix:
         include:
-          - { repo: core, path: terraform, checkout: self }
           - { repo: extractor, path: infra/extractor, checkout: TeamPiKi/extractor }
           - { repo: renderer, path: infra/headless-browser, checkout: TeamPiKi/renderer }
     steps:
@@ -210,7 +267,7 @@ jobs:
         with:
           # TODO(런타임 확정): extractor/renderer 의 실제 GitHub repo 슬러그를 확인해 matrix.checkout 을 맞춘다.
           #   타 레포 checkout 은 그 레포 read 권한이 있는 토큰이 필요하다(org 기본 GITHUB_TOKEN 은 자기 레포만).
-          repository: ${{ matrix.checkout == 'self' && github.repository || matrix.checkout }}
+          repository: ${{ matrix.checkout }}
 
       - name: AWS 자격 (부트스트랩 키)
         uses: aws-actions/configure-aws-credentials@v4
@@ -227,23 +284,16 @@ jobs:
           TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
         run: |
           set -euo pipefail
-          # backend.hcl 은 gitignore(계정번호 포함) — 각 레포 backend.hcl.example 의 bucket 키를 대상 계정으로 채워 생성한다.
-          # providers.tf 의 backend "s3" 가 key/region/encrypt/use_lockfile 를 이미 갖고, bucket 만 -backend-config 로 주입.
           printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
           terraform init -backend-config=backend.hcl -input=false
 
       - name: plan
         working-directory: ${{ matrix.path }}
-        env:
-          ENV: ${{ inputs.env }}
-          IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
         run: |
           set -euo pipefail
-          # core 만 environment/image_bucket_name 변수를 받는다(extractor/renderer 는 name_prefix·data 소스 기본값 사용).
-          # TODO(런타임 확정): 각 레포가 실제로 요구하는 TF_VAR 집합을 plan 출력으로 확정한다(누락 변수는 plan 이 물어본다).
-          if [ "${{ matrix.repo }}" = "core" ]; then
-            export TF_VAR_environment="$ENV" TF_VAR_image_bucket_name="$IMAGE_BUCKET"
-          fi
+          # extractor/renderer 는 name_prefix·data 소스 기본값을 쓴다(TF_VAR 없음).
+          # dry_run(plan-only)에서는 core 가 아직 apply 전이라 data 소스(VPC/SG) 조회가 실패할 수 있다 — 첫 이관은 not-dry_run 으로 core apply 후 이 job 이 돈다.
+          # TODO(런타임 확정): 각 레포가 실제로 요구하는 TF_VAR 를 plan 출력으로 확정한다.
           terraform plan -input=false -out=tfplan
 
       - name: apply (dry_run 이면 건너뜀)
@@ -256,8 +306,8 @@ jobs:
 
   # ── migrate-3: provision. 컷오버 밖에서 며칠 앞서. env 단위. 박스별 접근 경로(ssh/ssm)로 갈려 병렬. ──
   provision:
-    needs: [guard, config, infra]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.infra.result == 'success' || needs.infra.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
+    needs: [guard, config, infra_core, infra_apps]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.infra_core.result == 'success' || needs.infra_core.result == 'skipped') && (needs.infra_apps.result == 'success' || needs.infra_apps.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     strategy:
@@ -378,7 +428,7 @@ jobs:
 
   # ── 마무리: 결과 요약. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, infra, provision, rehearsal, cutover]
+    needs: [guard, config, bootstrap, ssm, infra_core, infra_apps, provision, rehearsal, cutover]
     if: ${{ always() && (inputs.only == 'all' || inputs.only == 'finalize') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -391,7 +441,8 @@ jobs:
             echo "|---|---|"
             echo "| bootstrap | ${{ needs.bootstrap.result }} |"
             echo "| ssm | ${{ needs.ssm.result }} |"
-            echo "| infra | ${{ needs.infra.result }} |"
+            echo "| infra_core | ${{ needs.infra_core.result }} |"
+            echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
             echo "| rehearsal | ${{ needs.rehearsal.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
