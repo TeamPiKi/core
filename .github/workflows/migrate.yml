@@ -13,7 +13,8 @@ name: Migrate
 # 자격증명은 절대 workflow_dispatch 입력에 받지 않는다 — 마스킹되지 않아 로그에 평문으로 남는다.
 #   bootstrap/ssm/infra: 대상 계정 부트스트랩 키(secrets.AWS_ACCESS_KEY_ID/SECRET).
 #   ssm: 구 계정 읽기용(secrets.AWS_SOURCE_ACCESS_KEY_ID/SECRET) 추가 — 두 계정을 오간다.
-#   provision 이후: infra 가 만든 OIDC 역할(secrets.AWS_DEPLOY_ROLE_ARN). SSH 는 secrets.EC2_SSH_KEY.
+#   provision: 부트스트랩 키(tfstate output 조회·SSM)로. 앱 박스 SSH 는 secrets.EC2_SSH_KEY.
+#   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout)·GH_PAT(EC2_SSH_KEY 자동 등록).
 
 on:
   workflow_dispatch:
