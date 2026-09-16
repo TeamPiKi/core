@@ -1,23 +1,38 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
+import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.contracts.extraction.v1.ExtractionResult
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.google.protobuf.util.JsonFormat
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
+import org.springframework.http.converter.HttpMessageConverter
+import org.springframework.http.converter.protobuf.ProtobufJsonFormatHttpMessageConverter
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 
-// 원격 추출 서비스(extractor) 계약(extractor repo docs/api-contract.md)의 공용 절반.
-// link(HttpProductLinkExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResponse)과
+// 원격 추출 서비스(extractor) 계약(정본: infra contracts/)의 공용 절반.
+// link(HttpProductLinkExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResult)과
 // 같은 3갈래 번역을 쓰므로 호출·번역 전체를 한 곳에 모은다 — 계약이 진화할 때 두 클라이언트가 조용히 어긋나는 것을 막는다.
 // 클라이언트별로 갈리는 건 요청 모양(URL vs bucket·key)과 로그 컨텍스트(target)뿐이다.
+//
+// 요청·응답 클래스는 계약 정본에서 생성된다 — 이쪽에 필드 정의가 없어 한쪽만 개명되는 사고가 불가능하다.
 internal object RemoteExtractionContract {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    // 기본 파서는 모르는 필드에 실패한다 — 그대로 두면 extractor 가 필드를 먼저 더한 2xx 가 일시 실패로 떨어진다.
+    // 프린터는 authorized false 를 생략하지 않고 찍어 "무엇을 보냈나"가 와이어와 상대 로그에 남게 한다.
+    fun messageConverter(): HttpMessageConverter<*> =
+        ProtobufJsonFormatHttpMessageConverter(
+            JsonFormat.parser().ignoringUnknownFields(),
+            JsonFormat.printer().alwaysPrintFieldsWithNoPresence(),
+        ).apply { supportedMediaTypes = listOf(MediaType.APPLICATION_JSON) }
 
     // 확정 실패(422) code 전수 → 우리 예외. 계약 카탈로그(shared-infra/contracts/extraction-error-codes.yaml)의
     // permanent code 를 빠짐없이 여기에 명시한다 — 표에 없는 code 는 아래 fallback 으로 떨어져 internal_error 로
@@ -68,7 +83,7 @@ internal object RemoteExtractionContract {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()
-                    .body(RemoteExtractionResponse::class.java)
+                    .body(ExtractionResult::class.java)
             } catch (e: RestClientResponseException) {
                 throw translate(e, target)
             } catch (e: RestClientException) {
@@ -90,7 +105,7 @@ internal object RemoteExtractionContract {
     // 일부면 INCOMPLETE, 전부 떨구면 FAILED). 현재 extractor 는 결과 URL 을 https 로 하드코딩 생성하므로
     // non-https 2xx 는 구성 불가능하다 — extractor 가 CDN 등 결과 URL 출처를 바꾸면 이 가드를 재검토한다.
     private fun toSnapshot(
-        response: RemoteExtractionResponse?,
+        response: ExtractionResult?,
         link: ProductLink?,
         target: String,
     ): ProductSnapshot {
@@ -98,6 +113,23 @@ internal object RemoteExtractionContract {
         if (response.hasNoExtractedValue()) throw contractViolation(target)
         return response.toProductSnapshot(link)
     }
+
+    // 이 응답이 2xx 로 온 것 자체가 계약 위반이다. 판정 기준의 정본은 ItemSnapshot.hasNoExtractedValue 다.
+    private fun ExtractionResult.hasNoExtractedValue(): Boolean =
+        !(hasName() && name.isNotBlank()) && !hasImageUrl() && !hasCurrentPrice()
+
+    // fromExtracted 를 반드시 경유한다 — 원격이 정상 값을 보장해도 신뢰 경계를 넘어온 값은 다시 검증한다(다층 방어).
+    // has* 로 가르는 이유는 JSON 생략과 null 을 같게 읽기 위해서다. 모르는 method 는 UNSPECIFIED 라 기록하지 않는다.
+    private fun ExtractionResult.toProductSnapshot(link: ProductLink?): ProductSnapshot =
+        ProductSnapshot.fromExtracted(
+            link = link,
+            name = if (hasName()) name else null,
+            imageUrl = if (hasImageUrl()) imageUrl else null,
+            price = if (hasCurrentPrice()) currentPrice else null,
+            currency = if (hasCurrency()) currency else null,
+            finalUrl = if (hasFinalUrl()) finalUrl else null,
+            extractionMethod = method.takeIf { it != ExtractionMethod.EXTRACTION_METHOD_UNSPECIFIED }?.name,
+        )
 
     private fun contractViolation(target: String): ProductExtractorException {
         log.warn("remote extract contract violation: no extracted value in 2xx {}", target)
@@ -118,8 +150,9 @@ internal object RemoteExtractionContract {
             log.warn("remote extract transient status={} {}", e.statusCode.value(), target)
             return ProductExtractorException.transientFailure(e)
         }
+        // 모르는 code 문자열은 파서가 무시해 UNSPECIFIED 로 읽힌다 — 그 이름은 표에 없으니 아래 fallback 으로 간다.
         val code =
-            runCatching { e.getResponseBodyAs(RemoteExtractionFailureResponse::class.java)?.code }
+            runCatching { e.getResponseBodyAs(ExtractionFailure::class.java)?.code?.name }
                 .getOrNull()
         // code 는 관측·디버깅용(계약 §1) — 응답엔 노출되지 않고 로그로만 남긴다. 확정 실패는 계약상 정상 결과라 info.
         // 원문 code 는 이 줄에만 남는다: 메트릭은 bucket 단위라(카디널리티) 개별 code 추적은 로그가 진다.
@@ -129,51 +162,3 @@ internal object RemoteExtractionContract {
         return translation()
     }
 }
-
-// tolerant reader(계약 §4): extractor 가 additive 로 필드를 더해도 모르는 필드는 무시한다.
-// link·image 두 경로가 응답 모양을 공유한다(extractor 쪽도 ExtractionResponse 하나를 공유).
-@JsonIgnoreProperties(ignoreUnknown = true)
-internal data class RemoteExtractionResponse(
-    val name: String? = null,
-    val imageUrl: String? = null,
-    // extractor 가 내려주는 wire 필드명이라 우리 쪽 개명(currentPrice → price, #870)에서 홀로 제외됐다.
-    // 여기만 바꾸면 Jackson 매핑이 끊겨 2xx 의 가격이 조용히 null 이 된다. 부분값을 받아들이게 된 뒤로는
-    // 그 귀결이 "전부 일시 실패"(눈에 띔)가 아니라 **모든 추출이 가격 없는 INCOMPLETE 로 조용히 성공**이라
-    // 더 늦게 발견된다 — 개명하려면 extractor 와 동시 배포가 필요하다.
-    val currentPrice: Int? = null,
-    val currency: String? = null,
-    // additive 확장(계약 §2, extractor#17): 리다이렉트 귀결점. 구버전 extractor 는 안 내려주며(null),
-    // 그 경우 정체성(canonical) 확정을 건너뛴다 — 배포 순서 무관.
-    val finalUrl: String? = null,
-    // additive 확장: 추출 경로(STRUCTURED|LLM). 출처(SERVER/SERVER_LLM) 기록의 근거이며 모르는 값은 미기록으로 둔다.
-    val method: String? = null,
-) {
-    // 성공 응답이 값을 하나도 담지 않았는지 — extractor 의 성공 계약과 대칭인 판정이라 이름도 맞춘다
-    // (extractor#37 의 ProductSnapshot.hasNoExtractedValue). 이 응답이 2xx 로 온 것 자체가 계약 위반이다.
-    // 판정 기준은 도메인(ItemSnapshot.hasNoExtractedValue)과 같다: currency 는 READY 필수가 아니라 단독으로
-    // "건졌다"의 근거가 되지 못하므로 세지 않고, blank name 은 정규화가 어차피 떨구므로 없는 것으로 본다.
-    fun hasNoExtractedValue(): Boolean =
-        listOfNotNull(name?.takeIf { it.isNotBlank() }, imageUrl, currentPrice).isEmpty()
-
-    // 외부 응답 → 도메인 매핑은 DTO 자신이 진다 (CLAUDE.md).
-    // fromExtracted 를 반드시 경유한다 — https-only imageUrl(XSS 사다리 차단)·currency ISO 정규화·범위 검증은
-    // 모든 추출 경로가 공유하는 단일 진실 원천이고, 원격 계약이 정상 값을 보장하더라도 신뢰 경계(외부 서비스)를
-    // 넘어온 값은 우리 경계에서 다시 검증한다(다층 방어). 범위 위반은
-    // untrustworthyValue(→ 워커 reason=extract_quality)로 떨어진다.
-    // link 는 이미지 추출엔 원본 URL 이 없어 null 이다 — 이미지 경로의 계약(원본 URL 없음 — extractor 계약 §2).
-    fun toProductSnapshot(link: ProductLink?): ProductSnapshot =
-        ProductSnapshot.fromExtracted(
-            link = link,
-            name = name,
-            imageUrl = imageUrl,
-            price = currentPrice,
-            currency = currency,
-            finalUrl = finalUrl,
-            extractionMethod = method,
-        )
-}
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-internal data class RemoteExtractionFailureResponse(
-    val code: String? = null,
-)

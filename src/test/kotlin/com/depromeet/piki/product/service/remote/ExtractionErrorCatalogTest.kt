@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
 import com.depromeet.piki.item.service.ItemParsingMetrics
 import org.yaml.snakeyaml.Yaml
 import java.io.File
@@ -81,6 +82,27 @@ class ExtractionErrorCatalogTest {
                         )
                     }
                 },
+            )
+        }
+    }
+
+    @Test
+    fun `계약 정본(extraction proto)의 ExtractionErrorCode enum 은 카탈로그의 code 집합과 정확히 일치한다`() {
+        // 모양 정본(proto)과 분류 정본(yaml)이 같은 목록을 들어야 translate 가 enum 이름으로 카탈로그를 찾는다.
+        val protoCodes =
+            ExtractionErrorCode.entries
+                .filter { it != ExtractionErrorCode.UNRECOGNIZED && it.number != 0 }
+                .map { it.name }
+                .toSet()
+        val catalogCodes = catalog.map { it.code }.toSet()
+        val protoOnly = protoCodes - catalogCodes
+        val catalogOnly = catalogCodes - protoCodes
+
+        if (protoOnly.isNotEmpty() || catalogOnly.isNotEmpty()) {
+            fail(
+                "extraction.proto 의 ExtractionErrorCode 와 카탈로그($CATALOG_PATH)가 어긋난다.\n" +
+                    "- proto 에만 있음: ${protoOnly.sorted().joinToString(", ")}\n" +
+                    "- 카탈로그에만 있음: ${catalogOnly.sorted().joinToString(", ")}",
             )
         }
     }

@@ -23,7 +23,11 @@ class HttpExtractionModelProbeTest {
     private val probeUrl = "http://extractor.test${HttpExtractionModelProbe.PROBE_PATH}"
 
     private fun probeWith(server: (MockRestServiceServer) -> Unit): HttpExtractionModelProbe {
-        val builder = RestClient.builder().baseUrl("http://extractor.test")
+        val builder =
+            RestClient
+                .builder()
+                .baseUrl("http://extractor.test")
+                .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
         return HttpExtractionModelProbe(builder.build())

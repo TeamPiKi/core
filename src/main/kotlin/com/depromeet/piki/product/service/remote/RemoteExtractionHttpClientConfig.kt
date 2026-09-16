@@ -28,6 +28,8 @@ class RemoteExtractionHttpClientConfig {
                     setReadTimeout(properties.readTimeoutMs)
                 },
             ).observationRegistry(observationRegistry)
+            // registerDefaults 를 빼면 Jackson 이 사라져 image·probe 요청이 "컨버터 없음"으로 일시 실패한다(실측).
+            .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
             .build()
     }
 }

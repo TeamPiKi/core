@@ -176,6 +176,7 @@ jobs:
           path: shared-infra
           sparse-checkout: |
             blocks
+            contracts
           sparse-checkout-cone-mode: true
 
       # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
