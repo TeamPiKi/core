@@ -1,0 +1,172 @@
+name: Migrate
+
+# AWS 계정 이관 오케스트레이터 (#1092 / 골격 #1093).
+#
+# 인프라를 "만들고 부수는" 워크플로라 절대 자동 발화하면 안 된다 — workflow_dispatch 만 둔다(push·schedule·workflow_run 없음).
+# 단계 로직(bootstrap 명령·terraform·provision·덤프/복원)은 후속 이슈가 채운다:
+#   bootstrap/ssm/infra = migrate-0/1/2 (#1094), provision = migrate-3 (#1095),
+#   rehearsal = migrate-4 (#1096), cutover = migrate-5/6 (#1097).
+# 이 파일(#1093)은 그 골격 — job 그래프·수동 가드·env 축·only/dry_run 스위치·컴포짓 배선만 확정한다.
+#
+# env 축: provision/rehearsal/cutover 는 입력 env(dev|prod) 하나만 대상으로 돈다. "두 번 딸깍" — dev 로 먼저(카나리)
+# 돌려 검증하고, 같은 워크플로를 prod 로 한 번 더 실행한다. bootstrap/ssm/infra 는 계정 단위라 env 무관(멱등).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_account_id:
+        description: "대상 AWS 계정번호 (12자리). 실제 접속 계정과 다르면 guard 가 중단한다."
+        required: true
+        type: string
+      env:
+        description: "이관 대상 환경. provision/rehearsal/cutover 가 이 환경만 대상. dev 로 먼저(카나리) → prod."
+        required: true
+        type: choice
+        options: [dev, prod]
+      confirm:
+        description: "MIGRATE 를 정확히 입력해야 진행한다(오발 방지)."
+        required: true
+        type: string
+      only:
+        description: "all 이면 전체 실행. 특정 단계명을 고르면 그 단계만(dry-run·부분 재개용)."
+        required: false
+        default: all
+        type: choice
+        options: [all, bootstrap, ssm, infra, provision, rehearsal, cutover, finalize]
+      dry_run:
+        description: "true 면 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
+        required: false
+        default: false
+        type: boolean
+
+# 자격증명은 절대 workflow_dispatch 입력에 받지 않는다 — 마스킹되지 않아 로그·실행 메타데이터에 평문으로 남는다.
+# bootstrap 부트스트랩 키는 GitHub Environment secret 으로만 받고, migrate-3 부터는 OIDC(id-token)로 전환한다(#1094).
+permissions:
+  contents: read
+  id-token: write
+
+# 같은 env 이관은 직렬화(재실행이 앞선 실행을 취소하지 않게 cancel-in-progress:false). dev/prod 는 그룹이 달라 서로 안 막는다.
+concurrency:
+  group: migrate-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 가드: 오발·엉뚱한 계정 방지. 나머지 job 은 전부 이 job 의 성공에 needs 로 매인다. ──
+  guard:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }} # env 별 secret/vars(EC2_HOST·AWS_*_ROLE_ARN 등) 해석 경계
+    outputs:
+      account_id: ${{ steps.check.outputs.account_id }}
+    steps:
+      - name: confirm · 계정번호 검증
+        id: check
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          TARGET: ${{ inputs.target_account_id }}
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "MIGRATE" ] || { echo "::error::confirm 이 MIGRATE 가 아니다 — 중단"; exit 1; }
+          echo "$TARGET" | grep -Eq '^[0-9]{12}$' || { echo "::error::target_account_id 가 12자리 숫자가 아니다"; exit 1; }
+          # TODO(#1094): 부트스트랩 자격으로 STS 로 실제 접속 계정을 읽어 target 과 대조.
+          #   ACTUAL=$(aws sts get-caller-identity --query Account --output text)
+          #   [ "$ACTUAL" = "$TARGET" ] || { echo "::error::접속 계정($ACTUAL) != target($TARGET) — 엉뚱한 계정 사고 차단"; exit 1; }
+          echo "account_id=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "::notice::guard 통과 — env=${{ inputs.env }} target=$TARGET dry_run=${{ inputs.dry_run }} only=${{ inputs.only }}"
+
+  # ── migrate-0: 계정 부트스트랩 (tfstate 버킷·키페어 2종·EC2_SSH_KEY secret). 계정 단위(env 무관). ──
+  bootstrap:
+    needs: guard
+    if: ${{ inputs.only == 'all' || inputs.only == 'bootstrap' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: bootstrap (migrate-0)
+        run: |
+          echo "::notice::[골격] bootstrap — 구현은 #1094 (tfstate 버킷·키페어 rsa 2종·EC2_SSH_KEY secret 갱신, migrator 키 자동 삭제)"
+
+  # ── migrate-1: SSM 파라미터 이식 + 계정번호 치환 (S3_BUCKET·S3_PUBLIC_BASE_URL 등). 계정 단위. ──
+  ssm:
+    needs: [guard, bootstrap]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'ssm') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: ssm 이식 (migrate-1)
+        run: |
+          echo "::notice::[골격] ssm — 구현은 #1094 (/piki-core/<env>/ 경로별 복사 + 계정번호 치환, 실행 시점 개수 실측)"
+
+  # ── migrate-2: terraform 3레포 plan → apply (OIDC provider·역할 포함). 계정 단위. dry_run 이면 plan 까지만. ──
+  infra:
+    needs: [guard, ssm]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.ssm.result == 'success' || needs.ssm.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'infra') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: terraform plan/apply (migrate-2)
+        run: |
+          echo "::notice::[골격] infra — 구현은 #1094 (terraform 3레포 plan → apply). dry_run=${{ inputs.dry_run }} 면 plan 까지만"
+
+  # ── migrate-3: provision. 컷오버 밖에서 며칠 앞서. env 단위. SSH 2 / SSM 3 로 갈리며 병렬(#1095). ──
+  provision:
+    needs: [guard, infra]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.infra.result == 'success' || needs.infra.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # env 축과 교차: 그 env 의 박스만 provision 한다. 접근 경로(ssh/ssm)로 갈린다(#1095).
+        include:
+          - { box: app, access: ssh }
+          - { box: db, access: ssm }
+          - { box: extractor, access: ssm }
+          - { box: renderer, access: ssm }
+    steps:
+      - name: provision ${{ matrix.box }} (${{ matrix.access }}) — env=${{ inputs.env }}
+        run: |
+          echo "::notice::[골격] provision ${{ matrix.box }}/${{ matrix.access }} — 구현은 #1095 (멱등, docker·nginx·certbot·SSM 검증)"
+
+  # ── migrate-4: 리허설. 무중단 덤프 → 복원 → URL재작성 → 검증. env 단위(dev 데이터로 먼저). ──
+  rehearsal:
+    needs: [guard, provision]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.provision.result == 'success' || needs.provision.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'rehearsal') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: rehearsal (migrate-4) — env=${{ inputs.env }}
+        run: |
+          echo "::notice::[골격] rehearsal — 구현은 #1096 (mysqldump→복원→URL재작성 4컬럼→행수 대조, S3 경유·artifact 금지)"
+
+  # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. DNS 폴링 → freeze → 덤프/복원/S3 → 배포 → 검증. env 단위. ──
+  # 파괴적이라 dry_run 이면 통째로 건너뛴다. dev 로 먼저 돌려 카나리 검증 후 prod.
+  cutover:
+    needs: [guard, rehearsal]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.rehearsal.result == 'success' || needs.rehearsal.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'cutover') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: cutover (migrate-5/6) — env=${{ inputs.env }}
+        run: |
+          echo "::notice::[골격] cutover — 구현은 #1097 (DNS 폴링/CF API → freeze → 덤프·복원·URL재작성·S3 delta → 배포 → 검증 → freeze 해제, 롤백=DNS 원복)"
+
+  # ── 마무리: 결과 요약·기록(#1098 이 채움). 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
+  finalize:
+    needs: [guard, bootstrap, ssm, infra, provision, rehearsal, cutover]
+    if: ${{ always() && (inputs.only == 'all' || inputs.only == 'finalize') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: 요약
+        run: |
+          echo "### 이관 요약 (env=${{ inputs.env }}, dry_run=${{ inputs.dry_run }})" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "| 단계 | 결과 |"
+            echo "|---|---|"
+            echo "| bootstrap | ${{ needs.bootstrap.result }} |"
+            echo "| ssm | ${{ needs.ssm.result }} |"
+            echo "| infra | ${{ needs.infra.result }} |"
+            echo "| provision | ${{ needs.provision.result }} |"
+            echo "| rehearsal | ${{ needs.rehearsal.result }} |"
+            echo "| cutover | ${{ needs.cutover.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::[골격] finalize — 단계별 소요·다운타임·URL재작성 건수·행수 대조 기록은 #1098"
