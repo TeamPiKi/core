@@ -76,11 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # infra 의 계약 파일을 로컬 설치 위치와 같은 자리에 받아 온다. 빌드와 테스트가 경로를 하나만 알면 된다.
-      # 체크아웃이 없으면 그 테스트가 실패한다(skip 하면 계약 강제가 조용히 사라지므로 의도된 동작).
-      # 옵션은 extractor 쪽 같은 스텝과 일치시킨다(extractor#32) — 같은 목적으로 같은 repo 를 받는 두 소비자가
-      # 갈리면 한쪽만 손보게 된다. sparse-checkout 은 필요한 디렉터리만, persist-credentials=false 는 러너에
-      # 자격증명을 남기지 않게, ref 는 어느 브랜치가 정본인지 명시한다.
+      # job 이 다르면 러너도 달라 각자 받아야 한다. 없으면 카탈로그 대조 테스트가 실패한다.
       - name: Checkout extraction contract
         uses: actions/checkout@v4
         with:
