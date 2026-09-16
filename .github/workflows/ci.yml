@@ -19,7 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # proto 가 없으면 컴파일이 깨진다. test job 과 같은 스텝을 여기에도 둔다.
       - name: Checkout extraction contract
         uses: actions/checkout@v4
         with:
@@ -76,7 +75,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # job 이 다르면 러너도 달라 각자 받아야 한다. 없으면 카탈로그 대조 테스트가 실패한다.
       - name: Checkout extraction contract
         uses: actions/checkout@v4
         with:
