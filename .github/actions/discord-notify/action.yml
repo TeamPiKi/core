@@ -1,0 +1,46 @@
+name: Discord notify
+description: 이관 진행상황을 Discord webhook 으로 보고한다. 실패 시 실행 링크로 "어디서 막혔는지" 를 남긴다.
+
+inputs:
+  webhook:
+    description: "Discord webhook URL (secrets.DISCORD_WEBHOOK_URL). 비어 있으면 조용히 건너뛴다."
+    required: false
+    default: ""
+  status:
+    description: "start | success | failure | info"
+    required: true
+  title:
+    description: "한 줄 제목"
+    required: true
+  detail:
+    description: "본문(선택)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WEBHOOK: ${{ inputs.webhook }}
+        STATUS: ${{ inputs.status }}
+        TITLE: ${{ inputs.title }}
+        DETAIL: ${{ inputs.detail }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -uo pipefail
+        # webhook 미설정이면 알림만 생략하고 워크플로는 계속(알림 실패가 이관을 죽이면 안 된다 — db-backup.sh 와 같은 결).
+        [ -n "${WEBHOOK:-}" ] || { echo "::warning::Discord webhook 미설정 — 알림 생략"; exit 0; }
+        case "$STATUS" in
+          start)   EMOJI="🚀" ;;
+          success) EMOJI="✅" ;;
+          failure) EMOJI="❌" ;;
+          *)       EMOJI="ℹ️" ;;
+        esac
+        # content 를 파이썬으로 JSON 인코딩 — 따옴표·역슬래시·개행을 안전하게 이스케이프(수동 조립의 깨진 JSON 방지).
+        CONTENT="$EMOJI $TITLE"
+        [ -n "${DETAIL:-}" ] && CONTENT="$CONTENT"$'\n'"$DETAIL"
+        CONTENT="$CONTENT"$'\n'"실행 로그: $RUN_URL"
+        BODY=$(CONTENT="$CONTENT" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
+        curl -sf -X POST -H 'Content-Type: application/json' -d "$BODY" "$WEBHOOK" >/dev/null \
+          || echo "::warning::Discord 전송 실패 — 무시하고 계속한다"
