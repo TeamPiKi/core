@@ -213,9 +213,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # --- 1.5단계: 프리플라이트 ---------------------------------------------------
-  # 승인 게이트 앞에 둔다. 클론 평탄화 백필(#1027 Phase 2)은 Flyway 마이그레이션이라 앱 부팅 중에 돌고,
-  # 거기서 예외가 나면 새 슬롯이 못 떠 헬스체크 5분을 다 기다린 뒤 롤백된다 — dev 가 #1044 배포에서
-  # 정확히 그렇게 죽었다. 그 예외 조건을 읽기 전용 SELECT 로 먼저 세어 둔다 (#1103).
+  # 승인 게이트 앞에 둔다. Flyway 는 앱 부팅 중에 돌고, 거기서 예외가 나면 새 슬롯이 못 떠 헬스체크
+  # 5분을 다 기다린 뒤 롤백된다 — dev 가 #1044 배포에서 정확히 그렇게 죽었다. 그 예외 조건을 읽기 전용
+  # SELECT 로 먼저 세어 둔다 (#1103). 검사는 두 층이다 — Flyway 실패 잔재는 상설이고, 클론 평탄화
+  # 백필의 가드 2종은 그 백필이 prod 에 적용되면 자동으로 꺼진다.
   #
   # promote 가 이 job 을 needs 로 받으므로, 여기서 멈추면 승인 대기에 들어가지 않는다 — 승인자가 "무엇을
   # 승인하는가" 를 판단하기 전에 "승인해도 되는가" 가 먼저 걸러진다.
@@ -262,13 +263,13 @@ jobs:
           SSH_OPTS="-i /tmp/pf_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
 
           # shellcheck disable=SC2086  # SSH_OPTS 는 의도적으로 단어 분리한다.
-          scp $SSH_OPTS infra/scripts/preflight-clone-flatten.sh "$BOX_USER@$HOST:/tmp/preflight-clone-flatten.sh"
+          scp $SSH_OPTS infra/scripts/preflight-migration.sh "$BOX_USER@$HOST:/tmp/preflight-migration.sh"
 
           # 박스에서 돌린 뒤 스크립트를 지우고, 실행 결과(rc)는 그대로 들고 나온다.
           set +e
           # shellcheck disable=SC2086
           ssh $SSH_OPTS "$BOX_USER@$HOST" \
-            'bash /tmp/preflight-clone-flatten.sh prod; RC=$?; rm -f /tmp/preflight-clone-flatten.sh; exit $RC' \
+            'bash /tmp/preflight-migration.sh prod; RC=$?; rm -f /tmp/preflight-migration.sh; exit $RC' \
             > /tmp/pf_out.md
           RC=$?
           set -e
@@ -322,9 +323,9 @@ jobs:
 
           # 백필이 이미 적용된 뒤에는 처리량이 없다 — 그 사실 자체를 문구로 보낸다.
           case "$DIGEST" in
-            *verdict=skipped*)
+            *backfill=applied*)
               BACKFILL='적용 완료 (검사 대상 없음)' ;;
-            *verdict=pass*)
+            *backfill=pending*)
               REPOINT=$(echo "$DIGEST" | sed -n 's/.*repoint=\([0-9]*\).*/\1/p')
               MERGE=$(echo "$DIGEST" | sed -n 's/.*merge=\([0-9]*\).*/\1/p')
               SELFSKIP=$(echo "$DIGEST" | sed -n 's/.*selfskip=\([0-9]*\).*/\1/p')
