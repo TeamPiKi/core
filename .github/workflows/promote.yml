@@ -242,7 +242,14 @@ jobs:
           EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
           ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
           echo "domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
-          if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+          # 조회가 비면 fail-closed 로 멈춘다. 이 run 은 pipefail 이 없어 getent 가 실패해도 awk·head 가
+          # 성공하면 빈 값이 남는데, 그걸 통과로 치면 검증 없이 접속하게 된다 — 엉뚱한 박스(특히 dev)를
+          # 읽으면 그쪽엔 백필이 이미 적용돼 있어 "적용 완료, 통과" 라는 거짓 초록이 나온다.
+          if [ -z "$EXPECTED" ] || [ -z "$ACTUAL" ]; then
+            echo "::error::대상 호스트 DNS 확인 실패 (domain=$DOMAIN target=$TARGET) — 검증하지 못한 채 접속하지 않는다."
+            exit 1
+          fi
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "::error::프리플라이트 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — secret 오설정 의심, 중단."
             exit 1
           fi
