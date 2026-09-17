@@ -227,76 +227,20 @@ jobs:
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.run.outputs.verdict }}
+      verdict: ${{ steps.pf.outputs.verdict }}
     steps:
-      - name: Checkout (프리플라이트 스크립트)
+      - name: Checkout (액션·프리플라이트 스크립트)
         uses: actions/checkout@v4
 
-      # deploy.yml 의 같은 가드와 같은 결 — 하드코딩 IP 대신 DNS 를 source of truth 로 "이 secret 이
-      # 정말 그 박스냐" 를 본다. promote 는 언제나 prod 를 향하므로 도메인은 api.piki.day 고정이다.
-      - name: Guard — 대상이 prod 박스인지
-        env:
-          DOMAIN: api.piki.day
-          TARGET: ${{ secrets.EC2_HOST }}
-        run: |
-          EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
-          ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
-          echo "domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
-          # 조회가 비면 fail-closed 로 멈춘다. 이 run 은 pipefail 이 없어 getent 가 실패해도 awk·head 가
-          # 성공하면 빈 값이 남는데, 그걸 통과로 치면 검증 없이 접속하게 된다 — 엉뚱한 박스(특히 dev)를
-          # 읽으면 그쪽엔 백필이 이미 적용돼 있어 "적용 완료, 통과" 라는 거짓 초록이 나온다.
-          if [ -z "$EXPECTED" ] || [ -z "$ACTUAL" ]; then
-            echo "::error::대상 호스트 DNS 확인 실패 (domain=$DOMAIN target=$TARGET) — 검증하지 못한 채 접속하지 않는다."
-            exit 1
-          fi
-          if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "::error::프리플라이트 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — secret 오설정 의심, 중단."
-            exit 1
-          fi
-
-      # deploy.yml 이 쓰는 appleboy/ssh-action 대신 raw ssh 를 쓴다 — 스크립트가 뱉는 마크다운(stdout)을
-      # 원문 그대로 Step Summary 에 붙여야 하는데, 그 액션은 stdout 을 자기 로그 형식으로 감싼다.
-      # DB 자격증명은 러너가 넘기지 않는다. 박스가 SSM(/piki-core/prod/db-*)에서 직접 읽는다.
-      - name: 프리플라이트 실행
-        id: run
-        env:
-          HOST: ${{ secrets.EC2_HOST }}
-          BOX_USER: ${{ secrets.EC2_USER }}
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          umask 077
-          trap 'rm -f /tmp/pf_key' EXIT
-          printf '%s\n' "$SSH_KEY" > /tmp/pf_key
-          SSH_OPTS="-i /tmp/pf_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
-
-          # shellcheck disable=SC2086  # SSH_OPTS 는 의도적으로 단어 분리한다.
-          scp $SSH_OPTS infra/scripts/preflight-migration.sh "$BOX_USER@$HOST:/tmp/preflight-migration.sh"
-
-          # 박스에서 돌린 뒤 스크립트를 지우고, 실행 결과(rc)는 그대로 들고 나온다.
-          set +e
-          # shellcheck disable=SC2086
-          ssh $SSH_OPTS "$BOX_USER@$HOST" \
-            'bash /tmp/preflight-migration.sh prod; RC=$?; rm -f /tmp/preflight-migration.sh; exit $RC' \
-            > /tmp/pf_out.md
-          RC=$?
-          set -e
-
-          # 어느 결과든 요약을 먼저 남긴다 — 막혔을 때 그 표가 곧 조치 목록이다.
-          cat /tmp/pf_out.md >> "$GITHUB_STEP_SUMMARY"
-          cat /tmp/pf_out.md
-
-          # 스크립트가 남긴 기계용 한 줄(HTML 주석이라 Step Summary 엔 안 보인다). 아래 Discord 알림이 쓴다.
-          DIGEST=$(sed -n 's/^<!-- digest: \(.*\) -->$/\1/p' /tmp/pf_out.md | tail -1)
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-
-          case "$RC" in
-            0) echo "verdict=pass" >> "$GITHUB_OUTPUT" ;;
-            1) echo "verdict=blocked" >> "$GITHUB_OUTPUT"
-               echo "::error::프리플라이트 가드 위반 — 이대로 배포하면 백필이 예외로 죽는다. Step Summary 의 상세 표를 보고 조치한 뒤 다시 실행하라." ;;
-            *) echo "verdict=error" >> "$GITHUB_OUTPUT"
-               echo "::error::프리플라이트를 수행하지 못했다(rc=$RC) — SSH·SSM·DB 조회 실패. 확인하지 못한 채로 승격하지 않는다." ;;
-          esac
-          exit "$RC"
+      - name: 프리플라이트
+        id: pf
+        uses: ./.github/actions/preflight-migration
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          user: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          environment: prod
+          domain: api.piki.day
 
       # 승인 대기 알림은 여기서 보낸다 — notify job 은 워크플로가 끝나야 도는데 승인 대기는 그 앞이라,
       # 거기서 보내면 이미 승인이 끝난 뒤에 도착한다. 실패 알림은 그대로 notify 가 맡는다(그때는 promote 가
@@ -309,7 +253,7 @@ jobs:
         continue-on-error: true   # 전송 실패가 게이트를 깨지 않게.
         shell: bash
         env:
-          DIGEST: ${{ steps.run.outputs.digest }}
+          DIGEST: ${{ steps.pf.outputs.digest }}
           SHA: ${{ needs.plan.outputs.sha }}
           COUNT: ${{ needs.plan.outputs.count }}
           VERSION: ${{ needs.plan.outputs.version }}
@@ -363,6 +307,22 @@ jobs:
       contents: write
       actions: write
     steps:
+      # 승인 직후 같은 프리플라이트를 한 번 더 돈다. 승인 전 결과는 대기 시간만큼 낡는다 — prod 는 아직
+      # 옛 코드라 그동안에도 클론이 새로 생기고, 그 사이 다른 prod 배포가 Flyway 실패 기록을 남길 수도
+      # 있다. 낡은 근거로 ff·dispatch 를 시작하지 않는다 (#1103).
+      - name: Checkout (액션·프리플라이트 스크립트)
+        uses: actions/checkout@v4
+
+      - name: 프리플라이트 재확인 (승인 후)
+        uses: ./.github/actions/preflight-migration
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          user: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          environment: prod
+          domain: api.piki.day
+          label: 승인 후 재확인
+
       # ff-push 는 기본 GITHUB_TOKEN(contents: write)으로 한다. main 은 ruleset
       # protectReleaseBranches 가 deletion·non_fast_forward 만 강제하고 PR 규칙이 없어, ff 업데이트가
       # 그대로 통과한다(별도 App·PAT bypass 불필요). dev 만 protectImportantBranch 로 PR 필수를 유지한다.

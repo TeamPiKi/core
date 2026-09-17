@@ -1,0 +1,115 @@
+name: prod 마이그레이션 프리플라이트
+description: >-
+  대상 박스로 SSH 해서 "이 배포가 마이그레이션에서 죽을 조건" 을 읽기 전용으로 센다.
+  걸리면 non-zero 로 멈춰 호출한 job 을 실패시킨다.
+
+# 두 곳이 같은 검사를 돈다 — 승인 전(preflight job)과 승인 직후(promote job). 승인 대기 동안 prod
+# 데이터가 바뀔 수 있어(옛 코드가 아직 클론을 만든다), 승인 전 결과 하나로 배포를 시작하면 낡은 근거에
+# 기대게 된다. 같은 블록을 두 벌 쓰면 한쪽만 고쳐져 갈라지므로 여기로 뺀다 (#1103).
+#
+# 호출 전에 actions/checkout 이 필요하다 — 이 파일과 infra/scripts/ 를 러너가 들고 있어야 한다.
+
+inputs:
+  host:
+    description: 대상 박스 (EC2_HOST). IP 든 hostname 이든 DNS 로 정규화해 비교한다.
+    required: true
+  user:
+    description: SSH 사용자 (EC2_USER).
+    required: true
+  key:
+    description: SSH 개인키 (EC2_SSH_KEY).
+    required: true
+  environment:
+    description: 앱 환경. 박스가 SSM 에서 /piki-core/<environment>/db-* 를 읽는 데 쓴다.
+    required: false
+    default: prod
+  domain:
+    description: 그 환경의 도메인. host 가 정말 이 도메인의 박스인지 DNS 로 대조한다.
+    required: false
+    default: api.piki.day
+  label:
+    description: Step Summary 에 붙일 한 줄 꼬리표. 한 run 에서 두 번 돌 때 어느 쪽인지 가른다.
+    required: false
+    default: ""
+
+outputs:
+  digest:
+    description: 스크립트가 남긴 기계용 요약 한 줄 (verdict·backfill·수치).
+    value: ${{ steps.run.outputs.digest }}
+  verdict:
+    description: pass · blocked · error.
+    value: ${{ steps.run.outputs.verdict }}
+
+runs:
+  using: composite
+  steps:
+    # deploy.yml 의 같은 가드와 같은 결 — 하드코딩 IP 대신 DNS 를 source of truth 로 "이 secret 이
+    # 정말 그 박스냐" 를 본다.
+    - name: Guard — 대상이 그 도메인의 박스인지
+      shell: bash
+      env:
+        DOMAIN: ${{ inputs.domain }}
+        TARGET: ${{ inputs.host }}
+      run: |
+        EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
+        ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
+        echo "domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
+        # 조회가 비면 fail-closed 로 멈춘다. 이 run 은 pipefail 이 없어 getent 가 실패해도 awk·head 가
+        # 성공하면 빈 값이 남는데, 그걸 통과로 치면 검증 없이 접속하게 된다 — 엉뚱한 박스(특히 dev)를
+        # 읽으면 그쪽엔 백필이 이미 적용돼 있어 "적용 완료, 통과" 라는 거짓 초록이 나온다.
+        if [ -z "$EXPECTED" ] || [ -z "$ACTUAL" ]; then
+          echo "::error::대상 호스트 DNS 확인 실패 (domain=$DOMAIN target=$TARGET) — 검증하지 못한 채 접속하지 않는다."
+          exit 1
+        fi
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "::error::프리플라이트 대상(${TARGET}→${ACTUAL}) 이 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — secret 오설정 의심, 중단."
+          exit 1
+        fi
+
+    # deploy.yml 이 쓰는 appleboy/ssh-action 대신 raw ssh 를 쓴다 — 스크립트가 뱉는 마크다운(stdout)을
+    # 원문 그대로 Step Summary 에 붙여야 하는데, 그 액션은 stdout 을 자기 로그 형식으로 감싼다.
+    # DB 자격증명은 러너가 넘기지 않는다. 박스가 SSM(/piki-core/<env>/db-*)에서 직접 읽는다.
+    - name: 실행
+      id: run
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        BOX_USER: ${{ inputs.user }}
+        SSH_KEY: ${{ inputs.key }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        umask 077
+        trap 'rm -f /tmp/pf_key' EXIT
+        printf '%s\n' "$SSH_KEY" > /tmp/pf_key
+        SSH_OPTS="-i /tmp/pf_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
+
+        # shellcheck disable=SC2086  # SSH_OPTS 는 의도적으로 단어 분리한다.
+        scp $SSH_OPTS infra/scripts/preflight-migration.sh "$BOX_USER@$HOST:/tmp/preflight-migration.sh"
+
+        # 박스에서 돌린 뒤 스크립트를 지우고, 실행 결과(rc)는 그대로 들고 나온다.
+        set +e
+        # shellcheck disable=SC2086
+        ssh $SSH_OPTS "$BOX_USER@$HOST" \
+          "bash /tmp/preflight-migration.sh '$ENVIRONMENT'; RC=\$?; rm -f /tmp/preflight-migration.sh; exit \$RC" \
+          > /tmp/pf_out.md
+        RC=$?
+        set -e
+
+        # 어느 결과든 요약을 먼저 남긴다 — 막혔을 때 그 표가 곧 조치 목록이다.
+        [ -n "$LABEL" ] && { echo "> $LABEL"; echo ""; } >> "$GITHUB_STEP_SUMMARY"
+        cat /tmp/pf_out.md >> "$GITHUB_STEP_SUMMARY"
+        cat /tmp/pf_out.md
+
+        # 스크립트가 남긴 기계용 한 줄(HTML 주석이라 Step Summary 엔 안 보인다).
+        DIGEST=$(sed -n 's/^<!-- digest: \(.*\) -->$/\1/p' /tmp/pf_out.md | tail -1)
+        echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+        case "$RC" in
+          0) echo "verdict=pass" >> "$GITHUB_OUTPUT" ;;
+          1) echo "verdict=blocked" >> "$GITHUB_OUTPUT"
+             echo "::error::프리플라이트 가드 위반 — 이대로 배포하면 마이그레이션이 예외로 죽는다. Step Summary 의 상세 표를 보고 조치한 뒤 다시 실행하라." ;;
+          *) echo "verdict=error" >> "$GITHUB_OUTPUT"
+             echo "::error::프리플라이트를 수행하지 못했다(rc=$RC) — SSH·SSM·DB 조회 실패. 확인하지 못한 채로 승격하지 않는다." ;;
+        esac
+        exit "$RC"
