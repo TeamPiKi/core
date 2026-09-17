@@ -1,7 +1,7 @@
 # Grafana 구성 (Terraform)
 
 **Grafana Cloud(piki.grafana.net) 의 알림·대시보드 구성 정본은 이 디렉터리다** (#1008, #1011).
-알림 룰 그룹 4개 · contact point 3개 · 루트 알림 정책 · 알림 폴더 · 대시보드 5개를 관리한다.
+알림 룰 그룹 3개 · contact point 3개 · 루트 알림 정책 · 알림 폴더 · 대시보드 5개를 관리한다.
 UI 에서 고칠 수는 있지만(잠금 없음) 다음 `apply` 가 코드 형상으로 되돌린다 —
 UI 수정은 실험, 확정은 PR.
 
