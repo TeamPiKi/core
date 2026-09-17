@@ -52,7 +52,7 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_NOTIFICATION)
                 .data(NotificationSsePayload.from(notification))
-        return send(registry.connectionsOf(userId)) { event }
+        return broadcast(registry.connectionsOf(userId)) { event }
     }
 
     fun deliverSilentSync(
@@ -64,7 +64,7 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_SILENT_SYNC)
                 .data(payload)
-        send(userIds.flatMap { registry.connectionsOf(it) }) { event }
+        broadcast(userIds.flatMap { registry.connectionsOf(it) }) { event }
     }
 
     fun closeAll(userId: UUID) {
@@ -73,7 +73,7 @@ class LocalSseDelivery(
 
     // 주석(`: ping`)은 표준 EventSource 에 노출되지 않아 이름 붙은 이벤트로 보낸다. data 없는 event 는 디스패치되지 않는다.
     fun ping() {
-        send(registry.all()) { SseEmitter.event().name(EVENT_HEARTBEAT).data(it.id.toString()) }
+        broadcast(registry.all()) { SseEmitter.event().name(EVENT_HEARTBEAT).data(it.id.toString()) }
     }
 
     // 이 INFO 건수가 #1057 효과 판정 지표다.
@@ -98,13 +98,13 @@ class LocalSseDelivery(
     // 여기서 연결을 닫지 않는다 - 끊긴 연결(IOException)은 컨테이너가 onError 로 알려 오고, 여기서 complete 하면 Spring 의
     // 1회용 결과를 먼저 차지해 onError 쪽 complete 가 무력화된다(ResponseBodyEmitter.send·complete Javadoc). 그 외 실패는
     // payload 쪽 문제라 연결이 멀쩡하다.
-    private fun send(
+    private fun broadcast(
         connections: Collection<SseConnection>,
         event: (SseConnection) -> SseEmitter.SseEventBuilder,
     ): Int =
         connections.count { connection ->
             try {
-                connection.emitter.send(event(connection))
+                send(connection, event(connection))
                 true
             } catch (e: IOException) {
                 false
@@ -113,6 +113,13 @@ class LocalSseDelivery(
                 false
             }
         }
+
+    private fun send(
+        connection: SseConnection,
+        event: SseEmitter.SseEventBuilder,
+    ) {
+        connection.emitter.send(event)
+    }
 
     // completeWithError 금지(#1024): 헤더가 나간 뒤의 에러 종료는 Tomcat 의 /error ERROR 디스패치를 부르고,
     // 그 디스패치엔 인증이 없어 AuthorizationDenied + "already committed" 서버 에러 두 줄이 된다.
