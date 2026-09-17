@@ -59,11 +59,11 @@ data: {"type":"TOURNAMENT_ITEM_PARSED","tournamentId":99,"tournamentItemId":555,
 
 ### `heartbeat`
 
-서버 ping. 약 30초 간격, `data` 는 고정 문자열 `ping` (연결 번호는 `connect` 가 준 값을 그대로 쓴다).
+서버 ping. 약 30초 간격, `data` 는 `connect` 와 같은 연결 번호.
 
 ```text
 event: heartbeat
-data: ping
+data: 3f1c2b0e-7d4a-4c8b-9e2f-1a2b3c4d5e6f
 ```
 
 **60초 동안 안 오면 스트림이 죽은 것이므로 재연결한다.** SSE 는 중간 프록시·이동통신망에서 조용히 끊겨도 양쪽 다 모를 수 있고, 조용한 시간엔 이 이벤트가 유일한 유입이다. 임계값은 한 번 밀린 ping 을 끊김으로 오판하지 않도록 두 주기(60초)다.
@@ -76,7 +76,7 @@ data: ping
 |---|---|
 | Method / Path | `POST /api/v1/notifications/heartbeat` |
 | 인증 | 구독과 동일 |
-| Body | `{ "connectionId": "<connect 로 받은 번호>" }` |
+| Body | `{ "connectionId": "<connect·heartbeat 로 받은 번호>" }` |
 | 응답 | `200` (`data` 없음) |
 
 - **보내는 조건**: SSE 연결 중이고 앱이 포그라운드일 때 30초마다. 백그라운드에선 보내지 않는다. 실패해도 재시도하지 않고 다음 주기에 보낸다.

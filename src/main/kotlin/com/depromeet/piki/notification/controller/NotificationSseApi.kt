@@ -29,7 +29,7 @@ interface NotificationSseApi {
                 "| `silent-sync` | 화면 갱신 사건마다 | 조용한 화면 갱신 신호(알림 아님). payload 의 `type` 으로 사건을 분기한다: " +
                 "`TOURNAMENT_ITEM_PARSED`(`{type, tournamentId, tournamentItemId, status}`, status=`READY`\\|`FAILED`) · " +
                 "`UNREAD_COUNT_CHANGED`(`{type, unreadCount}`, 읽음 후 멀티 디바이스 인앱 배지 동기화). 알림센터·푸시 없이 SSE 로만 흐른다. `notification-sse-spec.md` 참조 |\n" +
-                "| `heartbeat` | 약 30초 간격 | 서버 ping. `data=ping`(고정값). **60초 동안 안 오면 스트림이 죽은 것이므로 재연결**한다 |\n\n" +
+                "| `heartbeat` | 약 30초 간격 | 서버 ping. `data=<connectionId>`(connect 와 같은 번호). **60초 동안 안 오면 스트림이 죽은 것이므로 재연결**한다 |\n\n" +
                 "- 토너먼트 알림은 해당 토너먼트 참여자에게만 fan-out 되므로, **자기 스트림 1개만 구독**하면 토너먼트·개인 알림이 모두 도착한다.\n" +
                 "- 연결 타임아웃은 없다. 수명은 양방향 하트비트가 결정하고, 클라이언트는 끊기면 재연결한다.\n" +
                 "- 서버 ping 은 프록시까지 도달한 것만 확인되므로, 클라이언트도 `POST /heartbeat` 로 자기 생존을 알려야 한다(아래).",
@@ -65,7 +65,7 @@ interface NotificationSseApi {
             "SSE 연결이 살아 있음을 클라이언트가 서버에 알린다. 서버 ping(`heartbeat` 이벤트)은 프록시까지 도달한 것만 확인되고, " +
                 "클라이언트가 비정상 종료돼도 서버는 한참 뒤에야 알기 때문에 반대 방향 신호가 필요하다.\n\n" +
                 "- **SSE 연결 중이고 앱이 포그라운드일 때 30초마다** 호출한다. " +
-                "본문의 `connectionId` 는 `connect` 이벤트 data 로 받은 번호다.\n" +
+                "본문의 `connectionId` 는 `connect`·`heartbeat` 이벤트 data 로 받은 번호다.\n" +
                 "- 실패해도 재시도하지 않는다. 다음 주기에 다시 보내면 된다. `401` 은 다른 API 와 같이 토큰 갱신 대상이다" +
                 "(연결이 액세스 토큰 15분보다 오래 살면 연결 중에 만난다).\n" +
                 "- 서버는 등록 시각부터 재어 **60초 동안 하트비트가 없으면 정상 종료**한다" +

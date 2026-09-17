@@ -52,7 +52,7 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_NOTIFICATION)
                 .data(NotificationSsePayload.from(notification))
-        return send(registry.connectionsOf(userId), event)
+        return send(registry.connectionsOf(userId)) { event }
     }
 
     fun deliverSilentSync(
@@ -64,16 +64,16 @@ class LocalSseDelivery(
                 .event()
                 .name(EVENT_SILENT_SYNC)
                 .data(payload)
-        send(userIds.flatMap { registry.connectionsOf(it) }, event)
+        send(userIds.flatMap { registry.connectionsOf(it) }) { event }
     }
 
     fun closeAll(userId: UUID) {
         registry.removeAll(userId).forEach { complete(it, "탈퇴") }
     }
 
-    // 주석(`: ping`)은 표준 EventSource 에 노출되지 않아 이름 붙은 이벤트로 보내고, data 없는 event 는 디스패치되지 않아 고정값을 싣는다.
+    // 주석(`: ping`)은 표준 EventSource 에 노출되지 않아 이름 붙은 이벤트로 보낸다. data 없는 event 는 디스패치되지 않는다.
     fun ping() {
-        send(registry.all(), SseEmitter.event().name(EVENT_HEARTBEAT).data(HEARTBEAT_DATA))
+        send(registry.all()) { SseEmitter.event().name(EVENT_HEARTBEAT).data(it.id.toString()) }
     }
 
     // 이 INFO 건수가 #1057 효과 판정 지표다.
@@ -100,11 +100,11 @@ class LocalSseDelivery(
     // payload 쪽 문제라 연결이 멀쩡하다.
     private fun send(
         connections: Collection<SseConnection>,
-        event: SseEmitter.SseEventBuilder,
+        event: (SseConnection) -> SseEmitter.SseEventBuilder,
     ): Int =
         connections.count { connection ->
             try {
-                connection.emitter.send(event)
+                connection.emitter.send(event(connection))
                 true
             } catch (e: IOException) {
                 false
@@ -131,7 +131,6 @@ class LocalSseDelivery(
         const val NO_TIMEOUT = 0L
         const val EVENT_NOTIFICATION = "notification"
         const val EVENT_HEARTBEAT = "heartbeat"
-        const val HEARTBEAT_DATA = "ping"
         const val EVENT_SILENT_SYNC = "silent-sync"
     }
 }

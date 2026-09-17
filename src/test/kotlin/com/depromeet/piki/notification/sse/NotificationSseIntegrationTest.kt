@@ -419,15 +419,15 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `서버 ping 은 모든 연결에 heartbeat 이벤트를 보낸다`() {
+    fun `서버 ping 은 heartbeat 이벤트에 그 연결의 번호를 실어 보낸다`() {
         val userId = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        registry.register(SseConnection(userId, emitter))
+        val connection = registry.register(SseConnection(userId, emitter))
         try {
             localDelivery.ping()
 
             assertTrue(emitter.sentData.any { it is String && it.contains("event:heartbeat") })
-            assertTrue(emitter.sentData.contains(LocalSseDelivery.HEARTBEAT_DATA))
+            assertTrue(emitter.sentData.contains(connection.id.toString()))
         } finally {
             registry.removeAll(userId)
         }
