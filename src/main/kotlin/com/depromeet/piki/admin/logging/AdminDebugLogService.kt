@@ -7,8 +7,7 @@ import org.springframework.boot.logging.LogLevel
 import org.springframework.boot.logging.LoggingSystem
 import org.springframework.stereotype.Service
 
-// 우리 패키지만 DEBUG 로 여닫는 스위치(#1109). 메모리에만 있어 재배포하면 INFO 로 돌아간다.
-// Spring·Hibernate 까지 열면 로그량이 튀어 Loki 한도를 건드리므로 대상은 이 패키지 하나로 고정한다.
+// 대상은 우리 패키지 하나다. 라이브러리까지 DEBUG 로 열면 로그량이 Loki 한도를 건드린다.
 @Service
 @ConditionalOnAdminEnabled
 class AdminDebugLogService(

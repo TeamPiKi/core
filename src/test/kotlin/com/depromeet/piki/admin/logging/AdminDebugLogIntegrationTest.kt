@@ -53,7 +53,7 @@ class AdminDebugLogIntegrationTest : IntegrationTestSupport() {
             mockMvc
                 .perform(get("/admin/debug-log"))
                 .andExpect(status().isOk)
-                .andExpect(content().string(containsString("DEBUG 켜짐")))
+                .andExpect(content().string(containsString("checked=\"checked\"")))
         } finally {
             restoreInfo()
         }
@@ -66,7 +66,8 @@ class AdminDebugLogIntegrationTest : IntegrationTestSupport() {
 
         try {
             mockMvc.perform(post("/admin/debug-log").with(csrf()).param("debugOn", "true"))
-            mockMvc.perform(post("/admin/debug-log").with(csrf()).param("debugOn", "false"))
+            // 체크박스를 끄면 파라미터 자체가 안 온다. 화면과 같은 모양으로 보낸다.
+            mockMvc.perform(post("/admin/debug-log").with(csrf()))
 
             assertFalse(serviceLogger.isDebugEnabled)
             assertEquals(before + 2, auditCount())
