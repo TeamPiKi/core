@@ -9,7 +9,7 @@ resource "grafana_notification_policy" "root" {
   group_by        = ["alertname", "environment", "service"]
   group_wait      = "30s"
   group_interval  = "5m"
-  repeat_interval = "4h"
+  repeat_interval = "6h"
 
   policy {
     contact_point = grafana_contact_point.discord_dev.name
