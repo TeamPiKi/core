@@ -107,6 +107,7 @@ class LocalSseDelivery(
                 send(connection, event(connection))
                 true
             } catch (e: IOException) {
+                log.debug("SSE write 실패(연결 끊김) userId={} connectionId={}", connection.userId, connection.id, e)
                 false
             } catch (e: Exception) {
                 log.warn("SSE write 실패 userId={}", connection.userId, e)
