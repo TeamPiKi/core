@@ -58,8 +58,19 @@ MYSQL_PWD="$(ssm_param db-password)" || { err "SSM db-password 조회 실패"; e
 export MYSQL_PWD
 
 # -N -B: 헤더·표 장식 없이 탭 구분 raw 값만. 그대로 셸 변수에 담는다.
+#
+# 조회 실패는 여기서 종료 코드 2로 바꾼다 — 그냥 두면 mysql 의 1 이 그대로 올라와 호출자가
+# "가드 위반(1)" 과 구분하지 못한다. DB 장애가 "이대로 배포하면 백필이 죽는다" 로 둔갑하는 자리다.
+# 명령 치환은 그 코드를 그대로 전달하고, 상세 표의 파이프도 pipefail 덕에 2 를 그대로 올린다.
 q() {
-  mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1"
+  local out
+  if ! out=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1"); then
+    err "DB 조회 실패 (${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_NAME}) — SQL 첫 줄: ${1%%$'\n'*}"
+    exit 2
+  fi
+  # 빈 결과에 개행 한 줄을 만들지 않는다 — 상세 표의 `while read` 가 빈 행 하나를 찍는다.
+  [ -n "$out" ] || return 0
+  printf '%s\n' "$out"
 }
 
 # 살아있는 클론 참여자 한 명을 한 행으로 푼 공통 뷰. 백필의 loadCloneParticipants 와 같은 범위다
@@ -85,8 +96,7 @@ HAS_OWN_PLAY="
                             WHERE h.tournament_user_id = r.id AND h.deleted_at IS NULL)))
 "
 
-APPLIED=$(q "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '${BACKFILL_VERSION}' AND success = 1") \
-  || { err "flyway_schema_history 조회 실패 — DB 연결·권한 확인 (${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_NAME})"; exit 2; }
+APPLIED=$(q "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '${BACKFILL_VERSION}' AND success = 1")
 
 echo "### Preflight: 클론 평탄화 백필"
 echo ""
