@@ -8,7 +8,6 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SseConnectionTest {
@@ -26,11 +25,12 @@ class SseConnectionTest {
     }
 
     @Test
-    fun `하트비트를 한 번도 안 보낸 연결은 아무리 오래돼도 결측이 아니다`() {
-        val connection = SseConnection(UUID.randomUUID(), SseEmitter())
+    fun `하트비트를 한 번도 안 보낸 연결은 등록 시각부터 임계값을 넘으면 결측이다`() {
+        val connection = SseConnection(UUID.randomUUID(), SseEmitter(), openedAt = t0)
 
-        assertNull(connection.lastHeartbeatAt)
-        assertFalse(connection.isStale(t0.plusSeconds(3600), threshold))
+        assertEquals(t0, connection.lastHeartbeatAt)
+        assertFalse(connection.isStale(t0.plus(threshold), threshold))
+        assertTrue(connection.isStale(t0.plus(threshold).plusMillis(1), threshold))
     }
 
     @Test
