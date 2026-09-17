@@ -93,9 +93,11 @@ class SseEmitterRegistryTest {
         val owner = UUID.randomUUID()
         val connection = registry.register(SseConnection(owner, SseEmitter()))
 
+        val before = connection.lastHeartbeatAt
+
         assertFalse(registry.touch(owner, UUID.randomUUID(), t0))
         assertFalse(registry.touch(UUID.randomUUID(), connection.id, t0))
-        assertEquals(null, connection.lastHeartbeatAt)
+        assertEquals(before, connection.lastHeartbeatAt)
     }
 
     @Test
@@ -113,14 +115,14 @@ class SseEmitterRegistryTest {
         val userId = UUID.randomUUID()
         val stale = registry.register(SseConnection(userId, SseEmitter()))
         val alive = registry.register(SseConnection(userId, SseEmitter()))
-        val legacy = registry.register(SseConnection(userId, SseEmitter()))
+        val fresh = registry.register(SseConnection(userId, SseEmitter(), openedAt = t0.plusSeconds(50)))
         registry.touch(userId, stale.id, t0)
         registry.touch(userId, alive.id, t0.plusSeconds(50))
 
         val removed = registry.removeStale(t0.plusSeconds(61), Duration.ofSeconds(60))
 
         assertEquals(listOf(stale), removed)
-        assertEquals(listOf(alive, legacy), registry.connectionsOf(userId))
+        assertEquals(listOf(alive, fresh), registry.connectionsOf(userId))
     }
 
     @Test

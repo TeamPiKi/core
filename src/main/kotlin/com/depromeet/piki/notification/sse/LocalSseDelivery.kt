@@ -21,12 +21,13 @@ class LocalSseDelivery(
     private val log = LoggerFactory.getLogger(javaClass)
 
     // 인사 뒤에 등록한다 - 등록된 연결은 반드시 connect 를 보낸 연결이고, 실패 시 정리할 것이 없다.
-    // onError·onTimeout 뒤 Spring 은 예외를 결과로 실어 dispatch 한다. 먼저 complete 해 정상 완료로 끝낸다.
+    // 끊김은 컨테이너 onError 가 정상 완료로 끝내고, 그 뒤 Spring 은 예외 결과 dispatch 를 조용히 삼킨다.
     fun open(userId: UUID): SseEmitter {
-        val emitter = SseEmitter(SSE_TIMEOUT_MS)
+        // 타임아웃 없음. 연결 수명은 양방향 하트비트(서버 ping 쓰기 실패 · 클라이언트 하트비트 결측)가 결정한다.
+        val emitter = SseEmitter(NO_TIMEOUT)
         val connection = SseConnection(userId, emitter)
         emitter.onCompletion { registry.unregister(connection) }
-        emitter.onError { emitter.complete() }
+        // 타임아웃은 서버 종료 때 Tomcat 이 남은 연결에 강제로만 건다. Spring 의 예외 결과 dispatch 가 ERROR 로그를 남기므로 정상 완료로 덮는다.
         emitter.onTimeout { emitter.complete() }
         // 컨트롤러 반환 전이라 소켓이 아닌 버퍼에 쌓이고, 실제 쓰기와 그 실패 처리는 Spring 의 initialize 가 맡는다.
         emitter.send(SseEmitter.event().name(EVENT_CONNECT).data(connection.id.toString()))
@@ -127,7 +128,7 @@ class LocalSseDelivery(
 
     companion object {
         const val EVENT_CONNECT = "connect"
-        const val SSE_TIMEOUT_MS = 30 * 60 * 1000L
+        const val NO_TIMEOUT = 0L
         const val EVENT_NOTIFICATION = "notification"
         const val EVENT_HEARTBEAT = "heartbeat"
         const val HEARTBEAT_DATA = "ping"

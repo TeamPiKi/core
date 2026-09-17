@@ -434,25 +434,25 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `하트비트를 보내다 임계값 넘게 끊긴 연결만 서버가 닫고 한 번도 안 보낸 연결은 건드리지 않는다`() {
+    fun `하트비트가 임계값 넘게 끊긴 연결만 서버가 닫고 갓 등록된 연결은 건드리지 않는다`() {
         val userId = UUID.randomUUID()
         val now = Instant.parse("2026-09-08T00:00:00Z")
         val stale = RecordingSseEmitter()
         val alive = RecordingSseEmitter()
-        val legacy = RecordingSseEmitter()
+        val fresh = RecordingSseEmitter()
         val staleConnection = registry.register(SseConnection(userId, stale))
         val aliveConnection = registry.register(SseConnection(userId, alive))
-        registry.register(SseConnection(userId, legacy))
+        registry.register(SseConnection(userId, fresh, openedAt = now.plusSeconds(50)))
         registry.touch(userId, staleConnection.id, now)
         registry.touch(userId, aliveConnection.id, now.plusSeconds(50))
         try {
             val evicted = localDelivery.evictStale(now.plusSeconds(61), Duration.ofSeconds(60))
 
             assertEquals(1, evicted)
-            assertEquals(listOf<SseEmitter>(alive, legacy), registry.connectionsOf(userId).map { it.emitter })
+            assertEquals(listOf<SseEmitter>(alive, fresh), registry.connectionsOf(userId).map { it.emitter })
             assertTrue(stale.completed)
             assertFalse(alive.completed)
-            assertFalse(legacy.completed)
+            assertFalse(fresh.completed)
         } finally {
             registry.removeAll(userId)
         }
