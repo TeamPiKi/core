@@ -31,6 +31,10 @@ DETAIL_LIMIT=20
 
 err() { echo "[preflight] $*" >&2; }
 
+# 호출자(워크플로)가 파싱할 요약 한 줄. HTML 주석이라 Step Summary 에는 안 보이고, stdout 한 갈래만
+# 캡처하면 사람용 마크다운과 기계용 값을 함께 얻는다. 원격 실행이라 $GITHUB_OUTPUT 을 쓸 수 없다.
+digest() { echo ""; echo "<!-- digest: $* -->"; }
+
 # 상세 표가 DETAIL_LIMIT 에서 잘렸다는 사실을 표 바로 아래 남긴다. 안 남기면 "20건이구나" 로 읽혀
 # 조치 범위를 과소평가한다(가드 표의 총계와 어긋나 보이기도 한다).
 truncated_note() {
@@ -95,6 +99,7 @@ if [ "$APPLIED" -gt 0 ]; then
   echo "- 백필 \`V${BACKFILL_VERSION}\` 적용 완료 (${INSTALLED})"
   echo ""
   echo "**건너뜀.** 검사 대상 없음. 이 게이트는 Phase 4 이후 제거 가능"
+  digest "verdict=skipped"
   exit 0
 fi
 
@@ -187,6 +192,7 @@ if [ "$G1" -gt 0 ] || [ "$G2" -gt 0 ] || [ "$G3" -gt 0 ]; then
   fi
 
   echo "조치 후 promote 를 다시 실행."
+  digest "verdict=blocked g1=${G1} g2=${G2} g3=${G3}"
   exit 1
 fi
 
@@ -220,3 +226,5 @@ echo "| 재지향 (링크게스트) | ${REPOINT} |"
 echo "| 병합 (초대멤버) | ${MERGE} |"
 echo "| 스킵 (self·중복) | ${SKIP} |"
 echo "| 대상 밖 (TU 가 이미 soft-deleted) | 클론 ${ORPHAN_CLONES} · 이력 ${ORPHAN_HISTORIES} |"
+
+digest "verdict=pass repoint=${REPOINT} merge=${MERGE} selfskip=${SKIP}"

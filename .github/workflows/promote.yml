@@ -277,6 +277,10 @@ jobs:
           cat /tmp/pf_out.md >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/pf_out.md
 
+          # 스크립트가 남긴 기계용 한 줄(HTML 주석이라 Step Summary 엔 안 보인다). 아래 Discord 알림이 쓴다.
+          DIGEST=$(sed -n 's/^<!-- digest: \(.*\) -->$/\1/p' /tmp/pf_out.md | tail -1)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
           case "$RC" in
             0) echo "verdict=pass" >> "$GITHUB_OUTPUT" ;;
             1) echo "verdict=blocked" >> "$GITHUB_OUTPUT"
@@ -285,6 +289,58 @@ jobs:
                echo "::error::프리플라이트를 수행하지 못했다(rc=$RC) — SSH·SSM·DB 조회 실패. 확인하지 못한 채로 승격하지 않는다." ;;
           esac
           exit "$RC"
+
+      # 승인 대기 알림은 여기서 보낸다 — notify job 은 워크플로가 끝나야 도는데 승인 대기는 그 앞이라,
+      # 거기서 보내면 이미 승인이 끝난 뒤에 도착한다. 실패 알림은 그대로 notify 가 맡는다(그때는 promote 가
+      # skip 돼 워크플로가 곧장 끝나므로 늦지 않는다).
+      #
+      # GitHub 도 required reviewer 에게 승인 대기를 알리지만, 그 알림엔 "승인해도 되는가" 가 없다.
+      # 프리플라이트 판정과 백필 예상 처리량을 같이 실어 Actions 를 열기 전에 판단이 서게 한다.
+      - name: Notify Discord (승인 대기)
+        if: ${{ success() }}
+        continue-on-error: true   # 전송 실패가 게이트를 깨지 않게.
+        shell: bash
+        env:
+          DIGEST: ${{ steps.run.outputs.digest }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          COUNT: ${{ needs.plan.outputs.count }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUMP: ${{ needs.plan.outputs.bump }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
+          RUN_URL="https://github.com/$REPO/actions/runs/$RUN_ID"
+          COMMIT_URL="https://github.com/$REPO/commit/$SHA"
+          SHORT_SHA="${SHA:0:7}"
+
+          # 백필이 이미 적용된 뒤에는 처리량이 없다 — 그 사실 자체를 문구로 보낸다.
+          case "$DIGEST" in
+            *verdict=skipped*)
+              BACKFILL='적용 완료 (검사 대상 없음)' ;;
+            *verdict=pass*)
+              REPOINT=$(echo "$DIGEST" | sed -n 's/.*repoint=\([0-9]*\).*/\1/p')
+              MERGE=$(echo "$DIGEST" | sed -n 's/.*merge=\([0-9]*\).*/\1/p')
+              SELFSKIP=$(echo "$DIGEST" | sed -n 's/.*selfskip=\([0-9]*\).*/\1/p')
+              BACKFILL="재지향 ${REPOINT:-?} · 병합 ${MERGE:-?} · 스킵 ${SELFSKIP:-?}" ;;
+            *)
+              # digest 파싱 실패. 통과는 rc 로 이미 확정됐으므로 알림은 보내되 수치는 단정하지 않는다.
+              BACKFILL='수치 확인 불가 (Step Summary 참고)' ;;
+          esac
+
+          TEXT=$(printf '⏸ Promote 승인 대기: 프리플라이트 통과\n• 커밋: [%s](<%s>) (%s 커밋)\n• 버전: `%s` (bump=%s)\n• 백필: %s\n• 실행: %s\n• [승인하러 가기](<%s>)' \
+            "$SHORT_SHA" "$COMMIT_URL" "$COUNT" "$VERSION" "$BUMP" "$BACKFILL" "$ACTOR_MENTION" "$RUN_URL")
+
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
   # --- 2단계: 진행 -----------------------------------------------------------
   # environment 의 required reviewer 승인을 받아야 시작된다. 승인 화면에서 bump 를 바꿀 수는 없으므로,
