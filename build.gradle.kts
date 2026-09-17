@@ -5,6 +5,7 @@ plugins {
     id("org.springframework.boot") version "4.0.5"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.2"
+    id("com.google.protobuf") version "0.10.0"
 }
 
 ktlint {
@@ -30,6 +31,9 @@ repositories {
 val testcontainersVersion = "1.21.4"
 val awsSdkVersion = "2.44.11"
 
+// Spring Boot BOM 이 protobuf 를 관리하지 않아 명시한다. protoc 도 같은 버전으로 맞춘다(생성 코드와 런타임의 호환).
+val protobufVersion = "4.35.0"
+
 dependencyManagement {
     imports {
         mavenBom("org.testcontainers:testcontainers-bom:$testcontainersVersion")
@@ -43,6 +47,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("tools.jackson.module:jackson-module-kotlin")
+
+    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
 
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-mysql")
@@ -136,6 +143,21 @@ dependencies {
 kotlin {
     compilerOptions {
         freeCompilerArgs.addAll("-Xjsr305=strict", "-Xannotation-default-target=param-property")
+    }
+}
+
+// 정본이 소스 트리 밖이라 경로가 규약이다. 로컬은 infra 의 install.sh 가, CI 는 checkout 이 같은 자리에 놓는다.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:$protobufVersion"
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir("shared-infra/contracts")
+        }
     }
 }
 

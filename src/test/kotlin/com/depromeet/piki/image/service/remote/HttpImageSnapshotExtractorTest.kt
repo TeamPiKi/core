@@ -20,6 +20,7 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.request
 import org.springframework.test.web.client.response.MockRestResponseCreators.withServerError
 import org.springframework.test.web.client.response.MockRestResponseCreators.withStatus
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
+import com.depromeet.piki.product.service.remote.RemoteExtractionContract
 import org.springframework.web.client.RestClient
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -48,7 +49,11 @@ class HttpImageSnapshotExtractorTest {
         model: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpImageSnapshotExtractor {
-        val builder = RestClient.builder().baseUrl("http://extractor.test")
+        val builder =
+            RestClient
+                .builder()
+                .baseUrl("http://extractor.test")
+                .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
         return HttpImageSnapshotExtractor(
