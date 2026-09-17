@@ -1,0 +1,91 @@
+name: SSH gate
+description: 러너의 공인 IP 만 대상 인스턴스의 22번에 잠시 열고, 일이 끝나면 되돌린다.
+
+# 왜 필요한가 — 신 계정에서는 러너가 어떤 박스에도 SSH 를 붙일 수 없다.
+#
+# terraform/security_groups.tf 의 앱 SG 는 22번을 var.ssh_ingress_cidr 로 연다. 그 기본값은
+# 203.0.113.1/32 (RFC 5737 문서화용, 라우팅되지 않는 대역)이고, 같은 파일의 lifecycle 이
+# ingress 를 ignore_changes 로 묶어 둔다. 주석이 밝히듯 현재 계정의 "github actions 배포용
+# 0.0.0.0/0:22" 는 terraform 이 아니라 사람이 콘솔에서 넣은 규칙이다.
+#
+# 즉 갓 만든 계정의 SG 에는 그 규칙이 없다. 그대로 두면 provision 의 scp·ssh 가 첫 이관에서
+# 확정적으로 막히고, rehearsal·cutover 의 앱 박스 접근도 함께 막힌다. 콘솔에서 손으로 열라고
+# 하면 "딸깍" 이 아니게 되므로, 필요한 순간에 필요한 IP 만 열고 끝나면 닫는다.
+#
+# 0.0.0.0/0 으로 상시 개방하지 않는 이유: 그 규칙은 한 번 넣으면 ignore_changes 때문에 아무도
+# 지우지 않아 계정 수명 내내 남는다. 러너 IP/32 · 작업 구간 한정이 같은 일을 훨씬 좁게 한다.
+
+inputs:
+  action:
+    description: "open | close"
+    required: true
+  instance-name:
+    description: "대상 인스턴스의 Name 태그 (예: piki-prod-app · piki-prod-db)"
+    required: true
+  port:
+    description: "열 포트"
+    required: false
+    default: "22"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ACTION: ${{ inputs.action }}
+        INSTANCE_NAME: ${{ inputs.instance-name }}
+        PORT: ${{ inputs.port }}
+      run: |
+        set -uo pipefail
+        # close 는 실패 처리 중에도 불린다(if: always()). 여기서 다시 죽으면 원래 실패 원인이 가려지므로
+        # 정리 경로는 어떤 경우에도 0 으로 끝낸다. open 은 실패하면 뒤 단계가 어차피 막히니 그대로 전파한다.
+
+        STATE_FILE="/tmp/piki-ssh-gate-${INSTANCE_NAME}.sg"
+
+        sg_ids() {
+          aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCE_NAME" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text
+        }
+
+        if [ "$ACTION" = open ]; then
+          set -e
+          MY_IP=$(curl -sf --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]')
+          echo "$MY_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' || { echo "::error::러너 공인 IP 조회 실패"; exit 1; }
+          CIDR="$MY_IP/32"
+          IDS=$(sg_ids)
+          [ -n "$IDS" ] || { echo "::error::인스턴스를 찾지 못했다 — tag:Name=$INSTANCE_NAME (running 상태 확인)"; exit 1; }
+          : > "$STATE_FILE"
+          for sg in $IDS; do
+            # 이미 있으면 InvalidPermission.Duplicate 로 실패한다 — 그건 정상이고, 그 경우 close 에서
+            # 지우면 안 되므로(남의 규칙일 수 있다) 상태 파일에 적지 않는다.
+            if aws ec2 authorize-security-group-ingress --group-id "$sg" \
+                 --ip-permissions "IpProtocol=tcp,FromPort=$PORT,ToPort=$PORT,IpRanges=[{CidrIp=$CIDR,Description=piki-migrate-runner}]" \
+                 >/dev/null 2>&1; then
+              echo "$sg $CIDR" >> "$STATE_FILE"
+              echo "::notice::SSH 게이트 개방 — $sg $PORT/tcp ← $CIDR ($INSTANCE_NAME)"
+            else
+              echo "::notice::SSH 게이트 이미 열려 있음 — $sg $CIDR (건드리지 않는다)"
+            fi
+          done
+          exit 0
+        fi
+
+        if [ "$ACTION" = close ]; then
+          [ -s "$STATE_FILE" ] || { echo "::notice::SSH 게이트 — 되돌릴 규칙 없음 ($INSTANCE_NAME)"; exit 0; }
+          while read -r sg cidr; do
+            [ -n "${sg:-}" ] || continue
+            if aws ec2 revoke-security-group-ingress --group-id "$sg" \
+                 --ip-permissions "IpProtocol=tcp,FromPort=$PORT,ToPort=$PORT,IpRanges=[{CidrIp=$cidr}]" \
+                 >/dev/null 2>&1; then
+              echo "::notice::SSH 게이트 회수 — $sg $PORT/tcp ← $cidr"
+            else
+              echo "::warning::SSH 게이트 회수 실패 — $sg $cidr. 콘솔에서 직접 지워야 한다(러너 IP 가 남는다)"
+            fi
+          done < "$STATE_FILE"
+          rm -f "$STATE_FILE"
+          exit 0
+        fi
+
+        echo "::error::action 은 open|close 여야 한다 (받은 값: $ACTION)"
+        exit 1
