@@ -102,7 +102,7 @@ _exec_ssm() {
   if [ -n "$akey" ]; then
     # 구 계정 자격은 장기 키라 SESSION_TOKEN 이 없다. 주변에 남아 있으면 키와 짝이 안 맞아
     # InvalidClientTokenId 가 나므로 명시적으로 비운다.
-    A=(env "AWS_ACCESS_KEY_ID=$akey" "AWS_SECRET_ACCESS_KEY=$asec" --unset=AWS_SESSION_TOKEN "AWS_DEFAULT_REGION=$AWS_REGION" aws)
+    A=(env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$akey" "AWS_SECRET_ACCESS_KEY=$asec" "AWS_DEFAULT_REGION=$AWS_REGION" aws)
   else
     A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
   fi
@@ -213,7 +213,7 @@ REMOTE
 # 두 계정 버킷 사이엔 cross-account 정책이 없다. 러너가 구 자격으로 받아 신 자격(주변 환경)으로 올린다.
 relay_dump() {
   log "릴레이 — 구 계정 버킷 → 러너 → 신 계정 버킷"
-  env "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" --unset=AWS_SESSION_TOKEN \
+  env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" \
     aws s3 cp "s3://$SRC_RELAY_BUCKET/$RELAY_KEY" "$WORK/dump.sql.gz" --region "$AWS_REGION" >/dev/null
   aws s3 cp "$WORK/dump.sql.gz" "s3://$DST_RELAY_BUCKET/$RELAY_KEY" --region "$AWS_REGION" >/dev/null
   rm -f "$WORK/dump.sql.gz"

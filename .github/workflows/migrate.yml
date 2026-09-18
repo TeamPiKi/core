@@ -349,6 +349,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: AWS 자격 (신 계정 OIDC 역할 — put-parameter 쓰기용)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
       - name: SSM 파라미터 이식 (경로별 복사 + 계정번호 치환)
         env:
           SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
@@ -360,16 +367,16 @@ jobs:
           [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
             echo "::error::구 계정 읽기 자격(MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET) 미설정 — SSM 이식 불가"; exit 1; }
           # 소스(구 계정)에서 경로 아래 모든 파라미터 이름을 읽는다.
-          NAMES=$(AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+          NAMES=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
             aws ssm get-parameters-by-path --path "$SSM_PREFIX" --recursive \
             --region "$AWS_REGION" --query 'Parameters[].Name' --output text)
           [ -n "$NAMES" ] || { echo "::warning::$SSM_PREFIX 아래 파라미터 없음 — 이식할 것 없음"; exit 0; }
           COUNT=0
           for name in $NAMES; do
-            TYPE=$(AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+            TYPE=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
               aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
               --query 'Parameter.Type' --output text)
-            VALUE=$(AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+            VALUE=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
               aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
               --query 'Parameter.Value' --output text)
             # 값에 박힌 구 계정번호를 신 계정번호로 치환(S3 버킷명·ARN 등). 그 외 문자열은 그대로.
@@ -757,7 +764,7 @@ jobs:
           # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
           if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
             mkdir -p imgs
-            env "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" --unset=AWS_SESSION_TOKEN aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
             rm -rf imgs
           fi
@@ -895,7 +902,7 @@ jobs:
           trap 'bash infra/scripts/migrate-unfreeze.sh' ERR
           if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
             mkdir -p imgs
-            env "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" --unset=AWS_SESSION_TOKEN aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
             rm -rf imgs
           fi
