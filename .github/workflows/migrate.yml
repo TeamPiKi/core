@@ -418,14 +418,13 @@ jobs:
       - name: 개발자 IAM 유저 재생성 (PiKi-Developer 그룹)
         env:
           GROUP_NAME: PiKi-Developer
-          INITIAL_PASSWORD: ${{ secrets.IAM_INITIAL_PASSWORD }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }} # 유저별 임시 비번을 여기로 전송(로그엔 안 남김)
         run: |
           set -euo pipefail
-          [ -n "${INITIAL_PASSWORD:-}" ] || {
-            echo "::error::IAM_INITIAL_PASSWORD 미설정 — 콘솔 로그인 디폴트 비번이 필요하다(신 계정 password policy 만족값)"; exit 1; }
-          # SRC 자격·GROUP_NAME·INITIAL_PASSWORD·AWS_REGION 은 ambient env 로 스크립트가 상속. 신 계정 쓰기는 OIDC 주변 자격.
+          # SRC 자격·GROUP_NAME·AWS_REGION·webhook 은 ambient env 로 스크립트가 상속. 신 계정 쓰기는 OIDC 주변 자격.
+          # 임시 비번은 스크립트가 유저별 랜덤 생성 → Discord 로만 전송(첫 로그인 시 변경 강제). 별도 secret 불필요.
           bash infra/scripts/migrate-iam-users.sh
 
       - name: Discord — iam_users 결과
