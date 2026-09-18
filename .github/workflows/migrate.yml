@@ -703,6 +703,14 @@ jobs:
           action: open
           instance-name: ${{ needs.config.outputs.app_tag }}
 
+      - name: Discord — 리허설 시작 (라이브 무영향)
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: info
+          title: "[리허설] 시작 (env=${{ inputs.env }}) — 라이브 무영향"
+          detail: "읽기전용 덤프로 신 계정에 복원·대조만 한다. 실서비스는 그대로. 실제 전환(cutover) 아님."
+
       - name: 덤프→복원→URL재작성→행수 대조 + S3 이미지 동기화
         env:
           DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }} # dev 카나리에서 실 스키마명 확정(레포 var 로 덮어쓰기)
@@ -754,13 +762,14 @@ jobs:
           action: close
           instance-name: ${{ needs.config.outputs.app_tag }}
 
-      - name: Discord — rehearsal 결과
+      - name: Discord — 리허설 결과
         if: always()
         uses: ./.github/actions/discord-notify
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
-          title: "rehearsal ${{ job.status }} (env=${{ inputs.env }})"
+          title: "[리허설] ${{ job.status }} (env=${{ inputs.env }})"
+          detail: "읽기전용 덤프라 실서비스 무영향. 실제 전환(cutover) 아님."
 
   # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. 파괴적이라 dry_run 이면 통째 건너뜀. dev 로 먼저 카나리 후 prod. ──
   #
