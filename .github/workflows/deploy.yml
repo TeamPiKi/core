@@ -28,6 +28,22 @@ on:
         description: "[이관 전용] ECR push 에 쓸 역할 ARN. 신 계정 이미지 푸시용. 비우면 vars.AWS_ECR_PUSH_ROLE_ARN."
         required: false
         type: string
+  # 계정 이관(migrate.yml)이 신 계정 박스로 이 배포를 돌리려고 호출한다. dispatch 와 같은 이관 입력을 받는다.
+  # 호출이라 migrate.yml 이 완료를 기다릴 수 있다(gh workflow run 의 fire-and-forget 과 다름).
+  workflow_call:
+    inputs:
+      sha:
+        description: "배포할 커밋(40자 hex). 비우면 브랜치 끝."
+        required: false
+        type: string
+      migration_host:
+        description: "[이관 전용] 배포 대상 호스트. 채우면 도메인↔EC2_HOST 가드를 건너뛴다."
+        required: false
+        type: string
+      migration_role_arn:
+        description: "[이관 전용] ECR push 에 쓸 역할 ARN(신 계정)."
+        required: false
+        type: string
 
 jobs:
   # 트리거 브랜치 → 배포 환경(dev/prod)·도메인·nginx conf 를 한 곳에서 결정한다.
@@ -38,8 +54,10 @@ jobs:
     # prod 배포 커밋 검증이 compare API 를 친다.
     permissions:
       contents: read
+    # workflow_call(계정 이관 호출)도 통과시킨다 — 빠뜨리면 호출돼도 resolve 가 skip 되어 deploy 까지 멈춘다.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     outputs:
       environment: ${{ steps.r.outputs.environment }}
