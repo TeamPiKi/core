@@ -884,25 +884,58 @@ jobs:
       migration_host: ${{ needs.deploy_core.outputs.app_ip }}
       migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
 
-  # extractor·renderer — 각 레포의 deploy 를 호출한다(그 레포가 workflow_call·migration_host 를 연다).
-  # 대상 박스 IP 는 그 레포 terraform 소관이라 여기서 못 구한다. 호출측이 값을 못 주면 그 레포의
-  # secrets.EC2_HOST 로 폴백되므로, 신 계정 주소를 넘길 수 있을 때까지는 수동 실행이 안전하다.
-  # TODO(런타임 확정): extractor·renderer 의 신 계정 박스 주소를 얻는 경로(각 레포 tfstate output)를
-  #   확정해 아래 host 를 채운다. 지금은 안내만 남기고 건너뛴다(#1092).
-  deploy_side_services:
+  # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
+  # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —
+  # piki-extractor · piki-headless-browser). 신 계정 자격으로 EC2 를 직접 물어 IP 를 얻는다.
+  side_hosts:
     needs: [guard, config, deploy_core_app]
-    if: ${{ always() && needs.deploy_core_app.result == 'success' }}
+    if: ${{ needs.deploy_core_app.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
+    outputs:
+      extractor_ip: ${{ steps.find.outputs.extractor_ip }}
+      renderer_ip: ${{ steps.find.outputs.renderer_ip }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Discord — extractor·renderer 배포 안내
-        uses: ./.github/actions/discord-notify
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          status: info
-          title: "[세미 디플로이] extractor·renderer 는 각 레포에서 실행 필요"
-          detail: "두 레포 deploy 에 workflow_call·migration_host 가 열렸다(extractor#85·renderer#45). 신 계정 박스 주소 확정 후 자동 호출로 전환 예정 — 그 전까지는 각 레포 Actions 에서 migration_host 를 채워 1회 실행."
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 박스 IP 조회 (Name 태그)
+        id: find
+        run: |
+          set -euo pipefail
+          ip_of() {
+            aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$1" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].PublicIpAddress' --output text | tr '\t' '\n' | head -1
+          }
+          EX=$(ip_of piki-extractor); RE=$(ip_of piki-headless-browser)
+          # 못 찾으면 멈춘다 — 빈 값을 넘기면 호출된 레포가 자기 secrets.EC2_HOST(구 계정)로 폴백해
+          # 이관 중에 구 계정 박스를 덮어쓴다. 그게 이 단계에서 가장 위험한 실패다.
+          [ -n "$EX" ] && [ "$EX" != "None" ] || { echo "::error::extractor 박스를 못 찾음(tag:Name=piki-extractor, running) — infra_apps apply 여부 확인"; exit 1; }
+          [ -n "$RE" ] && [ "$RE" != "None" ] || { echo "::error::renderer 박스를 못 찾음(tag:Name=piki-headless-browser, running) — infra_apps apply 여부 확인"; exit 1; }
+          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; } >> "$GITHUB_OUTPUT"
+          echo "::notice::extractor=$EX renderer=$RE"
+
+  # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
+  deploy_extractor:
+    needs: [side_hosts]
+    if: ${{ needs.side_hosts.result == 'success' }}
+    uses: TeamPiKi/extractor/.github/workflows/deploy.yml@main
+    secrets: inherit
+    with:
+      migration_host: ${{ needs.side_hosts.outputs.extractor_ip }}
+
+  deploy_renderer:
+    needs: [side_hosts]
+    if: ${{ needs.side_hosts.result == 'success' }}
+    uses: TeamPiKi/renderer/.github/workflows/deploy.yml@main
+    secrets: inherit
+    with:
+      migration_host: ${{ needs.side_hosts.outputs.renderer_ip }}
 
   # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. 파괴적이라 dry_run 이면 통째 건너뜀. dev 로 먼저 카나리 후 prod. ──
   #
@@ -911,8 +944,8 @@ jobs:
   # (스크립트의 trap) 이 job 의 남은 스텝까지 이어진다(FREEZE_STATE_FILE + migrate-unfreeze.sh).
   # 파일로 잇는 이유는 워크플로가 스텝마다 셸이 갈려 trap 이 넘어가지 않기 때문이다.
   cutover:
-    needs: [guard, config, rehearsal, deploy_core_app]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.rehearsal.result == 'success' || needs.rehearsal.result == 'skipped') && (needs.deploy_core_app.result == 'success' || needs.deploy_core_app.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'cutover') }}
+    needs: [guard, config, rehearsal, deploy_core_app, deploy_extractor, deploy_renderer]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.rehearsal.result == 'success' || needs.rehearsal.result == 'skipped') && (needs.deploy_core_app.result == 'success' || needs.deploy_core_app.result == 'skipped') && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') && (needs.deploy_renderer.result == 'success' || needs.deploy_renderer.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'cutover') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     env:
@@ -1097,7 +1130,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, deploy_core_app, cutover]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
     if: ${{ always() && (inputs.only == 'all' || inputs.only == 'finalize') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -1154,7 +1187,9 @@ jobs:
             echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
             echo "| rehearsal | ${{ needs.rehearsal.result }} |"
-            echo "| deploy(세미) | ${{ needs.deploy_core_app.result }} |"
+            echo "| deploy core | ${{ needs.deploy_core_app.result }} |"
+            echo "| deploy extractor | ${{ needs.deploy_extractor.result }} |"
+            echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
             # skipped 는 두 뜻이다 — only 로 안 고른 단계이거나, 토큰이 없어 못 돈 단계이거나.
             # 후자는 "안 한 일"이 남았다는 뜻이라 요약에서 구분해 준다.
@@ -1168,7 +1203,7 @@ jobs:
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} rehearsal=${{ needs.rehearsal.result }} deploy=${{ needs.deploy_core_app.result }} cutover=${{ needs.cutover.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
