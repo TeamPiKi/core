@@ -48,7 +48,7 @@ on:
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, infra, provision, rehearsal, cutover, finalize]
+        options: [all, bootstrap, ssm, iam, infra, provision, rehearsal, cutover, finalize]
       dry_run:
         description: "true 면 되돌리기 어려운 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
         required: false
@@ -396,6 +396,46 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "ssm ${{ job.status }} (env=${{ inputs.env }})"
+
+  # ── migrate-1b: 개발자 IAM 유저 이관. 계정 단위·멱등 — dev(첫 실행)에 생기고 prod 재실행은 no-op. ──
+  # 그룹(PiKi-Developer)·멤버·정책 재생성 + 콘솔 디폴트 비번(최초 로그인 시 강제 변경). 액세스키·MFA 는 각자 등록.
+  # 실제 사람 계정 생성이라 mutation → dry_run(리허설) 에선 건너뛴다.
+  iam_users:
+    needs: [guard, config, bootstrap]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'iam') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할 — IAM 쓰기용)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 개발자 IAM 유저 재생성 (PiKi-Developer 그룹)
+        env:
+          GROUP_NAME: PiKi-Developer
+          INITIAL_PASSWORD: ${{ secrets.IAM_INITIAL_PASSWORD }}
+          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
+          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${INITIAL_PASSWORD:-}" ] || {
+            echo "::error::IAM_INITIAL_PASSWORD 미설정 — 콘솔 로그인 디폴트 비번이 필요하다(신 계정 password policy 만족값)"; exit 1; }
+          # SRC 자격·GROUP_NAME·INITIAL_PASSWORD·AWS_REGION 은 ambient env 로 스크립트가 상속. 신 계정 쓰기는 OIDC 주변 자격.
+          bash infra/scripts/migrate-iam-users.sh
+
+      - name: Discord — iam_users 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "iam_users ${{ job.status }} (env=${{ inputs.env }})"
+          detail: "PiKi-Developer 그룹·멤버·정책 재생성. 각 유저는 로그인 후 비번 변경·MFA·액세스키를 직접 등록."
 
   # ── migrate-2a: core terraform. VPC·subnet·SG·OIDC 등 계정 기반. extractor/renderer 가 data 소스로 참조하므로 먼저 선다. ──
   infra_core:
@@ -979,7 +1019,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, infra_core, infra_apps, provision, rehearsal, cutover]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, cutover]
     if: ${{ always() && (inputs.only == 'all' || inputs.only == 'finalize') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -1031,6 +1071,7 @@ jobs:
             echo "|---|---|"
             echo "| bootstrap | ${{ needs.bootstrap.result }} |"
             echo "| ssm | ${{ needs.ssm.result }} |"
+            echo "| iam_users | ${{ needs.iam_users.result }} |"
             echo "| infra_core | ${{ needs.infra_core.result }} |"
             echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
