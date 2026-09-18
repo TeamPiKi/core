@@ -420,11 +420,13 @@ jobs:
           GROUP_NAME: PiKi-Developer
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }} # 유저별 임시 비번을 여기로 전송(로그엔 안 남김)
+          # 임시 비번은 채널이 아니라 admin DM 으로만 — 봇이 ADMIN_DISCORD_ID 에게 DM(팀 노출·로그 잔존 없음).
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          ADMIN_DISCORD_ID: ${{ secrets.MIGRATE_ADMIN_DISCORD_ID }}
         run: |
           set -euo pipefail
-          # SRC 자격·GROUP_NAME·AWS_REGION·webhook 은 ambient env 로 스크립트가 상속. 신 계정 쓰기는 OIDC 주변 자격.
-          # 임시 비번은 스크립트가 유저별 랜덤 생성 → Discord 로만 전송(첫 로그인 시 변경 강제). 별도 secret 불필요.
+          # SRC 자격·GROUP_NAME·AWS_REGION·봇토큰·admin id 는 ambient env 로 스크립트가 상속. 신 계정 쓰기는 OIDC 주변 자격.
+          # 임시 비번은 스크립트가 유저별 랜덤 생성 → admin DM 으로만 전송(첫 로그인 시 변경 강제). 별도 비번 secret 불필요.
           bash infra/scripts/migrate-iam-users.sh
 
       - name: Discord — iam_users 결과

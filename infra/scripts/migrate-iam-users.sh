@@ -20,8 +20,10 @@ GROUP_NAME="${GROUP_NAME:-PiKi-Developer}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 SRC_AWS_KEY="${SRC_AWS_KEY:?구 계정 액세스 키}"
 SRC_AWS_SECRET="${SRC_AWS_SECRET:?구 계정 시크릿}"
-# 발급한 임시 비번을 이 webhook 으로 전송(첫 로그인 시 변경 강제). 비면 전송 생략 — 콘솔에서 각 유저 비번을 재설정해야 한다.
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+# 발급한 임시 비번은 채널이 아니라 admin DM 으로만 보낸다 — webhook 은 채널이라 모두가 남의 비번까지 본다.
+# 봇이 ADMIN_DISCORD_ID 에게 DM(admin 진입 경로와 같은 결). 둘 중 하나라도 없으면 전송 생략(콘솔에서 재설정).
+DISCORD_BOT_TOKEN="${DISCORD_BOT_TOKEN:-}"
+ADMIN_DISCORD_ID="${ADMIN_DISCORD_ID:-}"
 
 log() { echo "[migrate-iam] $(date -u +%H:%M:%S) $*"; }
 
@@ -96,17 +98,26 @@ for u in $MEMBERS; do
   COUNT=$((COUNT + 1))
 done
 
-# ── 발급한 임시 비번을 Discord 로 전달 (로그엔 안 남긴다) ─────────────────────
+# ── 발급한 임시 비번을 admin DM 으로만 전달 (채널 노출 방지·로그엔 안 남긴다) ─────
 if [ -n "$NEW_CREDS" ]; then
-  if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+  if [ -n "$DISCORD_BOT_TOKEN" ] && [ -n "$ADMIN_DISCORD_ID" ]; then
     ACCOUNT=$(dst sts get-caller-identity --query Account --output text)
     CONTENT="**$GROUP_NAME 초기 자격 (첫 로그인 시 비밀번호 변경 필수)**"$'\n'"콘솔: https://$ACCOUNT.signin.aws.amazon.com/console"$'\n'"---$NEW_CREDS"
-    BODY=$(CONTENT="$CONTENT" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
-    curl -sf -X POST -H 'Content-Type: application/json' -d "$BODY" "$DISCORD_WEBHOOK_URL" >/dev/null \
-      && log "임시 비번을 Discord 로 전송했다(유저별)" \
-      || log "::warning::Discord 전송 실패 — 콘솔에서 각 유저 비번을 재설정해야 한다"
+    # 봇으로 admin 과의 DM 채널을 열고(그 채널로만), 거기에 비번 목록을 보낸다. 채널 게시 아님.
+    DM_ID=$(curl -sf -X POST -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H 'Content-Type: application/json' \
+      -d "{\"recipient_id\":\"$ADMIN_DISCORD_ID\"}" https://discord.com/api/v10/users/@me/channels \
+      | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+    if [ -n "$DM_ID" ]; then
+      BODY=$(CONTENT="$CONTENT" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
+      curl -sf -X POST -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H 'Content-Type: application/json' \
+        -d "$BODY" "https://discord.com/api/v10/channels/$DM_ID/messages" >/dev/null \
+        && log "임시 비번을 admin DM 으로 전송했다(채널 노출 없음)" \
+        || log "::warning::admin DM 전송 실패 — 콘솔에서 각 유저 비번을 재설정해야 한다"
+    else
+      log "::warning::admin DM 채널 개설 실패(봇 권한·ADMIN_DISCORD_ID 확인) — 콘솔에서 재설정 필요"
+    fi
   else
-    log "::warning::DISCORD_WEBHOOK_URL 미설정 — 임시 비번을 전달할 곳이 없다. 콘솔에서 각 유저 비번을 재설정할 것"
+    log "::warning::DISCORD_BOT_TOKEN/ADMIN_DISCORD_ID 미설정 — 임시 비번을 DM 으로 못 보낸다. 콘솔에서 각 유저 비번을 재설정할 것"
   fi
 fi
 log "완료 — $GROUP_NAME 멤버 $COUNT 명 재생성. 각 유저는 로그인 후 MFA·액세스키를 직접 등록한다(credential 은 이관 불가)."
