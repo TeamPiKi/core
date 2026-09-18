@@ -278,6 +278,12 @@ jobs:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           set -euo pipefail
+          # migration_host 는 dispatch 입력이라 임의 값이 올 수 있다. 검증 없이 /etc/letsencrypt(TLS 개인키)를
+          # 그 호스트로 보내면 dispatch 권한자가 키를 임의 호스트로 유출시킬 수 있다. 신 계정의 실제 EIP 목록과
+          # 대조해, 승인된 EIP 가 아니면 중단한다(fail-closed — describe 권한이 없어 검증 불가여도 중단).
+          APPROVED=$(aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text 2>/dev/null | tr '\t' '\n')
+          echo "$APPROVED" | grep -qx "$NEW_HOST" || {
+            echo "::error::migration_host($NEW_HOST) 가 신 계정 EIP 목록에 없음(또는 describe 권한 없음) — TLS 개인키 유출 방지로 중단"; exit 1; }
           umask 077
           echo "$SSH_KEY" > /tmp/mig_key.pem && chmod 600 /tmp/mig_key.pem
           SSHOPT=(-i /tmp/mig_key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
