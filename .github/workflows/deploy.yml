@@ -199,42 +199,12 @@ jobs:
             contracts
           sparse-checkout-cone-mode: true
 
-      # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
-      # 러너에서의 재빌드(약 47초)를 없앤다. run-id 로 그 CI 실행에 못박아, 배포 커밋과 다른 커밋의 JAR 을
-      # 집는 레이스를 차단한다(그냥 '최신' 아티팩트를 집으면 배포 도중 다른 push 로 커밋 불일치가 난다).
-      # 자동 경로는 러너에 JDK·Gradle 이 필요 없다 — 도커 빌드의 layertools extract 는 이미지 안에서 돈다.
-      - name: Download JAR from triggering CI run
-        id: fetch_jar
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: app-jar
-          path: build/libs
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # 수동 배포(workflow_dispatch): 트리거한 CI 실행이 없어 아티팩트가 없다. 이때만 러너에서 직접 빌드한다.
-      - name: Set up JDK 25 (manual dispatch fallback)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/setup-java@v4
+      # workflow_run 이면 트리거한 CI run 의 아티팩트, dispatch 면 러너 빌드. 자동 경로는 러너에 JDK 가 필요 없다.
+      - name: Resolve JAR
+        id: resolve_jar
+        uses: TeamPiKi/infra/.github/actions/app-jar-resolve@main
         with:
           java-version: '25'
-          distribution: 'temurin'
-
-      - name: Cache Gradle (manual dispatch fallback)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-${{ runner.os }}-
-
-      - name: Build JAR (manual dispatch fallback)
-        id: build
-        if: github.event_name == 'workflow_dispatch'
-        run: ./gradlew bootJar --no-daemon
 
       - name: Configure AWS credentials (OIDC)
         id: aws_credentials
@@ -285,7 +255,8 @@ jobs:
             shared-infra/blocks/healthcheck.sh,
             shared-infra/blocks/run_container.sh,
             shared-infra/blocks/slot_decide.sh,
-            shared-infra/blocks/slot_switch.sh
+            shared-infra/blocks/slot_switch.sh,
+            shared-infra/blocks/ssm_env.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
 
@@ -435,17 +406,14 @@ jobs:
           envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
-            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
-            # 에 -e 로 주입한다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는 공용 ECR 이미지로 실행
-            # (박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance role(IMDS) 자격증명에 닿는다
-            # (읽기 권한=terraform iam.tf 의 app_ssm_read). 값 운반은 base64 로 감싸 공백·따옴표·$·개행(APPLE_PRIVATE_KEY
-            # PEM)까지 바이트 그대로 옮기고, 임시 파일은 umask 600·즉시 삭제한다. 아래 가드가 이 값들을 검사하므로 순서상
-            # pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
+            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 공용 블록(ssm_env.sh)이 KEY=VALUE 파일로
+            # 만들고 아래 docker run 에 --env-file 로 넘긴다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는
+            # 공용 ECR 이미지로 실행(박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance
+            # role(IMDS) 자격증명에 닿는다(읽기 권한=terraform iam.tf 의 app_ssm_read). 아래 가드가 이 값들을 검사하므로
+            # 순서상 pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
             # 태그는 patch 로 고정한다 - latest 는 아래 image prune 과 겹쳐 매 배포가 그 시점 latest 를 새로
             # pull 하므로, 상류 변경이 이 repo 커밋 없이 배포를 깨뜨릴 수 있다. 갱신은 의도적 커밋으로만.
             AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
-            # 조회·파싱 실패를 각자 즉시 끊는다 - 안 끊으면 PARAM_COUNT 가 비어 아래 -eq 비교가 깨진 채
-            # 흘러갈 수 있다. (전역 set -e 는 이 스크립트의 의도된 fallback 경로들을 바꿔 쓰지 않는다.)
             if ! PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
               ssm get-parameters-by-path \
               --path "/piki-core/$ENVIRONMENT/" --recursive --with-decryption \
@@ -453,51 +421,29 @@ jobs:
               echo "::error::SSM get-parameters-by-path 호출 실패 — IAM 권한(app_ssm_read apply 여부)·네트워크(공용 ECR pull) 확인"
               exit 1
             fi
-            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"; then
-              echo "::error::SSM 응답 JSON 파싱 실패 — aws-cli 출력 형식 변화 여부 확인"
-              exit 1
-            fi
-            if [ "$PARAM_COUNT" -eq 0 ]; then
-              echo "::error::SSM /piki-core/$ENVIRONMENT/ 에서 파라미터를 못 받았다 — 마이그레이션 워크플로 선행(값 심기) 또는 IAM 권한 확인"
-              exit 1
-            fi
-            # NAME<TAB>base64(VALUE) 로 뽑아 파일에 쓴 뒤(파이프 서브셸의 export 유실을 피하려 파일 리다이렉트로 루프),
-            # UPPER_SNAKE 로 복원해 export + '--env KEY' 플래그(RUN_ENV_FLAGS, run_container 블록의 passthrough)를
-            # 모은다. 플래그엔 값이 없어 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
+            # --reserve: 러너가 -e 로 따로 넘기는 배포 제어 값. SSM 키가 같은 이름이면 블록이 배포를 끊는다.
             umask 077
-            SSM_KV="$(mktemp)"
-            printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
-            # 예약 변수 방어(denylist): SSM 키를 그대로 export 하므로, 배포 제어 값(ENVIRONMENT·IMAGE_TAG 등)이나
-            # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
-            # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
-            # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
-            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOGGING_STRUCTURED_FORMAT_CONSOLE TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
-            RUN_ENV_FLAGS=""
-            TAB="$(printf '\t')"
-            while IFS="$TAB" read -r P_NAME P_B64; do
-              [ -n "$P_NAME" ] || continue
-              E_KEY="$(basename "$P_NAME" | tr 'a-z-' 'A-Z_')"
-              case "$RESERVED" in *" $E_KEY "*)
-                echo "::error::SSM 파라미터 $P_NAME 가 예약 변수 $E_KEY 와 충돌 — 배포 제어·내부 변수 이름은 /piki-core/ 아래에 두지 않는다"
-                exit 1;;
-              esac
-              # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
-              E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
-              export "$E_KEY=$E_VAL"
-              RUN_ENV_FLAGS="$RUN_ENV_FLAGS --env $E_KEY"
-            done < "$SSM_KV"
-            rm -f "$SSM_KV"
+            ENV_FILE="$(mktemp)"
+            trap 'rm -f "$ENV_FILE"' EXIT
+            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | bash /tmp/piki-deploy/ssm_env.sh --out "$ENV_FILE" \
+              --reserve ENVIRONMENT --reserve SPRING_PROFILES_ACTIVE --reserve ADMIN_ENABLED --reserve ENV_ACCESS_GATE \
+              --reserve ADMIN_ENVIRONMENT --reserve SPRINGDOC_ENABLED --reserve IMAGE_TAG --reserve EXTRACT_REMOTE_BASE_URL \
+              --reserve JAVA_TOOL_OPTIONS --reserve LOGGING_STRUCTURED_FORMAT_CONSOLE --reserve TRACING_OTLP_ENABLED)"; then
+              echo "::error::SSM 파라미터 -> env 파일 변환 실패 (파라미터 0개 · 다중행 값 · 예약 이름 충돌 — 블록 stderr 참조)"
+              exit 1
+            fi
             echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
+            env_val() { grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2-; }
 
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
-            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
+            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$(env_val DISCORD_PUBLIC_KEY)" ] || [ -z "$(env_val DISCORD_ADMIN_USER_IDS)" ] || [ -z "$(env_val DISCORD_ADMIN_CHANNEL_ID)" ] || [ -z "$(env_val ADMIN_GRANT_SIGNING_KEY)" ]; }; then
               echo "::error::admin secret(DISCORD_PUBLIC_KEY/DISCORD_ADMIN_USER_IDS/DISCORD_ADMIN_CHANNEL_ID/ADMIN_GRANT_SIGNING_KEY) empty while ADMIN_ENABLED=true"
               exit 1
             fi
             # APPLE_WEB_CALLBACK_URL 은 AppleProperties.webCallbackUrl(@NotBlank)로 필수다(#430). 비면 컨테이너 기동이
             # BindException 으로 죽어 배포가 늦게 실패하므로, 배포 전에 fail-fast 로 원인을 즉시 드러낸다.
-            if [ -z "$APPLE_WEB_CALLBACK_URL" ]; then
+            if [ -z "$(env_val APPLE_WEB_CALLBACK_URL)" ]; then
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
             fi
@@ -587,9 +533,8 @@ jobs:
             #   호스트 127.0.0.1 에서 닿는 published 포트라 슬롯 포트($INACTIVE_PORT)를 준다.
             # 기동은 공용 블록(run_container.sh, extractor·renderer 와 동일)에 위임한다. 블록이 기동 직후
             #   "Running + 재시작 0회" 검증까지 책임져 즉사 크래시가 헬스 폴링 전에 조기 검출된다.
-            #   env 는 전부 '--env KEY' passthrough - 위에서 export 한 값을 docker 가 직접 읽어
-            #   argv·로그 노출이 없고 다중행 PEM 도 전달된다. 슬롯 계산·graceful stop·로그 덤프는
-            #   blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
+            #   SSM 값은 --env-file, 배포 제어 값은 '--env KEY' passthrough - 둘 다 값이 argv·로그에 노출되지 않는다.
+            #   슬롯 계산·graceful stop·로그 덤프는 blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
             export JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}"
             export LOGGING_STRUCTURED_FORMAT_CONSOLE="ecs"
             export TRACING_OTLP_ENABLED="true"
@@ -605,10 +550,10 @@ jobs:
               --add-host host.docker.internal:host-gateway \
               --memory "${{ needs.resolve.outputs.mem_limit }}" \
               --memory-swap "${{ needs.resolve.outputs.mem_swap }}" \
+              --env-file "$ENV_FILE" \
               --env JAVA_TOOL_OPTIONS --env LOGGING_STRUCTURED_FORMAT_CONSOLE --env TRACING_OTLP_ENABLED \
               --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
-              --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED \
-              $RUN_ENV_FLAGS
+              --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED
 
       - name: Health check and switch
         id: health
@@ -712,10 +657,8 @@ jobs:
             STATUS="❌ 실패 (nginx 설정 적용)"
           elif [ "${{ steps.provision.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (런타임 프로비저닝)"
-          elif [ "${{ steps.build.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (Gradle 빌드)"
-          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (CI 아티팩트 다운로드)"
+          elif [ "${{ steps.resolve_jar.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (JAR 준비)"
           else
             STATUS="⚠️ 알 수 없음"
           fi
@@ -730,7 +673,7 @@ jobs:
             echo "| 환경 | ${{ needs.resolve.outputs.environment }} |"
             echo "| 커밋 | [\`$SHORT_SHA\`]($COMMIT_URL) |"
             echo "| 현재 활성 슬롯 | $NOW |"
-            echo "| JAR 준비 | ${{ github.event_name == 'workflow_run' && steps.fetch_jar.outcome || steps.build.outcome }} |"
+            echo "| JAR 준비 | ${{ steps.resolve_jar.outcome }} |"
             echo "| Docker 푸시 | ${{ steps.docker_push.outcome }} |"
             echo "| EC2 배포 | ${{ steps.deploy.outcome }} |"
             echo "| 헬스체크 & 전환 | ${{ steps.health.outcome }} |"
@@ -809,10 +752,8 @@ jobs:
           if [ "${{ steps.guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.guard.outputs.reason }}"
             CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
-          elif [ "${{ steps.build.outcome }}" = "failure" ]; then
-            CAUSE="Gradle 빌드 실패 (Build JAR)"
-          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
-            CAUSE="CI 아티팩트(JAR) 다운로드 실패 (트리거 CI 의 app-jar 누락/만료 · actions:read 권한)"
+          elif [ "${{ steps.resolve_jar.outcome }}" = "failure" ]; then
+            CAUSE="JAR 준비 실패 (workflow_run 이면 CI 아티팩트 다운로드 — app-jar 누락/만료 · actions:read 권한, dispatch 면 Gradle 빌드)"
           elif [ "${{ steps.aws_credentials.outcome }}" = "failure" ] || [ "${{ steps.ecr_login.outcome }}" = "failure" ]; then
             CAUSE="ECR 인증 실패 (OIDC assume-role 또는 ECR 로그인 — 신뢰조건·IAM 권한 확인)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then

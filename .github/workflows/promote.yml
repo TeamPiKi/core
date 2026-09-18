@@ -4,11 +4,13 @@ name: Promote
 # 코드는 PR 로 dev 에만 들어오고(squash), 이 워크플로가 "이미 CI 통과·배포된 동일 커밋"을 main 으로
 # 앞으로만(fast-forward) 옮긴다. ff 전용이라 두 브랜치 SHA 가 항상 정렬되고, squash·분기 사고를 구조적으로 막는다.
 #
-# 실행은 두 단계다.
-#   plan    - 승인 없이 바로 돈다. 승격 대상(미승격 PR·라벨 집계·다음 버전·ff 가능 여부)을 Step Summary 에
-#             적고 멈춘다. 승격도 배포도 하지 않는다.
-#   promote - environment(promote-approval) 보호규칙에 걸려 승인 대기 상태가 된다. 요약을 읽고 승인하면
-#             그때 ff 승격 + 배포 dispatch 가 이어진다.
+# 실행은 세 단계다.
+#   plan      - 승인 없이 바로 돈다. 승격 대상(미승격 PR·라벨 집계·다음 버전·ff 가능 여부)을 Step Summary 에
+#               적고 멈춘다. 승격도 배포도 하지 않는다.
+#   preflight - 역시 승인 없이 돈다. prod DB 를 읽어 "이 배포가 마이그레이션에서 죽을 조건"을 미리 센다.
+#               걸리면 promote 가 시작되지 않아 승인 버튼 자체가 뜨지 않는다.
+#   promote   - environment(promote-approval) 보호규칙에 걸려 승인 대기 상태가 된다. 요약을 읽고 승인하면
+#               그때 ff 승격 + 배포 dispatch 가 이어진다.
 #
 # 왜 이 모양인가: Actions UI 는 workflow_dispatch 인풋을 URL 로 미리 채우지 못한다. 그래서 "확인 결과
 # 화면에서 진행 버튼" 식의 이음은 만들 수 없고, 한 run 안에서 멈췄다 재개하는 승인 게이트가 UI 가 주는
@@ -210,11 +212,93 @@ jobs:
             echo "breaking change 가 있으면 거부하고 \`bump=major\` 로 다시 실행하라. auto 는 major 를 뽑지 않는다."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # --- 1.5단계: 프리플라이트 ---------------------------------------------------
+  # 승인 게이트 앞에 둔다. Flyway 는 앱 부팅 중에 돌고, 거기서 예외가 나면 새 슬롯이 못 떠 헬스체크
+  # 5분을 다 기다린 뒤 롤백된다 — dev 가 #1044 배포에서 정확히 그렇게 죽었다. 그 예외 조건을 읽기 전용
+  # SELECT 로 먼저 세어 둔다 (#1103). 검사는 두 층이다 — Flyway 실패 잔재는 상설이고, 클론 평탄화
+  # 백필의 가드 2종은 그 백필이 prod 에 적용되면 자동으로 꺼진다.
+  #
+  # promote 가 이 job 을 needs 로 받으므로, 여기서 멈추면 승인 대기에 들어가지 않는다 — 승인자가 "무엇을
+  # 승인하는가" 를 판단하기 전에 "승인해도 되는가" 가 먼저 걸러진다.
+  preflight:
+    needs: plan
+    if: ${{ needs.plan.outputs.skipped == 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.pf.outputs.verdict }}
+    steps:
+      - name: Checkout (액션·프리플라이트 스크립트)
+        uses: actions/checkout@v4
+
+      - name: 프리플라이트
+        id: pf
+        uses: ./.github/actions/preflight-migration
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          user: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          environment: prod
+          domain: api.piki.day
+
+      # 승인 대기 알림은 여기서 보낸다 — notify job 은 워크플로가 끝나야 도는데 승인 대기는 그 앞이라,
+      # 거기서 보내면 이미 승인이 끝난 뒤에 도착한다. 실패 알림은 그대로 notify 가 맡는다(그때는 promote 가
+      # skip 돼 워크플로가 곧장 끝나므로 늦지 않는다).
+      #
+      # GitHub 도 required reviewer 에게 승인 대기를 알리지만, 그 알림엔 "승인해도 되는가" 가 없다.
+      # 프리플라이트 판정과 백필 예상 처리량을 같이 실어 Actions 를 열기 전에 판단이 서게 한다.
+      - name: Notify Discord (승인 대기)
+        if: ${{ success() }}
+        continue-on-error: true   # 전송 실패가 게이트를 깨지 않게.
+        shell: bash
+        env:
+          DIGEST: ${{ steps.pf.outputs.digest }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          COUNT: ${{ needs.plan.outputs.count }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUMP: ${{ needs.plan.outputs.bump }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_MAP: ${{ secrets.DISCORD_USER_MAP }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "DISCORD_WEBHOOK_URL 미설정 — 알림 생략"; exit 0; }
+          DISCORD_MAP="$DISCORD_USER_MAP"; [ -n "$DISCORD_MAP" ] || DISCORD_MAP='{}'
+          DISCORD_ID=$(echo "$DISCORD_MAP" | jq -r --arg login "$ACTOR" '.[$login] // empty')
+          ACTOR_MENTION="${DISCORD_ID:+<@$DISCORD_ID>}"; ACTOR_MENTION="${ACTOR_MENTION:-$ACTOR}"
+          RUN_URL="https://github.com/$REPO/actions/runs/$RUN_ID"
+          COMMIT_URL="https://github.com/$REPO/commit/$SHA"
+          SHORT_SHA="${SHA:0:7}"
+
+          # 백필이 이미 적용된 뒤에는 처리량이 없다 — 그 사실 자체를 문구로 보낸다.
+          case "$DIGEST" in
+            *backfill=applied*)
+              BACKFILL='적용 완료 (검사 대상 없음)' ;;
+            *backfill=pending*)
+              REPOINT=$(echo "$DIGEST" | sed -n 's/.*repoint=\([0-9]*\).*/\1/p')
+              MERGE=$(echo "$DIGEST" | sed -n 's/.*merge=\([0-9]*\).*/\1/p')
+              SELFSKIP=$(echo "$DIGEST" | sed -n 's/.*selfskip=\([0-9]*\).*/\1/p')
+              BACKFILL="재지향 ${REPOINT:-?} · 병합 ${MERGE:-?} · 스킵 ${SELFSKIP:-?}" ;;
+            *)
+              # digest 파싱 실패. 통과는 rc 로 이미 확정됐으므로 알림은 보내되 수치는 단정하지 않는다.
+              BACKFILL='수치 확인 불가 (Step Summary 참고)' ;;
+          esac
+
+          TEXT=$(printf '⏸ Promote 승인 대기: 프리플라이트 통과\n• 커밋: [%s](<%s>) (%s 커밋)\n• 버전: `%s` (bump=%s)\n• 백필: %s\n• 실행: %s\n• [승인하러 가기](<%s>)' \
+            "$SHORT_SHA" "$COMMIT_URL" "$COUNT" "$VERSION" "$BUMP" "$BACKFILL" "$ACTOR_MENTION" "$RUN_URL")
+
+          HTTP_CODE=$(curl -s --max-time 10 -o /tmp/discord_resp.json -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
+
   # --- 2단계: 진행 -----------------------------------------------------------
   # environment 의 required reviewer 승인을 받아야 시작된다. 승인 화면에서 bump 를 바꿀 수는 없으므로,
   # 판정이 다르면 거부하고 bump 를 명시해 재실행하는 것이 정정 경로다.
   promote:
-    needs: plan
+    needs: [plan, preflight]
     if: ${{ needs.plan.outputs.skipped == 'false' }}
     runs-on: ubuntu-latest
     environment: promote-approval
@@ -223,6 +307,22 @@ jobs:
       contents: write
       actions: write
     steps:
+      # 승인 직후 같은 프리플라이트를 한 번 더 돈다. 승인 전 결과는 대기 시간만큼 낡는다 — prod 는 아직
+      # 옛 코드라 그동안에도 클론이 새로 생기고, 그 사이 다른 prod 배포가 Flyway 실패 기록을 남길 수도
+      # 있다. 낡은 근거로 ff·dispatch 를 시작하지 않는다 (#1103).
+      - name: Checkout (액션·프리플라이트 스크립트)
+        uses: actions/checkout@v4
+
+      - name: 프리플라이트 재확인 (승인 후)
+        uses: ./.github/actions/preflight-migration
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          user: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          environment: prod
+          domain: api.piki.day
+          label: 승인 후 재확인
+
       # ff-push 는 기본 GITHUB_TOKEN(contents: write)으로 한다. main 은 ruleset
       # protectReleaseBranches 가 deletion·non_fast_forward 만 강제하고 PR 규칙이 없어, ff 업데이트가
       # 그대로 통과한다(별도 App·PAT bypass 불필요). dev 만 protectImportantBranch 로 PR 필수를 유지한다.
@@ -299,7 +399,7 @@ jobs:
   # 두 단계 중 어디서 끝났든 한 곳에서 알린다 (배포 성공/실패 알림은 deploy.yml 이 따로 보낸다).
   # 승인 대기 자체는 GitHub 이 required reviewer 에게 알리므로 여기서 중복해 보내지 않는다.
   notify:
-    needs: [plan, promote]
+    needs: [plan, preflight, promote]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions: {}
@@ -309,6 +409,8 @@ jobs:
         shell: bash
         env:
           PLAN: ${{ needs.plan.result }}
+          PREFLIGHT: ${{ needs.preflight.result }}
+          PREFLIGHT_VERDICT: ${{ needs.preflight.outputs.verdict }}
           PROMOTE: ${{ needs.promote.result }}
           SKIPPED: ${{ needs.plan.outputs.skipped }}
           SHA: ${{ needs.plan.outputs.sha }}
@@ -336,6 +438,16 @@ jobs:
           elif [ "$SKIPPED" = "true" ]; then
             TEXT=$(printf '🔁 Promote: `dev` → `main` — 변경 없음(이미 동일), 배포 생략\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
               "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$PREFLIGHT" != "success" ]; then
+            # 승인 전에 걸린 경우다. 승인자는 대기 알림조차 못 받으므로, 왜 안 뜨는지를 여기서 알린다.
+            # verdict 가 비는 경우(실패한 job 의 output 이 전달되지 않을 때)는 단정하지 않고 뭉뚱그린다.
+            case "$PREFLIGHT_VERDICT" in
+              blocked) REASON='프리플라이트 가드 위반 — 이대로 배포하면 마이그레이션이 죽는다' ;;
+              error)   REASON='프리플라이트를 수행하지 못함 (SSH·SSM·DB 조회 실패)' ;;
+              *)       REASON='프리플라이트 실패' ;;
+            esac
+            TEXT=$(printf '❌ Promote 중단: %s\n• 실행: %s\n• 승인 단계로 넘어가지 않았다\n• [Step Summary 에서 막힌 행 확인](<%s>)' \
+              "$REASON" "$ACTOR_MENTION" "$RUN_URL")
           elif [ "$PROMOTE" = "success" ]; then
             TEXT=$(printf '🚀 Promote 성공: `dev` → `main`\n• 커밋: [%s](<%s>) (%s 커밋)\n• 버전: `%s` (bump=%s, 배포 성공 시 릴리즈 생성)\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](<%s>)' \
               "$SHORT_SHA" "$COMMIT_URL" "$COUNT" "$VERSION" "$BUMP" "$ACTOR_MENTION" "$RUN_URL")
