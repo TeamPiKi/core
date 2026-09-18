@@ -264,6 +264,32 @@ jobs:
       # prod 는 cert 가 이미 있어 통째로 skip(=nginx 안 멈춤, 다운타임 0).
       # certonly --standalone 은 nginx 와 무관하게 :80 을 잠깐 점유해 발급하므로, SSL 을 참조하는
       # nginx conf 적용(다음 스텝)보다 먼저여야 nginx -t 가 통과한다.
+      # 이관 세미 디플로이(migration_host)의 cert 최초 설정. HTTP-01 은 DNS 가 그 호스트를 가리켜야
+      # 발급되는데, 컷오버 전엔 DNS 가 아직 구 호스트라 신 호스트에서 fresh 발급이 원리적으로 실패한다
+      # (검증 요청이 구 호스트로 감). cert 는 도메인에 묶인 거라, 구 호스트의 /etc/letsencrypt 를 그대로
+      # 신 호스트로 옮기면 유효한 HTTPS 로 바로 뜨고, 컷오버 후 갱신은 DNS 가 신 호스트라 정상 동작한다.
+      # 아래 'Ensure TLS cert' 는 cert 가 이미 있으면 HTTP-01 을 건너뛰므로, 이 복사가 그 fresh 발급을 대신한다.
+      - name: (이관) 구 호스트 TLS cert 복사
+        if: ${{ inputs.migration_host != '' }}
+        env:
+          OLD_HOST: ${{ secrets.EC2_HOST }}
+          NEW_HOST: ${{ inputs.migration_host }}
+          SSH_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "$SSH_KEY" > /tmp/mig_key.pem && chmod 600 /tmp/mig_key.pem
+          SSHOPT=(-i /tmp/mig_key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
+          # 구 호스트에서 /etc/letsencrypt 를 tar 로 말아 러너로 받아 신 호스트로 푼다(러너 릴레이).
+          # /etc/letsencrypt 는 root 소유라 sudo. live 심볼릭·archive·renewal 설정·options-ssl·dhparams 가 통째로 옮겨져
+          # nginx conf 가 참조하는 파일이 다 따라온다(다음 스텝의 개별 복사도 no-op 가 된다).
+          ssh "${SSHOPT[@]}" "$SSH_USER@$OLD_HOST" 'sudo tar -C /etc -czf - letsencrypt' > /tmp/le.tgz
+          [ -s /tmp/le.tgz ] || { echo "::error::구 호스트에서 /etc/letsencrypt 를 가져오지 못했다 (cert 존재·sudo 권한 확인)"; exit 1; }
+          ssh "${SSHOPT[@]}" "$SSH_USER@$NEW_HOST" 'sudo tar -C /etc -xzf -' < /tmp/le.tgz
+          rm -f /tmp/mig_key.pem /tmp/le.tgz
+          echo "::notice::TLS cert 복사 완료 — $OLD_HOST → $NEW_HOST (HTTP-01 건너뜀, 컷오버 즉시 HTTPS 유효)"
+
       - name: Ensure TLS cert (certbot if missing)
         id: cert
         uses: appleboy/ssh-action@v1
