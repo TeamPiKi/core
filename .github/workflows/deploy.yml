@@ -15,6 +15,35 @@ on:
         description: "배포할 커밋(40자 hex). 비우면 --ref 가 가리키는 브랜치 끝. Promote 워크플로가 승격한 커밋을 채운다."
         required: false
         type: string
+      # ── 계정 이관 전용 (#1092) ─────────────────────────────────────────────
+      # 이관 중에는 "도메인이 가리키는 곳"과 "배포해야 할 곳"이 일부러 다르다. 신 계정 박스는
+      # DNS 가 넘어오기 전에 앱이 떠 있어야 하고(컷오버 스모크가 그걸 본다), 그 시점 도메인은
+      # 아직 구 계정을 가리킨다. 아래 가드는 정확히 그 불일치를 잡으라고 있는 것이라, 이관에서는
+      # 우회 경로를 따로 열어 준다 — 가드를 느슨하게 고치는 대신 "이관이라고 명시할 때만" 비킨다.
+      migration_host:
+        description: "[이관 전용] 배포 대상 호스트를 직접 지정한다. 채우면 도메인↔EC2_HOST 가드를 건너뛴다. 평소에는 비워 둘 것."
+        required: false
+        type: string
+      migration_role_arn:
+        description: "[이관 전용] ECR push 에 쓸 역할 ARN. 신 계정 이미지 푸시용. 비우면 vars.AWS_ECR_PUSH_ROLE_ARN."
+        required: false
+        type: string
+  # 계정 이관(migrate.yml)이 신 계정 박스로 이 배포를 돌리려고 호출한다. dispatch 와 같은 이관 입력을 받는다.
+  # 호출이라 migrate.yml 이 완료를 기다릴 수 있다(gh workflow run 의 fire-and-forget 과 다름).
+  workflow_call:
+    inputs:
+      sha:
+        description: "배포할 커밋(40자 hex). 비우면 브랜치 끝."
+        required: false
+        type: string
+      migration_host:
+        description: "[이관 전용] 배포 대상 호스트. 채우면 도메인↔EC2_HOST 가드를 건너뛴다."
+        required: false
+        type: string
+      migration_role_arn:
+        description: "[이관 전용] ECR push 에 쓸 역할 ARN(신 계정)."
+        required: false
+        type: string
 
 jobs:
   # 트리거 브랜치 → 배포 환경(dev/prod)·도메인·nginx conf 를 한 곳에서 결정한다.
@@ -25,8 +54,10 @@ jobs:
     # prod 배포 커밋 검증이 compare API 를 친다.
     permissions:
       contents: read
+    # workflow_call(계정 이관 호출)도 통과시킨다 — 빠뜨리면 호출돼도 resolve 가 skip 되어 deploy 까지 멈춘다.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     outputs:
       environment: ${{ steps.r.outputs.environment }}
@@ -140,7 +171,14 @@ jobs:
           DOMAIN: ${{ needs.resolve.outputs.domain }}
           TARGET: ${{ secrets.EC2_HOST }}
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          MIGRATION_HOST: ${{ inputs.migration_host }}
         run: |
+          # 이관 중에는 도메인과 배포 대상이 일부러 다르다(위 입력 주석). 우회를 로그에 크게 남겨,
+          # 평소 배포에서 이 경로가 켜지면 바로 눈에 띄게 한다.
+          if [ -n "${MIGRATION_HOST:-}" ]; then
+            echo "::warning::[이관 모드] 도메인 가드 우회 — $MIGRATION_HOST 로 배포한다 ($DOMAIN 은 아직 구 계정을 가리킨다)"
+            exit 0
+          fi
           # 양쪽을 IP 로 정규화해 비교한다 — EC2_HOST 가 IP 든 hostname(EC2 public DNS 등)이든
           # getent 가 IP 로 풀어주므로, 형식 차이로 인한 false-abort 없이 "같은 호스트냐"만 본다.
           EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
@@ -190,7 +228,7 @@ jobs:
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          role-to-assume: ${{ inputs.migration_role_arn != '' && inputs.migration_role_arn || vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -223,7 +261,7 @@ jobs:
         id: upload_files
         uses: appleboy/scp-action@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           source: |
@@ -244,13 +282,45 @@ jobs:
       # prod 는 cert 가 이미 있어 통째로 skip(=nginx 안 멈춤, 다운타임 0).
       # certonly --standalone 은 nginx 와 무관하게 :80 을 잠깐 점유해 발급하므로, SSL 을 참조하는
       # nginx conf 적용(다음 스텝)보다 먼저여야 nginx -t 가 통과한다.
+      # 이관 세미 디플로이(migration_host)의 cert 최초 설정. HTTP-01 은 DNS 가 그 호스트를 가리켜야
+      # 발급되는데, 컷오버 전엔 DNS 가 아직 구 호스트라 신 호스트에서 fresh 발급이 원리적으로 실패한다
+      # (검증 요청이 구 호스트로 감). cert 는 도메인에 묶인 거라, 구 호스트의 /etc/letsencrypt 를 그대로
+      # 신 호스트로 옮기면 유효한 HTTPS 로 바로 뜨고, 컷오버 후 갱신은 DNS 가 신 호스트라 정상 동작한다.
+      # 아래 'Ensure TLS cert' 는 cert 가 이미 있으면 HTTP-01 을 건너뛰므로, 이 복사가 그 fresh 발급을 대신한다.
+      - name: (이관) 구 호스트 TLS cert 복사
+        if: ${{ inputs.migration_host != '' }}
+        env:
+          OLD_HOST: ${{ secrets.EC2_HOST }}
+          NEW_HOST: ${{ inputs.migration_host }}
+          SSH_USER: ${{ secrets.EC2_USER }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          # migration_host 는 dispatch 입력이라 임의 값이 올 수 있다. 검증 없이 /etc/letsencrypt(TLS 개인키)를
+          # 그 호스트로 보내면 dispatch 권한자가 키를 임의 호스트로 유출시킬 수 있다. 신 계정의 실제 EIP 목록과
+          # 대조해, 승인된 EIP 가 아니면 중단한다(fail-closed — describe 권한이 없어 검증 불가여도 중단).
+          APPROVED=$(aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text 2>/dev/null | tr '\t' '\n')
+          echo "$APPROVED" | grep -qx "$NEW_HOST" || {
+            echo "::error::migration_host($NEW_HOST) 가 신 계정 EIP 목록에 없음(또는 describe 권한 없음) — TLS 개인키 유출 방지로 중단"; exit 1; }
+          umask 077
+          echo "$SSH_KEY" > /tmp/mig_key.pem && chmod 600 /tmp/mig_key.pem
+          SSHOPT=(-i /tmp/mig_key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
+          # 구 호스트에서 /etc/letsencrypt 를 tar 로 말아 러너로 받아 신 호스트로 푼다(러너 릴레이).
+          # /etc/letsencrypt 는 root 소유라 sudo. live 심볼릭·archive·renewal 설정·options-ssl·dhparams 가 통째로 옮겨져
+          # nginx conf 가 참조하는 파일이 다 따라온다(다음 스텝의 개별 복사도 no-op 가 된다).
+          ssh "${SSHOPT[@]}" "$SSH_USER@$OLD_HOST" 'sudo tar -C /etc -czf - letsencrypt' > /tmp/le.tgz
+          [ -s /tmp/le.tgz ] || { echo "::error::구 호스트에서 /etc/letsencrypt 를 가져오지 못했다 (cert 존재·sudo 권한 확인)"; exit 1; }
+          ssh "${SSHOPT[@]}" "$SSH_USER@$NEW_HOST" 'sudo tar -C /etc -xzf -' < /tmp/le.tgz
+          rm -f /tmp/mig_key.pem /tmp/le.tgz
+          echo "::notice::TLS cert 복사 완료 — $OLD_HOST → $NEW_HOST (HTTP-01 건너뜀, 컷오버 즉시 HTTPS 유효)"
+
       - name: Ensure TLS cert (certbot if missing)
         id: cert
         uses: appleboy/ssh-action@v1
         env:
           DOMAIN: ${{ needs.resolve.outputs.domain }}
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: DOMAIN
@@ -285,7 +355,7 @@ jobs:
           NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: NGINX_CONF,DOMAIN
@@ -337,7 +407,7 @@ jobs:
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
           # extractor prod 박스는 자체 Alloy 가 수집한다 (dev 동거 extractor 는 #862 로 폐지 — 전 환경이 전용 박스 사용).
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: ENVIRONMENT
@@ -379,7 +449,7 @@ jobs:
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
           EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
@@ -541,7 +611,7 @@ jobs:
         env:
           DOMAIN: ${{ needs.resolve.outputs.domain }}
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: DOMAIN
@@ -607,7 +677,7 @@ jobs:
 
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key && chmod 600 /tmp/ec2_key
           ACTIVE_PORT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "${{ secrets.EC2_USER }}@${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}" \
             'grep -oP "\\d+" /etc/nginx/piki-upstream.conf 2>/dev/null | head -1' 2>/dev/null || echo "")
           rm -f /tmp/ec2_key
 

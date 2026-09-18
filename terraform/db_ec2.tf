@@ -126,7 +126,27 @@ data "aws_iam_policy_document" "db_instance" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.db_backup.arn]
   }
+
+  # 계정 이관 워크플로(#1092)가 provision-db.sh·db-backup.sh 를 tfstate 버킷의 provision/ 아래에
+  # 올려 두고, 이 박스가 SSM Run Command 로 내려받아 실행한다. 이 문장이 없으면 그 aws s3 cp 가
+  # AccessDenied 로 실패하고 — send-command 는 비동기라 — 워크플로는 성공으로 끝난 뒤 한참 뒤
+  # 복원 단계에서 "컨테이너 없음"으로 드러난다.
+  #
+  # provision/* 객체만 준다. tfstate 본체(*.tfstate)에는 전 계정의 인프라 구성과 출력값이 들어
+  # 있어 박스가 읽을 이유가 없고, ListBucket 도 주지 않는다 — 내려받을 키 이름은 워크플로가 이미
+  # 명령에 박아 보내므로 목록 조회가 필요 없다.
+  #
+  # 버킷명은 terraform 입력이 아니라 계정번호에서 파생한다(워크플로의 config job 과 같은 규칙:
+  # piki-tfstate-<account>). 입력을 새로 만들면 3레포 backend.hcl 과 두 곳에서 같은 값을 관리하게 된다.
+  statement {
+    sid       = "ReadMigrationProvisionScripts"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::piki-tfstate-${data.aws_caller_identity.current.account_id}/provision/*"]
+  }
 }
+
+# 계정번호는 이 계정 자신에서 읽는다 — 이관으로 계정이 바뀌어도 코드를 고칠 필요가 없다.
+data "aws_caller_identity" "current" {}
 
 resource "aws_iam_role_policy" "db_instance" {
   name   = "piki-prod-db-policy"
