@@ -13,7 +13,9 @@ name: Migrate
 # 자격증명은 절대 workflow_dispatch 입력에 받지 않는다 — 마스킹되지 않아 로그에 평문으로 남는다.
 #   신 계정: OIDC 로 역할(BOOTSTRAP_ROLE)을 맡는다. GitHub 에 신 계정 장기 키를 두지 않는다 — 사람이 CloudShell 에
 #           infra/scripts/bootstrap-oidc.sh 를 한 번 붙여넣으면 발판이 생기고, 나중에 지울 키가 남지 않는다.
-#   구 계정: secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET (읽기 전용). 이미 있는 계정이라 키가 정상 경로다.
+#   구 계정: secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET. 순수 read-only 는 아니다 — 릴레이·이미지 버킷 읽기에
+#           더해, prod DB 제어(SSM 경로)에서 ssm:SendCommand·ListCommandInvocations·GetCommandInvocation 이 필요하다.
+#           (박스 안 GetParameter·kms:Decrypt·릴레이 업로드는 DB 인스턴스 role 이 하고, 이 키가 하지 않는다.) 이미 있는 계정이라 키가 정상 경로다.
 #   provision: 신 계정 역할(tfstate output 조회·SSM)로. 앱 박스 SSH 는 secrets.EC2_SSH_KEY.
 #   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout).
 #
@@ -628,9 +630,15 @@ jobs:
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
           # 성공으로 끝나고, 그 실패는 rehearsal 복원 단계에서 "컨테이너 없음"으로 나타난다. 컷오버 창
           # 안에서 원인 추적을 하게 되는 최악의 순서라 여기서 결과를 확인하고 전파한다.
-          INSTANCE_ID=$(aws ssm list-command-invocations --command-id "$CMD_ID" \
-            --query 'CommandInvocations[0].InstanceId' --output text)
-          [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ] || {
+          # invocation 은 send-command 직후 전파 전이라 빈 결과가 올 수 있다 — 나타날 때까지 잠깐 재조회한다.
+          INSTANCE_ID=None
+          for _ in $(seq 1 30); do
+            INSTANCE_ID=$(aws ssm list-command-invocations --command-id "$CMD_ID" \
+              --query 'CommandInvocations[0].InstanceId' --output text 2>/dev/null || echo None)
+            { [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ]; } && break
+            sleep 2
+          done
+          { [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ]; } || {
             echo "::error::SSM 대상 없음 — tag:Name=$DB_TAG 인스턴스가 없거나 SSM Agent 미등록"; exit 1; }
           # wait 는 자체 타임아웃에 걸려도 실패 코드를 내므로 판정은 Status 로 한다.
           aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
@@ -995,6 +1003,7 @@ jobs:
             echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP |"
             echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` |"
             echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` |"
+            echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
             echo "| \`EXTRACTOR_PROD_ADDRESS\` | repo secret | 신 계정 extractor 주소 |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
             echo
@@ -1003,7 +1012,7 @@ jobs:
             echo "역할 ARN 의 정확한 이름은 신 계정 terraform output 또는 IAM 콘솔에서 확인한다"
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::남은 수동 정리 5건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · EXTRACTOR_PROD_ADDRESS · OLD_ACCOUNT_ID. 자세한 내용은 실행 Summary."
+          echo "::warning::남은 수동 정리 6건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · EXTRACTOR_PROD_ADDRESS · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제. 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
         id: sum

@@ -57,15 +57,20 @@ runs:
           [ -n "$IDS" ] || { echo "::error::인스턴스를 찾지 못했다 — tag:Name=$INSTANCE_NAME (running 상태 확인)"; exit 1; }
           : > "$STATE_FILE"
           for sg in $IDS; do
-            # 이미 있으면 InvalidPermission.Duplicate 로 실패한다 — 그건 정상이고, 그 경우 close 에서
-            # 지우면 안 되므로(남의 규칙일 수 있다) 상태 파일에 적지 않는다.
-            if aws ec2 authorize-security-group-ingress --group-id "$sg" \
+            # 종료코드만 보고 전부 "이미 열림"으로 넘기면 권한 부족·규칙 한도 초과·잘못된 SG 같은 실제 실패가
+            # 가려진 채 게이트가 안 열리고, 뒤 스텝(scp·스모크 SSH)이 타임아웃으로 죽는다(컷오버 freeze 뒤라 특히 나쁘다).
+            # stderr 를 잡아 InvalidPermission.Duplicate(=이미 있음, 정상)만 건너뛰고 나머지는 즉시 실패시킨다.
+            # Duplicate 는 남의 규칙일 수 있어 상태 파일에 적지 않는다(close 에서 안 지운다).
+            if ERR=$(aws ec2 authorize-security-group-ingress --group-id "$sg" \
                  --ip-permissions "IpProtocol=tcp,FromPort=$PORT,ToPort=$PORT,IpRanges=[{CidrIp=$CIDR,Description=piki-migrate-runner}]" \
-                 >/dev/null 2>&1; then
+                 2>&1 >/dev/null); then
               echo "$sg $CIDR" >> "$STATE_FILE"
               echo "::notice::SSH 게이트 개방 — $sg $PORT/tcp ← $CIDR ($INSTANCE_NAME)"
-            else
+            elif printf '%s' "$ERR" | grep -q 'InvalidPermission.Duplicate'; then
               echo "::notice::SSH 게이트 이미 열려 있음 — $sg $CIDR (건드리지 않는다)"
+            else
+              echo "::error::SSH 게이트 개방 실패 — $sg: $ERR"
+              exit 1
             fi
           done
           exit 0

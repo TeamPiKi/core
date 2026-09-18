@@ -113,9 +113,16 @@ _exec_ssm() {
     --comment "piki migrate-db ($MODE)" \
     --parameters commands="[\"set -e\",\"echo $b64 | base64 -d > /tmp/piki-migrate-remote.sh\",\"bash /tmp/piki-migrate-remote.sh\",\"rm -f /tmp/piki-migrate-remote.sh\"]" \
     --query 'Command.CommandId' --output text)
-  instance_id=$("${A[@]}" ssm list-command-invocations --command-id "$cmd_id" \
-    --query 'CommandInvocations[0].InstanceId' --output text 2>/dev/null || echo None)
-  [ "$instance_id" != None ] && [ -n "$instance_id" ] || {
+  # send-command 직후엔 invocation 이 아직 전파 안 돼 빈 결과가 올 수 있다. 나타날 때까지 잠깐 재조회한다 —
+  # 첫 조회의 빈 결과를 "대상 없음"으로 오판하면 정상 명령이 실패로 찍힌다(prod SSM 경로).
+  instance_id=None
+  for _ in $(seq 1 30); do
+    instance_id=$("${A[@]}" ssm list-command-invocations --command-id "$cmd_id" \
+      --query 'CommandInvocations[0].InstanceId' --output text 2>/dev/null || echo None)
+    { [ "$instance_id" != None ] && [ -n "$instance_id" ]; } && break
+    sleep 2
+  done
+  { [ "$instance_id" != None ] && [ -n "$instance_id" ]; } || {
     log "SSM 대상 없음 — tag:Name=$tag 인스턴스가 없거나 SSM Agent 미등록"; return 1; }
   # wait 는 타임아웃(기본 약 10분)에 걸리면 실패 코드를 내지만, 그게 곧 명령 실패는 아니라
   # 판정은 아래 Status 로 한다. 긴 덤프를 넉넉히 기다리도록 재시도로 감싼다.
