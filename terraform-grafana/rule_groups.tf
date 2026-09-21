@@ -73,18 +73,8 @@ resource "grafana_rule_group" "piki_db" {
   }
 }
 
-locals {
-  # 기동마다 고정으로 찍히는 무해한 WARN. ERROR 는 가리지 않는다. 근본 해소는 #1111, 해소된 logger 는 여기서 지운다.
-  startup_noise_loggers = [
-    "org.flywaydb.core.internal.database.base.Database",
-    "org.flywaydb.core.internal.command.DbMigrate",
-    "org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration",
-    "org.hibernate.orm.deprecation",
-    "org.springdoc.core.events.SpringDocAppInitializer",
-  ]
-}
-
-# 등록한 패턴만 보는 다른 룰과 달리 전 서비스 WARN·ERROR 를 전부 잡는다 (#1105).
+# 등록한 패턴만 보는 다른 룰과 달리 전 서비스 ERROR 를 전부 잡는다 (#1105).
+# WARN 은 "비정상이지만 처리가 끝난 것"이라 알림에서 뺐다.
 # trace_id 를 묶음에 넣으면 건별 알림으로 되돌아간다. 파싱 실패는 parsing 룰이 건별로 알려서 뺀다.
 # logs_url 은 없는 라벨을 넣으면 "[no value]" 가, Tomcat logger 는 대괄호가 Discord 링크 문법을 깨서 조건부·인코딩 처리한다 (#1114).
 resource "grafana_rule_group" "logs" {
@@ -94,7 +84,7 @@ resource "grafana_rule_group" "logs" {
   disable_provenance = true
 
   rule {
-    name           = "서버 로그 (전 서비스, WARN·ERROR)"
+    name           = "서버 로그 (전 서비스, ERROR)"
     condition      = "B"
     for            = "0s"
     no_data_state  = "OK"
@@ -114,7 +104,7 @@ resource "grafana_rule_group" "logs" {
       }
       model = <<-EOT
       {
-        "expr": "sum by (service, environment, level, logger, error_type) (count_over_time({service=~\"piki-.+\", level=~\"(?i)(error|warn(ing)?|critical)\"} != \"item.parse.result\" | level=~\"(?i)(error|critical)\" or logger!~\"${join("|", local.startup_noise_loggers)}\" [10m]))",
+        "expr": "sum by (service, environment, level, logger, error_type) (count_over_time({service=~\"piki-.+\", level=~\"(?i)(error|critical)\"} != \"item.parse.result\" [10m]))",
         "intervalMs": 1000,
         "maxDataPoints": 43200,
         "queryType": "instant",
