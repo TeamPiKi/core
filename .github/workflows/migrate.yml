@@ -547,7 +547,10 @@ jobs:
   # 대신 조용히 넘기지 않는다 — config 가 경고를 남기고 finalize 요약이 미완료로 표시한다.
   infra_apps:
     needs: [guard, config, infra_core]
-    if: ${{ needs.infra_core.result == 'success' && needs.config.outputs.has_cross_repo_token == 'true' && (inputs.only == 'all' || inputs.only == 'infra') }}
+    # dry_run 에서는 건너뛴다. core 가 apply 되지 않아 VPC·SG 가 실재하지 않는데, 이 두 레포의
+    # terraform 은 data.aws_vpc·data.aws_security_group 으로 그것들을 조회한다 — "no matching EC2 VPC
+    # found" 로 확정적으로 실패한다(실측). 예상된 상황이 실패로 뜨면 진짜 결함을 가리므로 skip 이 맞다.
+    if: ${{ needs.infra_core.result == 'success' && inputs.dry_run == false && needs.config.outputs.has_cross_repo_token == 'true' && (inputs.only == 'all' || inputs.only == 'infra') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     strategy:
@@ -613,7 +616,9 @@ jobs:
   # ── migrate-3: provision. 컷오버 밖에서 며칠 앞서. env 단위. dev=SSH(앱박스, DB 동거) / prod=별도 DB 박스는 SSM. ──
   provision:
     needs: [guard, config, infra_core, infra_apps]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.infra_core.result == 'success' || needs.infra_core.result == 'skipped') && (needs.infra_apps.result == 'success' || needs.infra_apps.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
+    # dry_run 에서는 건너뛴다 — apply 를 안 해 박스가 실재하지 않는데 SSH·SSM 으로 붙으려다 실패한다.
+    # only=provision 으로 단계만 따로 돌릴 때는 앞 단계가 skipped 여도 진행해야 하므로 그 경우만 허용.
+    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'provision' || (needs.infra_core.result == 'success' && (needs.infra_apps.result == 'success' || needs.infra_apps.result == 'skipped'))) && (inputs.only == 'all' || inputs.only == 'provision') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
