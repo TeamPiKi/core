@@ -1,0 +1,93 @@
+name: Wait for
+description: 사람이 해야 할 일을 Discord 로 안내하고, 그 일이 끝났는지 조건으로 폴링한다. 조건이 곧 신호라 버튼·승인 게이트가 필요 없다.
+
+# 이관에서 사람이 개입하는 지점은 셋인데(계정 접근·DNS 전환·그 외) 모양이 같다 — "안내하고,
+# 사람이 하고, 결과를 조건으로 확인한다". 승인 게이트(environment protection)를 쓰지 않는 이유는
+# 두 가지다. 하나는 freeze 구간에 우리 앱이 정지해 있어 Discord 봇(DiscordAccessController)이
+# 버튼을 받을 수 없다는 것(#1092). 다른 하나는 승인 버튼이 "눌렸다"만 말하고 "실제로 됐다"는
+# 말하지 않는다는 것이다 — 오타로 엉뚱한 값을 넣어도 버튼은 눌린다.
+#
+# 그래서 여기서는 결과 자체를 조건으로 본다. 조건이 참이 되는 순간이 곧 완료 신호다.
+
+inputs:
+  webhook:
+    description: "Discord webhook URL. 비어 있으면 안내만 로그로 남기고 폴링은 그대로 한다."
+    required: false
+    default: ""
+  title:
+    description: "한 줄 제목 (예: 'CloudShell 접근 권한이 필요합니다')"
+    required: true
+  instruction:
+    description: "사람이 해야 할 일. 그대로 따라 할 수 있게 쓴다(명령·값 포함)."
+    required: true
+  check:
+    description: "완료 조건. bash 로 실행해 종료코드 0 이면 완료. 부수효과 없이 여러 번 돌 수 있어야 한다."
+    required: true
+  timeout-minutes:
+    description: "이 시간까지 기다린다. 넘으면 실패."
+    required: false
+    default: "60"
+  interval-seconds:
+    description: "조건 확인 주기."
+    required: false
+    default: "20"
+  remind-minutes:
+    description: "이 주기로 Discord 안내를 다시 보낸다(대화가 흘러 묻히는 걸 막는다). 0 이면 재알림 없음."
+    required: false
+    default: "10"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WEBHOOK: ${{ inputs.webhook }}
+        TITLE: ${{ inputs.title }}
+        INSTRUCTION: ${{ inputs.instruction }}
+        CHECK: ${{ inputs.check }}
+        TIMEOUT_MIN: ${{ inputs.timeout-minutes }}
+        INTERVAL: ${{ inputs.interval-seconds }}
+        REMIND_MIN: ${{ inputs.remind-minutes }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -uo pipefail
+
+        notify() {
+          local emoji="$1" body content
+          [ -n "${WEBHOOK:-}" ] || { echo "::warning::Discord webhook 미설정 — 안내 생략(폴링은 계속)"; return 0; }
+          content="$emoji **$TITLE**"$'\n\n'"$INSTRUCTION"$'\n\n'"실행 로그: $RUN_URL"
+          body=$(CONTENT="$content" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
+          curl -sf -X POST -H 'Content-Type: application/json' -d "$body" "$WEBHOOK" >/dev/null \
+            || echo "::warning::Discord 전송 실패 — 무시하고 계속한다"
+        }
+
+        # 조건을 먼저 본다. 이미 충족됐으면(재실행·부분 재개) 사람을 부르지 않는다 — 멱등.
+        if bash -c "$CHECK" >/dev/null 2>&1; then
+          echo "::notice::이미 충족 — $TITLE (사람 개입 불필요)"
+          exit 0
+        fi
+
+        echo "::notice::사람 개입 대기 — $TITLE"
+        printf '%s\n' "$INSTRUCTION"
+        notify "⏳"
+
+        DEADLINE=$(( $(date +%s) + TIMEOUT_MIN * 60 ))
+        NEXT_REMIND=$(( $(date +%s) + REMIND_MIN * 60 ))
+        while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+          sleep "$INTERVAL"
+          if bash -c "$CHECK" >/dev/null 2>&1; then
+            echo "::notice::조건 충족 — $TITLE"
+            notify "✅"
+            exit 0
+          fi
+          LEFT=$(( (DEADLINE - $(date +%s)) / 60 ))
+          echo "대기 중 — $TITLE (남은 ${LEFT}분)"
+          if [ "$REMIND_MIN" -gt 0 ] && [ "$(date +%s)" -ge "$NEXT_REMIND" ]; then
+            notify "⏳"
+            NEXT_REMIND=$(( $(date +%s) + REMIND_MIN * 60 ))
+          fi
+        done
+
+        echo "::error::시간 초과(${TIMEOUT_MIN}분) — $TITLE. 안내대로 처리한 뒤 이 job 을 Re-run 하면 이어서 진행된다."
+        notify "❌"
+        exit 1
