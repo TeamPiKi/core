@@ -558,7 +558,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     strategy:
-      fail-fast: false # extractor 실패가 renderer plan 을 못 보게 막지 않는다(둘은 서로 독립)
+      # 둘은 독립이 아니다 — renderer 의 terraform 이 data.aws_security_group 으로 extractor SG 를
+      # 조회한다(headless-browser/main.tf: var.extractor_sg_name). 병렬로 돌리면 renderer 가 먼저
+      # 들어가 "no matching EC2 Security Group found" 로 죽는다(실측). max-parallel 1 로 직렬화하고
+      # matrix 순서를 extractor → renderer 로 둬 선행 관계를 만든다.
+      fail-fast: false # extractor 가 실패해도 renderer 의 실패 사유를 함께 보기 위해 멈추지 않는다
+      max-parallel: 1
       matrix:
         include:
           - { repo: extractor, path: infra/extractor, checkout: TeamPiKi/extractor }
