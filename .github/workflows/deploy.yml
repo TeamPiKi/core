@@ -236,6 +236,7 @@ jobs:
             shared-infra/blocks/run_container.sh,
             shared-infra/blocks/slot_decide.sh,
             shared-infra/blocks/slot_switch.sh,
+            shared-infra/blocks/deploy_slot.sh,
             shared-infra/blocks/ssm_env.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
@@ -378,12 +379,17 @@ jobs:
           # 워크플로 밖 수동 관리 포인트를 없애 재발을 막는다.
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
           EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
+          JAVA_TOOL_OPTIONS: ${{ needs.resolve.outputs.jvm_opts }}
+          MEM_LIMIT: ${{ needs.resolve.outputs.mem_limit }}
+          MEM_SWAP: ${{ needs.resolve.outputs.mem_swap }}
+          # 전환 후 프론트 경유 검증의 Host 헤더
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL,JAVA_TOOL_OPTIONS,MEM_LIMIT,MEM_SWAP,DOMAIN
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 공용 블록(ssm_env.sh)이 KEY=VALUE 파일로
@@ -414,6 +420,21 @@ jobs:
             fi
             echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
             env_val() { grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2-; }
+
+            # 배포 제어·튜닝 값(비시크릿)도 같은 파일에 덧붙인다 - 컨테이너로 가는 통로를 --env-file 하나로.
+            # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs: 운영 로그를 ECS JSON 으로 내 Alloy 가 trace 를 Loki structured metadata
+            #   로 승격한다(#364). TRACING_OTLP_ENABLED + 아래 --add-host: span 을 박스 로컬 Alloy(4318)로 push 한다(#380).
+            {
+              printf '%s=%s\n' SPRING_PROFILES_ACTIVE "$SPRING_PROFILES_ACTIVE"
+              printf '%s=%s\n' ADMIN_ENABLED "$ADMIN_ENABLED"
+              printf '%s=%s\n' ENV_ACCESS_GATE "$ENV_ACCESS_GATE"
+              printf '%s=%s\n' ADMIN_ENVIRONMENT "$ADMIN_ENVIRONMENT"
+              printf '%s=%s\n' SPRINGDOC_ENABLED "$SPRINGDOC_ENABLED"
+              printf '%s=%s\n' EXTRACT_REMOTE_BASE_URL "$EXTRACT_REMOTE_BASE_URL"
+              printf '%s=%s\n' JAVA_TOOL_OPTIONS "$JAVA_TOOL_OPTIONS"
+              printf '%s=%s\n' LOGGING_STRUCTURED_FORMAT_CONSOLE ecs
+              printf '%s=%s\n' TRACING_OTLP_ENABLED true
+            } >> "$ENV_FILE"
 
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
@@ -460,141 +481,29 @@ jobs:
 
             docker pull "$IMAGE"
 
-            # 슬롯 판정은 infra 공용 블록(slot_decide)에 위임 - 상태 파일이 source of truth 이고 값(슬롯
-            # 이름·포트)은 이 호출부가 소유한다. 상태 파일이 없으면 초기 상태(8080 서빙 가정)로 먼저
-            # 초기화한다 (Apply nginx config 의 부트스트랩과 같은 기본값 - 종전 인라인 판정과 동작 등가).
-            # "할당 후 eval" 2단계는 블록 헤더가 정한 소비 계약이다 (치환 실패 은폐 방지).
+            # 상태 파일이 없으면 초기 상태(8080 서빙 가정)로 먼저 초기화한다 (Apply nginx config 의 부트스트랩과 같은 기본값).
             [ -f /etc/nginx/piki-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
-              --slot-a blue:8080 --slot-b green:8081)
-            eval "$DECIDED"
-            echo "================================================"
-            echo "  CURRENT : $ACTIVE (port $ACTIVE_PORT) [serving traffic]"
-            echo "  DEPLOY  : $INACTIVE (port $INACTIVE_PORT) [new version]"
-            echo "================================================"
 
-            # 로그 백업 후 비활성 슬롯 정리
-            mkdir -p /var/log/piki
-            docker logs "piki-core-$INACTIVE" > /var/log/piki/piki-core-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
-            find /var/log/piki -name "*.log" -mtime +7 -delete || true
-            # 직전 배포의 구버전 teardown 이 timeout 으로 끊겨 이 슬롯 컨테이너가 살아있을 수 있다.
-            # 아래 docker run 의 name/port 충돌을 막으려 force 로 지우고, 데몬 지연에 대비해 timeout 으로 상한을 건다.
-            timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-            timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-
-            # 새 버전 비활성 포트에 기동.
-            # -p 를 127.0.0.1 에 바인딩해 호스트 공인 IP(EIP)로의 직접 접근을 막는다. nginx(호스트 프로세스)와
-            # health check 는 localhost 로 접근하므로 영향 없고, actuator/prometheus 가 SG ingress 설정과 무관하게
-            # 외부에서 직접 scrape 되는 우회 경로를 구조적으로 차단한다 (nginx /actuator 차단의 보강).
-            # 주의: 별도 PR 의 Grafana Alloy 는 같은 호스트의 컨테이너이므로 --network host 로 띄워 localhost 를 scrape 해야 한다
-            #       (redis 가 쓰는 172.17.0.1 bridge 바인딩 방식으로는 127.0.0.1 바인딩 포트에 닿지 못한다).
-            # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs: 운영 로그를 ECS JSON 으로 출력해 Alloy 가 trace 를 Loki
-            # structured metadata 로 승격하게 한다(#364). Spring 표준 env 라 application.yml 배선 없이 property 로
-            # 직접 바인딩된다(extractor 와 동일 이름, #783). 값 고정 평문이라 Secrets 불필요. 로컬은 이 변수
-            # 미설정이라 application.yml 의 평문 콘솔 패턴(#361)을 그대로 쓴다.
-            # TRACING_OTLP_ENABLED=true + --add-host: span 을 OTLP 로 Alloy(otelcol.receiver.otlp)에 push 한다(#380).
-            # 앱 컨테이너는 bridge 네트워크라 컨테이너 안 localhost 가 --network host 인 Alloy 에 안 닿으므로,
-            # --add-host=host.docker.internal:host-gateway 로 호스트 게이트웨이를 잡고 application.yml 의 OTLP
-            # endpoint(host.docker.internal:4318)로 보낸다. 값 고정 평문이라 Secrets 불필요(로컬 미설정 → export off).
-            # --memory: 컨테이너 메모리 한도(cgroup). 906Mi 박스라 한도가 없으면 OOM 시 커널 전역
-            # OOM-killer 가 임의 프로세스를 죽이고 박스 전체가 thrash 로 무응답이 된다(2026-06-06 사고).
-            # 한도를 주면 초과 시 이 컨테이너만 cgroup-OOM 으로 죽고 --restart 로 재기동 — host·다른
-            # 컨테이너는 멀쩡. blue-green overlap 중 사고의 폭발 반경을 앱 한 개로 가둔다.
-            # --restart unless-stopped: redis/mysql/alloy 와 동일 정책. cgroup-OOM·박스 재부팅 후 자가 복구.
-            #   (teardown 은 docker stop + rm -f 라 정책과 충돌하지 않는다.)
-            # RAM·힙 한도는 resolve job 이 박스 크기별로 정한다(environment 분기) — dev 는 576m/1152m·힙288m,
-            #   prod t4g.small(1.8G, #596)은 768m/1536m·힙512m. blue+green overlap(전환 중 잠깐 2개 동시)이 RAM 안에 들어가
-            #   swap thrash 를 막는다(dev 2×576=1152<1.8G, prod 2×768=1536<1.8G). 앱 hot working set 만 RAM 에서 빠르게 돌고
-            #   식은 페이지는 swap 에 남는다. memory-swap 은 부팅 스파이크가 RAM 을 잠깐 넘어도 cgroup-OOM 대신 swap 으로
-            #   흘려 배포가 안 깨지게 하는 쿠션이다. 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정.
-            #   ExitOnOutOfMemoryError: 힙 OOM 시 즉시 종료→재시작.
-            # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md) — 박스 Alloy 가
-            #   이 라벨로 수집 대상을 인식한다(로그=observe+service, 메트릭=+port). piki.metrics.port 는
-            #   호스트 127.0.0.1 에서 닿는 published 포트라 슬롯 포트($INACTIVE_PORT)를 준다.
-            # 기동은 공용 블록(run_container.sh, extractor·renderer 와 동일)에 위임한다. 블록이 기동 직후
-            #   "Running + 재시작 0회" 검증까지 책임져 즉사 크래시가 헬스 폴링 전에 조기 검출된다.
-            #   SSM 값은 --env-file, 배포 제어 값은 '--env KEY' passthrough - 둘 다 값이 argv·로그에 노출되지 않는다.
-            #   슬롯 계산·graceful stop·로그 덤프는 blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
-            export JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}"
-            export LOGGING_STRUCTURED_FORMAT_CONSOLE="ecs"
-            export TRACING_OTLP_ENABLED="true"
-            bash /tmp/piki-deploy/run_container.sh \
-              --name "piki-core-$INACTIVE" \
-              --image "$IMAGE" \
-              --restart unless-stopped \
-              --publish "127.0.0.1:$INACTIVE_PORT:8080" \
-              --label piki.observe=true \
-              --label piki.service=piki-core \
-              --label "piki.metrics.port=$INACTIVE_PORT" \
-              --label piki.metrics.path=/actuator/prometheus \
+            # ── blue-green 배포: 공용 블록(deploy_slot)이 결정·로그 덤프·잔재 정리·기동·슬롯 헬스·전환·구 슬롯 종료를 맡는다.
+            # 실패 시 새 슬롯을 정리하고 exit 1, 그동안 트래픽은 구 슬롯이 서빙한다. 값은 전부 여기서 준다.
+            # --publish 127.0.0.1 바인딩(nginx 경유로만 노출, actuator 직접 scrape 우회 차단)과 metrics 포트 라벨은 블록이 채운다.
+            # 슬롯 헬스 60×5s: 콜드 JVM + Flyway 에 blue+green 공존 swap 압박이 겹치면 부팅이 120초를 넘겨 120초 상한에서
+            #   간헐 롤백됐다(#628). 200 이면 즉시 통과라 정상 속도엔 영향 없다.
+            # verify-cmd: 전환 직후 소비자 경로(443 → nginx → 새 슬롯)를 통째로 검증한다. /health 는 conf 가 127.0.0.1 에만
+            #   열어 둔 내부 검증 경로라 -k 와 Host 헤더가 필요하다.
+            # --memory/--memory-swap/JAVA_TOOL_OPTIONS 는 resolve job 이 박스 크기별로 정한다(그쪽 주석이 산정 근거).
+            # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md).
+            bash /tmp/piki-deploy/deploy_slot.sh \
+              --state-file /etc/nginx/piki-upstream.conf \
+              --slot-a blue:8080 --slot-b green:8081 \
+              --name-prefix piki-core --container-port 8080 \
+              --log-dir /var/log/piki \
+              --health-path /health --health-interval 5 --health-attempts 60 \
+              --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN" \
+              -- --image "$IMAGE" --restart unless-stopped --env-file "$ENV_FILE" \
+              --memory "$MEM_LIMIT" --memory-swap "$MEM_SWAP" \
               --add-host host.docker.internal:host-gateway \
-              --memory "${{ needs.resolve.outputs.mem_limit }}" \
-              --memory-swap "${{ needs.resolve.outputs.mem_swap }}" \
-              --env-file "$ENV_FILE" \
-              --env JAVA_TOOL_OPTIONS --env LOGGING_STRUCTURED_FORMAT_CONSOLE --env TRACING_OTLP_ENABLED \
-              --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
-              --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED
-
-      - name: Health check and switch
-        id: health
-        uses: appleboy/ssh-action@v1
-        env:
-          DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DOMAIN
-          script: |
-            # 슬롯 재판정 - 배포 스텝과 같은 공용 블록·같은 값으로 읽는다 (상태 파일이 source of truth)
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
-              --slot-a blue:8080 --slot-b green:8081)
-            eval "$DECIDED"
-
-            # 새로 뜬 컨테이너(INACTIVE) 헬스체크는 infra 공용 블록(blocks/healthcheck.sh)에 위임한다.
-            # 간격·횟수는 호출부가 소유한다 (블록은 값을 갖지 않는다). 왜 300초(60×5s)인가:
-            #   콜드 JVM + 빈 DB Flyway 에 더해 blue+green 공존 시 swap 압박으로 부팅이 76초에서 120초+ 까지 늘어
-            #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
-            #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
-            #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
-            if bash /tmp/piki-deploy/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
-              echo "================================================"
-              echo "  HEALTH CHECK PASSED on $INACTIVE"
-              echo "================================================"
-              # 전환은 infra 공용 블록(slot_switch)에 위임 - 갱신·nginx -t·reload(정지 시 restart 폴백)와
-              # 실패 시 이전 upstream 원복까지 블록의 원복 경계 안에서 돈다. 종전 인라인(tee + reload)에는
-              # 원복이 없어 전환 실패 시 상태 파일과 실제 서빙이 어긋난 채 남았고, 그 괴리는 다음 배포가
-              # 서빙 중인 슬롯을 비활성으로 오판·제거하게 만들었다 (infra#37 에서 실사고로 실증된 결함의 해소).
-              # verify-cmd: 전환 직후 소비자 경로(프론트 443 → nginx → 새 슬롯)를 통째로 검증한다 - 앱만
-              # 살아있고 배달 경로가 끊긴 부류(extractor 이행 배포의 Host/444 사고가 그 실례)를 원복 경계
-              # 안에서 잡는다. /health 는 conf 가 127.0.0.1 에만 열어 둔 내부 검증 전용 경로이고, 검증 배선
-              # (폴링·재시도·TLS 우회 -k·Host 헤더)은 extractor 와 같은 공용 블록(healthcheck.sh)이 진다 -
-              # 값(URL·간격·도메인)만 여기서 준다. 짧은 재시도(2s x 5)는 reload 직후 워커 교체 흔들림 흡수.
-              if ! bash /tmp/piki-deploy/slot_switch.sh \
-                --state-file /etc/nginx/piki-upstream.conf --server "localhost:$INACTIVE_PORT" \
-                --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN"; then
-                echo "슬롯 전환 실패(이전 upstream 원복됨) - 새 슬롯 정리 후 중단"
-                timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-                timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-                exit 1
-              fi
-              echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
-              # 구버전 종료 — switch 는 이미 끝났으므로 best-effort.
-              # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
-              # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
-              # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
-              timeout 60 docker stop -t 30 "piki-core-$ACTIVE" 2>/dev/null || true
-              timeout 30 docker rm -f "piki-core-$ACTIVE" 2>/dev/null || true
-              echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
-              echo "================================================"
-              exit 0
-            else
-              echo "Health check failed — rolling back"
-              # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
-              timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-              timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-              exit 1
-            fi
+              --label piki.observe=true --label piki.service=piki-core --label piki.metrics.path=/actuator/prometheus
 
       - name: Write deployment summary
         if: always()
@@ -619,14 +528,12 @@ jobs:
             NOW="알 수 없음"
           fi
 
-          if [ "${{ steps.health.outcome }}" = "success" ]; then
+          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
             STATUS="✅ 성공"
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
-          elif [ "${{ steps.health.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (EC2 배포)"
+            STATUS="❌ 실패 (EC2 배포 - 기동·헬스·전환 중 하나, 스텝 로그의 [deploy_slot] 단계 참조)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
@@ -655,8 +562,7 @@ jobs:
             echo "| 현재 활성 슬롯 | $NOW |"
             echo "| JAR 준비 | ${{ steps.resolve_jar.outcome }} |"
             echo "| Docker 푸시 | ${{ steps.docker_push.outcome }} |"
-            echo "| EC2 배포 | ${{ steps.deploy.outcome }} |"
-            echo "| 헬스체크 & 전환 | ${{ steps.health.outcome }} |"
+            echo "| EC2 배포 (기동·헬스·전환) | ${{ steps.deploy.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Notify Discord on success
@@ -747,9 +653,7 @@ jobs:
           elif [ "${{ steps.provision.outcome }}" = "failure" ]; then
             CAUSE="런타임 프로비저닝 실패 (swap / redis / MySQL readiness / alloy)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
-            CAUSE="EC2 배포 실패 (docker pull/run · blue-green)"
-          elif [ "${{ steps.health.outcome }}" = "failure" ]; then
-            CAUSE="헬스체크 실패 (서버 미응답 — 앱 부팅/DB 연결 확인)"
+            CAUSE="EC2 배포 실패 (SSM env · docker pull · 기동 · 헬스체크 · 슬롯 전환 중 하나 — 스텝 로그의 [deploy_slot] 단계 참조)"
           else
             CAUSE="알 수 없음 (환경 설정 단계)"
           fi
