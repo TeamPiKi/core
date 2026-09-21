@@ -315,16 +315,13 @@ jobs:
       # 필요하면 이관과 무관하게 따로 한다.
       - name: 키페어 — 쓰던 공개키를 신 계정에 등록 (멱등)
         env:
-          ENV: ${{ inputs.env }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           set -euo pipefail
-          # 키 이름은 terraform aws_instance key_name 과 일치해야 한다(ec2.tf:45,79 실측).
-          if [ "$ENV" = "prod" ]; then KEY=team3-SE-1; else KEY=team3-dev-SE-1; fi
-          if aws ec2 describe-key-pairs --key-names "$KEY" >/dev/null 2>&1; then
-            echo "::notice::키페어 이미 등록됨 — $KEY"
-            exit 0
-          fi
+          # 입력 env 와 무관하게 terraform 이 요구하는 키를 전부 등록한다. core terraform 은 dev·prod
+          # 박스를 한 state 에 함께 정의하므로(ec2.tf:45 team3-SE-1=prod, :79 team3-dev-SE-1=dev),
+          # env=dev 로 돌려도 apply 가 prod 박스까지 만든다. 한쪽만 등록하면 그 apply 가
+          # "InvalidKeyPair.NotFound: The key pair 'team3-SE-1' does not exist" 로 죽는다(실측).
           [ -n "${SSH_KEY:-}" ] || {
             echo "::error::EC2_SSH_KEY 미설정 — 등록할 공개키를 유도할 원본이 없다"; exit 1; }
           umask 077
@@ -333,8 +330,15 @@ jobs:
           # AWS 에는 공개키만 올라간다.
           ssh-keygen -y -f /tmp/src.pem > /tmp/src.pub 2>/dev/null || {
             echo "::error::EC2_SSH_KEY 에서 공개키를 유도하지 못했다 — PEM 형식·줄바꿈 손상 확인"; rm -f /tmp/src.pem; exit 1; }
-          aws ec2 import-key-pair --key-name "$KEY" \
-            --public-key-material "fileb:///tmp/src.pub" >/dev/null
+          for KEY in team3-SE-1 team3-dev-SE-1; do
+            if aws ec2 describe-key-pairs --key-names "$KEY" >/dev/null 2>&1; then
+              echo "::notice::키페어 이미 등록됨 — $KEY"
+            else
+              aws ec2 import-key-pair --key-name "$KEY" \
+                --public-key-material "fileb:///tmp/src.pub" >/dev/null
+              echo "::notice::키페어 등록 — $KEY"
+            fi
+          done
           rm -f /tmp/src.pem /tmp/src.pub
           echo "::notice::키페어 등록 — $KEY (쓰던 EC2_SSH_KEY 가 신 계정 박스에도 그대로 통한다)"
 
@@ -858,8 +862,10 @@ jobs:
   # 대상 호스트는 terraform output(신 계정 EIP)이고, ECR push 는 bootstrap 역할로 한다.
   # 파괴적이지 않지만(신 계정에만 씀) dry_run 에선 인프라가 apply 전이라 대상이 없으므로 건너뛴다.
   deploy_core:
-    needs: [guard, config, rehearsal]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.rehearsal.result == 'success' || needs.rehearsal.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'deploy') }}
+    needs: [guard, config, infra_core, provision, rehearsal]
+    # cutover 와 같은 이유로 skipped 를 통과로 보지 않는다 — 인프라·박스가 없으면 배포 대상 자체가 없다
+    # (실측: infra_core 실패로 rehearsal 이 skip 됐는데 이 job 이 success 로 떴다).
+    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'deploy' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.rehearsal.result == 'success')) && (inputs.only == 'all' || inputs.only == 'deploy') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:
@@ -1017,8 +1023,11 @@ jobs:
   # (스크립트의 trap) 이 job 의 남은 스텝까지 이어진다(FREEZE_STATE_FILE + migrate-unfreeze.sh).
   # 파일로 잇는 이유는 워크플로가 스텝마다 셸이 갈려 trap 이 넘어가지 않기 때문이다.
   cutover:
-    needs: [guard, config, rehearsal, deploy_core_app, deploy_extractor, deploy_renderer]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.rehearsal.result == 'success' || needs.rehearsal.result == 'skipped') && (needs.deploy_core_app.result == 'success' || needs.deploy_core_app.result == 'skipped') && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') && (needs.deploy_renderer.result == 'success' || needs.deploy_renderer.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'cutover') }}
+    needs: [guard, config, infra_core, provision, rehearsal, deploy_core_app, deploy_extractor, deploy_renderer]
+    # 앞 단계를 skipped 까지 통과로 보면, 인프라가 서지도 않은 상태에서 구 앱을 freeze 한다(실측 —
+    # infra_core 가 키페어 문제로 실패했는데 cutover 가 돌아 dev 를 정지시켰고 롤백이 받아냈다).
+    # only=cutover 로 단계만 따로 돌릴 때는 앞 단계가 skipped 라 그 경우만 예외로 허용한다.
+    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'cutover' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.rehearsal.result == 'success' && needs.deploy_core_app.result == 'success')) && (inputs.only == 'all' || inputs.only == 'cutover') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     env:
