@@ -21,7 +21,11 @@
 #   신 계정 AWS 콘솔 → 우측 상단 CloudShell → 아래 내용을 통째로 붙여넣고 Enter
 #
 # 멱등하다. 두 번 돌려도 같은 상태로 수렴하므로, 실패했거나 확신이 안 서면 그냥 다시 붙여넣으면 된다.
-set -euo pipefail
+# CloudShell 은 이 스크립트를 "파일 실행" 이 아니라 "붙여넣어 현재 셸에서 실행" 하는 방식이라,
+# set -e 가 걸린 채 명령이 실패하면 로그인 셸 자체가 죽고 RECOVERY MODE 로 빠진다. 그 뒤엔 변수가
+# 전부 날아가 남은 줄들이 빈 값으로 돌며 엉뚱한 성공 메시지를 낸다(실측). 그래서 -e 를 쓰지 않고
+# 각 단계가 자기 실패를 직접 보고하게 한다.
+set -uo pipefail
 
 REPO="${REPO:-TeamPiKi/core}"
 ROLE_NAME="${ROLE_NAME:-piki-migrate-bootstrap}"
@@ -69,10 +73,14 @@ if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST"
   echo "[bootstrap-oidc] 역할 이미 존재 — 신뢰 정책만 갱신"
 else
-  aws iam create-role --role-name "$ROLE_NAME" \
-    --description "GitHub Actions 계정 이관 워크플로(#1092)가 맡는 역할" \
-    --assume-role-policy-document "$TRUST" >/dev/null
-  echo "[bootstrap-oidc] 역할 생성 — $ROLE_NAME"
+  if aws iam create-role --role-name "$ROLE_NAME" \
+    --description "GitHub Actions account migration role (#1092)" \
+    --assume-role-policy-document "$TRUST" >/dev/null; then
+    echo "[bootstrap-oidc] 역할 생성 — $ROLE_NAME"
+  else
+    echo "[bootstrap-oidc] 역할 생성 실패 — 위 오류를 확인할 것" >&2
+    return 1 2>/dev/null || exit 1
+  fi
 fi
 
 # 권한은 AdministratorAccess 다. 이 역할이 하는 일이 곧 "빈 계정에 인프라를 통째로 세우는 것" —
