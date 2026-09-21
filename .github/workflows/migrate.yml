@@ -946,26 +946,45 @@ jobs:
           set -euo pipefail
           [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — renderer 배포를 트리거할 수 없다"; exit 1; }
           REPO=TeamPiKi/renderer
-          # 트리거 직후 실행 id 를 특정하려고, 디스패치 전 시각을 기준으로 이후 생성된 실행만 찾는다.
-          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run deploy.yml --repo "$REPO" --ref main -f migration_host="$HOST"
-          echo "::notice::renderer 배포 트리거 — host=$HOST"
+          # 이 실행만 가리키는 고유 키. renderer 가 run-name 에 실어 주므로(그쪽 request_id 입력),
+          # 제목으로 정확히 우리 dispatch 로 생긴 실행만 고른다. 시각+최근순으로 고르면 그 사이 끼어든
+          # 다른 실행의 결론을 기다리게 되어, 우리 배포가 실패해도 성공으로 오판할 수 있다.
+          REQ="migrate-${{ github.run_id }}-${{ github.run_attempt }}"
+          gh workflow run deploy.yml --repo "$REPO" --ref main \
+            -f migration_host="$HOST" -f request_id="$REQ"
+          echo "::notice::renderer 배포 트리거 — host=$HOST req=$REQ"
+
+          # 조회는 전부 재시도로 감싼다 — set -e 아래서 gh 가 일시적으로 실패하면 폴링이 통째로 끊기고,
+          # 원격 배포는 계속 도는데 이 job 만 실패해 cutover 가 막힌다(재실행하면 중복 dispatch).
           RUN_ID=""
           for _ in $(seq 1 30); do
             sleep 5
-            RUN_ID=$(gh run list --repo "$REPO" --workflow=deploy.yml --created ">=$SINCE" \
-              --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-            [ -n "$RUN_ID" ] && break
+            if OUT=$(gh run list --repo "$REPO" --workflow=deploy.yml --limit 30 \
+                       --json databaseId,displayTitle --jq \
+                       "[.[] | select(.displayTitle | contains(\"$REQ\"))] | .[0].databaseId // empty" 2>/dev/null); then
+              RUN_ID="$OUT"
+              [ -n "$RUN_ID" ] && break
+            else
+              echo "::warning::renderer 실행 조회 실패 — 재시도"
+            fi
           done
-          [ -n "$RUN_ID" ] || { echo "::error::renderer 실행을 찾지 못했다 — 수동 확인 필요"; exit 1; }
+          [ -n "$RUN_ID" ] || { echo "::error::renderer 실행($REQ)을 찾지 못했다 — https://github.com/$REPO/actions 확인"; exit 1; }
           echo "::notice::renderer run=$RUN_ID 대기"
+
           # 완료까지 대기(최대 30분). 결론이 success 가 아니면 이 job 도 실패시켜 cutover 로 못 넘어가게 한다.
+          ST=""; CC=""
           for _ in $(seq 1 180); do
-            read -r ST CC < <(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion --jq '[.status,(.conclusion // "")]|@tsv')
-            [ "$ST" = "completed" ] && break
+            if OUT=$(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion \
+                       --jq '[.status,(.conclusion // "")]|@tsv' 2>/dev/null); then
+              ST=$(printf '%s' "$OUT" | cut -f1); CC=$(printf '%s' "$OUT" | cut -f2)
+              [ "$ST" = "completed" ] && break
+            else
+              echo "::warning::renderer 상태 조회 실패 — 재시도"
+            fi
             sleep 10
           done
-          echo "renderer 결과: status=$ST conclusion=$CC"
+          echo "renderer 결과: status=${ST:-unknown} conclusion=${CC:-unknown}"
+          [ "$ST" = "completed" ] || { echo "::error::renderer 배포가 제한 시간(30분) 안에 끝나지 않았다 — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
           [ "$CC" = "success" ] || { echo "::error::renderer 배포 실패(conclusion=$CC) — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
           echo "::notice::renderer 배포 완료"
 
