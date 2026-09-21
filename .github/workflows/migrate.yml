@@ -123,6 +123,7 @@ jobs:
       app_ip_output: ${{ steps.map.outputs.app_ip_output }}
       db_ip_output: ${{ steps.map.outputs.db_ip_output }}
       db_tag: ${{ steps.map.outputs.db_tag }}
+      root_pw_param: ${{ steps.map.outputs.root_pw_param }}
       app_tag: ${{ steps.map.outputs.app_tag }}
       image_bucket: ${{ steps.map.outputs.image_bucket }}
       db_backup_bucket: ${{ steps.map.outputs.db_backup_bucket }}
@@ -154,8 +155,13 @@ jobs:
           # 문자열로 갖고 있어, 셋이 같은 사실을 말한다. 도메인을 옮기는 날엔 세 곳을 함께 고친다.
           if [ "$ENV" = "prod" ]; then
             DB_CONTAINER=piki-prod-mysql; DB_EXEC=ssm; APP_IP_OUTPUT=ec2_public_ip;     DB_IP_OUTPUT=db_ec2_private_ip; DB_TAG=piki-prod-db;  APP_TAG=piki-prod-app;  DOMAIN=api.piki.day
+            # prod 는 provision-db.sh 가 별도 DB 박스를 띄우며 root 비번을 db-root-password 로 따로 둔다.
+            ROOT_PW_PARAM=db-root-password
           else
             DB_CONTAINER=piki-mysql;      DB_EXEC=ssh; APP_IP_OUTPUT=dev_ec2_public_ip; DB_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-app;  APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
+            # dev 는 provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가
+            # 곧 root 비번이고, db-root-password 라는 파라미터는 존재하지 않는다(실측).
+            ROOT_PW_PARAM=db-password
           fi
           {
             echo "app_tag=$APP_TAG"
@@ -166,6 +172,7 @@ jobs:
             echo "app_ip_output=$APP_IP_OUTPUT"
             echo "db_ip_output=$DB_IP_OUTPUT"           # dev 는 앱 박스와 같은 값(동거)
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
+            echo "root_pw_param=$ROOT_PW_PARAM"          # root 비번이 담긴 SSM 파라미터 이름(env 별로 다르다)
             echo "image_bucket=piki-images-$ACCOUNT"
             echo "db_backup_bucket=piki-db-backup-$ACCOUNT"
             echo "src_backup_bucket=piki-db-backup-$OLD_ACCOUNT_ID"  # 덤프 릴레이의 출발 버킷(구 계정)
@@ -369,6 +376,7 @@ jobs:
       - name: SSM 파라미터 이식 (경로별 복사 + 계정번호 치환)
         env:
           SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
+          ROOT_PW_PARAM: ${{ needs.config.outputs.root_pw_param }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
           SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
@@ -682,12 +690,10 @@ jobs:
           # 이관 경로는 그 블록을 올리지 않는다. 배포(deploy.yml)가 매번 올려 갱신하므로 여기선 건너뛴다.
           # shellcheck disable=SC2029  # $ENV 의 클라이언트 측 확장은 의도 — 원격엔 그 값이 리터럴로 실려야 한다
           ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-runtime.sh --skip-alloy"
-          # dev 는 DB 가 앱 박스 동거라 여기서 DB provision 도 함께.
-          if [ "$ENV" = "dev" ]; then
-            scp "${SSHOPT[@]}" infra/scripts/provision-db.sh infra/scripts/db-backup.sh "ubuntu@${APP_IP}:/tmp/"
-            # shellcheck disable=SC2029  # 위와 같은 의도
-            ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-db.sh --skip-alloy"
-          fi
+          # dev 는 여기서 끝이다. DB 가 앱 박스에 동거하고, 그 MySQL 은 방금 돈 provision-runtime.sh 가
+          # ENVIRONMENT=dev 분기에서 설치·기동한다(로그의 "[mysql] ready"). provision-db.sh 를 또 부르면
+          # 그 스크립트는 별도 prod DB 박스 전용이라 SSM_PREFIX 가 /piki-core/prod 로 박혀 있어
+          # dev 에서는 ParameterNotFound 로 죽는다(실측). 백업 cron(db-backup.sh)은 prod 관심사다.
           rm -f key.pem
           echo "::notice::앱 박스 provision 완료 — $APP_IP"
 
@@ -811,6 +817,7 @@ jobs:
           DB_CONTAINER: ${{ needs.config.outputs.db_container }}
           DB_TAG: ${{ needs.config.outputs.db_tag }}
           SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
+          ROOT_PW_PARAM: ${{ needs.config.outputs.root_pw_param }}
           SRC_APP_HOST: ${{ needs.config.outputs.src_app_host }} # config 가 DNS 로 해소해 굳힌 값
           DST_DB_HOST: ${{ steps.tf.outputs.dst_db }}
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
@@ -829,7 +836,7 @@ jobs:
           MODE=rehearsal DB_NAME="$DB_NAME" AWS_REGION="$AWS_REGION" \
             SRC_EXEC="$DB_EXEC" DST_EXEC="$DB_EXEC" \
             SRC_DB_CONTAINER="$DB_CONTAINER" DST_DB_CONTAINER="$DB_CONTAINER" \
-            SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" \
+            SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" ROOT_PW_PARAM="$ROOT_PW_PARAM" \
             SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" \
             SRC_DB_HOST="$SRC_APP_HOST" SRC_DB_KEY=key.pem \
             DST_DB_HOST="$DST_DB_HOST" DST_DB_KEY=key.pem \
@@ -1099,6 +1106,7 @@ jobs:
           DB_CONTAINER: ${{ needs.config.outputs.db_container }}
           DB_TAG: ${{ needs.config.outputs.db_tag }}
           SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
+          ROOT_PW_PARAM: ${{ needs.config.outputs.root_pw_param }}
           SRC_APP_HOST: ${{ needs.config.outputs.src_app_host }}
           DST_DB_HOST: ${{ steps.tf.outputs.dst_db }}
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
@@ -1121,7 +1129,7 @@ jobs:
             FREEZE_STATE_FILE="$FREEZE_STATE_FILE" \
             SRC_EXEC="$DB_EXEC" DST_EXEC="$DB_EXEC" \
             SRC_DB_CONTAINER="$DB_CONTAINER" DST_DB_CONTAINER="$DB_CONTAINER" \
-            SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" \
+            SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" ROOT_PW_PARAM="$ROOT_PW_PARAM" \
             SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" \
             SRC_DB_HOST="$SRC_APP_HOST" SRC_DB_KEY=key.pem \
             DST_DB_HOST="$DST_DB_HOST" DST_DB_KEY=key.pem \

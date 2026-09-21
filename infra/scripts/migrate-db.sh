@@ -33,6 +33,11 @@ SRC_DB_CONTAINER="${SRC_DB_CONTAINER:?구 계정 MySQL 컨테이너명}"
 DST_DB_CONTAINER="${DST_DB_CONTAINER:?신 계정 MySQL 컨테이너명}"
 SRC_SSM_PREFIX="${SRC_SSM_PREFIX:?구 계정 SSM 프리픽스 (예: /piki-core/prod)}"
 DST_SSM_PREFIX="${DST_SSM_PREFIX:?신 계정 SSM 프리픽스}"
+# root 비밀번호가 담긴 SSM 파라미터 이름. env 마다 다르다 —
+#   prod: 별도 DB 박스를 provision-db.sh 가 띄우며 db-root-password 를 따로 둔다.
+#   dev : provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가 곧 root 비번이고,
+#         db-root-password 라는 파라미터는 애초에 없다(실측 — 이 값을 고정하면 dev 에서 ParameterNotFound).
+ROOT_PW_PARAM="${ROOT_PW_PARAM:-db-root-password}"
 SRC_RELAY_BUCKET="${SRC_RELAY_BUCKET:?구 계정 릴레이 버킷 (db_backup)}"
 DST_RELAY_BUCKET="${DST_RELAY_BUCKET:?신 계정 릴레이 버킷 (db_backup)}"
 
@@ -158,8 +163,9 @@ REGION="$AWS_REGION"
 WORK=/var/tmp/piki-migrate
 mkdir -p "\$WORK"
 aws_cli() { docker run --rm --network host -v "\$WORK:/work" "\$AWSCLI_IMAGE" "\$@"; }
-ROOT_PW="\$(aws_cli ssm get-parameter --name "\$SSM_PREFIX/db-root-password" --with-decryption --region "\$REGION" --query Parameter.Value --output text)"
-[ -n "\$ROOT_PW" ] && [ "\$ROOT_PW" != None ] || { echo "db-root-password 조회 실패 — 인스턴스 role·파라미터 확인" >&2; exit 1; }
+ROOT_PW_PARAM="$ROOT_PW_PARAM"
+ROOT_PW="\$(aws_cli ssm get-parameter --name "\$SSM_PREFIX/\$ROOT_PW_PARAM" --with-decryption --region "\$REGION" --query Parameter.Value --output text)"
+[ -n "\$ROOT_PW" ] && [ "\$ROOT_PW" != None ] || { echo "\$ROOT_PW_PARAM 조회 실패 — 인스턴스 role·파라미터 확인" >&2; exit 1; }
 PRE
 }
 
@@ -190,6 +196,42 @@ rollback_freeze() {
   ssh "${SSHOPT[@]}" -i "$SRC_APP_KEY" "ubuntu@$SRC_APP_HOST" 'xargs -r docker start' < "$FREEZE_STATE_FILE" \
     && log "롤백 완료 — 구 계정 서비스 복구" \
     || log "롤백 실패 — 수동으로 구 앱 컨테이너를 기동해야 한다: $(tr '\n' ' ' < "$FREEZE_STATE_FILE")"
+}
+
+# ── 직전송 경로 (양쪽 다 ssh 일 때) ──────────────────────────────────────────
+# S3 릴레이를 타지 않는다. 릴레이는 keyless 박스(prod DB)를 SSM 으로만 조종할 수 있어서 둔 우회로인데,
+# dev 는 러너가 앱 박스에 SSH 로 직접 닿는다. 게다가 dev 용 릴레이 버킷은 존재하지 않는다 —
+# piki-db-backup-* 는 prod DB 박스 백업용으로 만든 것이라 dev 덤프를 올릴 자리가 아니다(실측).
+# 그래서 덤프를 러너 표준입출력으로 바로 흘려보낸다.
+dump_direct() {
+  log "덤프(직전송) — 구 계정 박스에서 러너로"
+  { remote_preamble "$SRC_DB_CONTAINER" "$SRC_SSM_PREFIX"
+    cat <<REMOTE
+docker exec -e MYSQL_PWD="\$ROOT_PW" "\$CONTAINER" \\
+  mysqldump -u root --single-transaction --routines --triggers --events --databases "$DB_NAME" | gzip
+REMOTE
+  } | _exec_ssh "$SRC_DB_HOST" "$SRC_DB_KEY" > "$WORK/dump.sql.gz"
+  local sz; sz=$(stat -c %s "$WORK/dump.sql.gz" 2>/dev/null || stat -f %z "$WORK/dump.sql.gz")
+  [ "$sz" -gt 1024 ] || { log "덤프가 비정상적으로 작다(${sz}B) — 손상 의심"; return 1; }
+  log "덤프 완료 — ${sz}B"
+}
+
+restore_direct() {
+  log "복원(직전송) — 러너에서 신 계정 박스로"
+  { remote_preamble "$DST_DB_CONTAINER" "$DST_SSM_PREFIX"
+    cat <<'REMOTE'
+cat > "$WORK/dump.sql.gz"
+gunzip < "$WORK/dump.sql.gz" | docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysql -u root
+rm -f "$WORK/dump.sql.gz"
+echo RESTORE_OK
+REMOTE
+  } > "$WORK/restore.sh"
+  # 스크립트와 덤프를 한 스트림으로 보낸다 — 앞부분(스크립트)이 stdin 으로 나머지(덤프)를 받는다.
+  cat "$WORK/restore.sh" "$WORK/dump.sql.gz" \
+    | ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'bash -s' | tee "$WORK/restore.out"
+  grep -q '^RESTORE_OK' "$WORK/restore.out" || { log "복원 결과를 확인하지 못했다"; return 1; }
+  rm -f "$WORK/dump.sql.gz"
+  log "복원 완료"
 }
 
 dump_to_relay() {
@@ -310,9 +352,19 @@ verify_counts() {
 }
 
 # ── 흐름 ─────────────────────────────────────────────────────────────────────
+# 전송 경로 선택 — 양쪽 다 ssh 면 러너가 직접 닿으므로 S3 릴레이가 불필요하고, dev 는 릴레이 버킷
+# 자체가 없어 직전송만 성립한다. 한쪽이라도 ssm(keyless prod DB 박스)이면 릴레이를 탄다.
+transfer() {
+  if [ "$SRC_EXEC" = ssh ] && [ "$DST_EXEC" = ssh ]; then
+    dump_direct; restore_direct
+  else
+    dump_to_relay; relay_dump; restore_from_relay
+  fi
+}
+
 case "$MODE" in
   rehearsal)
-    dump_to_relay; relay_dump; restore_from_relay; rewrite_urls; verify_counts
+    transfer; rewrite_urls; verify_counts
     log "rehearsal 완료 — 라이브 무영향"
     ;;
   cutover)
@@ -320,7 +372,7 @@ case "$MODE" in
     # freeze 직전에 롤백 경계를 건다. 이 지점 이후의 어떤 실패도 구 앱을 되살리고 끝난다.
     trap rollback_freeze EXIT
     freeze_source
-    dump_to_relay; relay_dump; restore_from_relay; rewrite_urls; verify_counts
+    transfer; rewrite_urls; verify_counts
     # 여기서 trap 을 풀지 않는다 — 남은 단계(S3 sync·스모크·DNS)는 워크플로가 돌리고,
     # 그쪽도 같은 FREEZE_STATE_FILE 로 migrate-unfreeze.sh 를 걸어 경계를 이어받는다.
     trap - EXIT
