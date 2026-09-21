@@ -680,10 +680,12 @@ jobs:
           # ("[mysql] prod 환경 — skip" 이 찍힌다) (2) 끝의 alloy 호출이 ${ENVIRONMENT:?} 로 죽는다(실측).
           # --skip-alloy: 관측 블록(config.alloy·provision-alloy-ssm.sh)의 SSOT 는 TeamPiKi/infra 이고
           # 이관 경로는 그 블록을 올리지 않는다. 배포(deploy.yml)가 매번 올려 갱신하므로 여기선 건너뛴다.
+          # shellcheck disable=SC2029  # $ENV 의 클라이언트 측 확장은 의도 — 원격엔 그 값이 리터럴로 실려야 한다
           ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-runtime.sh --skip-alloy"
           # dev 는 DB 가 앱 박스 동거라 여기서 DB provision 도 함께.
           if [ "$ENV" = "dev" ]; then
             scp "${SSHOPT[@]}" infra/scripts/provision-db.sh infra/scripts/db-backup.sh "ubuntu@${APP_IP}:/tmp/"
+            # shellcheck disable=SC2029  # 위와 같은 의도
             ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-db.sh --skip-alloy"
           fi
           rm -f key.pem
