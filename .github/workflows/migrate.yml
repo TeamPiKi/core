@@ -676,11 +676,15 @@ jobs:
           # 배열로 둔다 — 문자열 변수로 두고 unquoted 확장하면 word-split 에 기대게 되어 취약(SC2086).
           SSHOPT=(-i key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
           scp "${SSHOPT[@]}" infra/scripts/provision-runtime.sh "ubuntu@${APP_IP}:/tmp/"
-          ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" 'bash /tmp/provision-runtime.sh'
-          # dev 는 DB 가 앱 박스 동거라 여기서 DB provision 도 함께(관측 블록은 infra 레포 소관이라 --skip-alloy).
+          # ENVIRONMENT 를 원격 셸에 넘긴다. 안 넘기면 (1) dev 분기를 못 타 MySQL 을 안 깔고
+          # ("[mysql] prod 환경 — skip" 이 찍힌다) (2) 끝의 alloy 호출이 ${ENVIRONMENT:?} 로 죽는다(실측).
+          # --skip-alloy: 관측 블록(config.alloy·provision-alloy-ssm.sh)의 SSOT 는 TeamPiKi/infra 이고
+          # 이관 경로는 그 블록을 올리지 않는다. 배포(deploy.yml)가 매번 올려 갱신하므로 여기선 건너뛴다.
+          ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-runtime.sh --skip-alloy"
+          # dev 는 DB 가 앱 박스 동거라 여기서 DB provision 도 함께.
           if [ "$ENV" = "dev" ]; then
             scp "${SSHOPT[@]}" infra/scripts/provision-db.sh infra/scripts/db-backup.sh "ubuntu@${APP_IP}:/tmp/"
-            ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" 'bash /tmp/provision-db.sh --skip-alloy'
+            ssh "${SSHOPT[@]}" "ubuntu@${APP_IP}" "ENVIRONMENT='$ENV' bash /tmp/provision-db.sh --skip-alloy"
           fi
           rm -f key.pem
           echo "::notice::앱 박스 provision 완료 — $APP_IP"

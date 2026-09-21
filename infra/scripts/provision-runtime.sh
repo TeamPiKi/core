@@ -11,6 +11,16 @@ set -euo pipefail
 # (alloy(4절)는 공용 블록 provision-alloy-ssm.sh 가 자기 핀으로 조회하므로 이 값을 쓰지 않는다.)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
 
+# --skip-alloy: 관측 수집기 설치를 생략한다. 이 스크립트는 alloy 공용 블록이 /tmp/piki-deploy/alloy/ 에
+# 미리 올라와 있다고 전제하는데(deploy.yml 의 Upload deploy files), 계정 이관처럼 그 블록을 올리지 않는
+# 경로에서는 파일이 없어 마지막에 죽는다. provision-db.sh 와 같은 플래그·같은 뜻.
+SKIP_ALLOY=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-alloy) SKIP_ALLOY=true ;;
+  esac
+done
+
 # 1) swap — 메모리 906Mi 라 1G swap 이 필수다. 없을 때만 생성하고 fstab 에 등록해 재부팅에도 유지되게 한다.
 if sudo swapon --show | grep -q '/swapfile'; then
   echo "[swap] 이미 활성 — skip"
@@ -140,10 +150,14 @@ fi
 #    필수 5종(metrics·logs URL/USER, token) 실패는 즉시 중단, traces 2종은 빈 값 허용 — 블록이 판정한다.
 #    수집 대상은 컨테이너 label opt-in(piki.observe 등, contracts/observability.md) — 서비스 열거 regex 와
 #    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
-bash /tmp/piki-deploy/alloy/provision-alloy-ssm.sh \
-  --config /tmp/piki-deploy/alloy/config.alloy \
-  --name piki-alloy \
-  --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
-  --box piki-core
+if [ "$SKIP_ALLOY" = true ]; then
+  echo "[alloy] --skip-alloy — 관측 수집기 설치 생략"
+else
+  bash /tmp/piki-deploy/alloy/provision-alloy-ssm.sh \
+    --config /tmp/piki-deploy/alloy/config.alloy \
+    --name piki-alloy \
+    --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
+    --box piki-core
+fi
 
 echo "런타임 프로비저닝 완료"
