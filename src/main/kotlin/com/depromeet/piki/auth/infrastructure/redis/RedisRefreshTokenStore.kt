@@ -77,10 +77,9 @@ class RedisRefreshTokenStore(
             result.startsWith(REPLAY_PREFIX) -> RefreshOutcome.Replayed(result.removePrefix(REPLAY_PREFIX))
             result == EXPIRED -> RefreshOutcome.Expired
             result == REUSE -> {
-                // warn 레벨: 시스템 fail 아닌 보안 의심 이벤트. info 보다 가시성 ↑, error 는 alert fatigue 위험 +
-                // 시스템 정상이라 의미 안 맞음. PIKI 로그 레벨 정책의 "정상 흐름 아닌 의심 이벤트" 범주.
-                // 무효화 범위가 세션 하나임을 로그에도 남긴다 — 계정 전체가 끊긴 게 아님을 대응자가 바로 알게.
-                logger.warn(
+                // info 인 이유: 세션 무효화로 처리가 끝난 결과라 단발은 대응할 일이 없고, 원인 대부분이 클라이언트의 옛 토큰 재시도다.
+                // debug 로 내리지 않는다 — prod 에 적재되지 않아 "갑자기 로그아웃" 문의와 탈취 사후 조사의 근거가 사라진다.
+                logger.info(
                     "refresh token reuse detected — session invalidated. userId={} sessionId={}",
                     userId,
                     sessionId,
