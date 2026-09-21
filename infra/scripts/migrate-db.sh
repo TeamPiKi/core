@@ -210,7 +210,9 @@ dump_direct() {
 docker exec -e MYSQL_PWD="\$ROOT_PW" "\$CONTAINER" \\
   mysqldump -u root --single-transaction --routines --triggers --events --databases "$DB_NAME" | gzip
 REMOTE
-  } | _exec_ssh "$SRC_DB_HOST" "$SRC_DB_KEY" > "$WORK/dump.sql.gz"
+  # _exec_ssh 를 쓰지 않는다 — 그쪽은 본문을 세 번째 인자로 받는데(set -u 라 빠지면 unbound variable),
+  # 여기서는 본문을 파이프로 흘리고 원격 stdout(gzip 바이너리)을 그대로 받아야 한다.
+  } | ssh "${SSHOPT[@]}" -i "$SRC_DB_KEY" "ubuntu@$SRC_DB_HOST" 'bash -s' > "$WORK/dump.sql.gz"
   local sz; sz=$(stat -c %s "$WORK/dump.sql.gz" 2>/dev/null || stat -f %z "$WORK/dump.sql.gz")
   [ "$sz" -gt 1024 ] || { log "덤프가 비정상적으로 작다(${sz}B) — 손상 의심"; return 1; }
   log "덤프 완료 — ${sz}B"
@@ -218,17 +220,17 @@ REMOTE
 
 restore_direct() {
   log "복원(직전송) — 러너에서 신 계정 박스로"
+  # 덤프를 먼저 박스에 올린 뒤 스크립트를 실행한다. 스크립트와 덤프를 한 스트림으로 이으면
+  # `bash -s` 가 자기 입력을 블록 단위로 읽어 뒤쪽 덤프까지 삼켜버려, 원격의 `cat > dump.gz` 가
+  # 받을 데이터가 남지 않는다(조용히 빈 파일이 되어 복원이 깨진다).
+  scp "${SSHOPT[@]}" -i "$DST_DB_KEY" "$WORK/dump.sql.gz" "ubuntu@$DST_DB_HOST:/var/tmp/piki-migrate-dump.sql.gz" >/dev/null
   { remote_preamble "$DST_DB_CONTAINER" "$DST_SSM_PREFIX"
     cat <<'REMOTE'
-cat > "$WORK/dump.sql.gz"
-gunzip < "$WORK/dump.sql.gz" | docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysql -u root
-rm -f "$WORK/dump.sql.gz"
+gunzip < /var/tmp/piki-migrate-dump.sql.gz | docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysql -u root
+rm -f /var/tmp/piki-migrate-dump.sql.gz
 echo RESTORE_OK
 REMOTE
-  } > "$WORK/restore.sh"
-  # 스크립트와 덤프를 한 스트림으로 보낸다 — 앞부분(스크립트)이 stdin 으로 나머지(덤프)를 받는다.
-  cat "$WORK/restore.sh" "$WORK/dump.sql.gz" \
-    | ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'bash -s' | tee "$WORK/restore.out"
+  } | ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'bash -s' | tee "$WORK/restore.out"
   grep -q '^RESTORE_OK' "$WORK/restore.out" || { log "복원 결과를 확인하지 못했다"; return 1; }
   rm -f "$WORK/dump.sql.gz"
   log "복원 완료"
