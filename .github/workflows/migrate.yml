@@ -489,7 +489,10 @@ jobs:
           ACCOUNT: ${{ inputs.target_account_id }}
           # terraform 은 import·state show 에서도 root 변수를 요구한다. default 없는 둘(image_bucket_name·
           # db_backup_bucket_name)을 안 주면 "No value for required variable" 로 이 스텝이 죽는다(실측).
-          TF_VAR_environment: ${{ inputs.env }}
+          # 입력 env 를 넣지 않는다. core terraform 은 dev·prod 박스를 한 state 에 함께 정의하고
+          # (aws_instance.app=prod, aws_instance.dev_app=dev), environment 는 그 리소스들의 이름표
+          # (name_prefix = project-environment)일 뿐이다. 입력 env 를 주면 prod 실행이 dev 로 만든
+          # 리소스를 전부 다른 이름으로 보고 destroy → 재생성한다. 기본값(dev)으로 고정한다.
           TF_VAR_image_bucket_name: ${{ needs.config.outputs.image_bucket }}
           TF_VAR_db_backup_bucket_name: ${{ needs.config.outputs.db_backup_bucket }}
         run: |
@@ -507,14 +510,14 @@ jobs:
       - name: plan
         working-directory: terraform
         env:
-          ENV: ${{ inputs.env }}
           IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
           DB_BACKUP_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
         run: |
           set -euo pipefail
           # default 없는 필수 변수(variables.tf 실측): image_bucket_name·db_backup_bucket_name(둘 다 계정 파생).
-          # environment·github_repo 는 default 존재. environment 만 명시 주입.
-          export TF_VAR_environment="$ENV" TF_VAR_image_bucket_name="$IMAGE_BUCKET" TF_VAR_db_backup_bucket_name="$DB_BACKUP_BUCKET"
+          # environment 는 주지 않는다 — 입력 env 를 넣으면 prod 실행이 dev 로 만든 리소스를 다른 이름으로
+          # 보고 destroy → 재생성한다(core terraform 은 dev·prod 박스를 한 state 에 함께 정의).
+          export TF_VAR_image_bucket_name="$IMAGE_BUCKET" TF_VAR_db_backup_bucket_name="$DB_BACKUP_BUCKET"
           terraform plan -input=false -out=tfplan
 
       - name: apply (dry_run 이면 건너뜀)
