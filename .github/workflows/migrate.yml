@@ -929,13 +929,45 @@ jobs:
     with:
       migration_host: ${{ needs.side_hosts.outputs.extractor_ip }}
 
+  # renderer 는 private 레포라 `uses:` 재사용 호출이 성립하지 않는다 — access_level=organization 을 켜도
+  # 호출측 유효성 검사가 "workflow was not found" 로 막아 migrate.yml 전체가 디스패치조차 거부된다(실측).
+  # 그래서 이쪽만 API 로 트리거하고 완료·결론을 폴링한다. extractor 는 public 이라 `uses:` 를 유지한다.
   deploy_renderer:
     needs: [side_hosts]
     if: ${{ needs.side_hosts.result == 'success' }}
-    uses: TeamPiKi/renderer/.github/workflows/deploy.yml@main
-    secrets: inherit
-    with:
-      migration_host: ${{ needs.side_hosts.outputs.renderer_ip }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: renderer 배포 트리거 + 완료 대기
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          HOST: ${{ needs.side_hosts.outputs.renderer_ip }}
+        run: |
+          set -euo pipefail
+          [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — renderer 배포를 트리거할 수 없다"; exit 1; }
+          REPO=TeamPiKi/renderer
+          # 트리거 직후 실행 id 를 특정하려고, 디스패치 전 시각을 기준으로 이후 생성된 실행만 찾는다.
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run deploy.yml --repo "$REPO" --ref main -f migration_host="$HOST"
+          echo "::notice::renderer 배포 트리거 — host=$HOST"
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            sleep 5
+            RUN_ID=$(gh run list --repo "$REPO" --workflow=deploy.yml --created ">=$SINCE" \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$RUN_ID" ] && break
+          done
+          [ -n "$RUN_ID" ] || { echo "::error::renderer 실행을 찾지 못했다 — 수동 확인 필요"; exit 1; }
+          echo "::notice::renderer run=$RUN_ID 대기"
+          # 완료까지 대기(최대 30분). 결론이 success 가 아니면 이 job 도 실패시켜 cutover 로 못 넘어가게 한다.
+          for _ in $(seq 1 180); do
+            read -r ST CC < <(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion --jq '[.status,(.conclusion // "")]|@tsv')
+            [ "$ST" = "completed" ] && break
+            sleep 10
+          done
+          echo "renderer 결과: status=$ST conclusion=$CC"
+          [ "$CC" = "success" ] || { echo "::error::renderer 배포 실패(conclusion=$CC) — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
+          echo "::notice::renderer 배포 완료"
 
   # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. 파괴적이라 dry_run 이면 통째 건너뜀. dev 로 먼저 카나리 후 prod. ──
   #
