@@ -181,6 +181,24 @@ jobs:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # SSH 게이트 — 배포하는 이 job 의 러너 IP 만 22번에 잠시 열고, 끝나면 회수한다.
+      #
+      # 계정 이관 뒤 신 계정 SG 는 22번이 닫힌 채 생성된다(terraform 의 ingress 는 ignore_changes 라
+      # 관리 대상이 아니고, 구 계정에만 사람이 콘솔로 넣은 개방 규칙이 있었다). 이 게이트가 없으면
+      # 아래 scp 가 "dial tcp <ip>:22: i/o timeout" 으로 확정 실패한다(실측).
+      #
+      # action 은 @dev 를 참조한다 — 이 파일이 main 에 있어도 게이트 구현은 dev 의 것을 쓴다.
+      # AWS 자격(위 스텝)이 있어야 SG 를 조작할 수 있으므로 이 순서여야 한다.
+      #
+      # continue-on-error 인 이유: 역할에 SG 조작 권한이 없는 환경(구 계정 배포 등)에서 여기서
+      # 멈추면 게이트 없이도 되던 배포까지 막힌다. 권한이 없으면 뒤 scp 가 대신 드러낸다.
+      - name: SSH 게이트 개방 (러너 IP 만·배포 구간 한정)
+        continue-on-error: true
+        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
+        with:
+          action: open
+          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
+
       - name: Login to Amazon ECR
         id: ecr_login
         uses: aws-actions/amazon-ecr-login@v2
@@ -785,6 +803,15 @@ jobs:
 
   # main(prod) 배포 성공 후에만 GitHub Release 자동 생성 — 릴리스 = 실제로 라이브된 버전.
   # 배포 실패 시 release 가 needs(deploy) 실패로 skip 되어 "안 뜬 버전의 릴리스"가 안 남는다.
+      # 위에서 연 게이트를 회수한다. always() — 이 job 이 어디서 실패해도 22번이 열린 채 남지 않게.
+      # 게이트를 연 적이 없으면 상태 파일이 없어 그대로 통과한다.
+      - name: SSH 게이트 회수
+        if: always()
+        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
+        with:
+          action: close
+          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
+
   release:
     needs: [resolve, deploy]
     if: needs.resolve.outputs.environment == 'prod'
