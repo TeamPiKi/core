@@ -50,6 +50,9 @@ else
 fi
 
 # ── 2. 이관용 역할 ───────────────────────────────────────────────────────────
+# sub 에 세 레포를 둔다 — 이관이 core 뿐 아니라 extractor·renderer 배포도 신 계정 대상으로 돌리는데,
+# 그 배포들은 각자 레포에서 이 역할을 assume 해 ECR 에 push 한다. core 만 허용하면 그쪽이
+# "Not authorized to perform sts:AssumeRoleWithWebIdentity" 로 죽는다(실측).
 # sub 를 repo:<owner>/<repo>:* 로 둔다. 이 워크플로는 브랜치·환경을 가리지 않고 도는 데다,
 # 실행 자체가 workflow_dispatch + confirm=MIGRATE + 계정번호 대조로 이미 좁혀져 있다.
 # aud 조건은 반드시 건다 — 없으면 다른 OIDC 발급자의 토큰까지 받아들일 여지가 생긴다.
@@ -62,7 +65,11 @@ TRUST=$(cat <<JSON
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": { "${PROVIDER_HOST}:aud": "sts.amazonaws.com" },
-      "StringLike": { "${PROVIDER_HOST}:sub": "repo:${REPO}:*" }
+      "StringLike": { "${PROVIDER_HOST}:sub": [
+        "repo:${REPO}:*",
+        "repo:TeamPiKi/extractor:*",
+        "repo:TeamPiKi/renderer:*"
+      ] }
     }
   }]
 }
