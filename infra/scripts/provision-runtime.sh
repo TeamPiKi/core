@@ -21,6 +21,41 @@ for arg in "$@"; do
   esac
 done
 
+# 0) base 소프트웨어 — docker·nginx·certbot 이 없으면 깐다.
+#
+# 이 스크립트는 오랫동안 "박스에 docker 가 이미 있다" 를 전제했다. 그 전제는 terraform 의 user_data
+# (dev) 나 사람이 손으로 깐 기록(구 계정 prod)에 기대고 있었는데, 계정 이관으로 박스를 재생성하자
+# prod 쪽 전제가 통째로 사라져 2절 redis 에서 "docker: command not found" 로 죽었다(실측).
+#
+# user_data 에 기대지 않는 이유: 그것은 **첫 부팅에만** 실행된다. 이미 뜬 박스에 적용하려면 인스턴스를
+# 재생성해야 하고(terraform 은 user_data 변경을 in-place update 로 처리해 재생성하지도 않는다),
+# 그 재생성은 서비스 중인 박스에선 곧 다운타임이다. 여기서 보장하면 박스가 어떤 상태로 떠 있든
+# provision 한 번으로 준비된다 — 이 스크립트가 원래 표방하는 멱등과 같은 결이다.
+if command -v docker >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
+  echo "[base] docker·nginx 이미 설치됨 — skip"
+else
+  echo "[base] docker·nginx·certbot 설치"
+  export DEBIAN_FRONTEND=noninteractive
+  sudo -E apt-get update -qq
+  sudo -E apt-get install -y -qq ca-certificates curl nginx certbot python3-certbot-nginx
+  if ! command -v docker >/dev/null 2>&1; then
+    # Docker 공식 저장소 (arm64/t4g) — terraform 의 user_data 와 같은 절차.
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo -E apt-get update -qq
+    sudo -E apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    sudo usermod -aG docker ubuntu
+  fi
+  sudo systemctl enable --now docker
+  sudo systemctl enable --now nginx
+  # 이 셸은 usermod 이전에 열렸으므로 docker 그룹이 아직 안 붙었다. 아래 절들이 sudo 없이 docker 를
+  # 부르므로, 이번 실행에 한해 소켓 권한으로 메운다(다음 로그인부터는 그룹으로 해결된다).
+  sudo chmod 666 /var/run/docker.sock || true
+fi
+
 # 1) swap — 메모리 906Mi 라 1G swap 이 필수다. 없을 때만 생성하고 fstab 에 등록해 재부팅에도 유지되게 한다.
 if sudo swapon --show | grep -q '/swapfile'; then
   echo "[swap] 이미 활성 — skip"
