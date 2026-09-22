@@ -931,20 +931,29 @@ jobs:
 
   # core 앱 — 빌드·ECR push·배포·nginx·cert 복사까지 deploy.yml 이 통째로 처리한다.
   deploy_core_app:
-    needs: [guard, config, deploy_core]
-    if: ${{ needs.deploy_core.result == 'success' }}
+    needs: [guard, config, deploy_core, side_hosts, deploy_extractor]
+    # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 EXTRACT_REMOTE_BASE_URL 로 실측 헬스
+    # 프로브를 하고(#862), 그 주소가 비어 있거나 안 뜬 상태면 배포를 막는다(fail-fast, 의도된 안전장치).
+    if: ${{ needs.deploy_core.result == 'success' && needs.deploy_extractor.result == 'success' }}
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
       migration_host: ${{ needs.deploy_core.outputs.app_ip }}
       migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
+      # 평소 배포는 secrets.EXTRACTOR_PROD_ADDRESS(구 계정)를 쓰지만, 이관 중엔 아직 신 계정 extractor 로
+      # 바뀌지 않은 상태다(그 secret 갱신은 컷오버 후 사람이 할 정리 항목). 신 계정 IP 로 override 한다 —
+      # 안 넘기면 러너가 구 계정 extractor 에 SG·네트워크가 막혀 못 닿아 헬스 프로브에서 확정 실패한다(실측).
+      migration_extractor_address: ${{ needs.side_hosts.outputs.extractor_ip }}:8090
 
   # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
   # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —
   # piki-extractor · piki-headless-browser). 신 계정 자격으로 EC2 를 직접 물어 IP 를 얻는다.
   side_hosts:
-    needs: [guard, config, deploy_core_app]
-    if: ${{ needs.deploy_core_app.result == 'success' }}
+    needs: [guard, config, deploy_core]
+    # deploy_core_app(core 배포) 은 extractor 헬스를 배포 전에 실측 프로브한다(deploy.yml, #862 재발 방지).
+    # 그러려면 core 를 배포하기 *전에* extractor 가 이미 떠 있어야 하므로, side_hosts 는 deploy_core_app
+    # 을 기다리지 않고 인프라(deploy_core 로 대표되는 apply 완료) 직후 바로 돈다.
+    if: ${{ needs.deploy_core.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:

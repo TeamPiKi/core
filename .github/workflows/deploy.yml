@@ -28,6 +28,10 @@ on:
         description: "[이관 전용] ECR push 에 쓸 역할 ARN. 신 계정 이미지 푸시용. 비우면 vars.AWS_ECR_PUSH_ROLE_ARN."
         required: false
         type: string
+      migration_extractor_address:
+        description: "[이관 전용] host:port 형식. 채우면 secrets.EXTRACTOR_PROD_ADDRESS(구 계정) 대신 이 주소로 헬스 프로브·배포한다."
+        required: false
+        type: string
   # 계정 이관(migrate.yml)이 신 계정 박스로 이 배포를 돌리려고 호출한다. dispatch 와 같은 이관 입력을 받는다.
   # 호출이라 migrate.yml 이 완료를 기다릴 수 있다(gh workflow run 의 fire-and-forget 과 다름).
   workflow_call:
@@ -42,6 +46,10 @@ on:
         type: string
       migration_role_arn:
         description: "[이관 전용] ECR push 에 쓸 역할 ARN(신 계정)."
+        required: false
+        type: string
+      migration_extractor_address:
+        description: "[이관 전용] host:port. 신 계정 extractor 주소로 EXTRACTOR_PROD_ADDRESS 를 override."
         required: false
         type: string
 
@@ -462,7 +470,7 @@ jobs:
           # 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다(AWS 계정 이전 인시던트).
           # 워크플로 밖 수동 관리 포인트를 없애 재발을 막는다.
           # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
-          EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
+          EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', inputs.migration_extractor_address != '' && inputs.migration_extractor_address || secrets.EXTRACTOR_PROD_ADDRESS) }}
           JAVA_TOOL_OPTIONS: ${{ needs.resolve.outputs.jvm_opts }}
           MEM_LIMIT: ${{ needs.resolve.outputs.mem_limit }}
           MEM_SWAP: ${{ needs.resolve.outputs.mem_swap }}
