@@ -352,7 +352,34 @@ jobs:
             fi
           done
           rm -f /tmp/src.pem /tmp/src.pub
-          echo "::notice::키페어 등록 — $KEY (쓰던 EC2_SSH_KEY 가 신 계정 박스에도 그대로 통한다)"
+          echo "::notice::core 키페어 등록 완료 — 쓰던 EC2_SSH_KEY 가 신 계정 core 박스에 그대로 통한다"
+
+      # extractor·renderer 는 각자 자기 레포의 EC2_SSH_KEY 로 박스에 붙는다(그 레포 deploy.yml).
+      # core 키로 만든 박스에는 그 키가 안 통해 "unable to authenticate" 가 난다(실측). 그래서 두 레포의
+      # 키를 별도 키페어로 등록하고, 그 박스는 그 키페어로 만든다. 각 배포가 자기 키로 붙게 하는 것이
+      # secret 을 통일하는 것보다 안전하다 — 구 계정 배포가 그 순간 깨지지 않는다.
+      - name: 사이드 레포 키페어 등록 (extractor·renderer, 멱등)
+        env:
+          EXTRACTOR_KEY: ${{ secrets.EXTRACTOR_EC2_SSH_KEY }}
+          RENDERER_KEY: ${{ secrets.RENDERER_EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          register() {
+            local name="$1" pem="$2"
+            [ -n "$pem" ] || { echo "::warning::$name 용 키가 미설정 — 등록 생략(그 레포 배포는 SSH 실패할 수 있다)"; return 0; }
+            if aws ec2 describe-key-pairs --key-names "$name" >/dev/null 2>&1; then
+              echo "::notice::키페어 이미 등록됨 — $name"; return 0
+            fi
+            umask 077
+            printf '%s\n' "$pem" > /tmp/side.pem
+            ssh-keygen -y -f /tmp/side.pem > /tmp/side.pub 2>/dev/null || {
+              echo "::error::$name 키에서 공개키를 유도하지 못했다 — PEM 형식 확인"; rm -f /tmp/side.pem; return 1; }
+            aws ec2 import-key-pair --key-name "$name" --public-key-material "fileb:///tmp/side.pub" >/dev/null
+            rm -f /tmp/side.pem /tmp/side.pub
+            echo "::notice::키페어 등록 — $name"
+          }
+          register piki-extractor-key "${EXTRACTOR_KEY:-}"
+          register piki-renderer-key "${RENDERER_KEY:-}"
 
       - name: Discord — bootstrap 결과
         if: always()
@@ -627,7 +654,8 @@ jobs:
           # 신 계정 박스에는 그 주입이 없어 배포 scp 가 "unable to authenticate" 로 죽으므로(실측),
           # bootstrap 이 등록한 키를 지정해 만든다. 두 레포 모두 var.key_name 기본값은 빈 문자열이라
           # 평소 apply 에는 영향이 없다.
-          TF_VAR_key_name: team3-dev-SE-1
+          # 레포마다 자기 키페어로 만든다 — 그 레포 배포가 자기 EC2_SSH_KEY 로 붙기 때문(위 bootstrap 주석).
+          TF_VAR_key_name: ${{ matrix.repo == 'extractor' && 'piki-extractor-key' || 'piki-renderer-key' }}
         run: |
           set -euo pipefail
           # extractor/renderer 는 name_prefix·data 소스 기본값을 쓴다(그 외 TF_VAR 없음, variables.tf 실측).
@@ -638,7 +666,7 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         working-directory: ${{ matrix.path }}
         env:
-          TF_VAR_key_name: team3-dev-SE-1
+          TF_VAR_key_name: ${{ matrix.repo == 'extractor' && 'piki-extractor-key' || 'piki-renderer-key' }}
         run: |
           set -euo pipefail
           terraform apply -input=false -auto-approve tfplan
