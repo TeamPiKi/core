@@ -355,31 +355,27 @@ jobs:
           echo "::notice::core 키페어 등록 완료 — 쓰던 EC2_SSH_KEY 가 신 계정 core 박스에 그대로 통한다"
 
       # extractor·renderer 는 각자 자기 레포의 EC2_SSH_KEY 로 박스에 붙는다(그 레포 deploy.yml).
-      # core 키로 만든 박스에는 그 키가 안 통해 "unable to authenticate" 가 난다(실측). 그래서 두 레포의
-      # 키를 별도 키페어로 등록하고, 그 박스는 그 키페어로 만든다. 각 배포가 자기 키로 붙게 하는 것이
-      # secret 을 통일하는 것보다 안전하다 — 구 계정 배포가 그 순간 깨지지 않는다.
+      # core 키로 만든 박스에는 그 키가 안 통해 "unable to authenticate" 가 난다(실측).
+      #
+      # 두 레포는 같은 키를 쓴다(공개키 추출로 확인 — 지문 0f:47:55:…). 프라이빗 키를 secret 으로
+      # 또 받지 않고 공개키만 코드에 둔다. 공개키는 비밀이 아니고, import-key-pair 에는 그것만 필요하다.
+      # secret 을 core 값으로 통일하는 방안은 기각했다 — 통일하는 순간 구 계정 배포가 깨진다.
       - name: 사이드 레포 키페어 등록 (extractor·renderer, 멱등)
         env:
-          EXTRACTOR_KEY: ${{ secrets.EXTRACTOR_EC2_SSH_KEY }}
-          RENDERER_KEY: ${{ secrets.RENDERER_EC2_SSH_KEY }}
+          # extractor·renderer 의 EC2_SSH_KEY 공개키. 두 레포가 같은 키를 쓴다.
+          SIDE_PUBKEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSMnLAdvNW/lFN3K1BrkjcU+hmNqpC1BdkBjLNj4Udq"
         run: |
           set -euo pipefail
-          register() {
-            local name="$1" pem="$2"
-            [ -n "$pem" ] || { echo "::warning::$name 용 키가 미설정 — 등록 생략(그 레포 배포는 SSH 실패할 수 있다)"; return 0; }
-            if aws ec2 describe-key-pairs --key-names "$name" >/dev/null 2>&1; then
-              echo "::notice::키페어 이미 등록됨 — $name"; return 0
+          printf '%s\n' "$SIDE_PUBKEY" > /tmp/side.pub
+          for KEY in piki-extractor-key piki-renderer-key; do
+            if aws ec2 describe-key-pairs --key-names "$KEY" >/dev/null 2>&1; then
+              echo "::notice::키페어 이미 등록됨 — $KEY"
+            else
+              aws ec2 import-key-pair --key-name "$KEY" --public-key-material "fileb:///tmp/side.pub" >/dev/null
+              echo "::notice::키페어 등록 — $KEY"
             fi
-            umask 077
-            printf '%s\n' "$pem" > /tmp/side.pem
-            ssh-keygen -y -f /tmp/side.pem > /tmp/side.pub 2>/dev/null || {
-              echo "::error::$name 키에서 공개키를 유도하지 못했다 — PEM 형식 확인"; rm -f /tmp/side.pem; return 1; }
-            aws ec2 import-key-pair --key-name "$name" --public-key-material "fileb:///tmp/side.pub" >/dev/null
-            rm -f /tmp/side.pem /tmp/side.pub
-            echo "::notice::키페어 등록 — $name"
-          }
-          register piki-extractor-key "${EXTRACTOR_KEY:-}"
-          register piki-renderer-key "${RENDERER_KEY:-}"
+          done
+          rm -f /tmp/side.pub
 
       - name: Discord — bootstrap 결과
         if: always()
