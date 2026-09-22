@@ -48,7 +48,7 @@ on:
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, iam, infra, provision, rehearsal, deploy, cutover, finalize]
+        options: [all, bootstrap, ssm, iam, infra, provision, rehearsal, deploy, cutover, verify, finalize]
       dry_run:
         description: "true 면 되돌리기 어려운 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
         required: false
@@ -1525,9 +1525,142 @@ jobs:
           # 그 경우 실행 로그에 롤백 실패 error 가 남으므로, 사람이 그걸 보고 판단하도록 안내한다.
           detail: "실패 시 freeze 롤백이 자동으로 돈다. 실행 로그에서 '롤백 완료' 를 확인할 것 — '롤백 실패' 가 보이면 구 서비스가 내려간 채이므로 구 계정 박스에서 직접 docker start 해야 한다. 원인 해소 후 only=cutover 로 재실행."
 
+  # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
+  #
+  # cutover 의 스모크는 박스 안에서 localhost:8080 을 본다. 그것만으로는 SG·nginx·TLS·DNS 를 거친
+  # 실제 경로가 살아 있는지 알 수 없다 — 실측으로 모든 job 이 success 인데 도메인이 응답하지 않았다.
+  # 여기서는 러너(외부)에서 공개 도메인으로 실제 API 를 호출하고, 실패하면 박스에 들어가 원인을
+  # 수집해 Discord 로 함께 보낸다. only=verify 로 단독 실행해 진단 도구로도 쓴다.
+  verify:
+    needs: [guard, config, deploy_core, cutover]
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'verify' || (inputs.only == 'all' && needs.cutover.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 공개 도메인으로 실제 API 호출
+        id: probe
+        env:
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: |
+          set -uo pipefail
+          # 인증 없이 도달 가능한 경로만 고른다(SecurityConfig 의 permitAll 실측). 각 줄은
+          # "메서드 경로 기대코드[,기대코드...] 설명" 이고, 기대 코드가 여럿인 것은 데이터 상태에
+          # 따라 갈리는 응답이다(예: 없는 초대코드는 404 가 정상).
+          # 줄 구분에 개행 대신 '|' 를 쓴다 — 워크플로 YAML 블록 스칼라 안에서 열 0 으로 시작하는
+          # 개행은 블록을 닫아 버려 파싱이 깨진다(실측).
+          # 기대 코드는 구 계정 운영 도메인과 대조해 실측으로 잡았다. /health 와 /actuator/* 는
+          # permitAll 이지만 nginx 가 외부에서 막으므로(무응답·403) 200 을 기대하면 안 된다 —
+          # 오히려 403 이 "외부에 액추에이터가 안 열려 있다" 는 확인이라 기대값으로 둔다.
+          CASES='GET /actuator/health 403 액추에이터외부차단'
+          CASES="$CASES|GET /api/v1/auth/google/url 200 구글로그인URL"
+          CASES="$CASES|GET /api/v1/auth/kakao/url 200 카카오로그인URL"
+          CASES="$CASES|GET /api/v1/users/nickname/check?nickname=piki 200,400 닉네임중복확인"
+          CASES="$CASES|GET /api/v1/tournaments/by-invite-code?code=ZZZZZZ 400,404 초대코드조회"
+          # 아래는 실제 DB 쓰기까지 타는 E2E 성격이다 — 앱·DB·마이그레이션이 모두 살아야 통과한다.
+          CASES="$CASES|POST /api/v1/auth/guest 200,201 게스트토큰발급(DB쓰기)"
+
+          pass=0; fail=0; LINES=""
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            m=$(printf '%s' "$line" | cut -d' ' -f1)
+            path=$(printf '%s' "$line" | cut -d' ' -f2)
+            want=$(printf '%s' "$line" | cut -d' ' -f3)
+            desc=$(printf '%s' "$line" | cut -d' ' -f4)
+            # --max-time 으로 무응답을 000 으로 떨어뜨린다. 연결만 되고 응답이 없는 상태가
+            # 실제로 났으므로(TLS 는 성립, HTTP 응답 없음) 그 케이스를 반드시 실패로 본다.
+            # `|| echo 000` 을 붙이면 curl 이 실패할 때 자기 출력(000)에 그것이 덧붙어 '000000' 이
+            # 된다(실측). 출력만 받고 빈 값일 때만 000 으로 채운다.
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X "$m" \
+                     -H 'Content-Type: application/json' "https://$DOMAIN$path" 2>/dev/null) || true
+            [ -n "$code" ] || code=000
+            if printf '%s' "$want" | tr ',' '\n' | grep -qx "$code"; then
+              pass=$((pass+1)); mark="OK"
+            else
+              fail=$((fail+1)); mark="FAIL"
+            fi
+            printf '  %-4s %-3s %-46s %s (기대 %s)\n' "$mark" "$m" "$path" "$code" "$want"
+            LINES="$LINES$mark $desc $code"$'\n'
+          done < <(printf '%s\n' "$CASES" | tr '|' '\n')
+
+          {
+            echo "pass=$pass"
+            echo "fail=$fail"
+            echo "summary<<EOF"
+            printf '%s' "$LINES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::서비스 검증 — 통과 $pass · 실패 $fail (https://$DOMAIN)"
+          [ "$fail" -eq 0 ]
+
+      # 프로브가 깨졌을 때만 박스를 연다. 정상 경로에서 SSH 를 열지 않아 노출 시간을 줄인다.
+      - name: SSH 게이트 개방 (진단용)
+        if: failure()
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: open
+          instance-name: ${{ needs.config.outputs.app_tag }}
+
+      - name: 박스 진단 수집
+        id: diag
+        if: failure()
+        env:
+          APP_HOST: ${{ needs.deploy_core.outputs.app_ip }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -uo pipefail
+          printf '%s\n' "$SSH_KEY" > key.pem && chmod 600 key.pem
+          OUT=$(ssh -i key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=15 "ubuntu@$APP_HOST" '
+            echo "── 컨테이너 ──"; docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10
+            echo "── nginx ──"; systemctl is-active nginx; sudo nginx -t 2>&1 | tail -2
+            echo "── 업스트림 설정 ──"; cat /etc/nginx/piki-core-upstream.conf 2>/dev/null || echo "(없음)"
+            echo "── 로컬 헬스 ──"
+            curl -s -o /dev/null -w "8080=%{http_code} " --max-time 5 http://localhost:8080/health
+            curl -s -o /dev/null -w "8081=%{http_code} " --max-time 5 http://localhost:8081/health
+            curl -sk -o /dev/null -w "443=%{http_code}\n" --max-time 5 https://localhost/health
+            echo "── 앱 로그 끝 ──"
+            docker logs --tail 25 $(docker ps --filter name=piki-core --format "{{.Names}}" | head -1) 2>&1 | tail -25
+          ' 2>&1) || true
+          rm -f key.pem
+          printf '%s\n' "$OUT"
+          {
+            echo "diag<<EOF"
+            printf '%s' "$OUT" | tail -30
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: SSH 게이트 회수 (진단용)
+        if: always()
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: close
+          instance-name: ${{ needs.config.outputs.app_tag }}
+
+      - name: Discord — 서비스 검증 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "서비스 검증 ${{ job.status }} — https://${{ needs.config.outputs.domain }} (통과 ${{ steps.probe.outputs.pass || '?' }} · 실패 ${{ steps.probe.outputs.fail || '?' }})"
+          detail: |
+            ```
+            ${{ steps.probe.outputs.summary }}
+            ```
+            ${{ steps.diag.outputs.diag && format('진단:```{0}```', steps.diag.outputs.diag) || '' }}
+
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1594,6 +1727,7 @@ jobs:
             echo "| deploy extractor | ${{ needs.deploy_extractor.result }} |"
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
+            echo "| verify (외부 API 실검증) | ${{ needs.verify.result }} |"
             # skipped 는 두 뜻이다 — only 로 안 고른 단계이거나, 토큰이 없어 못 돈 단계이거나.
             # 후자는 "안 한 일"이 남았다는 뜻이라 요약에서 구분해 준다.
             # config 가 skip·실패하면 빈 문자열로 치환된다. != 'true' 로 보면 그때도 참이 되어
@@ -1610,7 +1744,7 @@ jobs:
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} verify=${{ needs.verify.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
