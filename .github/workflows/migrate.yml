@@ -1122,7 +1122,9 @@ jobs:
       # 평소 배포는 secrets.EXTRACTOR_PROD_ADDRESS(구 계정)를 쓰지만, 이관 중엔 아직 신 계정 extractor 로
       # 바뀌지 않은 상태다(그 secret 갱신은 컷오버 후 사람이 할 정리 항목). 신 계정 IP 로 override 한다 —
       # 안 넘기면 러너가 구 계정 extractor 에 SG·네트워크가 막혀 못 닿아 헬스 프로브에서 확정 실패한다(실측).
-      migration_extractor_address: ${{ needs.side_hosts.outputs.extractor_ip }}:8090
+      # 사설 IP 다 — 이 값은 앱 박스가 extractor 를 부를 주소이고, 공인 IP 로 부르면 SG 참조 규칙에
+      # 걸려 막힌다(side_hosts 주석 참조). 러너가 SSH 로 붙는 주소(extractor_ip)와 용도가 다르다.
+      migration_extractor_address: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
 
   # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
   # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —
@@ -1136,8 +1138,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:
+      # 공인 IP 는 러너가 SSH 로 붙을 때만 쓴다. 박스끼리의 호출은 아래 사설 IP 를 쓴다.
       extractor_ip: ${{ steps.find.outputs.extractor_ip }}
       renderer_ip: ${{ steps.find.outputs.renderer_ip }}
+      extractor_private_ip: ${{ steps.find.outputs.extractor_private_ip }}
     steps:
       - name: AWS 자격 (신 계정 OIDC 역할)
         uses: aws-actions/configure-aws-credentials@v4
@@ -1150,18 +1154,24 @@ jobs:
         id: find
         run: |
           set -euo pipefail
-          ip_of() {
+          ip_of() { # $1=Name $2=PublicIpAddress|PrivateIpAddress
             aws ec2 describe-instances \
               --filters "Name=tag:Name,Values=$1" "Name=instance-state-name,Values=running" \
-              --query 'Reservations[].Instances[].PublicIpAddress' --output text | tr '\t' '\n' | head -1
+              --query "Reservations[].Instances[].$2" --output text | tr '\t' '\n' | head -1
           }
-          EX=$(ip_of piki-extractor); RE=$(ip_of piki-headless-browser)
+          EX=$(ip_of piki-extractor PublicIpAddress); RE=$(ip_of piki-headless-browser PublicIpAddress)
+          # 사설 IP 를 따로 뽑는다. 앱 박스에서 extractor 를 부를 때 공인 IP 를 쓰면 트래픽이 인터넷
+          # 게이트웨이를 돌아 나갔다 들어와, extractor SG 의 "앱 SG 에서만 허용" 규칙이 소스를 앱 박스의
+          # 공인 IP 로 보고 막는다(실측: 헬스 프로브가 http://<공인>:8090 에서 실패). 같은 VPC 안에서는
+          # 사설 IP 로 가야 SG 참조가 성립한다.
+          EXP=$(ip_of piki-extractor PrivateIpAddress)
           # 못 찾으면 멈춘다 — 빈 값을 넘기면 호출된 레포가 자기 secrets.EC2_HOST(구 계정)로 폴백해
           # 이관 중에 구 계정 박스를 덮어쓴다. 그게 이 단계에서 가장 위험한 실패다.
           [ -n "$EX" ] && [ "$EX" != "None" ] || { echo "::error::extractor 박스를 못 찾음(tag:Name=piki-extractor, running) — infra_apps apply 여부 확인"; exit 1; }
           [ -n "$RE" ] && [ "$RE" != "None" ] || { echo "::error::renderer 박스를 못 찾음(tag:Name=piki-headless-browser, running) — infra_apps apply 여부 확인"; exit 1; }
-          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; } >> "$GITHUB_OUTPUT"
-          echo "::notice::extractor=$EX renderer=$RE"
+          [ -n "$EXP" ] && [ "$EXP" != "None" ] || { echo "::error::extractor 사설 IP 를 못 찾음 — 앱 박스가 extractor 를 부를 주소가 없다"; exit 1; }
+          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; echo "extractor_private_ip=$EXP"; } >> "$GITHUB_OUTPUT"
+          echo "::notice::extractor=$EX(사설 $EXP) renderer=$RE"
 
   # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
   # uses(재사용 호출)로 부르지 않는다 — secrets: inherit 이 호출자(core)의 EC2_SSH_KEY 를 주입해,
