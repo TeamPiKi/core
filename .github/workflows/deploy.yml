@@ -231,6 +231,19 @@ jobs:
           role-to-assume: ${{ inputs.migration_role_arn != '' && inputs.migration_role_arn || vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # 이관 세미 디플로이(migration_host)에서만 연다. 신 계정 SG 는 22번이 닫힌 채 생성되고
+      # (security_groups.tf 의 ingress 는 ignore_changes 라 terraform 관리 밖, 구 계정은 사람이 콘솔로
+      # 넣은 개방 규칙 덕에 평소 배포가 된다), 이 job 자신의 러너 IP 를 열어야 한다 — 게이트를 다른
+      # job(workflow_call 호출자)에서 미리 열어도 그 job 은 별개 러너라 IP 가 달라 소용없다(실측 —
+      # "dial tcp <ip>:22: i/o timeout"). AWS 자격(위 스텝)이 있어야 ssh-gate 가 SG 를 조작할 수 있어
+      # 이 순서(자격 → 게이트)여야 한다.
+      - name: SSH 게이트 개방 (이관 전용)
+        if: ${{ inputs.migration_host != '' }}
+        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
+        with:
+          action: open
+          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
+
       - name: Login to Amazon ECR
         id: ecr_login
         uses: aws-actions/amazon-ecr-login@v2
@@ -257,6 +270,7 @@ jobs:
       # source: infra/* 는 Checkout(서비스 전용), shared-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 공용 정본.
       # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
       # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
+
       - name: Upload deploy files
         id: upload_files
         uses: appleboy/scp-action@v1
@@ -739,6 +753,16 @@ jobs:
             -H "Content-Type: application/json; charset=utf-8" \
             --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
           [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
+
+      # 위에서 연 게이트를 회수한다. always() — 이 job 이 어디서 실패해도 22번이 열린 채 남지 않게.
+      # !=skipped 로 두는 이유: ssh-gate 는 SG 를 순서대로 처리해, 앞 SG 에 규칙을 넣은 뒤 다음 SG 에서
+      # 실패하면 open 스텝 자체는 failure 이지만 22번은 이미 일부 열려 있다(#1134 에서 실제로 겪은 함정).
+      - name: SSH 게이트 회수 (이관 전용)
+        if: ${{ always() && inputs.migration_host != '' }}
+        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
+        with:
+          action: close
+          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
 
   # main(prod) 배포 성공 후에만 GitHub Release 자동 생성 — 릴리스 = 실제로 라이브된 버전.
   # 배포 실패 시 release 가 needs(deploy) 실패로 skip 되어 "안 뜬 버전의 릴리스"가 안 남는다.
