@@ -78,18 +78,39 @@ runs:
 
         if [ "$ACTION" = close ]; then
           [ -s "$STATE_FILE" ] || { echo "::notice::SSH 게이트 — 되돌릴 규칙 없음 ($INSTANCE_NAME)"; exit 0; }
+          FAILED=0
+          REMAIN=$(mktemp)
           while read -r sg cidr; do
             [ -n "${sg:-}" ] || continue
-            if aws ec2 revoke-security-group-ingress --group-id "$sg" \
-                 --ip-permissions "IpProtocol=tcp,FromPort=$PORT,ToPort=$PORT,IpRanges=[{CidrIp=$cidr}]" \
-                 >/dev/null 2>&1; then
+            # 일시적 API 오류(스로틀링 등)로 규칙이 남는 것을 막기 위해 몇 번 다시 시도한다.
+            # 남은 규칙은 "이 러너 IP 로 22번이 계속 열려 있다" 는 뜻이라 조용히 넘길 수 없다 —
+            # GitHub 러너 IP 는 공유 풀이라 다음에 그 주소를 받는 쪽이 우리 박스에 닿는다.
+            ok=0
+            for attempt in 1 2 3; do
+              if ERR=$(aws ec2 revoke-security-group-ingress --group-id "$sg" \
+                   --ip-permissions "IpProtocol=tcp,FromPort=$PORT,ToPort=$PORT,IpRanges=[{CidrIp=$cidr}]" \
+                   2>&1 >/dev/null); then
+                ok=1; break
+              fi
+              # 규칙이 이미 없으면 회수된 것과 같다(누가 먼저 지웠거나 앞 시도가 실제로는 성공).
+              if printf '%s' "$ERR" | grep -q 'InvalidPermission.NotFound'; then ok=1; break; fi
+              [ "$attempt" -lt 3 ] && sleep 3
+            done
+            if [ "$ok" = 1 ]; then
               echo "::notice::SSH 게이트 회수 — $sg $PORT/tcp ← $cidr"
             else
-              echo "::warning::SSH 게이트 회수 실패 — $sg $cidr. 콘솔에서 직접 지워야 한다(러너 IP 가 남는다)"
+              echo "::error::SSH 게이트 회수 실패 — $sg $cidr ($ERR). 이 규칙이 남아 있으면 러너 IP 로 22번이 열린 채다 — 콘솔에서 직접 지울 것"
+              printf '%s %s\n' "$sg" "$cidr" >> "$REMAIN"
+              FAILED=1
             fi
           done < "$STATE_FILE"
-          rm -f "$STATE_FILE"
-          exit 0
+          if [ "$FAILED" = 0 ]; then
+            rm -f "$STATE_FILE" "$REMAIN"
+            exit 0
+          fi
+          # 회수하지 못한 것만 상태 파일에 남긴다 — 이 job 을 재실행하면 그것만 다시 시도한다.
+          mv "$REMAIN" "$STATE_FILE"
+          exit 1
         fi
 
         echo "::error::action 은 open|close 여야 한다 (받은 값: $ACTION)"
