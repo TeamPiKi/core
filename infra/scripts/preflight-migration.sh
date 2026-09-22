@@ -27,6 +27,11 @@ set -euo pipefail
 ENVIRONMENT="${1:-prod}"
 # 이미지 핀은 provision-runtime.sh·deploy.yml 의 SSM pull 과 같은 버전을 쓴다 (박스에 aws cli 가 없다).
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+# mysql 클라이언트도 컨테이너로 부른다. 앱 박스에 mysql-client 가 깔려 있다는 전제는 구 계정에서만
+# 참이었다(사람이 손으로 깐 것). 계정 이관으로 박스를 새로 세우자 "mysql: command not found" 로
+# 프리플라이트가 rc=2 를 냈다(실측). 태그는 운영 DB(infra/compose/db.yml)와 같은 8.4 로 맞춘다 —
+# 클라이언트가 서버보다 낮으면 인증 플러그인에서 걸린다.
+MYSQL_IMAGE="mysql:8.4"
 REGION="ap-northeast-2"
 SSM_PREFIX="/piki-core/${ENVIRONMENT}"
 # 한시 절이 지키는 백필. 이 버전이 적용돼 있으면 클론 가드를 건너뛴다(상설 절은 그대로 돈다).
@@ -72,10 +77,20 @@ export MYSQL_PWD
 # 명령 치환은 그 코드를 그대로 전달하고, 상세 표의 파이프도 pipefail 덕에 2 를 그대로 올린다.
 q() {
   local out
-  if ! out=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1"); then
+  # --network host 로 박스 네트워크를 그대로 쓴다(DB 는 같은 VPC 사설 IP). MYSQL_PWD 는 -e 로
+  # 넘겨 프로세스 목록·로그에 남기지 않는다 — 직접 호출하던 때와 같은 이유다.
+  #
+  # stderr 는 버리지 않고 따로 받아 실패했을 때만 보여 준다. 그냥 흘리면 docker 의 pull 진행
+  # 메시지가 결과 표에 섞이고, /dev/null 로 묻으면 정작 접속 실패 사유가 사라진다.
+  local errf; errf=$(mktemp)
+  if ! out=$(docker run --rm --network host -e MYSQL_PWD "$MYSQL_IMAGE" \
+               mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1" 2>"$errf"); then
+    err "mysql: $(tr '\n' ' ' < "$errf" | head -c 300)"
+    rm -f "$errf"
     err "DB 조회 실패 (${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_NAME}) — SQL 첫 줄: ${1%%$'\n'*}"
     exit 2
   fi
+  rm -f "$errf"
   # 빈 결과에 개행 한 줄을 만들지 않는다 — 상세 표의 `while read` 가 빈 행 하나를 찍는다.
   [ -n "$out" ] || return 0
   printf '%s\n' "$out"
