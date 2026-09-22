@@ -27,6 +27,8 @@ set -euo pipefail
 ENVIRONMENT="${1:-prod}"
 # 이미지 핀은 provision-runtime.sh·deploy.yml 의 SSM pull 과 같은 버전을 쓴다 (박스에 aws cli 가 없다).
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+# 앱 박스에는 mysql 클라이언트도 없다(신 계정 박스 실측, #1163). DB 박스가 띄우는 서버와 같은 이미지(provision-runtime.sh)로 클라이언트를 돌린다.
+MYSQL_IMAGE="mysql:8.4"
 REGION="ap-northeast-2"
 SSM_PREFIX="/piki-core/${ENVIRONMENT}"
 # 한시 절이 지키는 백필. 이 버전이 적용돼 있으면 클론 가드를 건너뛴다(상설 절은 그대로 돈다).
@@ -72,7 +74,8 @@ export MYSQL_PWD
 # 명령 치환은 그 코드를 그대로 전달하고, 상세 표의 파이프도 pipefail 덕에 2 를 그대로 올린다.
 q() {
   local out
-  if ! out=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1"); then
+  if ! out=$(docker run --rm --network host -e MYSQL_PWD "$MYSQL_IMAGE" \
+      mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -N -B "$DB_NAME" -e "$1"); then
     err "DB 조회 실패 (${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_NAME}) — SQL 첫 줄: ${1%%$'\n'*}"
     exit 2
   fi
