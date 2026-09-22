@@ -131,6 +131,7 @@ jobs:
       root_pw_param: ${{ steps.map.outputs.root_pw_param }}
       app_tag: ${{ steps.map.outputs.app_tag }}
       image_bucket: ${{ steps.map.outputs.image_bucket }}
+      old_image_bucket: ${{ steps.map.outputs.old_image_bucket }}
       db_backup_bucket: ${{ steps.map.outputs.db_backup_bucket }}
       src_backup_bucket: ${{ steps.map.outputs.src_backup_bucket }}
       tfstate_bucket: ${{ steps.map.outputs.tfstate_bucket }}
@@ -162,11 +163,18 @@ jobs:
             DB_CONTAINER=piki-prod-mysql; DB_EXEC=ssm; APP_IP_OUTPUT=ec2_public_ip;     DB_IP_OUTPUT=db_ec2_private_ip; DB_TAG=piki-prod-db;  APP_TAG=piki-prod-app;  DOMAIN=api.piki.day
             # prod 는 provision-db.sh 가 별도 DB 박스를 띄우며 root 비번을 db-root-password 로 따로 둔다.
             ROOT_PW_PARAM=db-root-password
+            # prod 이미지 버킷은 접두사 없는 var.image_bucket_name 그대로다(terraform/s3.tf).
+            IMAGE_PREFIX=""
           else
             DB_CONTAINER=piki-mysql;      DB_EXEC=ssh; APP_IP_OUTPUT=dev_ec2_public_ip; DB_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-app;  APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
             # dev 는 provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가
             # 곧 root 비번이고, db-root-password 라는 파라미터는 존재하지 않는다(실측).
             ROOT_PW_PARAM=db-password
+            # dev 이미지 버킷은 prod 와 분리된 별도 버킷이고 이름이 dev- 로 시작한다(terraform/s3.tf 의
+            # aws_s3_bucket.dev_images = "dev-${var.image_bucket_name}", outputs.tf 의 dev_image_bucket_name).
+            # 이 분기가 없으면 dev 컷오버가 dev 객체를 하나도 옮기지 않은 채 prod 버킷 전량을 freeze
+            # 구간 안에서 실어 나른다 — 컷오버 후 dev 이미지 전멸 + 다운타임 증폭.
+            IMAGE_PREFIX="dev-"
           fi
           {
             echo "app_tag=$APP_TAG"
@@ -178,7 +186,8 @@ jobs:
             echo "db_ip_output=$DB_IP_OUTPUT"           # dev 는 앱 박스와 같은 값(동거)
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
             echo "root_pw_param=$ROOT_PW_PARAM"          # root 비번이 담긴 SSM 파라미터 이름(env 별로 다르다)
-            echo "image_bucket=piki-images-$ACCOUNT"
+            echo "image_bucket=${IMAGE_PREFIX}piki-images-$ACCOUNT"
+            echo "old_image_bucket=${IMAGE_PREFIX}piki-images-$OLD_ACCOUNT_ID"  # 이미지 sync 의 출발 버킷(구 계정)
             echo "db_backup_bucket=piki-db-backup-$ACCOUNT"
             echo "src_backup_bucket=piki-db-backup-$OLD_ACCOUNT_ID"  # 덤프 릴레이의 출발 버킷(구 계정)
             echo "tfstate_bucket=piki-tfstate-$ACCOUNT"
@@ -401,10 +410,8 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
-      - name: SSM 파라미터 이식 (경로별 복사 + 계정번호 치환)
+      - name: SSM 파라미터 이식 (구 계정 전량 복사 + 계정번호 치환)
         env:
-          SSM_PREFIX: ${{ needs.config.outputs.ssm_prefix }}
-          ROOT_PW_PARAM: ${{ needs.config.outputs.root_pw_param }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
           SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
@@ -413,36 +420,48 @@ jobs:
           [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
             echo "::error::구 계정 읽기 자격(MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET) 미설정 — SSM 이식 불가"; exit 1; }
 
-          migrate_prefix() {
-            local prefix="$1" names name type value newvalue count=0
-            names=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-              aws ssm get-parameters-by-path --path "$prefix" --recursive \
-              --region "$AWS_REGION" --query 'Parameters[].Name' --output text)
-            [ -n "$names" ] || { echo "::warning::$prefix 아래 파라미터 없음 — 이식할 것 없음"; return 0; }
-            for name in $names; do
-              type=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-                aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
-                --query 'Parameter.Type' --output text)
-              value=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-                aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
-                --query 'Parameter.Value' --output text)
-              # 값에 박힌 구 계정번호를 신 계정번호로 치환(S3 버킷명·ARN 등). 그 외 문자열은 그대로.
-              newvalue=${value//$OLD_ACCOUNT_ID/$NEW_ACCOUNT}
-              # 신 계정 쓰기는 주변 환경 자격(OIDC 로 맡은 역할)으로 한다. 구 계정 읽기만 키를 앞에 붙인다.
-              aws ssm put-parameter --name "$name" --type "$type" --value "$newvalue" \
-                --overwrite --region "$AWS_REGION" >/dev/null
-              count=$((count+1))
-              echo "  이식: $name ($type)"
-            done
-            echo "::notice::SSM 이식 완료 — $count 개 ($prefix)"
-          }
+          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
 
-          migrate_prefix "$SSM_PREFIX"
-          # 관측(Grafana Alloy) 자격은 env 별 경로가 아니라 계정 공유 경로에 있다 — provision-runtime.sh·
-          # provision-db.sh·extractor·renderer 세 박스가 같은 /piki/observability/grafana-* 를 읽는다(#771).
-          # 이 경로를 빠뜨리면 provision 은 통과해도(--skip-alloy) 실제 배포(deploy.yml)의 alloy 스텝이
-          # 'ParameterNotFound' 로 죽는다(실측). 계정 단위라 env 와 무관하게 한 번만 이식.
-          migrate_prefix "/piki/observability"
+          # 경로를 열거하지 않고 구 계정의 파라미터 전량을 옮긴다. 경로 목록을 코드에 박으면 소비자가 늘
+          # 때마다 여기가 낡는다 — 실제로 /piki-core·/piki/observability 만 박아 둔 탓에 extractor 가
+          # 'no parameters in input'(/piki-extractor/app 부재)으로 죽었다(실측). renderer 는 배포 때
+          # SSM 을 안 읽어 통과했지만 런타임에 /piki-headless-browser 를 읽으므로 같은 결함을 품고 있었다.
+          # 전량 복사의 비용은 dev 실행 때 prod 경로까지 신 계정에 미리 심기는 것뿐이고, 구 계정은 읽기만
+          # 하므로 기존 운영에 영향이 없다.
+          # Tier 를 이름과 함께 받는다. put-parameter 에 --tier 를 안 주면 대상 계정의 기본 tier(Standard,
+          # 값 4KB 상한)가 적용되어, 구 계정의 Advanced 파라미터가 중간에서 실패한다. 이 루프는 순차 실행에
+          # 롤백이 없어 그 실패는 "앞부분만 이식된" 상태를 남긴다. 탭 구분 출력이라 IFS 를 탭으로 고정한다.
+          rows=$(src ssm describe-parameters --region "$AWS_REGION" \
+            --query 'Parameters[].[Name,Tier]' --output text --page-size 50 | sed '/^$/d' | sort)
+          [ -n "$rows" ] || { echo "::error::구 계정 SSM 파라미터 0개 — 자격·리전 확인"; exit 1; }
+          echo "대상 $(printf '%s\n' "$rows" | wc -l) 개"
+
+          count=0
+          while IFS=$'\t' read -r name tier; do
+            [ -n "$name" ] || continue
+            # describe-parameters 가 Tier 를 안 돌려주는 경우(None)엔 Standard 로 둔다 — 그 값이 기본이다.
+            case "$tier" in ""|None) tier=Standard ;; esac
+            type=$(src ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+              --query 'Parameter.Type' --output text)
+            value=$(src ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+              --query 'Parameter.Value' --output text)
+            # 값에 박힌 구 계정번호를 신 계정번호로 치환(S3 버킷명·ARN 등). 그 외 문자열은 그대로.
+            newvalue=${value//$OLD_ACCOUNT_ID/$NEW_ACCOUNT}
+            # 신 계정 쓰기는 주변 환경 자격(OIDC 로 맡은 역할)으로 한다. 구 계정 읽기만 키를 앞에 붙인다.
+            aws ssm put-parameter --name "$name" --type "$type" --tier "$tier" --value "$newvalue" \
+              --overwrite --region "$AWS_REGION" >/dev/null
+            count=$((count+1))
+            echo "  이식: $name ($type, $tier)"
+            # 값에 공인 IPv4 가 박혀 있으면 구 계정 박스를 가리킬 수 있다. 계정번호와 달리 IP 는 신 계정
+            # EIP 가 아직 없는 시점이라(이 job 이 infra 보다 먼저) 자동 치환이 불가능하다. 값은 절대 찍지
+            # 않고 이름만 남겨, 어느 파라미터를 사람이 확인해야 하는지 로그로 드러낸다.
+            case "$newvalue" in
+              *[0-9].[0-9]*.[0-9]*.[0-9]*)
+                printf '%s' "$newvalue" | grep -qE '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' \
+                  && echo "::warning::$name 값에 IPv4 가 박혀 있다 — 구 계정 박스를 가리키는지 확인 필요" ;;
+            esac
+          done <<< "$names"
+          echo "::notice::SSM 이식 완료 — $count 개 (구 계정 전량)"
 
       - name: Discord — ssm 결과
         if: always()
@@ -868,7 +887,7 @@ jobs:
           DST_DB_HOST: ${{ steps.tf.outputs.dst_db }}
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
-          OLD_IMAGE_BUCKET: piki-images-${{ env.OLD_ACCOUNT_ID }}
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
@@ -974,7 +993,12 @@ jobs:
     # deploy_extractor 를 끈 경우(skipped)도 진행한다 — extractor 박스 자체는 infra_apps 가 세웠고,
     # core 배포의 헬스 프로브는 "그 주소가 응답하는가" 만 본다. 서비스가 아직 안 떴다면 그 프로브가
     # 걸러낼 것이므로 여기서 미리 막지 않는다.
-    if: ${{ always() && needs.deploy_core.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
+    #
+    # side_hosts 의 성공을 함께 요구한다. 그게 빠져 있으면 side_hosts 가 실패했을 때 extractor_ip 가 빈
+    # 값으로 내려와 migration_extractor_address 가 ":8090" 이 되고, deploy.yml 의 빈-host 가드("http://"
+    # 정확히 일치)를 통과해 헬스 프로브에서 확정 실패한다. 그 실패는 다시 cutover 의 게이트를 막아
+    # 컷오버가 구조적으로 도달 불가가 된다 — 원인이 side_hosts 인데 증상은 core 배포 실패로 보인다.
+    if: ${{ always() && needs.deploy_core.result == 'success' && needs.side_hosts.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
@@ -1207,6 +1231,24 @@ jobs:
             exit 1; }
           echo "::notice::사전 점검 통과 — 구 계정=$SRC_APP_HOST, 신 계정=$NEW_IP"
 
+      # 이미지 벌크 sync 를 freeze *앞*에 둔다. 러너의 imgs 는 매 실행 빈 디렉터리라 s3 sync 가 버킷
+      # 전량을 내려받는데(이름만 델타다), 이게 freeze 뒤에 있으면 다운타임이 곧 버킷 전체 전송 시간이
+      # 된다. 여기서 대부분을 미리 받아 두고, freeze 뒤 스텝은 같은 디렉터리를 재사용해 그 사이 늘어난
+      # 분량만 받는다 — 그래서 여기서 imgs 를 지우지 않는다.
+      - name: S3 이미지 벌크 sync (freeze 이전 — 다운타임 밖)
+        env:
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
+          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ] || { echo "::notice::같은 버킷 — sync 불필요"; exit 0; }
+          mkdir -p imgs
+          env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+          aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
+          echo "::notice::이미지 벌크 sync 완료 — $(find imgs -type f | wc -l) 개 (freeze 밖)"
+
       - name: freeze→덤프/복원→URL재작성→행수 대조
         env:
           DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }}
@@ -1219,7 +1261,7 @@ jobs:
           DST_DB_HOST: ${{ steps.tf.outputs.dst_db }}
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
-          OLD_IMAGE_BUCKET: piki-images-${{ env.OLD_ACCOUNT_ID }}
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
@@ -1249,7 +1291,7 @@ jobs:
 
       - name: S3 이미지 최종 델타 sync → 신 계정 앱 스모크
         env:
-          OLD_IMAGE_BUCKET: piki-images-${{ env.OLD_ACCOUNT_ID }}
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
@@ -1259,12 +1301,16 @@ jobs:
         run: |
           set -euo pipefail
           # 여기서 실패하면 구 앱이 정지된 채 남는다 — 롤백 경계를 이어받는다.
-          trap 'bash infra/scripts/migrate-unfreeze.sh' ERR
+          # ERR 이 아니라 EXIT 로 잡는다. `cmd || { ...; exit 1; }` 형태는 좌변 실패가 ERR 을 발화시키지
+          # 않고 exit 도 ERR 이 아니라 EXIT 를 타므로, ERR trap 이면 이 스텝에서 가장 흔한 실패(아래
+          # 신 앱 헬스 실패)에서 롤백이 죽은 코드가 된다(실측).
+          trap 'rc=$?; [ "$rc" -eq 0 ] || bash infra/scripts/migrate-unfreeze.sh' EXIT
           if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
+            # imgs 는 위 벌크 sync 가 남겨 둔 것이다(같은 job = 같은 워크스페이스). 지우지 않고 재사용해야
+            # s3 sync 의 크기·mtime 비교가 먹어 freeze 구간에서는 증분만 오간다.
             mkdir -p imgs
             env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
-            rm -rf imgs
           fi
           # 스모크 — 신 계정 앱 헬스(블루/그린 8080·8081). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
           SSHOPT=(-i key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
@@ -1292,9 +1338,18 @@ jobs:
             바꾸시면 자동으로 감지해 이어서 진행합니다. 따로 누르실 것은 없습니다.
             시간이 초과되면 구 서비스를 자동으로 되살리니, 그 뒤 only=cutover 로 다시 실행하시면 됩니다.
           # 복수 해소기를 본다 — 하나만 보면 그 resolver 만 갱신된 상태를 전파 완료로 오인한다.
+          #
+          # "신 IP 가 응답에 들어 있나" 가 아니라 "정확히 신 IP 하나만 돌아오나" 로 닫는다. 가비아에서
+          # 레코드를 편집하는 동안 구·신 A 레코드가 잠시 공존하면 응답이 2줄이 되는데, tail -1 로 보면
+          # 그 순간을 전파 완료로 오인한다. 바로 다음 스텝이 롤백 경계를 해제하므로, 그 오판은 트래픽
+          # 절반이 정지된 구 박스로 가는 채 되돌릴 수단이 사라지는 상태로 직결된다.
+          # CNAME 줄은 걸러낸다(config 의 구 계정 주소 해소와 같은 필터).
           check: |
-            [ "$(dig +short @1.1.1.1 ${{ needs.config.outputs.domain }} | tail -1)" = "${{ steps.tf.outputs.dst_app }}" ] &&
-            [ "$(dig +short @8.8.8.8 ${{ needs.config.outputs.domain }} | tail -1)" = "${{ steps.tf.outputs.dst_app }}" ]
+            NEW="${{ steps.tf.outputs.dst_app }}"
+            for R in 1.1.1.1 8.8.8.8; do
+              GOT=$(dig +short "@$R" ${{ needs.config.outputs.domain }} | grep -E '^[0-9.]+$' | sort -u)
+              [ "$GOT" = "$NEW" ] || exit 1
+            done
           timeout-minutes: "45"
           interval-seconds: "20"
           remind-minutes: "10"
@@ -1312,10 +1367,16 @@ jobs:
           rm -f key.pem
           echo "::notice::cutover 완료 — 롤백 경계 해제. 구 앱은 정지 상태 유지(롤백 여지)"
 
-      # 어느 스텝에서 실패했든 마지막으로 한 번 더 확인한다. 위 trap 은 그 스텝 안에서만 유효하고,
+      # 어느 스텝에서 어떻게 끝났든 마지막으로 한 번 더 확인한다. 위 trap 은 그 스텝 안에서만 유효하고,
       # 상태 파일이 남아 있다는 건 freeze 가 걸린 채 끝났다는 뜻이다.
-      - name: 실패 시 freeze 롤백 (최종 안전망)
-        if: failure()
+      #
+      # failure() 가 아니라 always() 다 — failure() 는 취소에서 false 라, freeze 이후 가장 긴 구간인
+      # "DNS 전환 대기(45분)" 중에 사람이 Actions 에서 취소하거나 job timeout 에 걸리면 구 앱이 정지된
+      # 채 영구 방치된다. freeze 는 이 워크플로의 유일한 다운타임이라 가장 비싼 실패다.
+      # 성공 경로에서는 바로 위 스텝이 상태 파일을 지우고 migrate-unfreeze.sh 가 그걸 보고 즉시 빠져나가
+      # no-op 이므로, always() 로 둬도 되살리는 오작동이 없다.
+      - name: freeze 롤백 (최종 안전망 — 실패·취소 공통)
+        if: always()
         env:
           SRC_APP_HOST: ${{ needs.config.outputs.src_app_host }}
           SRC_APP_KEY: key.pem
@@ -1335,12 +1396,17 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "cutover ${{ job.status }} (env=${{ inputs.env }})"
-          detail: "실패했다면 freeze 롤백이 자동으로 돌아 구 서비스가 복구된 상태다(DNS 는 아직 구 계정). 원인 해소 후 only=cutover 로 재실행."
+          # "복구됐다" 고 단정하지 않는다 — migrate-unfreeze.sh 는 SSH 가 안 되면 복구에 실패한 채 끝난다.
+          # 그 경우 실행 로그에 롤백 실패 error 가 남으므로, 사람이 그걸 보고 판단하도록 안내한다.
+          detail: "실패 시 freeze 롤백이 자동으로 돈다. 실행 로그에서 '롤백 완료' 를 확인할 것 — '롤백 실패' 가 보이면 구 서비스가 내려간 채이므로 구 계정 박스에서 직접 docker start 해야 한다. 원인 해소 후 only=cutover 로 재실행."
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
-    if: ${{ always() && (inputs.only == 'all' || inputs.only == 'finalize') }}
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
+    # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
+    # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
+    # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
@@ -1397,17 +1463,22 @@ jobs:
             echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
             echo "| rehearsal | ${{ needs.rehearsal.result }} |"
+            echo "| side_hosts (extractor·renderer IP 조회) | ${{ needs.side_hosts.result }} |"
             echo "| deploy core | ${{ needs.deploy_core_app.result }} |"
             echo "| deploy extractor | ${{ needs.deploy_extractor.result }} |"
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
             # skipped 는 두 뜻이다 — only 로 안 고른 단계이거나, 토큰이 없어 못 돈 단계이거나.
             # 후자는 "안 한 일"이 남았다는 뜻이라 요약에서 구분해 준다.
-            if [ "${{ needs.config.outputs.has_cross_repo_token }}" != "true" ]; then
+            # config 가 skip·실패하면 빈 문자열로 치환된다. != 'true' 로 보면 그때도 참이 되어
+            # "토큰이 없어 안 세웠다" 는 사실과 다른 안내가 나가므로, 명시적으로 false 일 때만 띄운다.
+            if [ "${{ needs.config.outputs.has_cross_repo_token }}" = "false" ]; then
               echo
               echo "> **미완료** — \`CROSS_REPO_TOKEN\` 이 없어 extractor·renderer 인프라를 세우지 않았다."
-              echo "> 앱·DB 는 이관됐지만 신 계정에 추출·렌더 박스가 없다. 토큰을 등록한 뒤"
-              echo "> \`only=infra\` 로 다시 돌리면 그 부분만 채워진다."
+              echo "> 그 결과 이 실행은 인프라·DB 까지만 갔다. core 배포는 배포 직전 extractor 헬스를"
+              echo "> 실측 프로브하는데 그 박스가 없어 \`side_hosts\` 가 멈추고, 그 뒤 core 배포와 컷오버가"
+              echo "> 함께 막힌다(의도된 fail-closed — 반쯤 이관된 상태로 DNS 를 넘기지 않기 위해서다)."
+              echo "> 토큰을 등록한 뒤 \`only=all\` 로 다시 돌리면 이어서 진행된다."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           # Discord detail 용 한 줄 요약
@@ -1418,6 +1489,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Discord — 이관 요약 보드
+        # 앞 스텝(요약 조립)이 실패해도 보드는 나가야 한다 — 다른 모든 job 의 Discord 스텝과 같은 결.
+        if: always()
         uses: ./.github/actions/discord-notify
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}

@@ -126,7 +126,8 @@ done
 if [ -n "$NEW_CREDS" ]; then
   if [ -n "$DISCORD_BOT_TOKEN" ] && [ -n "$ADMIN_DISCORD_ID" ]; then
     ACCOUNT=$(dst sts get-caller-identity --query Account --output text)
-    CONTENT="**$GROUP_NAME 초기 자격 (첫 로그인 시 비밀번호 변경 필수)**"$'\n'"콘솔: https://$ACCOUNT.signin.aws.amazon.com/console"$'\n'"---$NEW_CREDS"
+    # URL 은 <> 로 감싸 Discord 링크 프리뷰를 억제한다 (discord-notify 와 같은 결).
+    CONTENT="**$GROUP_NAME 초기 자격 (첫 로그인 시 비밀번호 변경 필수)**"$'\n'"콘솔: <https://$ACCOUNT.signin.aws.amazon.com/console>"$'\n'"---$NEW_CREDS"
     # 봇으로 admin 과의 DM 채널을 열고(그 채널로만), 거기에 비번 목록을 보낸다. 채널 게시 아님.
     DM_ID=$(curl -sf -X POST -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H 'Content-Type: application/json' \
       -d "{\"recipient_id\":\"$ADMIN_DISCORD_ID\"}" https://discord.com/api/v10/users/@me/channels \

@@ -40,7 +40,9 @@ runs:
         # content 를 파이썬으로 JSON 인코딩 — 따옴표·역슬래시·개행을 안전하게 이스케이프(수동 조립의 깨진 JSON 방지).
         CONTENT="$EMOJI $TITLE"
         [ -n "${DETAIL:-}" ] && CONTENT="$CONTENT"$'\n'"$DETAIL"
-        CONTENT="$CONTENT"$'\n'"실행 로그: $RUN_URL"
+        # URL 을 <> 로 감싸 링크 프리뷰(GitHub 카드)를 억제한다. 이관은 알림이 수십 건 오가는데 매 건마다
+        # 큰 카드가 펼쳐지면 정작 읽어야 할 제목·본문이 스크롤 밖으로 밀린다. 링크는 그대로 눌린다.
+        CONTENT="$CONTENT"$'\n'"실행 로그: <$RUN_URL>"
         BODY=$(CONTENT="$CONTENT" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
         curl -sf -X POST -H 'Content-Type: application/json' -d "$BODY" "$WEBHOOK" >/dev/null \
           || echo "::warning::Discord 전송 실패 — 무시하고 계속한다"
