@@ -54,6 +54,11 @@ on:
         required: false
         default: false
         type: boolean
+      deploy_side_services:
+        description: "extractor·renderer 서비스 배포 여부. 두 레포는 자기 EC2_SSH_KEY 로 박스에 붙는데 신 계정 박스는 core 키로 생성돼 인증이 안 된다(키 통일 전까지 false 권장)."
+        required: false
+        default: false
+        type: boolean
 
 # 호출한 워크플로(deploy.yml)는 호출자의 권한을 넘겨받되 그보다 넓을 수 없다. 좁으면
 # "nested job is requesting X, but is only allowed none" 으로 migrate.yml 자체가 유효성 검사에서 거부된다.
@@ -942,7 +947,10 @@ jobs:
     needs: [guard, config, deploy_core, side_hosts, deploy_extractor]
     # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 EXTRACT_REMOTE_BASE_URL 로 실측 헬스
     # 프로브를 하고(#862), 그 주소가 비어 있거나 안 뜬 상태면 배포를 막는다(fail-fast, 의도된 안전장치).
-    if: ${{ needs.deploy_core.result == 'success' && needs.deploy_extractor.result == 'success' }}
+    # deploy_extractor 를 끈 경우(skipped)도 진행한다 — extractor 박스 자체는 infra_apps 가 세웠고,
+    # core 배포의 헬스 프로브는 "그 주소가 응답하는가" 만 본다. 서비스가 아직 안 떴다면 그 프로브가
+    # 걸러낼 것이므로 여기서 미리 막지 않는다.
+    if: ${{ always() && needs.deploy_core.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
@@ -995,7 +1003,10 @@ jobs:
   # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
   deploy_extractor:
     needs: [side_hosts]
-    if: ${{ needs.side_hosts.result == 'success' }}
+    # 기본 false — 신 계정 박스는 core 의 EC2_SSH_KEY 로 만들어지는데 이 레포 배포는 자기 레포의
+    # EC2_SSH_KEY 로 붙어 "unable to authenticate" 가 난다(실측). 두 레포 키를 core 것으로 통일한
+    # 뒤에 켠다. 꺼도 core 이관(DB·앱·컷오버)은 완결되고, 추출·렌더는 그 뒤 따로 배포하면 된다.
+    if: ${{ needs.side_hosts.result == 'success' && inputs.deploy_side_services }}
     uses: TeamPiKi/extractor/.github/workflows/deploy.yml@main
     secrets: inherit
     with:
@@ -1009,7 +1020,8 @@ jobs:
   # 그래서 이쪽만 API 로 트리거하고 완료·결론을 폴링한다. extractor 는 public 이라 `uses:` 를 유지한다.
   deploy_renderer:
     needs: [side_hosts]
-    if: ${{ needs.side_hosts.result == 'success' }}
+    # deploy_extractor 와 같은 이유로 기본 false (위 주석 참고).
+    if: ${{ needs.side_hosts.result == 'success' && inputs.deploy_side_services }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
