@@ -1187,6 +1187,9 @@ jobs:
       # 사설 IP 다 — 이 값은 앱 박스가 extractor 를 부를 주소이고, 공인 IP 로 부르면 SG 참조 규칙에
       # 걸려 막힌다(side_hosts 주석 참조). 러너가 SSH 로 붙는 주소(extractor_ip)와 용도가 다르다.
       migration_extractor_address: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
+      # 이관은 이 파일이 놓인 브랜치(dev)에서 호출되므로, 넘기지 않으면 deploy.yml 이 브랜치만 보고
+      # prod 이관을 dev 환경으로 배선한다 — dev 키로 prod 박스에 붙어 SSH 인증이 실패한다(실측).
+      migration_env: ${{ inputs.env }}
 
   # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
   # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —

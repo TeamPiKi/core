@@ -32,6 +32,10 @@ on:
         description: "[이관 전용] host:port 형식. 채우면 secrets.EXTRACTOR_PROD_ADDRESS(구 계정) 대신 이 주소로 헬스 프로브·배포한다."
         required: false
         type: string
+      migration_env:
+        description: "[이관 전용] dev|prod. 채우면 브랜치 대신 이 값으로 환경을 정한다. 이관은 항상 dev 브랜치에서 호출되므로 이것이 없으면 prod 이관이 dev 환경으로 잘못 배선된다."
+        required: false
+        type: string
   # 계정 이관(migrate.yml)이 신 계정 박스로 이 배포를 돌리려고 호출한다. dispatch 와 같은 이관 입력을 받는다.
   # 호출이라 migrate.yml 이 완료를 기다릴 수 있다(gh workflow run 의 fire-and-forget 과 다름).
   workflow_call:
@@ -50,6 +54,10 @@ on:
         type: string
       migration_extractor_address:
         description: "[이관 전용] host:port. 신 계정 extractor 주소로 EXTRACTOR_PROD_ADDRESS 를 override."
+        required: false
+        type: string
+      migration_env:
+        description: "[이관 전용] dev|prod. 채우면 브랜치 대신 이 값으로 환경을 정한다."
         required: false
         type: string
 
@@ -99,7 +107,18 @@ jobs:
             REF=$(gh api "repos/$R/commits/$BRANCH" --jq '.sha') \
               || { echo "::error::$BRANCH 의 커밋을 해석하지 못했다."; exit 1; }
           fi
-          if [ "$BRANCH" = "main" ]; then
+          # 환경은 브랜치로 정한다 — main=prod, 그 외=dev. 다만 계정 이관은 워크플로 파일이 놓인
+          # 브랜치(dev)에서 호출되므로 그 규칙만으로는 prod 이관이 dev 환경으로 배선된다. 그러면
+          # environment 가 dev 가 되어 dev 의 EC2_SSH_KEY 로 prod 박스에 붙고, 실제로
+          # "ssh: unable to authenticate"(prod 박스는 prod 키로 생성)로 죽는다(실측).
+          # 그래서 이관이 넘긴 값이 있으면 그것을 우선한다.
+          MIG_ENV="${{ inputs.migration_env }}"
+          case "$MIG_ENV" in
+            dev|prod) ENVIRONMENT="$MIG_ENV" ;;
+            "")       [ "$BRANCH" = "main" ] && ENVIRONMENT=prod || ENVIRONMENT=dev ;;
+            *)        echo "::error::migration_env 는 dev 또는 prod 여야 한다 (받은 값: $MIG_ENV)"; exit 1 ;;
+          esac
+          if [ "$ENVIRONMENT" = "prod" ]; then
             echo "environment=prod" >> "$GITHUB_OUTPUT"
             echo "domain=api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=api.piki.day.conf" >> "$GITHUB_OUTPUT"
@@ -108,6 +127,7 @@ jobs:
             echo "domain=dev.api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=dev.api.piki.day.conf" >> "$GITHUB_OUTPUT"
           fi
+          [ -z "$MIG_ENV" ] || echo "::notice::이관 호출 — 브랜치($BRANCH) 대신 migration_env=$ENVIRONMENT 로 환경 결정"
           # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod(#596)와 dev(#680 동거 대비 리사이즈)
           # 둘 다 t4g.small(1.8G). blue-green overlap(전환 중 잠깐 2개 동시) 기준:
           #   prod 2×768=1536 < 1.8G, dev 2×576 + (mysql·alloy·redis 약 160) ≈ 1.31G < 1.8G (동거 extractor 는 #862 로 폐지).
