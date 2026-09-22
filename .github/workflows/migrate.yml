@@ -139,6 +139,7 @@ jobs:
       domain: ${{ steps.map.outputs.domain }}
       src_app_host: ${{ steps.src.outputs.src_app_host }}
       has_cross_repo_token: ${{ steps.tok.outputs.has_cross_repo_token }}
+      deploy_sha: ${{ steps.sha.outputs.deploy_sha }}
     steps:
       - name: env·계정 파생값 계산
         id: map
@@ -200,6 +201,33 @@ jobs:
             echo "tfstate_bucket=piki-tfstate-$ACCOUNT"
           } >> "$GITHUB_OUTPUT"
           echo "::notice::config — env=$ENV db=$DB_CONTAINER exec=$DB_EXEC"
+
+      # 신 계정에 올릴 커밋을 정한다.
+      #
+      # 이관은 "같은 형상으로 옮기는" 일이지 새 코드를 내보내는 일이 아니다. prod 박스에는 지금
+      # 운영 중인 버전, 즉 main 에 승격된 커밋이 올라가야 한다. 이 워크플로는 dev 브랜치에서
+      # 도므로 그대로 두면 dev HEAD(승격 전 코드)가 prod 로 나간다 — deploy.yml 의 승격 가드가
+      # 그것을 "main 히스토리에 없다" 로 막는다(실측). 막히는 쪽이 옳고, 여기서 올바른 커밋을 준다.
+      #
+      # dev 이관은 빈 값으로 둔다. dev 환경은 승격 가드가 없고 브랜치 HEAD 가 정상 대상이다.
+      - name: 배포할 커밋 결정
+        id: sha
+        env:
+          ENV: ${{ inputs.env }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$ENV" != "prod" ]; then
+            echo "deploy_sha=" >> "$GITHUB_OUTPUT"
+            echo "::notice::dev 이관 — 배포 커밋을 지정하지 않는다(브랜치 HEAD 사용)"
+            exit 0
+          fi
+          SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha') || {
+            echo "::error::main 의 커밋을 해석하지 못했다"; exit 1; }
+          echo "$SHA" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "::error::main HEAD 가 40자 hex 가 아니다 — 받은 값: $SHA"; exit 1; }
+          echo "deploy_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::prod 이관 — 신 계정에 올릴 커밋 = main HEAD $SHA (운영 중인 버전)"
 
       # 구 계정 앱 박스 주소를 secret 으로 받지 않고 여기서 한 번 해소해 고정한다.
       #
@@ -1179,6 +1207,8 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
+      # 운영 중인 버전을 올린다(prod). dev 이관에서는 빈 값이라 브랜치 HEAD 가 쓰인다.
+      sha: ${{ needs.config.outputs.deploy_sha }}
       migration_host: ${{ needs.deploy_core.outputs.app_ip }}
       migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
       # 평소 배포는 secrets.EXTRACTOR_PROD_ADDRESS(구 계정)를 쓰지만, 이관 중엔 아직 신 계정 extractor 로
