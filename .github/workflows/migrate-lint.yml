@@ -1,0 +1,29 @@
+name: migrate workflow lint
+
+# 이관 워크플로는 사람이 실행해야만 결함이 드러난다 — 한 번 돌리는 데 수십 분이 걸리고, 실패하면
+# 그 지점까지의 인프라 변경이 이미 일어난 뒤다. 실제로 이 워크플로는 "job output 오타"·"needs 누락"·
+# "미할당 셸 변수"·"terraform 변수 validation 위반" 네 부류로 각각 한 번씩 실행을 태웠다.
+# 넷 다 오탐 없이 기계가 판정할 수 있으므로 머지 전으로 내린다.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/migrate.yml'
+      - '.github/workflows/migrate-lint.yml'
+      - 'infra/scripts/verify-migrate-workflow.py'
+      - 'terraform/variables.tf'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck 설치
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: migrate.yml 정적 검증
+        run: python3 infra/scripts/verify-migrate-workflow.py
