@@ -815,11 +815,18 @@ jobs:
           BUCKET="${{ needs.config.outputs.tfstate_bucket }}"
           aws s3 cp infra/scripts/provision-db.sh "s3://$BUCKET/provision/provision-db.sh" >/dev/null
           aws s3 cp infra/scripts/db-backup.sh    "s3://$BUCKET/provision/db-backup.sh"    >/dev/null
+          # 내려받기를 박스의 aws CLI 로 하지 않는다. 이 박스의 user_data 는 docker·swap 까지만 깔고
+          # aws CLI 는 깔지 않아(db_ec2.tf 실측), 구 계정 박스에만 사람이 넣어 둔 것이었다. 신 계정에서
+          # 그대로 돌리면 첫 명령이 "exit status 127" 로 죽는다(실측).
+          # provision-db.sh 가 이미 쓰는 것과 같은 공용 ECR 이미지를 쓴다 — docker 는 user_data 가
+          # 보장하고, --network host 로 박스 instance role(IMDS) 자격에 닿는다.
+          AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+          PULL="docker run --rm --network host -v /tmp:/tmp $AWSCLI_IMAGE s3 cp"
           CMD_ID=$(aws ssm send-command \
             --targets "Key=tag:Name,Values=$DB_TAG" \
             --document-name AWS-RunShellScript \
             --comment "migrate provision-db" \
-            --parameters commands="[\"set -e\",\"aws s3 cp s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"aws s3 cp s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"bash /tmp/provision-db.sh --skip-alloy\"]" \
+            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"bash /tmp/provision-db.sh --skip-alloy\"]" \
             --query 'Command.CommandId' --output text)
           echo "::notice::SSM provision-db 전송 — CommandId=$CMD_ID"
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
