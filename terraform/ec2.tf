@@ -35,6 +35,31 @@ data "aws_ami" "ubuntu_2404_arm64" {
 # -----------------------------------------------------------------------------
 # 운영(prod) EC2 — 기존 인스턴스. Name 태그만 prod 로 명시.
 # var.environment 기본값(dev)이 바뀌어도 이 태그는 영향 받지 않도록 하드코딩.
+locals {
+  # 앱 박스 첫 부팅 부트스트랩 — 빈 우분투에 배포가 요구하는 base 소프트웨어(docker·nginx·certbot)를 깐다.
+  # dev·prod 가 같은 것을 쓴다. 구 계정 prod 박스는 사람이 손으로 깔아 terraform 이 그 사실을 모르는데,
+  # 계정 이관으로 재생성하면 빈 우분투가 되어 provision 이 "docker: command not found" 로 죽는다(실측).
+  # cert 발급은 여기서 하지 않는다 — 부팅 시점엔 EIP 연결·DNS 전파가 끝났다는 보장이 없어 HTTP-01 이
+  # 실패할 수 있다. deploy.yml 의 idempotent "ensure cert" 스텝이 인스턴스가 확실히 닿을 때 발급한다.
+  app_bootstrap_user_data = <<-EOF
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y ca-certificates curl nginx certbot python3-certbot-nginx
+    # Docker 공식 저장소 (arm64/t4g)
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    usermod -aG docker ubuntu
+    systemctl enable --now docker
+    systemctl enable --now nginx
+  EOF
+}
+
 # -----------------------------------------------------------------------------
 resource "aws_instance" "app" {
   ami                    = var.ec2_ami_id != null ? var.ec2_ami_id : data.aws_ami.ubuntu_2404_arm64[0].id
@@ -44,6 +69,12 @@ resource "aws_instance" "app" {
   vpc_security_group_ids = [aws_security_group.ec2.id]
   key_name               = "team3-SE-1"
   iam_instance_profile   = aws_iam_instance_profile.app.name
+
+  # dev 와 같은 부트스트랩을 쓴다. 이 박스는 원래 사람이 손으로 docker·nginx 를 깔아 terraform 이
+  # 그 사실을 모르는 상태였는데, 계정 이관으로 재생성되는 순간 그 수작업이 사라진다(실측 —
+  # provision 이 "docker: command not found" 로 중단). user_data 는 첫 부팅에만 도므로 이미 떠 있는
+  # 인스턴스에는 영향이 없고, 재생성될 때만 적용된다.
+  user_data = local.app_bootstrap_user_data
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -79,28 +110,9 @@ resource "aws_instance" "dev_app" {
   key_name             = "team3-dev-SE-1"
   iam_instance_profile = aws_iam_instance_profile.app.name
 
-  # cloud-init 부트스트랩 — 빈 우분투에 배포에 필요한 base 소프트웨어(docker·nginx·certbot)를
-  # 첫 부팅 때 자동 설치한다. prod EC2 는 과거 수동 설치라 이 user_data 가 없지만, dev 는 신규라 필요.
-  # cert 발급은 여기 안 함(부팅 시점엔 EIP 연결·DNS 전파가 끝났다는 보장이 없어 HTTP-01 이 실패할 수 있음).
-  # cert 는 deploy.yml 의 idempotent "ensure cert" 스텝이 인스턴스가 확실히 닿을 때 발급한다.
-  # user_data 는 첫 부팅에만 실행되므로, 기존(이미 부팅된) 인스턴스엔 `terraform apply -replace=aws_instance.dev_app` 로 적용한다.
-  user_data = <<-EOF
-    #!/bin/bash
-    set -eux
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y ca-certificates curl nginx certbot python3-certbot-nginx
-    # Docker 공식 저장소 (arm64/t4g)
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    usermod -aG docker ubuntu
-    systemctl enable --now docker
-    systemctl enable --now nginx
-  EOF
+  # 부트스트랩은 prod 와 같은 것을 쓴다(위 locals). 첫 부팅에만 실행되므로 이미 떠 있는 인스턴스에
+  # 적용하려면 `terraform apply -replace=aws_instance.dev_app` 가 필요하다.
+  user_data = local.app_bootstrap_user_data
 
   metadata_options {
     http_endpoint               = "enabled"
