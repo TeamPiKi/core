@@ -245,8 +245,15 @@ jobs:
       # job(workflow_call 호출자)에서 미리 열어도 그 job 은 별개 러너라 IP 가 달라 소용없다(실측 —
       # "dial tcp <ip>:22: i/o timeout"). AWS 자격(위 스텝)이 있어야 ssh-gate 가 SG 를 조작할 수 있어
       # 이 순서(자격 → 게이트)여야 한다.
-      - name: SSH 게이트 개방 (이관 전용)
-        if: ${{ inputs.migration_host != '' }}
+      # 이관 때만이 아니라 평소 배포에서도 연다. 신 계정 SG 는 22번이 닫힌 채 생성되므로, 컷오버가
+      # 끝난 환경은 이 게이트 없이는 scp 가 "dial tcp <ip>:22: i/o timeout" 으로 확정 실패한다(실측).
+      #
+      # continue-on-error 인 이유: 아직 이관하지 않은 환경은 구 계정 역할을 쓰는데 거기엔 SG 조작
+      # 권한이 없다(그 계정 terraform 은 이관 대상이 아니라 apply 하지 않는다). 구 계정에는 사람이
+      # 넣은 개방 규칙이 이미 있어 게이트 없이도 배포가 되므로, 여기서 멈추면 멀쩡한 배포를 막는 꼴이
+      # 된다. 신 계정에서 게이트가 실패하면 바로 다음 scp 가 타임아웃으로 드러난다.
+      - name: SSH 게이트 개방 (러너 IP 만·배포 구간 한정)
+        continue-on-error: true
         uses: TeamPiKi/core/.github/actions/ssh-gate@dev
         with:
           action: open
@@ -765,8 +772,13 @@ jobs:
       # 위에서 연 게이트를 회수한다. always() — 이 job 이 어디서 실패해도 22번이 열린 채 남지 않게.
       # !=skipped 로 두는 이유: ssh-gate 는 SG 를 순서대로 처리해, 앞 SG 에 규칙을 넣은 뒤 다음 SG 에서
       # 실패하면 open 스텝 자체는 failure 이지만 22번은 이미 일부 열려 있다(#1134 에서 실제로 겪은 함정).
-      - name: SSH 게이트 회수 (이관 전용)
-        if: ${{ always() && inputs.migration_host != '' }}
+      # 회수는 continue-on-error 를 두지 않는다. 실패하면 러너 IP 로 22번이 열린 채 남는데,
+      # GitHub 러너 IP 는 공유 풀이라 다음에 그 주소를 받는 쪽이 우리 박스에 닿는다. 배포가
+      # 성공했더라도 그 상태는 사람이 치워야 하므로 job 을 빨갛게 만들어 드러낸다.
+      # 게이트를 연 적이 없으면(구 계정처럼 권한이 없어 open 이 건너뛰어진 경우) 상태 파일이 없어
+      # 이 스텝은 그대로 통과한다.
+      - name: SSH 게이트 회수
+        if: always()
         uses: TeamPiKi/core/.github/actions/ssh-gate@dev
         with:
           action: close

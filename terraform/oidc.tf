@@ -62,6 +62,33 @@ data "aws_iam_policy_document" "ecr_push" {
     ]
     resources = [aws_ecr_repository.core.arn]
   }
+
+  # SSH 게이트(.github/actions/ssh-gate) — 배포 job 이 자기 러너 IP/32 만 22번에 잠시 열고 끝나면
+  # 회수한다. 이 권한이 없으면 신 계정에서 평소 배포가 전부 "dial tcp <ip>:22: i/o timeout" 으로
+  # 죽는다(실측). 신 계정 SG 는 22번이 닫힌 채 생성되고(security_groups.tf 의 ingress 는
+  # ignore_changes 라 terraform 관리 밖), 구 계정에만 사람이 콘솔로 넣은 개방 규칙이 있기 때문이다.
+  #
+  # 0.0.0.0/0 상시 개방 대신 이 권한을 주는 이유: 그 규칙은 한 번 넣으면 ignore_changes 때문에
+  # 아무도 지우지 않아 계정 수명 내내 남는다. 러너 IP/32 · 배포 구간 한정이 훨씬 좁다.
+  #
+  # 대상 SG 를 앱 SG 하나로 못박는다. 배포 경로가 오염돼도 다른 SG 는 건드리지 못한다
+  # (같은 파일의 db-provision role 주석이 말하는 "배포 경로 오염" 과 같은 결의 제한이다).
+  statement {
+    sid = "SshGateOnAppSgOnly"
+    actions = [
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupIngress",
+    ]
+    resources = [aws_security_group.ec2.arn]
+  }
+
+  # 게이트가 Name 태그로 대상 인스턴스의 SG 를 찾는다. EC2 Describe 계열은 IAM 에서 리소스를
+  # 한정할 수 없어(EC2 사양) * 를 쓴다 — 읽기 전용이라 변경 권한은 위 statement 범위에 그대로 묶인다.
+  statement {
+    sid       = "SshGateDescribe"
+    actions   = ["ec2:DescribeInstances", "ec2:DescribeSecurityGroups"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "github_ecr_push" {
