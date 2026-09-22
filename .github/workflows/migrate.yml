@@ -131,6 +131,7 @@ jobs:
       root_pw_param: ${{ steps.map.outputs.root_pw_param }}
       app_tag: ${{ steps.map.outputs.app_tag }}
       image_bucket: ${{ steps.map.outputs.image_bucket }}
+      sync_image_bucket: ${{ steps.map.outputs.sync_image_bucket }}
       old_image_bucket: ${{ steps.map.outputs.old_image_bucket }}
       db_backup_bucket: ${{ steps.map.outputs.db_backup_bucket }}
       src_backup_bucket: ${{ steps.map.outputs.src_backup_bucket }}
@@ -186,8 +187,14 @@ jobs:
             echo "db_ip_output=$DB_IP_OUTPUT"           # dev 는 앱 박스와 같은 값(동거)
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
             echo "root_pw_param=$ROOT_PW_PARAM"          # root 비번이 담긴 SSM 파라미터 이름(env 별로 다르다)
-            echo "image_bucket=${IMAGE_PREFIX}piki-images-$ACCOUNT"
-            echo "old_image_bucket=${IMAGE_PREFIX}piki-images-$OLD_ACCOUNT_ID"  # 이미지 sync 의 출발 버킷(구 계정)
+            # image_bucket 은 terraform 변수(var.image_bucket_name)로 들어가는 값이라 접두사가 붙으면
+            # 안 된다 — dev 버킷은 terraform 이 스스로 "dev-" 를 붙여 만들고(s3.tf 의 aws_s3_bucket.dev_images),
+            # 변수 자체는 piki-images-<계정> 형식만 받는다(variables.tf 의 validation). 접두사를 붙였더니
+            # plan 이 "image_bucket_name 은 piki-images-<12자리> 형식이어야 합니다" 로 죽었다(실측).
+            echo "image_bucket=piki-images-$ACCOUNT"
+            # 반면 실제 객체가 담긴 버킷은 env 별로 갈린다. 이미지 sync 와 DB 안 URL 재작성은 이 쪽을 쓴다.
+            echo "sync_image_bucket=${IMAGE_PREFIX}piki-images-$ACCOUNT"
+            echo "old_image_bucket=${IMAGE_PREFIX}piki-images-$OLD_ACCOUNT_ID"
             echo "db_backup_bucket=piki-db-backup-$ACCOUNT"
             echo "src_backup_bucket=piki-db-backup-$OLD_ACCOUNT_ID"  # 덤프 릴레이의 출발 버킷(구 계정)
             echo "tfstate_bucket=piki-tfstate-$ACCOUNT"
@@ -819,6 +826,112 @@ jobs:
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "provision ${{ job.status }} (env=${{ inputs.env }})"
 
+  # ── migrate-3b: SSM 의 박스 주소를 신 계정 것으로 재작성. ──
+  #
+  # ssm job 은 값에 박힌 *계정번호*만 바꾼다. 주소(IP)는 그때 신 계정 박스가 아직 없어 바꿀 수 없다.
+  # 그대로 두면 신 계정 앱이 구 계정 인프라를 본다 — 실측으로 다음 5건이 걸렸다.
+  #   /piki-core/{dev,prod}/db-host · redis-host        앱이 붙을 DB·Redis
+  #   /piki-extractor/app/product-extract-headless-base-url   extractor 가 부를 renderer
+  # 컷오버 후 DNS 만 넘어가고 데이터는 구 계정 DB 에 쌓이는 상태가 되므로, 배포 전에 끊는다.
+  #
+  # 경로·키 이름을 열거하지 않고 "구 박스 IP → 신 박스 IP" 매핑으로 값을 훑는다. 키 목록을 박으면
+  # 새 키가 생길 때마다 여기가 낡고, 그 낡음은 조용하다(값이 그냥 구 계정을 가리킨 채 배포된다).
+  ssm_hosts:
+    needs: [guard, config, bootstrap, infra_core, infra_apps, provision]
+    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && needs.infra_core.result == 'success' && (needs.provision.result == 'success' || needs.provision.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 박스 IP 매핑으로 SSM 주소 값 재작성
+        env:
+          SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
+          SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
+            echo "::error::구 계정 읽기 자격 미설정 — 주소 재작성 불가"; exit 1; }
+          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
+
+          # terraform 이 Name 태그에 박는 값들(ec2.tf·db_ec2.tf·두 side 레포의 main.tf 실측).
+          # 구·신 계정이 같은 이름을 쓰므로 이름이 곧 매핑 키다.
+          BOXES="piki-dev-app piki-prod-app piki-prod-db piki-extractor piki-headless-browser"
+
+          # running 만 본다 — 키페어 교체 등으로 terminated 가 남아 있으면 옛 IP 를 집는다.
+          ip_of() { # $1=runner(src|aws) $2=Name → "public<TAB>private"
+            $1 ec2 describe-instances --region "$AWS_REGION" \
+              --filters "Name=tag:Name,Values=$2" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[0].[PublicIpAddress,PrivateIpAddress]' --output text | head -1
+          }
+
+          # 매핑은 "구IP<TAB>신IP" 줄 목록이고 파일에 쌓는다. 셸 변수에 개행을 이어 붙이면 그 개행이
+          # 워크플로 YAML 의 블록 스칼라를 깨뜨린다(실측으로 파싱 실패).
+          MAPFILE=$(mktemp)
+          for n in $BOXES; do
+            IFS=$'\t' read -r op ov < <(ip_of src "$n" || true)
+            IFS=$'\t' read -r np nv < <(ip_of aws "$n" || true)
+            for pair in "${op:-None}|${np:-None}" "${ov:-None}|${nv:-None}"; do
+              o=${pair%%|*}; t=${pair##*|}
+              case "$o" in ""|None) continue ;; esac
+              case "$t" in ""|None) continue ;; esac
+              [ "$o" = "$t" ] && continue
+              printf '%s\t%s\n' "$o" "$t" >> "$MAPFILE"
+            done
+            echo "  $n = 구(${op:-없음}/${ov:-없음}) 신(${np:-없음}/${nv:-없음})"
+          done
+          [ -s "$MAPFILE" ] || { echo "::warning::치환할 주소 매핑이 없다 — 박스를 못 찾았거나 이미 같은 주소"; exit 0; }
+
+          # 신 IP 가 다른 구 IP 와 겹치면 한 값이 두 번 바뀐다. 실제로 겹치는지 먼저 본다.
+          DUP=$(awk -F'\t' 'NR==FNR{new[$2];next}{if($1 in new) print $1}' "$MAPFILE" "$MAPFILE" || true)
+          [ -z "$DUP" ] || { echo "::error::구 IP 집합과 신 IP 집합이 겹친다($DUP) — 연쇄 치환 위험. 중단"; exit 1; }
+
+          # 값 치환. 단순 문자열 치환이면 13.125.1.1 이 13.125.1.10 의 접두사라 다른 박스를 잘못 건드린다.
+          # 앞뒤가 숫자·점이 아닐 때만 바꾼다(\Q..\E 로 점을 리터럴 처리).
+          rewrite() {
+            local v="$1" o t
+            while IFS=$'\t' read -r o t; do
+              [ -n "$o" ] || continue
+              v=$(printf '%s' "$v" | OLD="$o" NEW="$t" perl -pe 's/(?<![0-9.])\Q$ENV{OLD}\E(?![0-9.])/$ENV{NEW}/g')
+            done < "$MAPFILE"
+            printf '%s' "$v"
+          }
+
+          rows=$(aws ssm describe-parameters --region "$AWS_REGION" \
+            --query 'Parameters[].[Name,Tier]' --output text --page-size 50 | sed '/^$/d' | sort)
+          changed=0
+          while IFS=$'\t' read -r name tier; do
+            [ -n "$name" ] || continue
+            case "$tier" in ""|None) tier=Standard ;; esac
+            type=$(aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+              --query 'Parameter.Type' --output text)
+            value=$(aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+              --query 'Parameter.Value' --output text)
+            newvalue=$(rewrite "$value")
+            [ "$newvalue" = "$value" ] && continue
+            # 값은 찍지 않는다(SecureString 포함). 이름만 남긴다.
+            aws ssm put-parameter --name "$name" --type "$type" --tier "$tier" --value "$newvalue" \
+              --overwrite --region "$AWS_REGION" >/dev/null
+            changed=$((changed+1))
+            echo "  재작성: $name"
+          done <<< "$rows"
+          echo "::notice::SSM 주소 재작성 완료 — $changed 건"
+
+      - name: Discord — ssm_hosts 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "ssm_hosts ${{ job.status }} (env=${{ inputs.env }}) — 박스 주소 재작성"
+
   # ── migrate-4: 리허설. 무중단 덤프 → 복원 → 이미지 URL 재작성 → 행수 대조. env 단위. 라이브 무영향(읽기전용 덤프). ──
   rehearsal:
     needs: [guard, config, infra_core, provision]
@@ -888,7 +1001,7 @@ jobs:
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
-          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다(bootstrap 이 공개키를 등록)
@@ -945,10 +1058,12 @@ jobs:
   # 대상 호스트는 terraform output(신 계정 EIP)이고, ECR push 는 bootstrap 역할로 한다.
   # 파괴적이지 않지만(신 계정에만 씀) dry_run 에선 인프라가 apply 전이라 대상이 없으므로 건너뛴다.
   deploy_core:
-    needs: [guard, config, infra_core, provision, rehearsal]
+    needs: [guard, config, infra_core, provision, ssm_hosts, rehearsal]
     # cutover 와 같은 이유로 skipped 를 통과로 보지 않는다 — 인프라·박스가 없으면 배포 대상 자체가 없다
     # (실측: infra_core 실패로 rehearsal 이 skip 됐는데 이 job 이 success 로 떴다).
-    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'deploy' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.rehearsal.result == 'success')) && (inputs.only == 'all' || inputs.only == 'deploy') }}
+    # ssm_hosts 도 성공을 요구한다 — 그게 실패하면 SSM 의 db-host·redis-host·headless-base-url 이 구
+    # 계정을 가리킨 채라, 배포된 신 계정 앱이 구 계정 DB 에 붙는다(컷오버 후 데이터가 갈린다).
+    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'deploy' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.ssm_hosts.result == 'success' && needs.rehearsal.result == 'success')) && (inputs.only == 'all' || inputs.only == 'deploy') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:
@@ -1238,7 +1353,7 @@ jobs:
       - name: S3 이미지 벌크 sync (freeze 이전 — 다운타임 밖)
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
-          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
         run: |
@@ -1262,7 +1377,7 @@ jobs:
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
-          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다
@@ -1292,7 +1407,7 @@ jobs:
       - name: S3 이미지 최종 델타 sync → 신 계정 앱 스모크
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
-          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
           SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
           DST_APP_HOST: ${{ steps.tf.outputs.dst_app }}
@@ -1402,7 +1517,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1462,6 +1577,7 @@ jobs:
             echo "| infra_core | ${{ needs.infra_core.result }} |"
             echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
+            echo "| ssm_hosts (박스 주소 재작성) | ${{ needs.ssm_hosts.result }} |"
             echo "| rehearsal | ${{ needs.rehearsal.result }} |"
             echo "| side_hosts (extractor·renderer IP 조회) | ${{ needs.side_hosts.result }} |"
             echo "| deploy core | ${{ needs.deploy_core_app.result }} |"
@@ -1484,7 +1600,7 @@ jobs:
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
