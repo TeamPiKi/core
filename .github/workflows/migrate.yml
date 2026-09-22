@@ -384,28 +384,37 @@ jobs:
           set -euo pipefail
           [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
             echo "::error::구 계정 읽기 자격(MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET) 미설정 — SSM 이식 불가"; exit 1; }
-          # 소스(구 계정)에서 경로 아래 모든 파라미터 이름을 읽는다.
-          NAMES=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-            aws ssm get-parameters-by-path --path "$SSM_PREFIX" --recursive \
-            --region "$AWS_REGION" --query 'Parameters[].Name' --output text)
-          [ -n "$NAMES" ] || { echo "::warning::$SSM_PREFIX 아래 파라미터 없음 — 이식할 것 없음"; exit 0; }
-          COUNT=0
-          for name in $NAMES; do
-            TYPE=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-              aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
-              --query 'Parameter.Type' --output text)
-            VALUE=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
-              aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
-              --query 'Parameter.Value' --output text)
-            # 값에 박힌 구 계정번호를 신 계정번호로 치환(S3 버킷명·ARN 등). 그 외 문자열은 그대로.
-            NEWVALUE=${VALUE//$OLD_ACCOUNT_ID/$NEW_ACCOUNT}
-            # 신 계정 쓰기는 주변 환경 자격(OIDC 로 맡은 역할)으로 한다. 구 계정 읽기만 키를 앞에 붙인다.
-            aws ssm put-parameter --name "$name" --type "$TYPE" --value "$NEWVALUE" \
-              --overwrite --region "$AWS_REGION" >/dev/null
-            COUNT=$((COUNT+1))
-            echo "  이식: $name ($TYPE)"
-          done
-          echo "::notice::SSM 이식 완료 — $COUNT 개 ($SSM_PREFIX)"
+
+          migrate_prefix() {
+            local prefix="$1" names name type value newvalue count=0
+            names=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+              aws ssm get-parameters-by-path --path "$prefix" --recursive \
+              --region "$AWS_REGION" --query 'Parameters[].Name' --output text)
+            [ -n "$names" ] || { echo "::warning::$prefix 아래 파라미터 없음 — 이식할 것 없음"; return 0; }
+            for name in $names; do
+              type=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+                aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+                --query 'Parameter.Type' --output text)
+              value=$(env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" \
+                aws ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
+                --query 'Parameter.Value' --output text)
+              # 값에 박힌 구 계정번호를 신 계정번호로 치환(S3 버킷명·ARN 등). 그 외 문자열은 그대로.
+              newvalue=${value//$OLD_ACCOUNT_ID/$NEW_ACCOUNT}
+              # 신 계정 쓰기는 주변 환경 자격(OIDC 로 맡은 역할)으로 한다. 구 계정 읽기만 키를 앞에 붙인다.
+              aws ssm put-parameter --name "$name" --type "$type" --value "$newvalue" \
+                --overwrite --region "$AWS_REGION" >/dev/null
+              count=$((count+1))
+              echo "  이식: $name ($type)"
+            done
+            echo "::notice::SSM 이식 완료 — $count 개 ($prefix)"
+          }
+
+          migrate_prefix "$SSM_PREFIX"
+          # 관측(Grafana Alloy) 자격은 env 별 경로가 아니라 계정 공유 경로에 있다 — provision-runtime.sh·
+          # provision-db.sh·extractor·renderer 세 박스가 같은 /piki/observability/grafana-* 를 읽는다(#771).
+          # 이 경로를 빠뜨리면 provision 은 통과해도(--skip-alloy) 실제 배포(deploy.yml)의 alloy 스텝이
+          # 'ParameterNotFound' 로 죽는다(실측). 계정 단위라 env 와 무관하게 한 번만 이식.
+          migrate_prefix "/piki/observability"
 
       - name: Discord — ssm 결과
         if: always()
