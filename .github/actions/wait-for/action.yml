@@ -55,7 +55,8 @@ runs:
         notify() {
           local emoji="$1" body content
           [ -n "${WEBHOOK:-}" ] || { echo "::warning::Discord webhook 미설정 — 안내 생략(폴링은 계속)"; return 0; }
-          content="$emoji **$TITLE**"$'\n\n'"$INSTRUCTION"$'\n\n'"실행 로그: $RUN_URL"
+          # URL 은 <> 로 감싸 Discord 링크 미리보기(임베드)를 억제한다.
+          content="$emoji **$TITLE**"$'\n\n'"$INSTRUCTION"$'\n\n'"실행 로그: <$RUN_URL>"
           body=$(CONTENT="$content" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
           curl -sf -X POST -H 'Content-Type: application/json' -d "$body" "$WEBHOOK" >/dev/null \
             || echo "::warning::Discord 전송 실패 — 무시하고 계속한다"

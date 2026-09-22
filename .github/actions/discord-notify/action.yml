@@ -40,7 +40,8 @@ runs:
         # content 를 파이썬으로 JSON 인코딩 — 따옴표·역슬래시·개행을 안전하게 이스케이프(수동 조립의 깨진 JSON 방지).
         CONTENT="$EMOJI $TITLE"
         [ -n "${DETAIL:-}" ] && CONTENT="$CONTENT"$'\n'"$DETAIL"
-        CONTENT="$CONTENT"$'\n'"실행 로그: $RUN_URL"
+        # URL 을 <> 로 감싼다 — Discord 가 링크 미리보기(임베드) 카드를 펼치지 않는다.
+        CONTENT="$CONTENT"$'\n'"실행 로그: <$RUN_URL>"
         BODY=$(CONTENT="$CONTENT" python3 -c 'import json,os; print(json.dumps({"content": os.environ["CONTENT"]}))')
         curl -sf -X POST -H 'Content-Type: application/json' -d "$BODY" "$WEBHOOK" >/dev/null \
           || echo "::warning::Discord 전송 실패 — 무시하고 계속한다"
