@@ -1560,6 +1560,112 @@ jobs:
           # 그 경우 실행 로그에 롤백 실패 error 가 남으므로, 사람이 그걸 보고 판단하도록 안내한다.
           detail: "실패 시 freeze 롤백이 자동으로 돈다. 실행 로그에서 '롤백 완료' 를 확인할 것 — '롤백 실패' 가 보이면 구 서비스가 내려간 채이므로 구 계정 박스에서 직접 docker start 해야 한다. 원인 해소 후 only=cutover 로 재실행."
 
+  # ── migrate-6b: 배포 배선 갱신. 컷오버가 끝난 env 의 GitHub 설정을 신 계정 값으로 돌린다. ──
+  #
+  # 이것을 자동화하지 않고 안내만 했더니, dev 컷오버 직후 평소 배포가 곧바로 깨졌다(실측).
+  #   EC2_HOST 가 구 계정 IP → deploy.yml 의 도메인↔호스트 가드가 배포를 중단
+  #   AWS_ECR_PUSH_ROLE_ARN 이 구 계정 → 이미지를 옛 계정 ECR 로 push
+  #   EXTRACTOR_PROD_ADDRESS 가 구 계정 → 신 앱이 옛 extractor 를 호출
+  # prod 에서는 같은 공백이 운영 배포 실패로 직결되고, 컷오버 직후 누가 배포하면 그 창에 그대로 걸린다.
+  #
+  # Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
+  # 영향을 받지 않는다(dev 이관 시점에 prod 는 계속 구 계정 값을 써야 한다).
+  #
+  # 코드에 박힌 것(migrate.yml 의 OLD_ACCOUNT_ID)은 여기서 손대지 않는다 — 커밋·리뷰를 거쳐야 하고,
+  # 그 값은 "다음 이관의 출발점" 이라 사람이 보고 넘기는 편이 맞다. finalize 안내에 남는다.
+  rewire:
+    needs: [guard, config, side_hosts, deploy_core, cutover]
+    if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: 신 계정 역할 ARN 조회 (terraform output)
+        id: tf
+        working-directory: terraform
+        env:
+          TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
+        run: |
+          set -euo pipefail
+          printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          terraform init -backend-config=backend.hcl -input=false >/dev/null
+          {
+            echo "ecr_role=$(terraform output -raw github_ecr_push_role_arn)"
+            echo "db_role=$(terraform output -raw github_db_provision_role_arn)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Environment 배선 갱신
+        id: rewire
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          ENV: ${{ inputs.env }}
+          APP_IP: ${{ needs.deploy_core.outputs.app_ip }}
+          EXTRACTOR_ADDR: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
+          ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
+          DB_ROLE: ${{ steps.tf.outputs.db_role }}
+        run: |
+          set -uo pipefail
+          [ -n "${GH_TOKEN:-}" ] || {
+            echo "::warning::CROSS_REPO_TOKEN 미설정 — 배선을 자동으로 못 바꾼다. 아래 finalize 안내대로 손으로 갱신할 것"
+            echo "done=false" >> "$GITHUB_OUTPUT"; exit 0; }
+
+          fail=0
+          # secret 은 gh 가 암호화까지 처리한다(직접 호출하면 libsodium 이 필요하다).
+          set_secret() {
+            if gh secret set "$1" --env "$ENV" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+              echo "  secret  $1 (env=$ENV)"
+            else
+              echo "::warning::secret $1 갱신 실패 — 토큰 권한(Secrets: write) 확인"; fail=1
+            fi
+          }
+          set_var() {
+            if gh variable set "$1" --env "$ENV" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+              echo "  var     $1 = $2 (env=$ENV)"
+            else
+              echo "::warning::variable $1 갱신 실패 — 토큰 권한(Variables: write) 확인"; fail=1
+            fi
+          }
+
+          # 값이 비면 덮어쓰지 않는다 — 빈 값으로 밀어 넣으면 배포가 조용히 엉뚱한 곳을 보거나
+          # 가드에 걸려 멈춘다. 그 경우는 경고로 남기고 사람이 채운다.
+          [ -n "$APP_IP" ] && set_secret EC2_HOST "$APP_IP" \
+            || { echo "::warning::앱 IP 를 못 얻어 EC2_HOST 를 건드리지 않았다"; fail=1; }
+          # extractor 는 같은 VPC 안에서 부르므로 사설 IP 여야 한다(공인 IP 면 SG 참조 규칙에 걸린다).
+          [ "$EXTRACTOR_ADDR" != ":8090" ] && set_secret EXTRACTOR_PROD_ADDRESS "$EXTRACTOR_ADDR" \
+            || { echo "::warning::extractor 사설 IP 를 못 얻어 EXTRACTOR_PROD_ADDRESS 를 건드리지 않았다"; fail=1; }
+          [ -n "$ECR_ROLE" ] && set_var AWS_ECR_PUSH_ROLE_ARN "$ECR_ROLE" \
+            || { echo "::warning::ECR push 역할 ARN 을 못 얻었다"; fail=1; }
+          [ -n "$DB_ROLE" ] && set_var AWS_DB_PROVISION_ROLE_ARN "$DB_ROLE" \
+            || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }
+
+          if [ "$fail" -eq 0 ]; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::배선 갱신 완료 — $ENV 의 배포가 신 계정을 향한다"
+          else
+            echo "done=partial" >> "$GITHUB_OUTPUT"
+            echo "::error::배선 갱신이 일부 실패했다 — 그대로 두면 $ENV 의 평소 배포가 구 계정으로 나가거나 멈춘다. finalize 안내대로 손으로 마무리할 것"
+            exit 1
+          fi
+
+      - name: Discord — 배선 갱신 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "배포 배선 갱신 ${{ job.status }} (env=${{ inputs.env }})"
+          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN 을 Environment 수준에서 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
+
   # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
   #
   # cutover 의 스모크는 박스 안에서 localhost:8080 을 본다. 그것만으로는 SG·nginx·TLS·DNS 를 거친
@@ -1695,7 +1801,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, verify]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1716,6 +1822,7 @@ jobs:
         env:
           ENV: ${{ inputs.env }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
+          REWIRE: ${{ needs.rewire.result }}
         run: |
           set -euo pipefail
           {
@@ -1726,12 +1833,16 @@ jobs:
             echo
             echo "| 무엇 | 어디 | 바꿀 값 |"
             echo "|---|---|---|"
-            echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP |"
-            echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` |"
-            echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` |"
+            # EC2_HOST·EXTRACTOR_PROD_ADDRESS·두 역할 ARN 은 rewire job 이 Environment 수준에 자동으로 쓴다.
+            # 그 job 이 실패했을 때만 손으로 할 목록에 되살린다 — 성공했는데도 안내에 남겨 두면
+            # "아직 할 일이 있다" 는 잘못된 신호가 된다.
+            if [ "$REWIRE" != "success" ]; then
+              echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP (rewire 실패) |"
+              echo "| \`EXTRACTOR_PROD_ADDRESS\` | Environment \`$ENV\` secret | 신 계정 extractor **사설** IP:8090 (rewire 실패) |"
+              echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
+              echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
+            fi
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
-            echo "| \`EXTRACTOR_PROD_ADDRESS\` | repo secret | 신 계정 extractor 주소 |"
-            echo "| 앱 SG 의 22번 인바운드 | 신 계정 EC2 콘솔 | **배포용 규칙 추가** — 구 계정에는 사람이 넣은 SSH 개방 규칙이 있어 deploy.yml 의 scp/ssh 가 되지만, 신 계정 SG 는 22번이 닫힌 채 생성된다(terraform 의 ingress 는 ignore_changes 라 관리 대상이 아니다). 안 넣으면 컷오버 후 **평소 배포가 \`dial tcp <ip>:22: i/o timeout\` 으로 전부 실패**한다 |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
             echo
             echo "\`EC2_SSH_KEY\` 는 바꿀 필요 없다 — bootstrap 이 같은 키의 공개키를 신 계정에 등록했다."
@@ -1762,6 +1873,7 @@ jobs:
             echo "| deploy extractor | ${{ needs.deploy_extractor.result }} |"
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
+            echo "| rewire (배포 배선 갱신) | ${{ needs.rewire.result }} |"
             echo "| verify (외부 API 실검증) | ${{ needs.verify.result }} |"
             # skipped 는 두 뜻이다 — only 로 안 고른 단계이거나, 토큰이 없어 못 돈 단계이거나.
             # 후자는 "안 한 일"이 남았다는 뜻이라 요약에서 구분해 준다.
@@ -1779,7 +1891,7 @@ jobs:
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} verify=${{ needs.verify.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} verify=${{ needs.verify.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
