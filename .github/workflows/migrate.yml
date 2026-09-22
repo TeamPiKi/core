@@ -341,15 +341,25 @@ jobs:
       # 대가는 계정을 옮겨도 키 재료가 그대로라는 것이다. 어차피 이 키는 모든 배포가 쓰는 하나뿐인
       # 키라 노출 범위가 이미 "우리 박스 전부"이고, 이관은 키 회전을 위한 이벤트가 아니다. 회전이
       # 필요하면 이관과 무관하게 따로 한다.
-      - name: 키페어 — 쓰던 공개키를 신 계정에 등록 (멱등)
+      - name: 키페어 — 쓰던 공개키를 신 계정에 등록 (env 인식·멱등)
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          ENV: ${{ inputs.env }}
         run: |
           set -euo pipefail
-          # 입력 env 와 무관하게 terraform 이 요구하는 키를 전부 등록한다. core terraform 은 dev·prod
-          # 박스를 한 state 에 함께 정의하므로(ec2.tf:45 team3-SE-1=prod, :79 team3-dev-SE-1=dev),
-          # env=dev 로 돌려도 apply 가 prod 박스까지 만든다. 한쪽만 등록하면 그 apply 가
-          # "InvalidKeyPair.NotFound: The key pair 'team3-SE-1' does not exist" 로 죽는다(실측).
+          # core terraform 은 dev·prod 박스를 한 state 에 함께 정의하고 **서로 다른 키페어**를 쓴다
+          # (ec2.tf:45 team3-SE-1=prod, :79 team3-dev-SE-1=dev — "dev 키 유출이 prod 접근으로
+          # 번지지 않게" 분리한 것이다). 그리고 EC2_SSH_KEY 는 Environment 별 secret 이라 이 실행이
+          # 아는 개인키는 **입력 env 의 것 하나뿐**이다.
+          #
+          # 이전에는 그 하나로 두 키페어를 모두 등록했다. 그 결과 env=dev 실행이 prod 키페어
+          # (team3-SE-1)를 dev 공개키로 만들어 버렸고, 그 키페어로 생성된 신 계정 prod 박스에
+          # prod 키로 붙자 "Permission denied (publickey)" 가 났다(실측).
+          #
+          # 그래서 둘을 구분한다.
+          #   내 env 키페어  — 반드시 이 실행의 공개키와 일치해야 한다. 다르면 고친다.
+          #   상대 env 키페어 — 올바른 재료가 없다. 없을 때만 자리채움으로 만들고(없으면 apply 가
+          #                    InvalidKeyPair.NotFound 로 죽는다) 그 사실을 경고로 남긴다.
           [ -n "${SSH_KEY:-}" ] || {
             echo "::error::EC2_SSH_KEY 미설정 — 등록할 공개키를 유도할 원본이 없다"; exit 1; }
           umask 077
@@ -358,17 +368,42 @@ jobs:
           # AWS 에는 공개키만 올라간다.
           ssh-keygen -y -f /tmp/src.pem > /tmp/src.pub 2>/dev/null || {
             echo "::error::EC2_SSH_KEY 에서 공개키를 유도하지 못했다 — PEM 형식·줄바꿈 손상 확인"; rm -f /tmp/src.pem; exit 1; }
-          for KEY in team3-SE-1 team3-dev-SE-1; do
-            if aws ec2 describe-key-pairs --key-names "$KEY" >/dev/null 2>&1; then
-              echo "::notice::키페어 이미 등록됨 — $KEY"
-            else
-              aws ec2 import-key-pair --key-name "$KEY" \
-                --public-key-material "fileb:///tmp/src.pub" >/dev/null
-              echo "::notice::키페어 등록 — $KEY"
-            fi
-          done
+          # 주석 필드는 비교에서 뺀다 — 같은 키라도 주석은 유도 시점마다 다를 수 있다.
+          WANT=$(awk '{print $1" "$2}' /tmp/src.pub)
+
+          if [ "$ENV" = "prod" ]; then MINE=team3-SE-1; OTHER=team3-dev-SE-1
+          else                         MINE=team3-dev-SE-1; OTHER=team3-SE-1; fi
+
+          # 등록된 공개키를 그대로 받아 비교한다(지문 계산보다 정확하다 — import 한 키와 AWS 가
+          # 만든 키는 지문 알고리즘이 다르다).
+          registered_pub() {
+            aws ec2 describe-key-pairs --key-names "$1" --include-public-key \
+              --query 'KeyPairs[0].PublicKey' --output text 2>/dev/null | awk '{print $1" "$2}'
+          }
+
+          CUR=$(registered_pub "$MINE" || true)
+          if [ -z "$CUR" ] || [ "$CUR" = "None" ]; then
+            aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
+            echo "::notice::키페어 등록 — $MINE ($ENV 용)"
+          elif [ "$CUR" = "$WANT" ]; then
+            echo "::notice::키페어 일치 확인 — $MINE ($ENV 용)"
+          else
+            aws ec2 delete-key-pair --key-name "$MINE" >/dev/null
+            aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
+            # 키페어를 고쳐도 이미 그 키로 부팅된 인스턴스의 authorized_keys 는 바뀌지 않는다.
+            # 그 박스는 재생성해야 SSH 가 통한다 — 조용히 넘어가면 provision 이 publickey 거부로 죽는다.
+            echo "::error::$MINE 이 다른 공개키로 등록돼 있어 교체했다. 이 키로 이미 만들어진 $ENV 앱 박스는 옛 공개키를 갖고 있어 SSH 가 통하지 않는다 — 그 인스턴스를 종료(또는 terraform -replace)한 뒤 only=infra 로 다시 세울 것. 신규 계정이라 그 박스에 아직 데이터가 없다면 종료가 가장 단순하다."
+            exit 1
+          fi
+
+          if aws ec2 describe-key-pairs --key-names "$OTHER" >/dev/null 2>&1; then
+            echo "::notice::상대 env 키페어 존재 — $OTHER (이 실행은 그 개인키를 모르므로 건드리지 않는다)"
+          else
+            aws ec2 import-key-pair --key-name "$OTHER" --public-key-material "fileb:///tmp/src.pub" >/dev/null
+            echo "::warning::$OTHER 를 자리채움으로 만들었다 — core terraform 이 dev·prod 박스를 한 state 에 정의해 이 키페어가 없으면 apply 가 InvalidKeyPair.NotFound 로 죽기 때문이다. 이 키페어로 만들어진 박스는 그 env 의 개인키로 붙지 않으므로, 반대편 env 이관 때 이 스텝이 키페어를 교체하고 박스 재생성을 요구한다."
+          fi
           rm -f /tmp/src.pem /tmp/src.pub
-          echo "::notice::core 키페어 등록 완료 — 쓰던 EC2_SSH_KEY 가 신 계정 core 박스에 그대로 통한다"
+          echo "::notice::core 키페어 처리 완료 — $ENV 용 $MINE 가 이 실행의 EC2_SSH_KEY 와 일치"
 
       # extractor·renderer 는 각자 자기 레포의 EC2_SSH_KEY 로 박스에 붙는다(그 레포 deploy.yml).
       # core 키로 만든 박스에는 그 키가 안 통해 "unable to authenticate" 가 난다(실측).
