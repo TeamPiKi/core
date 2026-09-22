@@ -376,24 +376,40 @@ jobs:
 
           # 등록된 공개키를 그대로 받아 비교한다(지문 계산보다 정확하다 — import 한 키와 AWS 가
           # 만든 키는 지문 알고리즘이 다르다).
+          #
+          # 정규화를 awk 파이프로 하지 않는다. `aws --output text` 는 값이 없을 때 문자열 "None" 을
+          # 내는데, `awk '{print $1" "$2}'` 는 그것을 "None "(뒤 공백)으로 만들어 None 판정을
+          # 빠져나간다. 그러면 멀쩡한 키페어가 매번 "다른 공개키" 로 오판돼 교체·중단이 반복된다(실측).
+          # 빈 값·None 을 먼저 거르고, 그 뒤에만 앞 두 필드를 취한다.
           registered_pub() {
-            aws ec2 describe-key-pairs --key-names "$1" --include-public-key \
-              --query 'KeyPairs[0].PublicKey' --output text 2>/dev/null | awk '{print $1" "$2}'
+            local raw
+            raw=$(aws ec2 describe-key-pairs --key-names "$1" --include-public-key \
+                    --query 'KeyPairs[0].PublicKey' --output text 2>/dev/null) || return 1
+            case "$raw" in ""|None) return 1 ;; esac
+            # 주석 필드는 비교에서 뺀다 — 같은 키라도 주석은 유도 시점마다 다르다.
+            set -- $raw
+            [ -n "${2:-}" ] || return 1
+            printf '%s %s' "$1" "$2"
           }
 
-          CUR=$(registered_pub "$MINE" || true)
-          if [ -z "$CUR" ] || [ "$CUR" = "None" ]; then
-            aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
-            echo "::notice::키페어 등록 — $MINE ($ENV 용)"
+          if ! CUR=$(registered_pub "$MINE"); then
+            # 없거나, 이 CLI 로는 공개키를 읽을 수 없는 경우다. 확신이 없으면 손대지 않는다 —
+            # 근거 없이 교체하면 멀쩡히 붙던 박스의 키페어를 헛되이 갈아 치운다.
+            if aws ec2 describe-key-pairs --key-names "$MINE" >/dev/null 2>&1; then
+              echo "::warning::$MINE 이 등록돼 있으나 공개키를 읽지 못해 대조를 건너뛴다. 키가 어긋나 있으면 뒤따르는 provision 의 SSH 에서 드러난다"
+            else
+              aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
+              echo "::notice::키페어 등록 — $MINE ($ENV 용)"
+            fi
           elif [ "$CUR" = "$WANT" ]; then
             echo "::notice::키페어 일치 확인 — $MINE ($ENV 용)"
           else
             aws ec2 delete-key-pair --key-name "$MINE" >/dev/null
             aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
             # 키페어를 고쳐도 이미 그 키로 부팅된 인스턴스의 authorized_keys 는 바뀌지 않는다.
-            # 그 박스는 재생성해야 SSH 가 통한다 — 조용히 넘어가면 provision 이 publickey 거부로 죽는다.
-            echo "::error::$MINE 이 다른 공개키로 등록돼 있어 교체했다. 이 키로 이미 만들어진 $ENV 앱 박스는 옛 공개키를 갖고 있어 SSH 가 통하지 않는다 — 그 인스턴스를 종료(또는 terraform -replace)한 뒤 only=infra 로 다시 세울 것. 신규 계정이라 그 박스에 아직 데이터가 없다면 종료가 가장 단순하다."
-            exit 1
+            # 다만 여기서 멈추지는 않는다 — 박스가 실제로 붙는지는 뒤따르는 provision 의 SSH 가
+            # 판정하고, 그쪽이 정확하다. 이 자리에서 중단하면 판정 근거 없이 이관 전체가 막힌다.
+            echo "::warning::$MINE 을 이 실행의 공개키로 교체했다. 이 키로 이미 부팅된 $ENV 앱 박스가 있다면 옛 공개키를 갖고 있어 SSH 가 통하지 않는다 — provision 이 publickey 거부로 실패하면 그 인스턴스를 종료한 뒤 only=infra 로 다시 세울 것"
           fi
 
           if aws ec2 describe-key-pairs --key-names "$OTHER" >/dev/null 2>&1; then
