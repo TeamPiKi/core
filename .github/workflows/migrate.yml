@@ -617,15 +617,23 @@ jobs:
 
       - name: plan
         working-directory: ${{ matrix.path }}
+        env:
+          # 두 레포 박스는 원래 key_name 없이 생성되고 공개키는 terraform 밖에서 주입하는 설계다.
+          # 신 계정 박스에는 그 주입이 없어 배포 scp 가 "unable to authenticate" 로 죽으므로(실측),
+          # bootstrap 이 등록한 키를 지정해 만든다. 두 레포 모두 var.key_name 기본값은 빈 문자열이라
+          # 평소 apply 에는 영향이 없다.
+          TF_VAR_key_name: team3-dev-SE-1
         run: |
           set -euo pipefail
-          # extractor/renderer 는 name_prefix·data 소스 기본값을 쓴다(TF_VAR 없음, variables.tf 실측).
+          # extractor/renderer 는 name_prefix·data 소스 기본값을 쓴다(그 외 TF_VAR 없음, variables.tf 실측).
           # dry_run(plan-only)에서는 core 가 아직 apply 전이라 data 소스(VPC/SG) 조회가 실패할 수 있다 — 첫 이관은 not-dry_run 으로 core apply 후 이 job 이 돈다.
           terraform plan -input=false -out=tfplan
 
       - name: apply (dry_run 이면 건너뜀)
         if: ${{ inputs.dry_run == false }}
         working-directory: ${{ matrix.path }}
+        env:
+          TF_VAR_key_name: team3-dev-SE-1
         run: |
           set -euo pipefail
           terraform apply -input=false -auto-approve tfplan
@@ -992,6 +1000,9 @@ jobs:
     secrets: inherit
     with:
       migration_host: ${{ needs.side_hosts.outputs.extractor_ip }}
+      # 그 레포의 vars.AWS_ECR_PUSH_ROLE_ARN 은 구 계정 역할이라 신 계정에서 assume 이 안 된다
+      # ("Not authorized to perform sts:AssumeRoleWithWebIdentity", 실측). 이관 부트스트랩 역할로 넘긴다.
+      migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
 
   # renderer 는 private 레포라 `uses:` 재사용 호출이 성립하지 않는다 — access_level=organization 을 켜도
   # 호출측 유효성 검사가 "workflow was not found" 로 막아 migrate.yml 전체가 디스패치조차 거부된다(실측).
