@@ -93,6 +93,27 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   echo "[mysql] ${COMPOSE_FILE} 가 없다 — provision-db.sh 와 함께 올렸는지 확인"
   exit 1
 fi
+# 데이터 볼륨 — compose 가 external 로 선언해 스스로 만들지 않는다(그 선언이 없으면 프로젝트명을
+# 앞에 붙인 새 볼륨이 생겨 기존 데이터 대신 빈 DB 로 뜬다 — db.yml 주석 참조). 구 계정 박스에는
+# 스크립트 시절 만든 볼륨이 그대로 있었지만, 계정 이관으로 박스를 새로 세우면 없다. 그 상태로
+# compose 를 올리면 external volume "..." not found 로 죽는다(실측).
+#
+# 없을 때만 만든다. 이미 있으면 손대지 않아 데이터가 보존된다. 새로 만들어진 경우는 빈 DB 인데,
+# 이관 흐름에서는 뒤따르는 rehearsal·cutover 가 덤프를 복원하므로 그게 정상 순서다.
+DATA_VOLUME="piki-prod-mysql-data"
+# compose 가 가리키는 이름과 어긋나면 엉뚱한 볼륨을 만들어 두고 compose 는 여전히 실패한다.
+# 그 조용한 어긋남을 막기 위해 여기서 대조한다.
+grep -q "name: ${DATA_VOLUME}" "$COMPOSE_FILE" || {
+  echo "[mysql] 데이터 볼륨 이름이 compose 와 다르다 — 스크립트의 DATA_VOLUME(${DATA_VOLUME})과 ${COMPOSE_FILE} 을 맞출 것"
+  exit 1
+}
+if docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
+  echo "[mysql] 데이터 볼륨 이미 존재 — $DATA_VOLUME (보존)"
+else
+  echo "[mysql] 데이터 볼륨 생성 — $DATA_VOLUME (빈 DB 로 뜬다. 이관이면 이후 복원이 채운다)"
+  docker volume create "$DATA_VOLUME" >/dev/null
+fi
+
 echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
 DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
 DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
