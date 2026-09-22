@@ -63,21 +63,13 @@ class TournamentService(
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
-    // 탈퇴(tombstone) 계정의 토너먼트 생성을 막는다. anonymize 는 닉네임·프로필만 비우고 행은 남기므로,
-    // 탈퇴 시 토큰 무효화가 부분 실패한 창에서 죽은 계정이 토너먼트를 만들 수 있다
-    // (위시가 findActiveById 로 막는 것과 같은 사유, #691).
-    //
-    // users 행 존재는 강제하지 않는다(findActiveById 가 아니라 findById + Elvis) — 인증만 되면 행 없이도 호출되던
-    // 기존 계약을 이 가드가 404 로 바꾸지 않기 위해서다(FCM 토큰 등록의 rejectIfWithdrawnForUpdate 와 같은 결).
-    //
-    // 회원 전용 게이트(#339)가 여기 함께 있었으나 클라이언트 대응 전까지 임시로 걷어냈다(#965). 그래서 게스트도
-    // 다시 토너먼트를 만들 수 있고, 그 토너먼트의 아이템 등록은 오너인 게스트 몫에서 깎인다. 게스트 계정은
-    // 무한 발급되므로(POST /auth/guest) 계정별 한도(ItemQuotaGuard)는 이 창 동안 게스트에 대해 실효가 없고,
-    // 남는 방어선은 전역 가용량 상한 하나다. 재적용은 아래 한 줄을 되살리면 된다(code·예외는 남겨 뒀다):
-    //   if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
-    private fun rejectIfDeleted(userId: UUID) {
+    // 게스트 차단은 아이템 등록 한도(ItemQuotaGuard)가 오너 계정 키라, 무한 발급되는 게스트가 오너면 계정 갈아타기로 리셋되기 때문(#904).
+    // 탈퇴 차단은 anonymize 가 행을 남겨 토큰 무효화 부분 실패 창에서 죽은 계정이 생성할 수 있기 때문(#691).
+    // users 행 부재는 허용한다(findById + Elvis). 인증만 되면 행 없이도 호출되던 계약을 404 로 바꾸지 않기 위해서다.
+    private fun requireMember(userId: UUID) {
         val user = userRepository.findById(userId) ?: return
         user.deletedAt?.let { throw UserException.deletedUser() }
+        if (user.identityType != IdentityType.MEMBER) throw TournamentException.guestCannotCreateTournament()
     }
 
     @Transactional
@@ -85,7 +77,7 @@ class TournamentService(
         userId: UUID,
         command: CreateTournament,
     ): CreateTournamentResult {
-        rejectIfDeleted(userId)
+        requireMember(userId)
         val inviteCode = generateUniqueInviteCode()
         val inviteExpiresAt =
             LocalDateTime
@@ -477,7 +469,7 @@ class TournamentService(
                     { it.getId() },
                 ),
             ).map { tu ->
-                // users 행이 없어도(인증됐으나 users 행 부재 — rejectIfDeleted 가 허용) 참여 행은 응답에 남긴다(#1027).
+                // users 행이 없어도(인증됐으나 users 행 부재 — requireMember 가 허용) 참여 행은 응답에 남긴다(#1027).
                 // mapNotNull 로 떨구면 참가자 수(DB 카운트, #1062)와 목록이 어긋나고 본인도 대기실에서 사라진다.
                 // 행이 없으면 알 수 없는 유저로 간주 — 마스킹 프사 + isWithdrawn=true 로 FE 가 "유저 알수없음" 을 렌더한다.
                 val user = userById[tu.userId]
@@ -1197,7 +1189,7 @@ class TournamentService(
         // 게스트에게는 다른 참여자의 신원을 지워 내린다(#1060) — 클라가 정상 값을 받아 가리는 게 아니라 서버가
         // 애초에 물음표 값을 내려야, 응답을 직접 뜯어봐도 남이 누구인지 알 수 없다.
         // 판정을 `== MEMBER` 로 두어(부정형이 아니라) identity 종류가 늘어도 기본이 "가린다" 쪽에 남게 한다.
-        // users 행 없는 인증 유저(rejectIfDeleted 가 허용하는 레거시 창)도 회원임을 증명하지 못하므로 마스킹 대상이다.
+        // users 행 없는 인증 유저(requireMember 가 허용하는 레거시 창)도 회원임을 증명하지 못하므로 마스킹 대상이다.
         val requesterIsMember = userById[userId]?.identityType == IdentityType.MEMBER
         if (requesterIsMember) return result
         return result.maskedFor(userId, defaultProfileImages.masked())
