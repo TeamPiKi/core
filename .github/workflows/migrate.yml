@@ -946,7 +946,10 @@ jobs:
   # 기록한 CIDR 대신 "이 워크플로가 붙인 설명" 으로 찾아 지운다. always() — 배포가 실패해도 열어 둔 채 끝나지 않게.
   gate_close:
     needs: [guard, config, deploy_core, deploy_core_app]
-    if: ${{ always() && needs.deploy_core.result == 'success' }}
+    # success 만 보면 부분 개방을 회수하지 못한다 — ssh-gate 는 SG 를 순서대로 열어서, 앞 SG 에 규칙을
+    # 넣은 뒤 다음 SG 에서 실패하면 deploy_core 는 failure 지만 22번 규칙은 이미 남아 있다.
+    # skipped(=deploy_core 자체가 안 돎)만 제외하고, 돌기 시작했으면 결과와 무관하게 회수한다.
+    if: ${{ always() && needs.deploy_core.result != 'skipped' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
