@@ -8,9 +8,14 @@ name: Promote
 #   plan      - 승인 없이 바로 돈다. 승격 대상(미승격 PR·라벨 집계·다음 버전·ff 가능 여부)을 Step Summary 에
 #               적고 멈춘다. 승격도 배포도 하지 않는다.
 #   preflight - 역시 승인 없이 돈다. prod DB 를 읽어 "이 배포가 마이그레이션에서 죽을 조건"을 미리 센다.
-#               걸리면 promote 가 시작되지 않아 승인 버튼 자체가 뜨지 않는다.
-#   promote   - environment(promote-approval) 보호규칙에 걸려 승인 대기 상태가 된다. 요약을 읽고 승인하면
-#               그때 ff 승격 + 배포 dispatch 가 이어진다.
+#               걸리면 approval 이 시작되지 않아 승인 버튼 자체가 뜨지 않는다.
+#   approval  - environment(promote-approval) 보호규칙에 걸려 승인 대기 상태가 된다. 하는 일은 없다.
+#   recheck   - 승인 직후 preflight 를 한 번 더 돈다. 승인 전 결과는 대기 시간만큼 낡기 때문이다.
+#   promote   - ff 승격 + 배포 dispatch.
+#
+# preflight·recheck 가 approval 과 다른 job 인 이유: prod 박스 SSH 는 environment(prod) 의 시크릿·역할로만
+# 가능한데 job 은 environment 를 하나만 가질 수 있다. 승인 게이트(promote-approval)와 같은 job 에 두면
+# repo 수준 값으로 떨어져 구 계정을 가리킨다(#1163 실측 — 이관 뒤 첫 실행이 SSH 타임아웃).
 #
 # 왜 이 모양인가: Actions UI 는 workflow_dispatch 인풋을 URL 로 미리 채우지 못한다. 그래서 "확인 결과
 # 화면에서 진행 버튼" 식의 이음은 만들 수 없고, 한 run 안에서 멈췄다 재개하는 승인 게이트가 UI 가 주는
@@ -218,19 +223,35 @@ jobs:
   # SELECT 로 먼저 세어 둔다 (#1103). 검사는 두 층이다 — Flyway 실패 잔재는 상설이고, 클론 평탄화
   # 백필의 가드 2종은 그 백필이 prod 에 적용되면 자동으로 꺼진다.
   #
-  # promote 가 이 job 을 needs 로 받으므로, 여기서 멈추면 승인 대기에 들어가지 않는다 — 승인자가 "무엇을
+  # approval 이 이 job 을 needs 로 받으므로, 여기서 멈추면 승인 대기에 들어가지 않는다 — 승인자가 "무엇을
   # 승인하는가" 를 판단하기 전에 "승인해도 되는가" 가 먼저 걸러진다.
   preflight:
     needs: plan
     if: ${{ needs.plan.outputs.skipped == 'false' }}
     runs-on: ubuntu-latest
+    # prod environment 에는 보호규칙이 없어 승인 없이 돈다. 시크릿(EC2_HOST)·변수(역할 ARN)를 신 계정 값으로 받는 자리다.
+    environment: prod
     permissions:
       contents: read
+      id-token: write
     outputs:
       verdict: ${{ steps.pf.outputs.verdict }}
     steps:
       - name: Checkout (액션·프리플라이트 스크립트)
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 신 계정 앱 SG 는 22번이 닫혀 있어 이 job 러너의 IP 를 열어야 SSH 가 된다(deploy.yml 과 같은 순서).
+      - name: SSH 게이트 개방 (러너 IP 만·프리플라이트 구간 한정)
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: open
+          instance-name: piki-prod-app
 
       - name: 프리플라이트
         id: pf
@@ -241,6 +262,13 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           environment: prod
           domain: api.piki.day
+
+      - name: SSH 게이트 회수
+        if: ${{ always() }}
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: close
+          instance-name: piki-prod-app
 
       # 승인 대기 알림은 여기서 보낸다 — notify job 은 워크플로가 끝나야 도는데 승인 대기는 그 앞이라,
       # 거기서 보내면 이미 승인이 끝난 뒤에 도착한다. 실패 알림은 그대로 notify 가 맡는다(그때는 promote 가
@@ -294,24 +322,45 @@ jobs:
             --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
           [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
 
-  # --- 2단계: 진행 -----------------------------------------------------------
-  # environment 의 required reviewer 승인을 받아야 시작된다. 승인 화면에서 bump 를 바꿀 수는 없으므로,
+  # --- 2단계: 승인 -----------------------------------------------------------
+  # environment 의 required reviewer 승인을 받아야 끝난다. 승인 화면에서 bump 를 바꿀 수는 없으므로,
   # 판정이 다르면 거부하고 bump 를 명시해 재실행하는 것이 정정 경로다.
-  promote:
+  approval:
     needs: [plan, preflight]
     if: ${{ needs.plan.outputs.skipped == 'false' }}
     runs-on: ubuntu-latest
     environment: promote-approval
-    # ref 업데이트(contents) + deploy 워크플로 dispatch(actions) 권한.
-    permissions:
-      contents: write
-      actions: write
+    permissions: {}
     steps:
-      # 승인 직후 같은 프리플라이트를 한 번 더 돈다. 승인 전 결과는 대기 시간만큼 낡는다 — prod 는 아직
-      # 옛 코드라 그동안에도 클론이 새로 생기고, 그 사이 다른 prod 배포가 Flyway 실패 기록을 남길 수도
-      # 있다. 낡은 근거로 ff·dispatch 를 시작하지 않는다 (#1103).
+      - name: 승인 확인
+        run: echo "::notice::승인됨 — 재확인 프리플라이트로 넘어간다"
+
+  # 승인 직후 같은 프리플라이트를 한 번 더 돈다. 승인 전 결과는 대기 시간만큼 낡는다 — prod 는 아직
+  # 옛 코드라 그동안에도 클론이 새로 생기고, 그 사이 다른 prod 배포가 Flyway 실패 기록을 남길 수도
+  # 있다. 낡은 근거로 ff·dispatch 를 시작하지 않는다 (#1103).
+  recheck:
+    needs: [plan, approval]
+    if: ${{ needs.plan.outputs.skipped == 'false' }}
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
       - name: Checkout (액션·프리플라이트 스크립트)
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: SSH 게이트 개방 (러너 IP 만·프리플라이트 구간 한정)
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: open
+          instance-name: piki-prod-app
 
       - name: 프리플라이트 재확인 (승인 후)
         uses: ./.github/actions/preflight-migration
@@ -323,6 +372,23 @@ jobs:
           domain: api.piki.day
           label: 승인 후 재확인
 
+      - name: SSH 게이트 회수
+        if: ${{ always() }}
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: close
+          instance-name: piki-prod-app
+
+  # --- 3단계: 진행 -----------------------------------------------------------
+  promote:
+    needs: [plan, recheck]
+    if: ${{ needs.plan.outputs.skipped == 'false' }}
+    runs-on: ubuntu-latest
+    # ref 업데이트(contents) + deploy 워크플로 dispatch(actions) 권한.
+    permissions:
+      contents: write
+      actions: write
+    steps:
       # ff-push 는 기본 GITHUB_TOKEN(contents: write)으로 한다. main 은 ruleset
       # protectReleaseBranches 가 deletion·non_fast_forward 만 강제하고 PR 규칙이 없어, ff 업데이트가
       # 그대로 통과한다(별도 App·PAT bypass 불필요). dev 만 protectImportantBranch 로 PR 필수를 유지한다.
@@ -399,7 +465,7 @@ jobs:
   # 두 단계 중 어디서 끝났든 한 곳에서 알린다 (배포 성공/실패 알림은 deploy.yml 이 따로 보낸다).
   # 승인 대기 자체는 GitHub 이 required reviewer 에게 알리므로 여기서 중복해 보내지 않는다.
   notify:
-    needs: [plan, preflight, promote]
+    needs: [plan, preflight, approval, recheck, promote]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions: {}
@@ -411,6 +477,8 @@ jobs:
           PLAN: ${{ needs.plan.result }}
           PREFLIGHT: ${{ needs.preflight.result }}
           PREFLIGHT_VERDICT: ${{ needs.preflight.outputs.verdict }}
+          APPROVAL: ${{ needs.approval.result }}
+          RECHECK: ${{ needs.recheck.result }}
           PROMOTE: ${{ needs.promote.result }}
           SKIPPED: ${{ needs.plan.outputs.skipped }}
           SHA: ${{ needs.plan.outputs.sha }}
@@ -448,6 +516,14 @@ jobs:
             esac
             TEXT=$(printf '❌ Promote 중단: %s\n• 실행: %s\n• 승인 단계로 넘어가지 않았다\n• [Step Summary 에서 막힌 행 확인](<%s>)' \
               "$REASON" "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$APPROVAL" != "success" ]; then
+            # 승인 거부·타임아웃. 승격하지 않았다.
+            TEXT=$(printf '⏹ Promote 중단: 승인되지 않아 승격하지 않음 (`%s`, %s 커밋)\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
+              "$SHORT_SHA" "$COUNT" "$ACTOR_MENTION" "$RUN_URL")
+          elif [ "$RECHECK" != "success" ]; then
+            # 승인은 받았으나 재확인에서 걸렸다. ff·dispatch 전이라 prod 는 그대로다.
+            TEXT=$(printf '❌ Promote 중단: 승인 후 프리플라이트 재확인 실패 — 승격·배포 전에 멈춤\n• 실행: %s\n• [Step Summary 에서 막힌 행 확인](<%s>)' \
+              "$ACTOR_MENTION" "$RUN_URL")
           elif [ "$PROMOTE" = "success" ]; then
             TEXT=$(printf '🚀 Promote 성공: `dev` → `main`\n• 커밋: [%s](<%s>) (%s 커밋)\n• 버전: `%s` (bump=%s, 배포 성공 시 릴리즈 생성)\n• 실행: %s\n• 배포는 deploy 워크플로에서 진행\n• [워크플로우 로그](<%s>)' \
               "$SHORT_SHA" "$COMMIT_URL" "$COUNT" "$VERSION" "$BUMP" "$ACTOR_MENTION" "$RUN_URL")
@@ -455,8 +531,7 @@ jobs:
             TEXT=$(printf '❌ Promote 실패: `dev` → `main` 승격 중 오류\n• 실행: %s\n• [워크플로우 로그에서 원인 확인](<%s>)' \
               "$ACTOR_MENTION" "$RUN_URL")
           else
-            # 승인 거부·타임아웃 등으로 promote 가 시작되지 않은 경우.
-            TEXT=$(printf '⏹ Promote 중단: 승인되지 않아 승격하지 않음 (`%s`, %s 커밋)\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
+            TEXT=$(printf '⏹ Promote 중단: 승격 단계가 시작되지 않음 (%s, %s 커밋)\n• 실행: %s\n• [워크플로우 로그](<%s>)' \
               "$SHORT_SHA" "$COUNT" "$ACTOR_MENTION" "$RUN_URL")
           fi
 
