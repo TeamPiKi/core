@@ -912,6 +912,17 @@ jobs:
           terraform init -backend-config=backend.hcl -input=false >/dev/null
           echo "app_ip=$(terraform output -raw "$APP_IP_OUTPUT")" >> "$GITHUB_OUTPUT"
 
+      # 배포는 다음 job(deploy_core_app)이 deploy.yml 을 호출해 수행하고, 그 워크플로는 러너에서 박스로
+      # SSH/scp 한다. 신 계정 SG 는 22번이 닫힌 채 생성되므로(security_groups.tf 의 ingress 는
+      # ignore_changes 라 terraform 이 관리하지 않고, 구 계정의 개방 규칙은 사람이 콘솔로 넣은 것),
+      # 여기서 열어 두지 않으면 scp 가 "dial tcp <ip>:22: i/o timeout" 으로 죽는다(실측).
+      # 게이트 상태 파일은 job 로컬이라 close 를 같은 job 에서 못 한다 — 배포가 끝난 뒤 gate_close 가 닫는다.
+      - name: SSH 게이트 개방 (배포 구간)
+        uses: ./.github/actions/ssh-gate
+        with:
+          action: open
+          instance-name: ${{ needs.config.outputs.app_tag }}
+
       - name: Discord — 세미 디플로이 시작
         uses: ./.github/actions/discord-notify
         with:
@@ -929,6 +940,47 @@ jobs:
     with:
       migration_host: ${{ needs.deploy_core.outputs.app_ip }}
       migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
+
+  # 배포 구간에 열어 둔 SSH 게이트를 회수한다. ssh-gate 의 상태 파일은 job 로컬이라 연 job 에서 닫을
+  # 수 없고(배포는 다른 job 이 한다), 러너 IP 도 job 마다 달라 close 가 규칙을 못 찾는다. 그래서 여는 쪽이
+  # 기록한 CIDR 대신 "이 워크플로가 붙인 설명" 으로 찾아 지운다. always() — 배포가 실패해도 열어 둔 채 끝나지 않게.
+  gate_close:
+    needs: [guard, config, deploy_core, deploy_core_app]
+    # success 만 보면 부분 개방을 회수하지 못한다 — ssh-gate 는 SG 를 순서대로 열어서, 앞 SG 에 규칙을
+    # 넣은 뒤 다음 SG 에서 실패하면 deploy_core 는 failure 지만 22번 규칙은 이미 남아 있다.
+    # skipped(=deploy_core 자체가 안 돎)만 제외하고, 돌기 시작했으면 결과와 무관하게 회수한다.
+    if: ${{ always() && needs.deploy_core.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 이관이 연 22번 규칙 회수
+        env:
+          INSTANCE_NAME: ${{ needs.config.outputs.app_tag }}
+        run: |
+          set -uo pipefail
+          IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCE_NAME" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text)
+          [ -n "$IDS" ] || { echo "::warning::인스턴스를 못 찾음 — 회수 생략"; exit 0; }
+          for sg in $IDS; do
+            # 이 워크플로가 붙인 설명(piki-migrate-runner)이 달린 22번 규칙만 지운다. 사람이 넣은 규칙은 안 건드린다.
+            CIDRS=$(aws ec2 describe-security-groups --group-ids "$sg" \
+              --query "SecurityGroups[].IpPermissions[?FromPort==\`22\`].IpRanges[?Description=='piki-migrate-runner'].CidrIp" \
+              --output text | tr '\t' '\n' | grep -v '^$' || true)
+            for cidr in $CIDRS; do
+              aws ec2 revoke-security-group-ingress --group-id "$sg" \
+                --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$cidr}]" >/dev/null 2>&1 \
+                && echo "::notice::게이트 회수 — $sg 22/tcp ← $cidr" \
+                || echo "::warning::게이트 회수 실패 — $sg $cidr (콘솔에서 직접 지울 것)"
+            done
+          done
 
   # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
   # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —
@@ -1264,6 +1316,7 @@ jobs:
             echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` |"
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
             echo "| \`EXTRACTOR_PROD_ADDRESS\` | repo secret | 신 계정 extractor 주소 |"
+            echo "| 앱 SG 의 22번 인바운드 | 신 계정 EC2 콘솔 | **배포용 규칙 추가** — 구 계정에는 사람이 넣은 SSH 개방 규칙이 있어 deploy.yml 의 scp/ssh 가 되지만, 신 계정 SG 는 22번이 닫힌 채 생성된다(terraform 의 ingress 는 ignore_changes 라 관리 대상이 아니다). 안 넣으면 컷오버 후 **평소 배포가 \`dial tcp <ip>:22: i/o timeout\` 으로 전부 실패**한다 |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
             echo
             echo "\`EC2_SSH_KEY\` 는 바꿀 필요 없다 — bootstrap 이 같은 키의 공개키를 신 계정에 등록했다."
@@ -1271,7 +1324,7 @@ jobs:
             echo "역할 ARN 의 정확한 이름은 신 계정 terraform output 또는 IAM 콘솔에서 확인한다"
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::남은 수동 정리 6건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · EXTRACTOR_PROD_ADDRESS · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제. 자세한 내용은 실행 Summary."
+          echo "::warning::남은 수동 정리 7건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · EXTRACTOR_PROD_ADDRESS · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제 · 앱 SG 22번 인바운드(배포용). 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
         id: sum
