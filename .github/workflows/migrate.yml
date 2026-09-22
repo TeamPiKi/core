@@ -1025,19 +1025,62 @@ jobs:
           echo "::notice::extractor=$EX renderer=$RE"
 
   # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
+  # uses(재사용 호출)로 부르지 않는다 — secrets: inherit 이 호출자(core)의 EC2_SSH_KEY 를 주입해,
+  # 사이드 키(piki-extractor-key)로 만든 박스에 core 키로 붙어 "unable to authenticate" 가 난다(실측:
+  # 같은 키를 쓰는 renderer 는 dispatch 방식이라 성공했다). API dispatch 로 부르면 그 레포가 자기
+  # secret 을 쓴다. renderer 와 같은 형태 — 트리거 후 request_id 로 실행을 특정해 완료를 폴링한다.
   deploy_extractor:
     needs: [side_hosts]
-    # 기본 false — 신 계정 박스는 core 의 EC2_SSH_KEY 로 만들어지는데 이 레포 배포는 자기 레포의
-    # EC2_SSH_KEY 로 붙어 "unable to authenticate" 가 난다(실측). 두 레포 키를 core 것으로 통일한
-    # 뒤에 켠다. 꺼도 core 이관(DB·앱·컷오버)은 완결되고, 추출·렌더는 그 뒤 따로 배포하면 된다.
     if: ${{ needs.side_hosts.result == 'success' && inputs.deploy_side_services }}
-    uses: TeamPiKi/extractor/.github/workflows/deploy.yml@main
-    secrets: inherit
-    with:
-      migration_host: ${{ needs.side_hosts.outputs.extractor_ip }}
-      # 그 레포의 vars.AWS_ECR_PUSH_ROLE_ARN 은 구 계정 역할이라 신 계정에서 assume 이 안 된다
-      # ("Not authorized to perform sts:AssumeRoleWithWebIdentity", 실측). 이관 부트스트랩 역할로 넘긴다.
-      migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: extractor 배포 트리거 + 완료 대기
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          HOST: ${{ needs.side_hosts.outputs.extractor_ip }}
+          ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
+        run: |
+          set -euo pipefail
+          [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — extractor 배포를 트리거할 수 없다"; exit 1; }
+          REPO=TeamPiKi/extractor
+          REQ="migrate-${{ github.run_id }}-${{ github.run_attempt }}"
+          # migration_role_arn: 그 레포의 vars.AWS_ECR_PUSH_ROLE_ARN 은 구 계정 역할이라 신 계정에서
+          # assume 이 안 된다("Not authorized to perform sts:AssumeRoleWithWebIdentity", 실측).
+          gh workflow run deploy.yml --repo "$REPO" --ref main \
+            -f migration_host="$HOST" -f migration_role_arn="$ROLE" -f request_id="$REQ"
+          echo "::notice::extractor 배포 트리거 — host=$HOST req=$REQ"
+
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            sleep 5
+            if OUT=$(gh run list --repo "$REPO" --workflow=deploy.yml --limit 30 \
+                       --json databaseId,displayTitle --jq \
+                       "[.[] | select(.displayTitle | contains(\"$REQ\"))] | .[0].databaseId // empty" 2>/dev/null); then
+              RUN_ID="$OUT"
+              [ -n "$RUN_ID" ] && break
+            else
+              echo "::warning::extractor 실행 조회 실패 — 재시도"
+            fi
+          done
+          [ -n "$RUN_ID" ] || { echo "::error::extractor 실행($REQ)을 찾지 못했다 — https://github.com/$REPO/actions 확인"; exit 1; }
+          echo "::notice::extractor run=$RUN_ID 대기"
+
+          ST=""; CC=""
+          for _ in $(seq 1 180); do
+            if OUT=$(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion \
+                       --jq '[.status,(.conclusion // "")]|@tsv' 2>/dev/null); then
+              ST=$(printf '%s' "$OUT" | cut -f1); CC=$(printf '%s' "$OUT" | cut -f2)
+              [ "$ST" = "completed" ] && break
+            else
+              echo "::warning::extractor 상태 조회 실패 — 재시도"
+            fi
+            sleep 10
+          done
+          echo "extractor 결과: status=${ST:-unknown} conclusion=${CC:-unknown}"
+          [ "$ST" = "completed" ] || { echo "::error::extractor 배포가 제한 시간(30분) 안에 끝나지 않았다 — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
+          [ "$CC" = "success" ] || { echo "::error::extractor 배포 실패(conclusion=$CC) — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
+          echo "::notice::extractor 배포 완료"
 
   # renderer 는 private 레포라 `uses:` 재사용 호출이 성립하지 않는다 — access_level=organization 을 켜도
   # 호출측 유효성 검사가 "workflow was not found" 로 막아 migrate.yml 전체가 디스패치조차 거부된다(실측).
