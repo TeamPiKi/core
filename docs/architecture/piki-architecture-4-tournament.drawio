@@ -1,0 +1,184 @@
+<mxfile host="app.diagrams.net" agent="PiKi docs">
+  <diagram id="토너먼트" name="토너먼트">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="740" math="0" shadow="0" background="#F7F8FA">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="grp-make" value="1 · 만들기" style="rounded=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#CBD5E1;verticalAlign=top;align=left;spacingLeft=16;spacingTop=10;fontSize=13;fontColor=#6B7280;fontStyle=1;html=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="50" y="60" width="280" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="pick" value="위시에서 후보 담기" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-make">
+          <mxGeometry x="26" y="46" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="bracket" value="가격대별 자동 매칭" style="rounded=1;arcSize=14;fillColor=#E0F2FE;strokeColor=#0EA5E9;fontColor=#0C4A6E;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-make">
+          <mxGeometry x="26" y="110" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="bracket-n" value="비슷한 값끼리 붙여&lt;br/&gt;공정한 1:1 대진표를 만든다" style="rounded=1;arcSize=12;fillColor=#F1F5F9;strokeColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#475569;html=1;spacingLeft=12;spacingRight=12;" vertex="1" parent="grp-make">
+          <mxGeometry x="60" y="152" width="194" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="start" value="토너먼트 시작" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-make">
+          <mxGeometry x="26" y="212" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="t1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pick" target="bracket">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bracket" target="start">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="grp-invite" value="2 · 부르기" style="rounded=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#CBD5E1;verticalAlign=top;align=left;spacingLeft=16;spacingTop=10;fontSize=13;fontColor=#6B7280;fontStyle=1;html=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="50" y="386" width="280" height="240" as="geometry"/>
+        </mxCell>
+        <mxCell id="inv-link" value="초대 링크" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-invite">
+          <mxGeometry x="26" y="46" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="inv-code" value="6자리 코드" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-invite">
+          <mxGeometry x="26" y="110" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="inv-code-s" value="오프라인에서 불러주거나 손 입력" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-invite">
+          <mxGeometry x="60" y="152" width="194" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="guest" value="게스트로 바로 참여" style="rounded=1;arcSize=14;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#15803D;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-invite">
+          <mxGeometry x="26" y="174" width="228" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="guest-s" value="회원가입 없이" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-invite">
+          <mxGeometry x="60" y="216" width="194" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t4a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.94;exitY=1;exitDx=0;exitDy=0;entryX=0.94;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="inv-link" target="guest">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t4b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="inv-code" target="guest">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="grp-play" value="3 · 고르기" style="rounded=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#CBD5E1;verticalAlign=top;align=left;spacingLeft=16;spacingTop=10;fontSize=13;fontColor=#6B7280;fontStyle=1;html=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="420" y="60" width="300" height="330" as="geometry"/>
+        </mxCell>
+        <mxCell id="round" value="1:1 라운드" style="rounded=1;arcSize=14;fillColor=#E0F2FE;strokeColor=#0EA5E9;fontColor=#0C4A6E;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-play">
+          <mxGeometry x="30" y="50" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="round-s" value="둘 중 하나만 고른다" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-play">
+          <mxGeometry x="64" y="92" width="206" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="progress" value="남은 선택 수 · 대진표" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-play">
+          <mxGeometry x="30" y="124" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="progress-n" value="결승까지 얼마나 왔는지&lt;br/&gt;한 화면에 드러낸다" style="rounded=1;arcSize=12;fillColor=#F1F5F9;strokeColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#475569;html=1;spacingLeft=12;spacingRight=12;" vertex="1" parent="grp-play">
+          <mxGeometry x="64" y="166" width="206" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="win" value="우승 확정" style="rounded=1;arcSize=14;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#15803D;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-play">
+          <mxGeometry x="30" y="226" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="play-note" value="참여자마다 자기 진행을 따로 가진다" style="text;html=1;align=center;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="1">
+          <mxGeometry x="450" y="400" width="240" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="round" target="progress">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="progress" target="win">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="grp-result" value="4 · 결과" style="rounded=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#CBD5E1;verticalAlign=top;align=left;spacingLeft=16;spacingTop=10;fontSize=13;fontColor=#6B7280;fontStyle=1;html=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="810" y="60" width="300" height="330" as="geometry"/>
+        </mxCell>
+        <mxCell id="receipt" value="영수증" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-result">
+          <mxGeometry x="30" y="50" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="receipt-s" value="저장 · 공유" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-result">
+          <mxGeometry x="64" y="92" width="206" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="group-result" value="그룹 결과" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-result">
+          <mxGeometry x="30" y="124" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="group-result-n" value="누가 무엇을 골랐는지&lt;br/&gt;서로의 선택을 비교한다" style="rounded=1;arcSize=12;fillColor=#F1F5F9;strokeColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#475569;html=1;spacingLeft=12;spacingRight=12;" vertex="1" parent="grp-result">
+          <mxGeometry x="64" y="166" width="206" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="share" value="완주 후 공유" style="rounded=1;arcSize=14;fillColor=#E0F2FE;strokeColor=#0EA5E9;fontColor=#0C4A6E;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-result">
+          <mxGeometry x="30" y="226" width="240" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="share-s" value="공유 링크 · 같은 코드로 14일" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-result">
+          <mxGeometry x="64" y="268" width="206" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="receipt" target="group-result">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#94A3B8;strokeWidth=1.5;fontColor=#6B7280;labelBackgroundColor=#F7F8FA;exitX=0.06;exitY=1;exitDx=0;exitDy=0;entryX=0.06;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="group-result" target="share">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="grp-data" value="저장 구조" style="rounded=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#CBD5E1;verticalAlign=top;align=left;spacingLeft=48;spacingTop=10;fontSize=13;fontColor=#6B7280;fontStyle=1;html=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="420" y="460" width="690" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-icon" value="" style="shape=image;html=1;imageAspect=0;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;image=data:image/svg+xml,PHN2ZyBmaWxsPSIjNDQ3OUExIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TXlTUUw8L3RpdGxlPjxwYXRoIGQ9Ik0xNi40MDUgNS41MDFjLS4xMTUgMC0uMTkzLjAxNC0uMjc0LjAzM3YuMDEzaC4wMTRjLjA1NC4xMDQuMTQ2LjE4LjIxNC4yNzMuMDU0LjEwNy4xLjIxNC4xNTQuMzJsLjAxNC0uMDE1Yy4wOTQtLjA2Ni4xNC0uMTcyLjE0LS4zMzMtLjA0LS4wNDctLjA0Ni0uMDk0LS4wOC0uMTQtLjA0LS4wNjctLjEyNi0uMS0uMTgtLjE1M3pNNS43NyAxOC42OTVoLS45MjdhNTAuODU0IDUwLjg1NCAwIDAwLS4yNy00LjQxaC0uMDA4bC0xLjQxIDQuNDFIMi40NWwtMS40LTQuNDFoLS4wMWE3Mi44OTIgNzIuODkyIDAgMDAtLjE5NSA0LjQxSDBjLjA1NS0xLjk2Ni4xOTItMy44MS40MS01LjUzaDEuMTVsMS4zMzUgNC4wNjRoLjAwOGwxLjM0Ny00LjA2NGgxLjA5NWMuMjQyIDIuMDE1LjM4NCAzLjg2LjQyOCA1LjUzem00LjAxNy00LjA4Yy0uMzc4IDIuMDQ1LS44NzYgMy41MzMtMS40OTIgNC40Ni0uNDgyLjcxNi0xLjAxIDEuMDczLTEuNTgzIDEuMDczLS4xNTMgMC0uMzQtLjA0Ni0uNTY2LS4xMzh2LS40OTRjLjExLjAxNy4yNC4wMjYuMzg2LjAyNi4yNjggMCAuNDgzLS4wNzUuNjQ3LS4yMjIuMTk3LS4xOC4yOTUtLjM4Mi4yOTUtLjYwNSAwLS4xNTUtLjA3Ny0uNDctLjIzLS45NDRMNi4yMyAxNC42MTVoLjkxbC43MjcgMi4zNmMuMTY0LjUzNi4yMzMuOTEuMjA1IDEuMTIzLjQtMS4wNjQuNjc4LTIuMjI3LjgzNS0zLjQ4M3ptMTIuMzI1IDQuMDhoLTIuNjN2LTUuNTNoLjg4NXY0Ljg1aDEuNzQ1em0tMy4zMi4xMzVsLTEuMDE2LS41Yy4wOS0uMDc2LjE3Ny0uMTU4LjI1NS0uMjUuNDMzLS41MDYuNjQ4LTEuMjU4LjY0OC0yLjI1MyAwLTEuODMtLjcxOC0yLjc0Ni0yLjE1NS0yLjc0Ni0uNzA0IDAtMS4yNTQuMjMyLTEuNjUuNjk3LS40My41MDgtLjY0NiAxLjI1Ni0uNjQ2IDIuMjQ1IDAgLjk3Mi4xOSAxLjY4Ni41NzQgMi4xNC4zNS40MS44NzcuNjE1IDEuNTgzLjYxNS4yNjQgMCAuNTA2LS4wMzMuNzI1LS4wOThsMS4zMjUuNzcyLjM2LS42MjJ6TTE1LjUgMTcuNTg4Yy0uMjI1LS4zNi0uMzM3LS45NC0uMzM3LTEuNzM2IDAtMS4zOTMuNDI0LTIuMDkgMS4yNy0yLjA5LjQ0MyAwIC43Ny4xNjcuOTc3LjUuMjI0LjM2Mi4zMzYuOTM2LjMzNiAxLjcyMyAwIDEuNDA0LS40MjQgMi4xMDgtMS4yNyAyLjEwOC0uNDQ1IDAtLjc3LS4xNjctLjk3OC0uNXptLTEuNjU4LS40MjVjMCAuNDctLjE3Mi44NTYtLjUxNiAxLjE1Ni0uMzQ0LjMtLjgwMy40NS0xLjM4NC40NS0uNTQzIDAtMS4wNjQtLjE3Mi0xLjU3My0uNTE1bC4yMzctLjQ3NmMuNDM4LjIyLjgzMy4zMjggMS4xOS4zMjguMzMyIDAgLjU5My0uMDczLjc4My0uMjJhLjc1NC43NTQgMCAwMC4zLS42MTVjMC0uMzMtLjIzLS42MS0uNjQ4LS44NDUtLjM4OC0uMjEzLTEuMTYzLS42NTctMS4xNjMtLjY1Ny0uNDIyLS4zMDctLjYzMi0uNjM2LS42MzItMS4xNzcgMC0uNDUuMTU3LS44MS40Ny0xLjA4NS4zMTUtLjI3OC43Mi0uNDE1IDEuMjItLjQxNS41MTIgMCAuOTguMTM2IDEuNC40MWwtLjIxMy40NzZhMi43MjYgMi43MjYgMCAwMC0xLjA2NC0uMjNjLS4yODMgMC0uNTAyLjA2OC0uNjU0LjIwNmEuNjg1LjY4NSAwIDAwLS4yNDguNTI0YzAgLjMyOC4yMzQuNjEuNjY2Ljg1LjM5My4yMTUgMS4xODcuNjcgMS4xODcuNjcuNDMzLjMwNS42NDguNjMuNjQ4IDEuMTY4em05LjM4Mi01Ljg1MmMtLjUzNS0uMDE0LS45NS4wNC0xLjI5Ny4xODgtLjEuMDQtLjI2LjA0LS4yNzQuMTY3LjA1NS4wNTMuMDYzLjE0LjExLjIxNC4wOC4xMzQuMjE4LjMxMy4zNDYuNDA3LjE0LjExLjI4LjIxNi40MjcuMzEuMjYuMTYuNTU1LjI1NS44MS40MTYuMTQ1LjA5NC4yOTMuMjEzLjQ0LjMxMy4wNzMuMDUuMTIuMTQuMjE0LjE3MnYtLjAyYy0uMDQ2LS4wNi0uMDYtLjE0Ny0uMTA1LS4yMTQtLjA2Ny0uMDY3LS4xMzQtLjEyNy0uMi0uMTkzYTMuMjIzIDMuMjIzIDAgMDAtLjY5NS0uNjc1Yy0uMjE0LS4xNDYtLjY4Mi0uMzUtLjc3LS41OTVsLS4wMTMtLjAxNGMuMTQ2LS4wMTMuMzItLjA2Ni40Ni0uMTA2LjIyNy0uMDYuNDM1LS4wNDcuNjctLjEwNi4xMDYtLjAyNy4yMTMtLjA2LjMyLS4wOTR2LS4wNmMtLjEyLS4xMi0uMjEtLjI4My0uMzM0LS4zOTVhOC44NjcgOC44NjcgMCAwMC0xLjEwNC0uODIzYy0uMjEtLjEzNC0uNDc2LS4yMi0uNjk3LS4zMzQtLjA4LS4wNC0uMjE0LS4wNi0uMjYtLjEyNy0uMTItLjE0Ni0uMTktLjM0LS4yNzUtLjUxNGExNy42OSAxNy42OSAwIDAxLS41NDctMS4xNjNjLS4xMi0uMjYyLS4xOTMtLjUyMy0uMzQtLjc2My0uNjktMS4xMzctMS40MzctMS44MjYtMi41ODYtMi41LS4yNDctLjE0LS41NDMtLjItLjg1Ni0uMjc0LS4xNjctLjAwOC0uMzM0LS4wMi0uNS0uMDI3LS4xMS0uMDQ3LS4yMTYtLjE3NC0uMzEtLjIzNS0uMzgtLjI0LTEuMzY0LS43Ni0xLjY0NC0uMDcyLS4xOC40MzQuMjY3Ljg2Mi40MjIgMS4wODIuMTE1LjE1My4yNi4zMjguMzQuNS4wNDcuMTE2LjA2LjIzNS4xMDcuMzU2LjEwNi4yOTQuMjA3LjYyMi4zNDcuODk3LjA3My4xNC4xNTMuMjg3LjI0Ny40MTMuMDU0LjA3My4xNDYuMTA3LjE2Ny4yMjctLjA5NC4xMzYtLjEuMzM0LS4xNTQuNS0uMjQuNzU3LS4xNDYgMS42OTMuMTk0IDIuMjUuMTA3LjE2Ni4zNjIuNTM0LjcwMy4zOTMuMy0uMTIuMjM0LS41LjMyLS44MzUuMDItLjA4LjAwNy0uMTMzLjA0OC0uMTg3di4wMTVjLjA5NC4xODguMTg4LjM2Ny4yNzQuNTU1LjIwNi4zMjguNTY2LjY2OC44NjcuODk1LjE2LjEyLjI4Ny4zMjguNDg3LjQwMnYtLjAyaC0uMDE1Yy0uMDQzLS4wNTgtLjEtLjA4Ni0uMTU0LS4xMzNhMy40NDUgMy40NDUgMCAwMS0uMzUtLjQgOC43NiA4Ljc2IDAgMDEtLjc0Ny0xLjIxOGMtLjExLS4yMS0uMjAyLS40MzYtLjI5LS42NDMtLjA0LS4wOC0uMDQtLjItLjEwNy0uMjQtLjEuMTQ2LS4yNDcuMjczLS4zMi40NTMtLjEyNy4yODgtLjE0LjY0Mi0uMTg4IDEuMDEtLjAyNy4wMDctLjAxNCAwLS4wMjcuMDE0LS4yMTQtLjA1Mi0uMjg3LS4yNzQtLjM2Ny0uNDYtLjItLjQ3NS0uMjMzLTEuMjM4LS4wNi0xLjc4NS4wNDctLjE0LjI0Ny0uNTgyLjE2Ny0uNzE2LS4wNDItLjEyNy0uMTc0LS4yLS4yNDctLjMwM2EyLjQ3OCAyLjQ3OCAwIDAxLS4yNC0uNDI3Yy0uMTYtLjM3NC0uMjQtLjc4OC0uNDE0LTEuMTYyLS4wOC0uMTczLS4yMi0uMzU0LS4zMzQtLjUxMy0uMTI3LS4xOC0uMjY3LS4zMDctLjM2OC0uNTItLjAzMy0uMDczLS4wOC0uMTk0LS4wMjctLjI3NC4wMTQtLjA1NC4wNDItLjA3NS4wOTQtLjA5LjA4OC0uMDcyLjMzNS4wMjIuNDIyLjA2Mi4yNDcuMS40NTUuMTk0LjY2Mi4zMzQuMDk0LjA2Ni4xOTUuMTkzLjMxNS4yMjZoLjE0Yy4yMTQuMDQ3LjQ1NS4wMTQuNjU1LjA3My4zNTUuMTE0LjY3NS4yOC45NjIuNDZhNS45NTMgNS45NTMgMCAwMTIuMDg1IDIuMjg2Yy4wOC4xNTQuMTE1LjI5NS4xODguNDU1LjE0LjMzLjMxMy42NjMuNDU1Ljk4Mi4xNC4zMTUuMjc1LjYzNi40NzYuODk3LjEuMTQuNTAyLjIxMy42ODIuMjg2LjEzMy4wNi4zNC4xMTUuNDYuMTg4LjIzLjE0LjQ1NC4zLjY3LjQ1NC4xMS4wNzYuNDQzLjI0My40NjMuMzc4eiIvPjwvc3ZnPg==;verticalLabelPosition=bottom;verticalAlign=top;fontSize=12;fontColor=#384049;fontStyle=1;html=1;" vertex="1" parent="grp-data">
+          <mxGeometry x="16" y="8" width="22" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-def" value="tournaments" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-data">
+          <mxGeometry x="30" y="46" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-def-s" value="정의 · 초대 코드 · 수명" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-data">
+          <mxGeometry x="64" y="88" width="156" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-user" value="tournament_users" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-data">
+          <mxGeometry x="250" y="46" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-user-s" value="참여와 진행 상태" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-data">
+          <mxGeometry x="284" y="88" width="156" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-item" value="tournament_items" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-data">
+          <mxGeometry x="470" y="46" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="t-item-s" value="출전 시점 버전 고정" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-data">
+          <mxGeometry x="504" y="88" width="156" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="t3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#0EA5E9;strokeWidth=2.5;fontColor=#0C4A6E;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="start" target="round">
+          <mxGeometry relative="1" as="geometry">
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t5" value="같은 토너먼트에 합류" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#16A34A;strokeWidth=2;fontColor=#15803D;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.9;entryDx=0;entryDy=0;" edge="1" parent="1" source="guest" target="round">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="376" y="580"/><mxPoint x="376" y="392"/><mxPoint x="392" y="392"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#0EA5E9;strokeWidth=2.5;fontColor=#0C4A6E;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="win" target="receipt">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="768" y="336"/><mxPoint x="768" y="160"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t11" value="완주한 판도 코드로 다시 열린다" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#CBD5E1;strokeWidth=1.5;dashed=1;fontColor=#94A3B8;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.2;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="share" target="grp-invite">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1150" y="336"/><mxPoint x="1150" y="668"/><mxPoint x="106" y="668"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg0" value="" style="rounded=1;arcSize=40;fillColor=#0EA5E9;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="62" y="706" width="22" height="6" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgt0" value="주 흐름" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="92" y="700" width="140" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=1;arcSize=40;fillColor=#16A34A;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="237" y="706" width="22" height="6" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgt1" value="게스트 참여" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="267" y="700" width="140" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=1;arcSize=40;fillColor=#94A3B8;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="412" y="706" width="22" height="6" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgt2" value="단계 진행" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="442" y="700" width="140" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=1;arcSize=40;fillColor=#CBD5E1;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="587" y="706" width="22" height="6" as="geometry"/>
+        </mxCell>
+        <mxCell id="lgt3" value="되돌아오는 경로" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="617" y="700" width="140" height="18" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
