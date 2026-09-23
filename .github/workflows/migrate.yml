@@ -1689,8 +1689,9 @@ jobs:
             fi
           }
           set_var() {
-            if gh variable set "$1" --env "$ENV" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
-              echo "  var     $1 = $2 (env=$ENV)"
+            local env="${3:-$ENV}"
+            if gh variable set "$1" --env "$env" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+              echo "  var     $1 = $2 (env=$env)"
             else
               echo "::warning::variable $1 갱신 실패 — 토큰 권한(Variables: write) 확인"; fail=1
             fi
@@ -1705,8 +1706,14 @@ jobs:
             || { echo "::warning::extractor 사설 IP 를 못 얻어 EXTRACTOR_PROD_ADDRESS 를 건드리지 않았다"; fail=1; }
           [ -n "$ECR_ROLE" ] && set_var AWS_ECR_PUSH_ROLE_ARN "$ECR_ROLE" \
             || { echo "::warning::ECR push 역할 ARN 을 못 얻었다"; fail=1; }
-          [ -n "$DB_ROLE" ] && set_var AWS_DB_PROVISION_ROLE_ARN "$DB_ROLE" \
-            || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }
+          # DB provision 역할은 prod-db Environment 에 쓴다. provision-db-observability.yml 이 그 Environment 로
+          # 돌고 역할의 trust 도 environment:prod-db 로 못박혀 있다(terraform/oidc.tf). $ENV(prod) 에 쓰면
+          # 그 워크플로는 repo 변수(구 계정 역할)로 떨어져 assume 이 거부된다(#1169 실측).
+          # dev 는 별도 DB 박스가 없어 이 변수를 쓰는 워크플로가 없다.
+          if [ "$ENV" = prod ]; then
+            [ -n "$DB_ROLE" ] && set_var AWS_DB_PROVISION_ROLE_ARN "$DB_ROLE" prod-db \
+              || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }
+          fi
 
           if [ "$fail" -eq 0 ]; then
             echo "done=true" >> "$GITHUB_OUTPUT"
@@ -1724,7 +1731,7 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "배포 배선 갱신 ${{ job.status }} (env=${{ inputs.env }})"
-          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN 을 Environment 수준에서 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
+          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
 
   # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
   #
@@ -1900,7 +1907,7 @@ jobs:
               echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP (rewire 실패) |"
               echo "| \`EXTRACTOR_PROD_ADDRESS\` | Environment \`$ENV\` secret | 신 계정 extractor **사설** IP:8090 (rewire 실패) |"
               echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
-              echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
+              [ "$ENV" = prod ] && echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
             fi
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
