@@ -23,7 +23,7 @@
 2. [주요 기능](#주요-기능)
 3. [시스템 구성](#시스템-구성)
 4. [기술 스택](#기술-스택)
-5. [도메인 구성](#도메인-구성)
+5. [레포 구성](#레포-구성)
 6. [데이터 모델](#데이터-모델)
 7. [시스템 아키텍처](#시스템-아키텍처)
 8. [인증](#인증)
@@ -71,13 +71,13 @@
 
 ## 시스템 구성
 
-| repo | 역할 |
-|---|---|
-| [client](https://github.com/TeamPiKi/client) | 앱 클라이언트 (iOS · Android · Web) |
-| **core** (이 repo) | 백엔드 API 서버 |
-| [extractor](https://github.com/TeamPiKi/extractor) | 상품 추출 서비스. URL 을 fetch·구조화 파싱하고 LLM 으로 보완 |
-| renderer <sup>private</sup> | 페이지 렌더링 내부 서비스 |
-| [infra](https://github.com/TeamPiKi/infra) | 여러 repo 에 걸치는 공통 자산의 SSOT (배포 블록 · 개발 규약) |
+| repo | 역할 | 스택 |
+|---|---|---|
+| [client](https://github.com/TeamPiKi/client) | 앱 클라이언트 (iOS · Android · Web) | |
+| **core** (이 repo) | 백엔드 API 서버 · 백오피스 | Kotlin · Spring Boot · MySQL · Redis |
+| [extractor](https://github.com/TeamPiKi/extractor) | 상품 추출 서비스. URL 을 fetch·구조화 파싱하고 LLM 으로 보완 | Java · Spring Boot · Gemini |
+| renderer <sup>private</sup> | JS 로 그려지는 페이지를 실제 브라우저로 렌더 | Python · FastAPI · Chrome |
+| [infra](https://github.com/TeamPiKi/infra) | 여러 repo 에 걸치는 공통 자산의 SSOT (배포 블록 · 개발 규약) | Bash · Protobuf |
 
 호출 흐름은 `client → core → extractor → renderer` 입니다.
 
@@ -132,7 +132,9 @@
   <img src="https://img.shields.io/badge/ktlint-FF7F50?style=for-the-badge" />
 </p>
 
-## 도메인 구성
+## 레포 구성
+
+### core
 
 ```
 📦 com.depromeet.piki
@@ -169,6 +171,44 @@
 **도메인 용어를 코드와 문서에서 같게 씁니다.** `item` 은 상품의 정체성이고, 추출값·상태·이력은 버전(`ItemSnapshot`)이 듭니다. `wish` 는 user 가 item 을 담은 기록이고, `tournament_item` 은 출전 시점의 버전을 고정해 가리킵니다. 외부 경계를 가리키는 이름에 `item` 을, 우리 엔티티에 `product` 를 쓰지 않습니다.
 
 **테이블 간 FK 제약과 JPA 연관관계 어노테이션을 두지 않습니다.** 관계는 raw ID 로만 잇고 참조 무결성은 서비스 계층이 책임집니다.
+
+
+### extractor
+
+```
+📦 com.depromeet.piki.extractor
+ ┃
+ ┣ 📂 api ───────────────── 추출 요청 · 모델 점검 엔드포인트 (core 전용)
+ ┣ 📂 extraction ────────── URL 추출 파이프라인
+ ┃  ┣ 📂 http ───────────── 페이지 fetch · 내부 주소 차단(SSRF)
+ ┃  ┣ 📂 headless ───────── renderer 호출 · 응답 압축 해제
+ ┃  ┣ 📂 structured ─────── JSON-LD · OpenGraph 파싱
+ ┃  ┗ 📂 gemini ─────────── 구조화로 못 채운 필드만 LLM 보완
+ ┃
+ ┣ 📂 image ─────────────── 상품 이미지에서 추출 · 상품 영역 크롭
+ ┣ 📂 probe ─────────────── LLM 모델 가용성 점검
+ ┣ 📂 domain ────────────── ProductLink · ProductSnapshot
+ ┗ 📂 common ────────────── 설정 · 예외 · S3 스토리지
+```
+
+### renderer
+
+비공개 레포라 구조는 싣지 않습니다. extractor 가 넘긴 URL 을 실제 Chrome 으로 끝까지 렌더해 HTML 을 돌려주는 데까지가 renderer 의 몫이고, 그 HTML 에서 상품 정보를 뽑는 건 extractor 가 합니다.
+
+### infra
+
+```
+📦 infra
+ ┃
+ ┣ 📂 blocks ────────────── 배포 블록 (슬롯 결정 · 컨테이너 실행 · 헬스체크 · 트래픽 전환)
+ ┣ 📂 contracts ─────────── 서비스 간 계약 (추출 API proto · 에러 코드 · 헬스체크)
+ ┣ 📂 conventions ───────── 공통 규약 (인프라 · 테스트 · 작성)
+ ┣ 📂 skills ────────────── 커밋 · PR · 이슈 스킬 정본
+ ┣ 📂 hooks ─────────────── git hooks
+ ┗ 📄 install.sh ────────── 규약 · 스킬을 각 레포에 설치
+```
+
+세 서비스의 배포는 같은 블록을 서로 다르게 조합한 것입니다. core 가 전체 세트를 쓰고, extractor 와 renderer 는 그 일부만 씁니다. 두 레포 이상이 쓰면서 복제하면 어긋나는 자산만 이 레포에 둡니다.
 
 ## 데이터 모델
 
