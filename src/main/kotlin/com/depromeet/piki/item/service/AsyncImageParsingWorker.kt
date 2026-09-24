@@ -40,7 +40,7 @@ class AsyncImageParsingWorker(
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
     override fun parse(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         imageKey: String,
         expectedAttempt: Int,
     ) {
@@ -54,18 +54,18 @@ class AsyncImageParsingWorker(
         val observation = Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry)
         observation.observe {
             parsingHeartbeat.guarded(
-                snapshotId,
+                requestId,
                 expectedAttempt,
                 onOwnershipLost = {
-                    log.info("item.parse.skip item={} snapshot={} type=image reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
+                    log.info("item.parse.skip item={} request={} type=image reason=ownership_lost expected={}", itemId, requestId, expectedAttempt)
                 },
             ) { attempt ->
                 val started = System.nanoTime()
                 runCatchingException { imageSnapshotExtractor.extract(imageKey) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, imageKey, snapshot, started, attempt, observation) }
+                    .onSuccess { snapshot -> onExtracted(itemId, requestId, imageKey, snapshot, started, attempt, observation) }
                     .onFailure { e ->
                         observation.error(e)
-                        onExtractFailed(itemId, snapshotId, imageKey, e, started, attempt)
+                        onExtractFailed(itemId, requestId, imageKey, e, started, attempt)
                     }
             }
         }
@@ -73,7 +73,7 @@ class AsyncImageParsingWorker(
 
     private fun onExtracted(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         imageKey: String,
         snapshot: ProductSnapshot,
         started: Long,
@@ -82,7 +82,7 @@ class AsyncImageParsingWorker(
     ) {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatchingException { transitionRetry.execute { itemParsingService.markExtracted(snapshotId, snapshot, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markExtracted(requestId, snapshot, attempt) } }
             .onSuccess { status ->
                 // 좀비 폐기(소유권 상실)면 전이가 스킵된다 — 결과를 세지 않고, **특히 raw 를 지우지 않는다**.
                 // 재클레임된 새 시도가 바로 그 원본으로 재실행해야 하므로, 여기서 지우면 되살릴 입력을 잃는다.
@@ -103,7 +103,7 @@ class AsyncImageParsingWorker(
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
                 // 종결이 실제로 적용됐을 때만 원장(로그·메트릭)에 남기고 raw 를 회수한다 (좀비 폐기·전이 실패면 원본을 보존.
                 // 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다 — 링크 워커와 같은 원칙).
-                if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                if (markFailedQuietly(itemId, requestId, attempt)) {
                     log.warn(
                         "item.parse.result item={} type=image result={} reason={} latency={}ms",
                         itemId,
@@ -164,7 +164,7 @@ class AsyncImageParsingWorker(
     // (비-HttpMappable 취급이 링크 워커와 다른 이유는 companion 의 isRetryable 주석 참고).
     private fun onExtractFailed(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         imageKey: String,
         e: Throwable,
         started: Long,
@@ -185,13 +185,13 @@ class AsyncImageParsingWorker(
                 mappable?.httpStatus?.value(),
                 elapsedMs,
             )
-            releaseQuietly(itemId, snapshotId, attempt)
+            releaseQuietly(itemId, requestId, attempt)
             return
         }
         // 확정 실패 — 상품 아님·추출값 신뢰 불가 등. 다시 해도 결과가 같으니 즉시 FAILED + raw 회수.
         // 단 전이가 실제로 적용됐을 때만이다 — 좀비 폐기·전이 실패면 결과를 세지도, raw 를 지우지도 않는다.
         val reason = ItemParsingMetrics.reasonOf(e)
-        if (!markFailedQuietly(itemId, snapshotId, attempt)) return
+        if (!markFailedQuietly(itemId, requestId, attempt)) return
         log.info(
             "item.parse.result item={} type=image result={} reason={} latency={}ms",
             itemId,
@@ -215,10 +215,10 @@ class AsyncImageParsingWorker(
     // 반납은 raw 를 지우지 않는다 — 다음 실행의 입력이기 때문이다.
     private fun releaseQuietly(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         attempt: Int,
     ) {
-        runCatchingException { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.release(requestId, attempt) } }
             .onFailure { e -> log.info("item {} 이미지 소유권 반납 생략 (이미 전이됨·소유권 상실): {}", itemId, e.message) }
     }
 
@@ -226,10 +226,10 @@ class AsyncImageParsingWorker(
     // 반환값 = 전이가 실제로 적용됐는지 (false: 좀비 폐기 또는 전이 실패). raw 회수 여부를 이 값으로 가른다.
     private fun markFailedQuietly(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         attempt: Int,
     ): Boolean =
-        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(requestId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)

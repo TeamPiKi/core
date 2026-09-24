@@ -5,6 +5,7 @@ import com.depromeet.piki.item.event.ItemMerged
 import com.depromeet.piki.item.repository.ItemLinkRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.repository.ParseRequestRepository
 import com.depromeet.piki.product.domain.CanonicalLink
 import com.depromeet.piki.product.domain.ProductLink
 import io.micrometer.core.instrument.MeterRegistry
@@ -14,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.LocalDateTime
 
 // 상품 정체성(#825)의 기록 계층 — 별칭(item_links)·canonical 확정·병합(재부모화)을 담당한다.
 // 등록 쪽의 별칭 히트 재사용은 ItemSharingService 가, 파싱 완료 쪽의 확정·병합은 여기가 진다.
@@ -25,6 +27,7 @@ class ItemIdentityRecorder(
     private val itemRepository: ItemRepository,
     private val itemLinkRepository: ItemLinkRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
+    private val parseRequestRepository: ParseRequestRepository,
     private val meterRegistry: MeterRegistry,
     private val transactionTemplate: TransactionTemplate,
     private val eventPublisher: ApplicationEventPublisher,
@@ -104,6 +107,9 @@ class ItemIdentityRecorder(
     ) {
         transactionTemplate.executeWithoutResult {
             itemSnapshotRepository.reparentAll(fromItemId = loserId, toItemId = winnerId)
+            // 요청도 item_id 를 직접 들고, 큐가 그 id 로 입력(link·imageKey)을 조인한다 — 안 따라가면 진행 중 작업이
+            // soft delete 된 loser 를 조인해 입력 없음으로 종결된다.
+            parseRequestRepository.reparentAll(fromItemId = loserId, toItemId = winnerId, now = LocalDateTime.now())
             itemLinkRepository.reparentAll(fromItemId = loserId, toItemId = winnerId)
             itemRepository.softDeleteById(loserId)
             // item 을 직접 참조하는 상위 도메인(위시의 item_id, #1051)이 같은 트랜잭션(BEFORE_COMMIT)에서 참조를 따라간다.

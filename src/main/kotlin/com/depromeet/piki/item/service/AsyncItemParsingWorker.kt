@@ -37,7 +37,7 @@ class AsyncItemParsingWorker(
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
     override fun parse(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         link: ProductLink,
         expectedAttempt: Int,
     ) {
@@ -50,18 +50,18 @@ class AsyncItemParsingWorker(
         val observation = Observation.createNotStarted(PARSE_OBSERVATION, observationRegistry)
         observation.observe {
             parsingHeartbeat.guarded(
-                snapshotId,
+                requestId,
                 expectedAttempt,
                 onOwnershipLost = {
-                    log.info("item.parse.skip item={} snapshot={} reason=ownership_lost expected={}", itemId, snapshotId, expectedAttempt)
+                    log.info("item.parse.skip item={} request={} reason=ownership_lost expected={}", itemId, requestId, expectedAttempt)
                 },
             ) { attempt ->
                 val started = System.nanoTime()
                 runCatchingException { productLinkExtractor.extract(link) }
-                    .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt, observation) }
+                    .onSuccess { snapshot -> onExtracted(itemId, requestId, link, snapshot, started, attempt, observation) }
                     .onFailure { e ->
                         observation.error(e)
-                        onExtractFailed(itemId, snapshotId, link, e, started, attempt)
+                        onExtractFailed(itemId, requestId, link, e, started, attempt)
                     }
             }
         }
@@ -69,7 +69,7 @@ class AsyncItemParsingWorker(
 
     private fun onExtracted(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         link: ProductLink,
         snapshot: ProductSnapshot,
         started: Long,
@@ -79,7 +79,7 @@ class AsyncItemParsingWorker(
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         // 전이가 실패(추출값 도메인 검증 위반·DB 오류·sweeper 와의 레이스로 이미 전이됨)해도 예외를 흡수한다.
         // 일시 DB 오류(데드락·lock timeout)면 추출 재실행 없이 전이 write 만 짧게 재시도한다(TransitionRetry).
-        runCatchingException { transitionRetry.execute { itemParsingService.markExtracted(snapshotId, snapshot, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markExtracted(requestId, snapshot, attempt) } }
             .onSuccess { status ->
                 // 좀비 폐기(소유권 상실)면 이 워커의 결과는 반영되지 않았다 — 결과 원장(로그·메트릭)에 세지 않는다.
                 // 폐기 사유 자체는 서비스가 남긴다.
@@ -102,7 +102,7 @@ class AsyncItemParsingWorker(
                 log.warn("item.parse.error item={} reason={} READY 전이 거부", itemId, ItemParsingMetrics.REASON_READY_REJECTED, e)
                 // 원장(로그·메트릭)은 전이가 실제로 적용됐을 때만 — 좀비 폐기·전이 실패면 이 실행의 결과가 반영되지 않았다
                 // (확정 실패 경로와 같은 원칙. 로그만 먼저 남기면 로그 원장과 메트릭이 어긋난다).
-                if (markFailedQuietly(itemId, snapshotId, attempt)) {
+                if (markFailedQuietly(itemId, requestId, attempt)) {
                     log.warn(
                         "item.parse.result item={} result={} reason={} latency={}ms url={}",
                         itemId,
@@ -168,7 +168,7 @@ class AsyncItemParsingWorker(
     // 재시도 무의미)는 즉시 FAILED. HttpMappable 이 아닌 예상 못한 예외는 일시·영구를 단정할 수 없어 보수적으로 일시로 둔다.
     private fun onExtractFailed(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         link: ProductLink,
         e: Throwable,
         started: Long,
@@ -193,14 +193,14 @@ class AsyncItemParsingWorker(
                 mappable?.httpStatus?.value(),
                 elapsedMs,
             )
-            releaseQuietly(itemId, snapshotId, attempt)
+            releaseQuietly(itemId, requestId, attempt)
             return
         }
         // 확정 실패 — 상품 아님·못 읽음·값 불신·대상 차단 등. 같은 URL 을 다시 파싱해도 결과가 같으므로
         // 즉시 FAILED 로 종결한다(사용자에게 빨리 알림). 사유는 예외가 들고 온 bucket 에서 파생한다.
         val reason = ItemParsingMetrics.reasonOf(e)
         // 전이가 실제로 적용됐을 때만 결과를 원장에 남긴다 — 좀비 폐기·전이 실패면 이 워커의 결과는 반영되지 않았다.
-        if (!markFailedQuietly(itemId, snapshotId, attempt)) return
+        if (!markFailedQuietly(itemId, requestId, attempt)) return
         log.info(
             "item.parse.result item={} result={} reason={} latency={}ms url={}",
             itemId,
@@ -219,10 +219,10 @@ class AsyncItemParsingWorker(
     // 레이스로 이미 마감 종결됐거나 소유권을 잃었으면 서비스가 false 를 주거나 entity check 가 던지고, 둘 다 정상 상황이다.
     private fun releaseQuietly(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         attempt: Int,
     ) {
-        runCatchingException { transitionRetry.execute { itemParsingService.release(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.release(requestId, attempt) } }
             .onFailure { e -> log.info("item {} 소유권 반납 생략 (이미 전이됨·소유권 상실): {}", itemId, e.message) }
     }
 
@@ -230,10 +230,10 @@ class AsyncItemParsingWorker(
     // 반환값 = 전이가 실제로 적용됐는지 (false: 좀비 폐기 또는 전이 실패).
     private fun markFailedQuietly(
         itemId: Long,
-        snapshotId: Long,
+        requestId: Long,
         attempt: Int,
     ): Boolean =
-        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(snapshotId, attempt) } }
+        runCatchingException { transitionRetry.execute { itemParsingService.markFailed(requestId, attempt) } }
             .onFailure { e ->
                 when (e) {
                     is IllegalStateException -> log.info("item {} 는 이미 전이됨, FAILED 처리 생략: {}", itemId, e.message)
