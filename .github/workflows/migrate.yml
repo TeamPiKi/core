@@ -848,6 +848,20 @@ jobs:
           rm -f key.pem
           echo "::notice::앱 박스 provision 완료 — $APP_IP"
 
+      # DB 박스는 배포할 앱이 없어 deploy.yml 의 Alloy 갱신 경로를 타지 않는다. 여기서 안 올리면 이관 뒤
+      # 관측 없이 돌다가 백업 지표 NoData 알림으로만 드러난다(#1169 실측). 블록의 SSOT 는 TeamPiKi/infra 라
+      # deploy.yml 과 같은 방식으로 main 을 sparse checkout 한다(public repo, 기본 GITHUB_TOKEN 으로 충분).
+      - name: Checkout infra blocks (DB 박스 Alloy)
+        if: ${{ inputs.env == 'prod' }}
+        uses: actions/checkout@v4
+        with:
+          repository: TeamPiKi/infra
+          ref: main
+          path: shared-infra
+          sparse-checkout: |
+            blocks/alloy
+          sparse-checkout-cone-mode: true
+
       - name: prod DB 박스 provision (SSM, keyless)
         if: ${{ inputs.env == 'prod' }}
         env:
@@ -859,6 +873,13 @@ jobs:
           BUCKET="${{ needs.config.outputs.tfstate_bucket }}"
           aws s3 cp infra/scripts/provision-db.sh "s3://$BUCKET/provision/provision-db.sh" >/dev/null
           aws s3 cp infra/scripts/db-backup.sh    "s3://$BUCKET/provision/db-backup.sh"    >/dev/null
+          # Alloy 블록은 provision-db.sh 가 자기 옆의 alloy/ 에서 찾는다(그 스크립트 3절). 파일을 하나씩
+          # 올리고 내리는 이유는 박스 role 이 provision/* GetObject 만 있고 ListBucket 이 없어(db_ec2.tf)
+          # --recursive 가 AccessDenied 로 죽기 때문이다. provision-alloy-ssm.sh 는 SSM 자격 로드를 겸하는
+          # 래퍼인데, 그 몫은 provision-db.sh 3절이 이미 하므로 올리지 않는다.
+          for f in config.alloy provision-alloy.sh; do
+            aws s3 cp "shared-infra/blocks/alloy/$f" "s3://$BUCKET/provision/alloy/$f" >/dev/null
+          done
           # compose 정의도 함께 올린다. provision-db.sh 는 자기 위치 기준으로 ../compose/db.yml 과
           # ./compose/db.yml 두 곳을 찾는데(그 스크립트 주석), /tmp 에 두면 후자가 되어 /tmp/compose/db.yml
           # 이다. 이걸 빠뜨리면 SSM 자격 로드까지 통과한 뒤 "db.yml 가 없다" 로 죽는다(실측).
@@ -874,7 +895,7 @@ jobs:
             --targets "Key=tag:Name,Values=$DB_TAG" \
             --document-name AWS-RunShellScript \
             --comment "migrate provision-db" \
-            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"bash /tmp/provision-db.sh --skip-alloy\"]" \
+            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh\"]" \
             --query 'Command.CommandId' --output text)
           echo "::notice::SSM provision-db 전송 — CommandId=$CMD_ID"
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
@@ -898,8 +919,7 @@ jobs:
             --query '[StandardOutputContent,StandardErrorContent]' --output text
           [ "$STATUS" = "Success" ] || {
             echo "::error::prod DB provision 실패 — Status=$STATUS (박스 instance-role 의 tfstate provision/* s3:GetObject 권한·스크립트 로그 확인)"; exit 1; }
-          echo "::notice::prod DB provision 완료 — $DB_TAG"
-          # NOTE(관측): --skip-alloy 로 돌린다 — alloy 공용 블록의 SSOT 는 TeamPiKi/infra 라 별도 배치가 필요(후속).
+          echo "::notice::prod DB provision 완료 — $DB_TAG (MySQL·백업 cron·Alloy)"
 
       - name: SSH 게이트 회수 (신 계정 앱 박스)
         if: always()
