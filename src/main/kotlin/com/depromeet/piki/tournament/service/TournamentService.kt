@@ -985,7 +985,17 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentByInviteCode(code)
                 ?: throw TournamentException.invalidInviteCode()
-        tournament.checkJoinable(null)
+        // 코드 하나가 상태에 따라 다른 문을 연다(#1013). 대기실이면 합류, 주최자가 완주했으면 플레이
+        // 생성이다. 그래서 미리보기도 상태별로 게이트가 갈린다 - 예전엔 checkJoinable(null) 하나라
+        // 완주한 토너먼트가 409 로 막혀, 코드로 들어온 사람이 무엇을 보게 될지 미리 볼 수 없었다.
+        //
+        // 입장 게이트(createFromPlayCode)와 같은 조건을 써야 "보이는데 못 들어가는" 어긋남이 안 생긴다.
+        if (isOwnerCompleted(tournament)) {
+            tournament.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
+            if (!tournament.isPlayLinkValid()) throw TournamentException.playLinkExpired()
+        } else {
+            tournament.checkJoinable(null)
+        }
         val itemCount = tournamentItemRepository.countByTournamentId(tournament.getId())
         val participantCount = tournamentUserRepository.countByTournamentId(tournament.getId())
         val joined =
@@ -1068,11 +1078,76 @@ class TournamentService(
         root.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
         if (!root.isPlayLinkValid()) throw TournamentException.playLinkExpired()
 
+        return joinAsPlayer(root.getId(), userId)
+    }
+
+    // 완료된 토너먼트에 **코드로** 입장한다(#1013).
+    //
+    // 링크 경로(createFromPlayLink)와 같은 일을 하고 주소만 다르다. 코드는 생성 시점에 발급돼
+    // 바뀌지 않으므로 새 컬럼도 새 발급도 필요 없고, uk_tournaments_active_invite_code 가 활성
+    // 토너먼트 전체에서 코드 유일성을 보장하므로 "코드 하나가 토너먼트 하나를 가리킨다" 가 이미
+    // 성립한다(삭제행은 generated 컬럼이 NULL 이라 코드가 재활용된다).
+    //
+    // create 와 달리 회원 게이트를 두지 않는다 - 여기서 만들어지는 것은 참여 행이고, 참여자는
+    // 아이템 추가가 막혀 있어 추출·LLM 비용을 만들 수 없다(링크 경로와 같은 판단).
+    @Transactional
+    fun createFromPlayCode(
+        userId: UUID,
+        code: String,
+    ): Long {
+        val tournament =
+            tournamentRepository.findTournamentByInviteCode(code)
+                ?: throw TournamentException.invalidInviteCode()
+        val root = tournamentRepository.findTournamentByIdForUpdate(tournament.getId())
+            ?: throw TournamentException.notFoundTournament()
+
+        // 이미 참여 행이 있으면 그대로 이어서 진행한다. 링크 경로와 같은 재진입 동작이다.
+        tournamentUserRepository.findByTournamentIdAndUserId(root.getId(), userId)?.let { return root.getId() }
+
+        // 상태가 게이트를 정한다. 아직 공유할 단계가 아니면 초대 합류 경로(join)를 쓰라는 뜻으로
+        // 막는다 - 그쪽은 정원·중복 검사와 발행 이벤트가 다르다.
+        //
+        // **"완료" 는 전역 status 가 아니라 주최자 참여 행으로 판정한다(#1027 Phase 3).** 진행 상태가
+        // 참여 행으로 옮겨져 tournaments.status 는 더 이상 주최자의 완주를 뜻하지 않는다.
+        // createPlayLink 가 공유 가능 여부를 판정하는 기준과 같아야, "링크는 만들어졌는데 코드로는
+        // 아직 못 들어가는" 어긋남이 안 생긴다.
+        if (!isOwnerCompleted(root)) throw TournamentException.notCompletedTournament()
+        root.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
+        if (!root.isPlayLinkValid()) throw TournamentException.playLinkExpired()
+
+        return joinAsPlayer(root.getId(), userId)
+    }
+
+    // 주최자가 자기 판을 완주했는지 — 곧 "공유 가능한 상태인지" 다.
+    //
+    // **전역 status 로 판정하지 않는다(#1027 Phase 3).** 진행 상태가 참여 행으로 옮겨져
+    // tournaments.status 는 더 이상 주최자의 완주를 뜻하지 않는다. createPlayLink 가 쓰는 기준과
+    // 같은 것을 써야 "링크는 만들어졌는데 코드로는 못 들어가는" 어긋남이 안 생긴다.
+    private fun isOwnerCompleted(tournament: Tournament): Boolean =
+        tournamentUserRepository
+            .findByIds(setOf(tournament.ownerTournamentUserId))
+            .firstOrNull()
+            ?.isCompleted() ?: false
+
+    // 링크·코드가 공유하는 참여 행 생성. 두 경로가 같은 일을 하므로 정원 검사와 알림도 같아야 한다.
+    //
+    // **정원을 링크 경로에도 건다(#1013).** 예전엔 초대 합류만 8명 제한이고 플레이 링크는 무제한이라,
+    // 코드 경로만 막으면 "코드로는 막히는데 링크를 달라고 하면 들어가지는" 상태가 되어 제한이 이름뿐이
+    // 된다. 같은 동작이므로 주소와 무관하게 같은 제한을 건다.
+    //
+    // 실측상 기존 사용은 깨지지 않는다 - 공유된 토너먼트 37개의 입장자가 최대 4명이었다.
+    private fun joinAsPlayer(
+        rootId: Long,
+        userId: UUID,
+    ): Long {
+        if (tournamentUserRepository.countByTournamentId(rootId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
+            throw TournamentException.participantLimitExceeded()
+        }
         // 참여 행은 PENDING 으로 붙인다 — 이후 start(startAsMember)가 플레이 시작으로 전이한다.
-        tournamentUserRepository.save(TournamentUser(root.getId(), userId, nicknameOf(userId)))
-        // 플레이링크로 새로 참여해 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). 신규 생성 분기에서만 발행한다.
-        eventPublisher.publishEvent(TournamentPlayedFromLink(rootTournamentId = root.getId(), actorId = userId))
-        return root.getId()
+        tournamentUserRepository.save(TournamentUser(rootId, userId, nicknameOf(userId)))
+        // 새로 참여해 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). 신규 생성 분기에서만 발행한다.
+        eventPublisher.publishEvent(TournamentPlayedFromLink(rootTournamentId = rootId, actorId = userId))
+        return rootId
     }
 
     @Transactional(readOnly = true)
@@ -1449,3 +1524,4 @@ internal fun Tournament.checkJoinable(inviteCode: String?) {
     if (!isInviteValid()) throw TournamentException.inviteExpired()
     inviteCode?.let { if (this.inviteCode != it) throw TournamentException.invalidInviteCode() }
 }
+
