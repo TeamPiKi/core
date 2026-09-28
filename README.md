@@ -45,7 +45,7 @@
 
 ### 1 · 위시템 가져오기
 
-앱 공유 · 이미지 · 링크 세 경로로 상품을 담습니다. 어느 경로든 서버가 같은 추출 파이프라인으로 보냅니다.
+앱 공유 · 이미지 · 링크 세 경로로 상품을 담습니다. 어느 경로로 들어오든 서버는 동일한 추출 파이프라인으로 처리합니다.
 
 | 앱 공유로 가져오기 | 이미지로 가져오기 | 링크로 가져오기 |
 | :---: | :---: | :---: |
@@ -53,37 +53,35 @@
 
 ### 2 · 친구 초대하기
 
-링크와 6자리 초대 코드로 친구를 부릅니다. 받은 사람은 **게스트로 바로 참여**하고, 나중에 로그인하면 그동안의 플레이가 계정으로 승계됩니다.
+링크와 6자리 초대 코드로 친구를 초대합니다. 초대를 받은 사용자는 게스트로 즉시 참여하며, 이후 로그인 시 기존 플레이 기록이 정식 계정으로 승계됩니다.
 
 <img alt="친구 초대하기" src="https://raw.githubusercontent.com/TeamPiKi/client/dev/docs/images/invite-friends.png" />
 
 ### 3 · 토너먼트로 고르기
 
-시작 전에 담긴 후보를 **비슷한 가격대끼리 자동 매칭**해 공정한 1:1 대진표를 만듭니다. 남은 선택 수와 대진표를 함께 보여줘 결승까지 얼마나 왔는지 드러냅니다.
+시작 전 담긴 후보를 비슷한 가격대끼리 자동 매칭하여 공정한 1:1 대진표를 구성합니다. 남은 선택 수와 대진표를 함께 제공하여 진행 상황을 직관적으로 보여줍니다.
 
 <img alt="토너먼트 후보 고르기" src="https://raw.githubusercontent.com/TeamPiKi/client/dev/docs/images/tournament.png" />
 
-### 4 · 결과 저장·공유하기
+### 4 · 결과 저장 및 공유하기
 
-결과를 **영수증 형태로** 저장하고 공유합니다. 친구도 같은 토너먼트에 참여해 서로의 선택을 비교할 수 있습니다.
+선택 결과를 영수증 형태로 저장하고 공유할 수 있습니다. 친구 역시 같은 토너먼트에 참여하여 서로의 선택을 비교할 수 있습니다.
 
 <img alt="결과 영수증" src="https://raw.githubusercontent.com/TeamPiKi/client/dev/docs/images/receipt.png" />
 
 ## 시스템 구성
 
-| repo | 역할 | 스택 |
+| 레포 | 역할 | 스택 |
 |---|---|---|
-| [client](https://github.com/TeamPiKi/client) | 앱 클라이언트 (iOS · Android · Web) | |
-| **core** (이 repo) | 백엔드 API 서버 · 백오피스 | Kotlin · Spring Boot · MySQL · Redis |
-| [extractor](https://github.com/TeamPiKi/extractor) | 상품 추출 서비스. URL 을 fetch·구조화 파싱하고 LLM 으로 보완 | Java · Spring Boot · Gemini |
-| renderer <sup>private</sup> | JS 로 그려지는 페이지를 실제 브라우저로 렌더 | Python · FastAPI · Chrome |
-| [infra](https://github.com/TeamPiKi/infra) | 여러 repo 에 걸치는 공통 자산의 SSOT (배포 블록 · 개발 규약) | Bash · Protobuf |
+| [client](https://github.com/TeamPiKi/client) | 앱 클라이언트 | iOS · Android · Web |
+| **core** (본 레포) | 백엔드 API 서버 및 백오피스 | Kotlin · Spring Boot · MySQL · Redis |
+| [extractor](https://github.com/TeamPiKi/extractor) | 상품 추출 서비스 (URL 페치, 구조화 파싱, LLM 보완) | Java · Spring Boot · Gemini |
+| renderer <sup>private</sup> | JS 기반 페이지 브라우저 렌더링 | Python · FastAPI · Chrome |
+| [infra](https://github.com/TeamPiKi/infra) | 공통 인프라 자산 SSOT (배포 블록, 개발 규약) | Bash · Protobuf |
 
-호출 흐름은 `client → core → extractor → renderer` 입니다.
+**호출 흐름:** `client → core → extractor → renderer`
 
 ## 기술 스택
-
-버전은 박지 않습니다. 단일 진실 원천은 [`build.gradle.kts`](build.gradle.kts) 입니다.
 
 **Language & Framework**
 
@@ -168,10 +166,8 @@
  ┗ 📂 common ────────────── 응답 래퍼 · 예외 · 이벤트 · 레이트리밋 · 스토리지
 ```
 
-**도메인 용어를 코드와 문서에서 같게 씁니다.** `item` 은 상품의 정체성이고, 추출값·상태·이력은 버전(`ItemSnapshot`)이 듭니다. `wish` 는 user 가 item 을 담은 기록이고, `tournament_item` 은 출전 시점의 버전을 고정해 가리킵니다. 외부 경계를 가리키는 이름에 `item` 을, 우리 엔티티에 `product` 를 쓰지 않습니다.
-
-**테이블 간 FK 제약과 JPA 연관관계 어노테이션을 두지 않습니다.** 관계는 raw ID 로만 잇고 참조 무결성은 서비스 계층이 책임집니다.
-
+- **도메인 용어 통일:** `item`은 상품의 고유 정체성을 의미하며, 추출값·상태·이력은 `ItemSnapshot`(버전)으로 관리합니다. `wish`는 사용자가 `item`을 담은 기록이며, `tournament_item`은 출전 시점의 버전을 고정하여 가리킵니다. 외부 경계를 가리키는 이름에는 `item`, 내부 엔티티에는 `product`를 사용합니다.
+- **JPA 연관관계 제약 최소화:** 테이블 간 FK 제약과 JPA 연관관계 어노테이션을 배제했습니다. 관계는 Raw ID로만 유지하며, 참조 무결성은 서비스 계층에서 보장합니다.
 
 ### extractor
 
@@ -191,114 +187,62 @@
  ┗ 📂 common ────────────── 설정 · 예외 · S3 스토리지
 ```
 
-### renderer
+### renderer 및 infra
 
-비공개 레포라 구조는 싣지 않습니다. extractor 가 넘긴 URL 을 실제 Chrome 으로 끝까지 렌더해 HTML 을 돌려주는 데까지가 renderer 의 몫이고, 그 HTML 에서 상품 정보를 뽑는 건 extractor 가 합니다.
-
-### infra
-
-```
-📦 infra
- ┃
- ┣ 📂 blocks ────────────── 배포 블록 (슬롯 결정 · 컨테이너 실행 · 헬스체크 · 트래픽 전환)
- ┣ 📂 contracts ─────────── 서비스 간 계약 (추출 API proto · 에러 코드 · 헬스체크)
- ┣ 📂 conventions ───────── 공통 규약 (인프라 · 테스트 · 작성)
- ┣ 📂 skills ────────────── 커밋 · PR · 이슈 스킬 정본
- ┣ 📂 hooks ─────────────── git hooks
- ┗ 📄 install.sh ────────── 규약 · 스킬을 각 레포에 설치
-```
-
-세 서비스의 배포는 같은 블록을 서로 다르게 조합한 것입니다. core 가 전체 세트를 쓰고, extractor 와 renderer 는 그 일부만 씁니다. 두 레포 이상이 쓰면서 복제하면 어긋나는 자산만 이 레포에 둡니다.
+- **renderer:** extractor가 전달한 URL을 실제 Chrome으로 렌더링하여 HTML을 반환합니다.
+- **infra:** 배포 블록, 서비스 간 계약(Proto), 공통 규약을 관리합니다.
 
 ## 데이터 모델
 
 <img src="docs/architecture/piki-architecture-6-erd.png" width="100%" />
 
-스키마의 정본은 Flyway 마이그레이션입니다. 위 ERD 는 그 마이그레이션 73 개를 실제 MySQL 에 순서대로 재생해 뽑은 최종 상태입니다 — 손으로 그린 그림이 아니라서 코드와 어긋나지 않습니다.
-
-**★ 는 기본키, → 는 다른 테이블을 가리키는 raw ID 입니다.** FK 제약이 없으므로 선은 DB 가 강제하는 관계가 아니라 서비스 계층이 지키는 논리적 참조입니다. 멀리 떨어진 참조는 선을 긋지 않고 → 표기로만 남겨 그림이 읽히게 뒀습니다.
-
-**운영 설정 9 개 테이블은 컬럼 없이 이름만 적었습니다** — 출처 몰 · 추출 모델 · 도메인 접근 정책 · 쿼터 · 알림 템플릿 · 감사 로그 · 활동 지표처럼 다른 테이블과 관계가 없는 테이블입니다.
+- 스키마의 정본은 Flyway 마이그레이션입니다. ERD는 73개의 마이그레이션을 실제 MySQL에 순서대로 적용한 최종 상태를 기반으로 합니다.
+- FK 제약이 없으므로 선은 DB가 강제하는 관계가 아닌 서비스 계층의 논리적 참조를 의미합니다.
+- 운영 설정 관련 테이블(출처 몰, 추출 모델, 도메인 접근 정책 등)은 독립적으로 분리되어 있습니다.
 
 ## 시스템 아키텍처
 
 <img src="docs/architecture/piki-architecture-1-overview.png" width="100%" />
 
+클라이언트 요청은 API 서버(core)를 거쳐 비즈니스 로직을 처리하며, 상품 추출이 필요한 경우 extractor와 renderer 파이프라인을 비동기/동기로 호출합니다.
+
 ## 인증
 
 <img src="docs/architecture/piki-architecture-2-auth.png" width="100%" />
 
-Google · Kakao · Apple 세 제공자와 **게스트** 를 함께 받습니다. 게스트는 회원가입 없이 초대 링크로 바로 참여하고, 나중에 로그인하면 **그동안의 플레이가 계정으로 승계**됩니다.
-
-토큰은 Redis 가 셋으로 나눠 듭니다 — 재발급용 refresh, 탈퇴 후 남은 토큰을 즉시 무효화하는 목록, CSRF 를 막는 1회성 oauth state 입니다.
-
-클라이언트 타입에 따라 **토큰을 바디로 줄지 쿠키로 심을지** 갈립니다.
+- **지원 제공자:** Google, Kakao, Apple 및 게스트 로그인
+- **토큰 관리:** Redis를 통해 재발급용 Refresh 토큰, 탈퇴 즉시 무효화를 위한 블랙리스트, CSRF 방지용 1회성 OAuth State를 관리합니다.
+- **클라이언트 대응:** 클라이언트 타입에 따라 토큰을 응답 바디 또는 쿠키로 전달합니다.
 
 ## 위시 등록과 상품 추출
 
 <img src="docs/architecture/piki-architecture-3-wishlist.png" width="100%" />
 
-앱 공유 · 이미지 · 링크 어느 경로로 들어와도 같은 파이프라인을 탑니다. core 가 출처 몰을 판정해 추출 경로를 정하고, extractor 가 구조화 파싱으로 채우다 **부족한 필드만 LLM 으로 보완**합니다. JS 로 그려지는 몰은 renderer 까지 갑니다.
-
-추출 결과는 덮어쓰지 않고 **버전(`ItemSnapshot`)으로 한 줄씩 쌓여** 가격·이름 이력이 남습니다.
-
-외부 호출은 트랜잭션 밖에서 끝냅니다. read-timeout 이 긴 추출을 트랜잭션 안에 넣으면 그동안 DB 커넥션을 잡아 다른 API 까지 느려지기 때문입니다.
+- **통합 파이프라인:** 앱 공유, 이미지, 링크 등 어떤 경로로 진입하든 동일한 파이프라인을 거칩니다. core가 출처 몰을 판정하고, extractor가 구조화 파싱을 수행한 뒤 부족한 필드를 LLM으로 보완합니다. JS 렌더링이 필요한 몰은 renderer를 경유합니다.
+- **버전 관리:** 추출 결과는 덮어쓰지 않고 `ItemSnapshot` 형태로 이력을 누적하여 가격 및 이름 변경 추이를 기록합니다.
+- **트랜잭션 분리:** 응답 속도 저하를 방지하기 위해 Read-timeout이 긴 외부 추출 API 호출은 DB 트랜잭션 범위 외부에 배치합니다.
 
 ## 토너먼트
 
 <img src="docs/architecture/piki-architecture-4-tournament.png" width="100%" />
 
-시작 전에 후보를 **비슷한 가격대끼리 자동 매칭**해 공정한 1:1 대진표를 만듭니다. 링크와 6자리 코드 둘 다 같은 판으로 들어오고, 받은 사람은 게스트로 바로 참여합니다.
-
-**참여자마다 자기 진행을 따로 가집니다.** 정의(`tournaments`)와 진행(`tournament_users`)을 나눠, 한 토너먼트에 여러 사람이 각자의 속도로 붙을 수 있습니다.
-
-완주한 판은 같은 코드로 다시 열립니다 — 결과를 받은 친구가 그 자리에서 자기 판을 시작합니다.
-
-### 대진표를 저장하지 않습니다
+- **자동 매칭:** 시작 전 후보들을 비슷한 가격대끼리 자동 매칭하여 공정한 1:1 대진표를 생성합니다.
+- **독립적인 진행:** 토너먼트 정의(`tournaments`)와 사용자별 진행 상태(`tournament_users`)를 분리하여, 여러 사용자가 각자의 속도로 플레이할 수 있습니다.
+- **대진표 미저장 설계:** 대진표는 별도 테이블에 저장하지 않고, 참여자 ID와 라운드 번호 기반의 Seed를 통해 매번 동일한 순서를 계산합니다. 이를 통해 스키마 복잡도를 낮추고 새로고침 시에도 순서를 완벽히 복원합니다.
 
 <img src="docs/architecture/piki-architecture-4b-bracket.png" width="100%" />
-
-대진표는 테이블에 없습니다. **참여자 ID 와 라운드 번호로 만든 seed** 로 매번 같은 순서를 다시 계산합니다. 새로고침해도 순서가 그대로 복원되고, 스키마는 한 줄도 늘지 않았습니다.
-
-가격순으로 정렬해 인접한 것끼리 묶으므로 **비슷한 가격대끼리 붙습니다.** 인원이 2 의 거듭제곱이 아니면 부족한 만큼 부전승을 두는데, 그 부전승은 최고가 고정이 아니라 **시드 랜덤으로 뽑아** 가격 편향을 없앴습니다.
-
-기록할 때는 페어 조합만 검증합니다. 라운드 안의 매치는 서로 독립이라 진행 순서가 달라도 결과가 같기 때문입니다. 같은 매치를 다시 보내면 **같은 승자면 성공, 다른 승자면 거부**합니다.
 
 ## 배포 자동화
 
 <img src="docs/architecture/piki-architecture-5-deploy.png" width="100%" />
 
-`dev` 로 머지되면 자동 배포되고, prod 는 `Promote` 워크플로가 `dev` 커밋을 `main` 으로 **fast-forward 승격**합니다. ff 전용이라 두 브랜치 SHA 가 항상 정렬되고 squash·분기 사고가 구조적으로 막힙니다. semver 태그와 릴리즈는 **배포 성공 후에만** 생성됩니다 — 안 뜬 버전에 태그를 박지 않기 위해서입니다.
-
-### 일회성 포트 개방
-
-배포하는 동안에만 **러너 IP 를 보안 그룹 인바운드에 넣었다가 회수**합니다. 22번을 상시 열어두지 않아, 평소에는 어느 IP 에서도 SSH 가 닫혀 있습니다. 배포가 중간에 실패해도 회수 스텝이 `always()` 로 돌아 규칙이 남지 않습니다.
-
-### 시크릿은 SSM 이 소유
-
-앱 런타임 시크릿을 GitHub Secrets 가 아니라 **Parameter Store(`/piki-core/<env>/`)** 에 둡니다. 러너가 값을 들고 다니지 않고 **박스가 인스턴스 프로파일로 직접 pull** 하므로, 유출면이 러너에서 사라집니다. DB 자격·Grafana 자격도 같은 방식입니다.
-
-프로비저닝도 SSM Run Command 로 합니다. DB 박스는 키페어가 없어 SSH 가 아예 불가능하고, 대신 **keyless 로 명령을 보냅니다.**
-
-### 마이그레이션 안전장치
-
-스키마 변경은 **Flyway** 가 앱 부팅 중에 적용합니다. FK 제약을 두지 않고 파괴적 변경은 단계 배포(add → 양쪽 호환 → remove)로 나눕니다.
-
-승격 앞에는 **프리플라이트**가 섭니다. prod DB 를 읽기 전용으로 훑어 마이그레이션이 죽을 조건 — 실패한 마이그레이션 잔재, 백필이 처리 못 할 데이터 — 을 미리 세고, 걸리면 **승인 버튼 자체가 뜨지 않습니다.** 승인 직후 ff 앞에서 한 번 더 돌아, 승인을 기다리는 동안 데이터가 바뀐 경우도 잡습니다.
-
-결과는 Step Summary 와 Discord 로 함께 갑니다. 승인자는 Actions 를 열기 전에 "승인해도 되는가" 를 손에 쥡니다.
-
-### blue-green
-
-새 슬롯을 띄워 헬스체크를 통과한 뒤에 nginx upstream 을 바꿉니다. 실패하면 이전 슬롯이 그대로 서빙하고 새 슬롯만 정리됩니다.
-
-최신 변경사항은 [릴리즈 노트](https://github.com/TeamPiKi/core/releases/latest)에서 확인합니다.
+- **브랜치 전략:** `dev` 머지 시 자동 배포되며, prod는 `Promote` 워크플로를 통해 `dev` 커밋을 `main`으로 Fast-forward 승격합니다.
+- **보안 및 시크릿:** 배포 시에만 러너 IP를 일시적으로 허용하며, 런타임 시크릿은 AWS SSM Parameter Store를 통해 인스턴스 프로파일로 직접 주입받습니다.
+- **마이그레이션 안전장치:** Flyway 기반 앱 부팅 시 마이그레이션을 수행하며, 승격 전 프리플라이트 검증을 통해 장애 요인을 사전에 차단합니다.
 
 ## 백오피스
 
-운영에 필요한 화면을 서버가 Thymeleaf 로 직접 서빙합니다. 별도 프론트 배포 없이 API 서버 하나로 끝납니다.
-
-공지 · 알림 템플릿 · 추출 정책 · 출처 몰 · 아이템 쿼터 · 디버그 로그를 다룹니다. 접근은 **Discord 커맨드로 발급받은 IP grant** 뒤에 둡니다.
+서버에서 Thymeleaf를 활용하여 운영 화면을 직접 서빙하며, 공지사항, 알림 템플릿, 추출 정책, 출처 몰, 아이템 쿼터, 디버그 로그 등을 관리합니다. 접근은 Discord 연동을 통한 IP Grant 인증 기반으로 통제됩니다.
 
 ## 팀 소개
 
