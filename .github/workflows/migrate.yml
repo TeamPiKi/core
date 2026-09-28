@@ -78,7 +78,7 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  OLD_ACCOUNT_ID: "996918499382" # 현재(구) 계정 — ssm 치환·이미지 URL 재작성의 원본. 이관 완료 후 갱신.
+  OLD_ACCOUNT_ID: "731770491043" # 현재(구) 계정 — ssm 치환·이미지 URL 재작성의 원본. 이관 완료 후 갱신.
   # 신 계정에서 이 워크플로가 맡는 역할. 사람이 CloudShell 에 infra/scripts/bootstrap-oidc.sh 를 한 번
   # 붙여넣으면 생긴다. 이름을 바꾸면 그 스크립트의 ROLE_NAME 도 함께 바꿔야 한다.
   BOOTSTRAP_ROLE: piki-migrate-bootstrap
