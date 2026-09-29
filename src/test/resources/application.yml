@@ -44,7 +44,7 @@ oauth:
     redirect-uri: http://localhost/auth/callback/apple
     web-callback-url: https://test.piki.day/auth/callback/apple
 
-# 원격 추출(extractor) 주소 — RestClient 빈 생성용 더미. 파싱 경계(ProductLinkExtractor·
+# 원격 추출(extractor) 주소 — RestClient 빈 생성용 더미. 파싱 경계(LinkSnapshotExtractor·
 # ImageSnapshotExtractor)는 IntegrationStubs 가 @Primary stub 으로 격리하므로 실제 호출은 없다.
 # test classpath 의 application.yml 이 main 을 통째로 대체해 main 의 기본값이 안 보인다 — 여기 명시한다.
 product:

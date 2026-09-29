@@ -4,7 +4,7 @@ import com.depromeet.piki.contracts.extraction.v1.LinkExtractionRequest
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.routing.DomainAccessPolicy
-import com.depromeet.piki.product.service.ProductLinkExtractor
+import com.depromeet.piki.product.service.LinkSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Component
@@ -26,14 +26,14 @@ import org.springframework.web.client.RestClient
 // model 도 같은 이유로 요청에 싣는다(#875). extractor 박스 하나를 여러 환경이 공유하므로 저쪽 환경변수로
 // 모델을 잡으면 dev 실험이 prod 를 덮는다 — 요청 단위로 주면 환경마다 다른 이쪽 DB 가 그대로 경계가 된다.
 //
-// 링크 파싱의 유일한 ProductLinkExtractor 구현이다. 워커(AsyncItemParsingWorker)는 이 경계 뒤의
+// 링크 파싱의 유일한 LinkSnapshotExtractor 구현이다. 워커(AsyncLinkParser)는 이 경계 뒤의
 // 원격 호출을 모른다 — 파싱은 전부 extractor(Java 서비스)가 한다.
 @Component
-class HttpProductLinkExtractor(
+class HttpLinkSnapshotExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,
     private val accessPolicy: DomainAccessPolicy,
     private val modelSettings: ExtractionModelSettings,
-) : ProductLinkExtractor {
+) : LinkSnapshotExtractor {
     override fun extract(link: ProductLink): ProductSnapshot {
         // 차단 도메인은 요청 자체를 내보내지 않는다. 등록 경계(verifyRegistrable)가 새 등록을 이미 막지만,
         // 그것만으로는 차단 지정 이전에 담긴 아이템의 재파싱·새로고침이 그대로 나간다 — 여기가 extractor 로

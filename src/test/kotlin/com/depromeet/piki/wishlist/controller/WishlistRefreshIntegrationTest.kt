@@ -15,7 +15,7 @@ import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -53,7 +53,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired
-    private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     @Autowired
     private lateinit var itemRepository: ItemRepository
@@ -94,7 +94,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
+            stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
@@ -298,7 +298,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
+            stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/inplay", "옛 상품", 10_000)
@@ -341,7 +341,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
+            stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val (wishId, itemId, _) = seedReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)

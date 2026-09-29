@@ -11,7 +11,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubItemParsingWorker
+import com.depromeet.piki.support.StubLinkParser
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
@@ -49,7 +49,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
-    @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
+    @Autowired private lateinit var stubLinkParser: StubLinkParser
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -61,7 +61,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Timeout(90)
     fun `풀이 가득 차면 PENDING 을 claim 하지 않고 슬롯이 나면 그때 집는다`() {
         // claim 여부만 검증하므로 실제 파싱은 끈다 (풀을 다시 점유해 슬롯 관측을 흐리지 않게).
-        stubItemParsingWorker.enabled = false
+        stubLinkParser.enabled = false
         val release = CountDownLatch(1)
         val slots = itemParsingExecutor.maxPoolSize
         var itemId = 0L
@@ -88,7 +88,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             await().atMost(Duration.ofSeconds(10)).until { statusOf(snapshotId) == ItemStatus.PROCESSING }
         } finally {
             release.countDown()
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
             deleteItem(itemId)
         }
     }

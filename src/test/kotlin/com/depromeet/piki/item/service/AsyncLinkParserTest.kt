@@ -11,28 +11,28 @@ import kotlin.test.assertTrue
 // recover 상한이 무한 재시도를 막으므로 bounded 하다(#461 retry-first 기조).
 // (예외 표본은 원격 파싱 경계의 실제 산출물 — 일시 실패는 transientFailure(원격 5xx·연결 실패),
 //  확정 실패는 permanentFailure(422)·ProductSnapshotException 이다.)
-class AsyncItemParsingWorkerTest {
+class AsyncLinkParserTest {
     @Test
     fun `RETRYABLE 인 HttpMappable 예외는 재시도 대상이다`() {
-        assertTrue(AsyncItemParsingWorker.isRetryable(ProductExtractorException.transientFailure(RuntimeException("원격 502"))))
+        assertTrue(AsyncLinkParser.isRetryable(ProductExtractorException.transientFailure(RuntimeException("원격 502"))))
     }
 
     @Test
     fun `RETRYABLE 이 아닌 HttpMappable 예외는 재시도 대상이 아니다(즉시 확정 실패)`() {
         // 원격 422 의 번역 결과 전부 — bucket 이 무엇이든(상품 아님·못 읽음·값 불신·대상 차단·조사 대상)
         // 재시도 판정은 하나로 같다. reason 재편(#936)이 전이 판정을 건드리지 않았음을 여기서 고정한다.
-        assertFalse(AsyncItemParsingWorker.isRetryable(ProductExtractorException.permanentFailure()))
-        assertFalse(AsyncItemParsingWorker.isRetryable(ProductExtractorException.blockedByTarget()))
-        assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.notProductPage()))
-        assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.untrustworthyValue()))
-        assertFalse(AsyncItemParsingWorker.isRetryable(ProductSnapshotException.noExtractableContent()))
+        assertFalse(AsyncLinkParser.isRetryable(ProductExtractorException.permanentFailure()))
+        assertFalse(AsyncLinkParser.isRetryable(ProductExtractorException.blockedByTarget()))
+        assertFalse(AsyncLinkParser.isRetryable(ProductSnapshotException.notProductPage()))
+        assertFalse(AsyncLinkParser.isRetryable(ProductSnapshotException.untrustworthyValue()))
+        assertFalse(AsyncLinkParser.isRetryable(ProductSnapshotException.noExtractableContent()))
     }
 
     @Test
     fun `HttpMappable 이 아닌 예상 못한 예외는 보수적으로 재시도 대상이다`() {
-        assertTrue(AsyncItemParsingWorker.isRetryable(RuntimeException("예상 못한 오류")))
-        assertTrue(AsyncItemParsingWorker.isRetryable(IllegalStateException("boom")))
-        assertTrue(AsyncItemParsingWorker.isRetryable(NullPointerException()))
+        assertTrue(AsyncLinkParser.isRetryable(RuntimeException("예상 못한 오류")))
+        assertTrue(AsyncLinkParser.isRetryable(IllegalStateException("boom")))
+        assertTrue(AsyncLinkParser.isRetryable(NullPointerException()))
     }
 
     // 치명적 JVM 오류(Error)에 대한 판정은 여기서 다루지 않는다 — 워커가 runCatchingException 으로 잡아

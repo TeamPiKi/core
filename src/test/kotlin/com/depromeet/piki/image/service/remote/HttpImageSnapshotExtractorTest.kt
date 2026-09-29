@@ -2,7 +2,7 @@ package com.depromeet.piki.image.service.remote
 
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.storage.S3Properties
-import com.depromeet.piki.item.service.AsyncImageParsingWorker
+import com.depromeet.piki.item.service.AsyncImageParser
 import com.depromeet.piki.item.service.ItemParsingMetrics
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ExtractionModelSettings
@@ -29,15 +29,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // 이미지 고유의 것만 고정한다 — 요청 모양(bucket·key·경로), link=null 스냅샷, 이미지 전용 422 code(IMAGE_UNSUPPORTED)
-// 취급, 그리고 확정/일시 갈래가 이미지 워커의 재시도 판정(AsyncImageParsingWorker.isRetryable)과 맞물리는 정합.
+// 취급, 그리고 확정/일시 갈래가 이미지 워커의 재시도 판정(AsyncImageParser.isRetryable)과 맞물리는 정합.
 // 3갈래 번역·경계 정규화·계약 위반 가드의 분기 망라는 같은 공유 함수(RemoteExtractionContract.postForSnapshot)를
-// 쓰는 HttpProductLinkExtractorTest 가 이미 고정하므로 여기서 반복하지 않는다.
+// 쓰는 HttpLinkSnapshotExtractorTest 가 이미 고정하므로 여기서 반복하지 않는다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다.
 class HttpImageSnapshotExtractorTest {
     private val imageKey = "items/raw/0f8a1c2e.png"
 
     // 지정한 축에만 값을 준다 — 이미지 추출기가 LINK 축을 읽는 회귀를 이 Fake 가 잡아야 한다
-    // (HttpProductLinkExtractorTest 의 같은 Fake 와 대칭이다).
+    // (HttpLinkSnapshotExtractorTest 의 같은 Fake 와 대칭이다).
     private class FakeModelSettings(
         private val axis: ExtractionTarget,
         private val model: String?,
@@ -94,7 +94,7 @@ class HttpImageSnapshotExtractorTest {
     fun `가격이 없는 사진의 부분값 200 도 그대로 매핑된다 - 이 경로의 정상 입력이다`() {
         // 사진에 가격이 박혀 있지 않은 것은 정상 입력이라, 이걸 경계에서 막으면 "쇼핑몰 화면 캡처"만 통과하는
         // 계약이 된다(#944 의 동인, prod 이미지 등록 18건 중 16건 실패). 부분값 수용의 분기 망라는 공유 함수를
-        // 쓰는 HttpProductLinkExtractorTest 가 고정하고, 여기서는 이미지 고유 조합(link=null + 부분값)만 본다.
+        // 쓰는 HttpLinkSnapshotExtractorTest 가 고정하고, 여기서는 이미지 고유 조합(link=null + 부분값)만 본다.
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/image")).andRespond(
@@ -128,7 +128,7 @@ class HttpImageSnapshotExtractorTest {
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(imageKey) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
         assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncImageParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
+        assertFalse(AsyncImageParser.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
     @Test
@@ -140,7 +140,7 @@ class HttpImageSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(imageKey) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncImageParsingWorker.isRetryable(e))
+        assertTrue(AsyncImageParser.isRetryable(e))
     }
 
     // 축 분리의 실증 — 이미지 경로는 IMAGE 지정만 따른다. FakeModelSettings 가 축과 무관하게 같은 값을 주므로

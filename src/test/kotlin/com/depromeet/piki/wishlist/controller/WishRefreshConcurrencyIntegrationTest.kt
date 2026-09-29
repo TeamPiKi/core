@@ -9,8 +9,8 @@ import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubItemParsingWorker
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkParser
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -56,9 +56,9 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
-    @Autowired private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
-    @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
+    @Autowired private lateinit var stubLinkParser: StubLinkParser
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -68,7 +68,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
         userJpaRepository.save(
             User(id = userId, nickname = "refresh", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
-        stubProductLinkExtractor.build = {
+        stubLinkSnapshotExtractor.build = {
             ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW")
         }
 
@@ -100,7 +100,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
             // 세 번째 행을 만들어 count==2 단언이 flake 한다(공유 컨텍스트의 live 워커가 테스트 상태를 가로채는 race).
             // 워커를 무력화해 새 snapshot 이 진행 중(PENDING/PROCESSING)에 머물게 하면, 두 번째 요청은 항상 '진행 중'을 보고
             // 멱등 no-op 한다 — 락의 직렬화만 순수하게 검증하고, teardown-vs-async 충돌·stub 람다 누수도 차단한다.
-            stubItemParsingWorker.enabled = false
+            stubLinkParser.enabled = false
             val status200 = AtomicInteger(0)
             val statusOther = AtomicInteger(0)
             val executor = Executors.newFixedThreadPool(2)
@@ -146,7 +146,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                 )
             assertEquals(2, snapshotCount, "옛 READY 1 + 새 PENDING 1 = 2 (락이 없으면 동시 생성으로 3+)")
         } finally {
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
             jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
@@ -163,7 +163,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
         userJpaRepository.save(
             User(id = userId, nickname = "memo-race", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
         )
-        stubProductLinkExtractor.build = {
+        stubLinkSnapshotExtractor.build = {
             ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW")
         }
 
@@ -190,7 +190,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
         val auth = "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
 
         try {
-            stubItemParsingWorker.enabled = false
+            stubLinkParser.enabled = false
             val status200 = AtomicInteger(0)
             val statusOther = AtomicInteger(0)
             val executor = Executors.newFixedThreadPool(2)
@@ -247,7 +247,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                 "refresh 가 스왑한 포인터가 memo 갱신의 전 컬럼 UPDATE 에 되덮이면 안 된다",
             )
         } finally {
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
             jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)

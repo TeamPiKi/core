@@ -6,7 +6,7 @@ import com.depromeet.piki.common.exception.ErrorCategory
 //
 // ⚠️ 이 enum 은 ErrorCodeRegistry.all 에 **의도적으로 등록하지 않는다**(AnnouncementImageErrorCode 와 같은 선례).
 // 유일한 생성 경로인 ProductSnapshot.fromExtracted · RemoteExtractionContract.translate 는 비동기 파싱
-// 워커(AsyncItemParsingWorker · AsyncImageParsingWorker)에서만 호출된다 — 워커가 예외를 잡아 item 을 FAILED 로
+// 워커(AsyncLinkParser · AsyncImageParser)에서만 호출된다 — 워커가 예외를 잡아 item 을 FAILED 로
 // 전이시키고 메트릭 reason(아래 bucket 에서 파생)으로 집계할 뿐, GlobalExceptionHandler 를 거치지 않아 응답 code 로 나가지 않는다.
 // 클라가 절대 받을 수 없는 code 를 공개 카탈로그에 넣으면 code→문구 매핑에 노이즈만 된다.
 // 여기서 code 를 부여하는 목적은 오직 예외 클래스 모양을 다른 도메인 예외와 통일(errorCode 참조)하는 것뿐이다.

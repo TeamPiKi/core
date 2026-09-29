@@ -19,7 +19,7 @@ sealed interface ClaimedItem {
     val expectedAttempt: Int
 }
 
-// URL 등록 경로의 지목 — 원본 link 로 파싱한다(AsyncItemParsingWorker).
+// URL 등록 경로의 지목 — 원본 link 로 파싱한다(AsyncLinkParser).
 data class LinkClaim(
     override val itemId: Long,
     override val snapshotId: Long,
@@ -27,7 +27,7 @@ data class LinkClaim(
     override val expectedAttempt: Int,
 ) : ClaimedItem
 
-// 이미지 등록 경로의 지목 — S3 raw object key 로 원본을 다시 읽어 파싱한다(AsyncImageParsingWorker).
+// 이미지 등록 경로의 지목 — S3 raw object key 로 원본을 다시 읽어 파싱한다(AsyncImageParser).
 data class ImageClaim(
     override val itemId: Long,
     override val snapshotId: Long,

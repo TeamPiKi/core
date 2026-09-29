@@ -14,7 +14,7 @@ import com.depromeet.piki.product.service.remote.ProductExtractorException
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
@@ -38,11 +38,11 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var parsingOwnership: ParsingOwnership
 
-    @Autowired private lateinit var asyncItemParsingWorker: AsyncItemParsingWorker
+    @Autowired private lateinit var asyncLinkParser: AsyncLinkParser
 
-    @Autowired private lateinit var asyncImageParsingWorker: AsyncImageParsingWorker
+    @Autowired private lateinit var asyncImageParser: AsyncImageParser
 
-    @Autowired private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     @Autowired private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
@@ -109,7 +109,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `시작 가드 — 소유권을 잃은 claim 은 워커가 ext 를 호출하지 않고 스킵한다`() {
         val extCalls = AtomicInteger(0)
-        stubProductLinkExtractor.build = {
+        stubLinkSnapshotExtractor.build = {
             extCalls.incrementAndGet()
             ProductSnapshot(link = it, name = "호출됨", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/c.png")
         }
@@ -118,7 +118,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshotId = snapshot.getId()
 
         // 워커의 스킵은 부수효과가 없어 로그가 유일한 완료 신호다 — 그 로그로 완료를 관측해 "ext 미호출"을 결정적으로 단언한다.
-        val workerLogger = LoggerFactory.getLogger(AsyncItemParsingWorker::class.java) as Logger
+        val workerLogger = LoggerFactory.getLogger(AsyncLinkParser::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         workerLogger.addAppender(appender)
         try {
@@ -126,7 +126,7 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
 
             // 옛 시도(attempt 1)로 워커 실행 — 시작 가드의 fenced touch 가 0행이라 ext 호출 없이 스킵해야 한다.
-            asyncItemParsingWorker.parse(item.getId(), snapshotId, item.link ?: error("link 없음"), 1)
+            asyncLinkParser.parse(item.getId(), snapshotId, item.link ?: error("link 없음"), 1)
 
             // 스킵 완료(로그)를 기다린 뒤 ext 가 한 번도 안 불렸음을 단언한다. list 동시 접근 CME 는 ignoreExceptions 로 흡수.
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
@@ -156,11 +156,11 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?", LocalDateTime.now(), snapshotId)
             StubImageSnapshotExtractor.defaultSnapshot()
         }
-        val workerLogger = LoggerFactory.getLogger(AsyncImageParsingWorker::class.java) as Logger
+        val workerLogger = LoggerFactory.getLogger(AsyncImageParser::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         workerLogger.addAppender(appender)
         try {
-            asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 0)
+            asyncImageParser.parse(item.getId(), snapshotId, imageKey, 0)
 
             // 좀비 폐기 로그가 유일한 완료 신호다(전이·회수를 둘 다 안 하므로 관측할 부수효과가 없다).
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
@@ -188,9 +188,9 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         val snapshotId = snapshot.getId()
         // 마지막 실행 예산만 남긴 상태에서 진입시킨다 — 워커가 획득하며 +1 해 상한(MAX_ATTEMPTS)에 닿는다.
         jdbcTemplate.update("UPDATE item_snapshots SET attempt_count = ? WHERE id = ?", ItemParsingService.MAX_ATTEMPTS - 1, snapshotId)
-        stubProductLinkExtractor.build = { throw ProductExtractorException.transientFailure(null) }
+        stubLinkSnapshotExtractor.build = { throw ProductExtractorException.transientFailure(null) }
         try {
-            asyncItemParsingWorker.parse(item.getId(), snapshotId, item.link!!, ItemParsingService.MAX_ATTEMPTS - 1)
+            asyncLinkParser.parse(item.getId(), snapshotId, item.link!!, ItemParsingService.MAX_ATTEMPTS - 1)
 
             await().atMost(Duration.ofSeconds(5)).until { itemSnapshotRepository.findById(snapshotId)?.status == ItemStatus.FAILED }
             assertEquals(

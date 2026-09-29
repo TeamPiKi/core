@@ -7,7 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageParsingWorker
+import com.depromeet.piki.support.StubImageParser
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -56,14 +56,14 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
     @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
-    @Autowired private lateinit var stubImageParsingWorker: StubImageParsingWorker
+    @Autowired private lateinit var stubImageParser: StubImageParser
 
     @Test
     fun `이미지 담기를 동시에 두 번 확정하면 FOR UPDATE 로 직렬화되어 32개 상한을 넘지 않는다`() {
         // 디스패처(@Scheduled)가 성공분 PENDING 을 집어 상태를 바꾸면 정리와 간섭하므로 워커를 꺼 둔다.
         // enabled 는 컨텍스트 공유 전역 상태라, try 진입 전 setup 이 실패해 끈 채 새면 다른 테스트가 연쇄 실패한다.
         // 끄기는 try 안으로 미루고 원래 값을 보관해, finally 가 항상 원복하도록 한다.
-        val previousWorkerEnabled = stubImageParsingWorker.enabled
+        val previousWorkerEnabled = stubImageParser.enabled
 
         val ownerId = UUID.randomUUID()
         userJpaRepository.save(
@@ -84,7 +84,7 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
         var tournamentId = 0L
         try {
-            stubImageParsingWorker.enabled = false
+            stubImageParser.enabled = false
             // 토너먼트 생성 — TournamentUser(owner) 도 함께 생성된다(verifyCanAddItems 의 참여자 검증 통과).
             val createResult = mockMvc.perform(
                 post("/api/v1/tournaments")
@@ -168,7 +168,7 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             // 상한을 넘겨 저장된 것이 없어야 한다 — 성공한 5장까지만 반영되어 정확히 32개다.
             assertEquals(32, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
         } finally {
-            stubImageParsingWorker.enabled = previousWorkerEnabled
+            stubImageParser.enabled = previousWorkerEnabled
             // @Transactional 자동 롤백이 없으므로 직접 지운다. 추가된 item/snapshot 은 id 하한으로 일괄 정리한다.
             if (tournamentId != 0L) {
                 jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)

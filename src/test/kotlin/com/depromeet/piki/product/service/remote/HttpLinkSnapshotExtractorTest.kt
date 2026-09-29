@@ -2,7 +2,7 @@ package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
-import com.depromeet.piki.item.service.AsyncItemParsingWorker
+import com.depromeet.piki.item.service.AsyncLinkParser
 import com.depromeet.piki.item.service.ItemParsingMetrics
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.domain.ProductLinkException
@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
 // 원격 추출 응답(계약 3갈래: 2xx / 422+code / 그 외)이 워커의 재시도 판정(category)과 정확히 맞물리게
 // 번역되는지, 그리고 2xx 값이 경계 정규화(fromExtracted — 모든 추출 경로의 단일 진실 원천)를 거치는지 검증한다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpPageFetcher 테스트와 같은 방식).
-class HttpProductLinkExtractorTest {
+class HttpLinkSnapshotExtractorTest {
     private val link = ProductLink.parse("https://shop.example.com/p/1")
 
     // 기본을 "정책 행 없음"으로 둔다 — 허락은 명시적으로 켜야만 생기는 사실이라(default-deny), Fake 도 그
@@ -58,7 +58,7 @@ class HttpProductLinkExtractorTest {
         access: DomainAccess? = null,
         model: String? = null,
         server: (MockRestServiceServer) -> Unit,
-    ): HttpProductLinkExtractor {
+    ): HttpLinkSnapshotExtractor {
         val builder =
             RestClient
                 .builder()
@@ -66,7 +66,7 @@ class HttpProductLinkExtractorTest {
                 .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
-        return HttpProductLinkExtractor(
+        return HttpLinkSnapshotExtractor(
             builder.build(),
             FakeAccessPolicy(access),
             FakeModelSettings(ExtractionTarget.LINK, model),
@@ -206,7 +206,7 @@ class HttpProductLinkExtractorTest {
             }
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
-        assertFalse(AsyncItemParsingWorker.isRetryable(e))
+        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -241,7 +241,7 @@ class HttpProductLinkExtractorTest {
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
         assertEquals(ItemParsingMetrics.REASON_NOT_PRODUCT, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncItemParsingWorker.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
+        assertFalse(AsyncLinkParser.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
     @Test
@@ -277,7 +277,7 @@ class HttpProductLinkExtractorTest {
 
             val e = assertFailsWith<BaseException> { extractor.extract(link) }
             assertEquals(reason, ItemParsingMetrics.reasonOf(e), "$code 의 메트릭 reason")
-            assertFalse(AsyncItemParsingWorker.isRetryable(e), "$code 는 422 라 재시도 대상이 아니어야 한다")
+            assertFalse(AsyncLinkParser.isRetryable(e), "$code 는 422 라 재시도 대상이 아니어야 한다")
         }
     }
 
@@ -296,7 +296,7 @@ class HttpProductLinkExtractorTest {
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
         // 이름을 모르는 실패를 다른 바구니에 섞지 않는다 — 조사 대상(internal_error)으로 센다.
         assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncItemParsingWorker.isRetryable(e))
+        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -312,7 +312,7 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncItemParsingWorker.isRetryable(e))
+        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -327,7 +327,7 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -368,7 +368,7 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -399,7 +399,7 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -413,7 +413,7 @@ class HttpProductLinkExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncItemParsingWorker.isRetryable(e))
+        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     // 모델 지정(백오피스·DB)이 LINK 축에서 요청 힌트로 실린다. 지정이 없으면 싣지 않아 extractor 기본 모델로

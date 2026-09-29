@@ -2,8 +2,8 @@ package com.depromeet.piki.support
 
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.redis.RefreshTokenStore
-import com.depromeet.piki.item.service.AsyncImageParsingWorker
-import com.depromeet.piki.item.service.AsyncItemParsingWorker
+import com.depromeet.piki.item.service.AsyncImageParser
+import com.depromeet.piki.item.service.AsyncLinkParser
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
@@ -12,17 +12,17 @@ import org.springframework.context.annotation.Primary
 // IntegrationTestSupport 가 import 하므로 모든 통합 테스트가 같은 컨텍스트를 공유한다.
 // 클래스별 @TestConfiguration / @Import 로 컨텍스트를 분기하면 캐시 적중률이 떨어지므로 금지.
 //
-// 각 stub 은 운영 @Component 빈(HttpProductLinkExtractor·HttpImageSnapshotExtractor 등)과 타입이 같아
+// 각 stub 은 운영 @Component 빈(HttpLinkSnapshotExtractor·HttpImageSnapshotExtractor 등)과 타입이 같아
 // 주입 후보가 2개가 된다. @Primary 로 stub 우선을 명시한다 — 빈 이름과 주입 지점
 // 파라미터명이 우연히 일치하는 데 기대지 않으므로, 파라미터명을 리팩터링해도 격리가 깨지지 않는다.
 @TestConfiguration(proxyBeanMethods = false)
 class IntegrationStubs {
     // 파싱(링크·이미지)의 외부 경계는 원격 extractor HTTP 호출 하나다 — 두 진입점 인터페이스를 stub 해
     // 통합 테스트가 실제 원격 호출 없이 파싱 결과를 제어한다. 원격 클라이언트 자체(3갈래 번역·계약 가드)는
-    // 단위(HttpProductLinkExtractorTest·HttpImageSnapshotExtractorTest)가 검증한다.
+    // 단위(HttpLinkSnapshotExtractorTest·HttpImageSnapshotExtractorTest)가 검증한다.
     @Bean
     @Primary
-    fun productLinkExtractor(): StubProductLinkExtractor = StubProductLinkExtractor()
+    fun linkSnapshotExtractor(): StubLinkSnapshotExtractor = StubLinkSnapshotExtractor()
 
     @Bean
     @Primary
@@ -46,19 +46,19 @@ class IntegrationStubs {
     @Primary
     fun fcmMessageSender(): StubFcmMessageSender = StubFcmMessageSender()
 
-    // ItemParsingWorker·ImageParsingWorker 는 내부 비동기 워커를 래핑한 configurable stub.
+    // LinkParser·ImageParser 는 내부 비동기 워커를 래핑한 configurable stub.
     // enabled=true (기본): 실제 워커로 위임 — WishlistRegisterAsyncIntegrationTest 는 이 경로를 사용한다.
     // enabled=false: no-op — @Transactional 통합 테스트에서 미커밋 item 접근으로 발생하는 warn 로그 노이즈를
     //   없애려면 테스트 본문에서 false 로 설정한다(설정한 테스트가 직접 복원한다).
     @Bean
     @Primary
-    fun itemParsingWorker(asyncItemParsingWorker: AsyncItemParsingWorker): StubItemParsingWorker =
-        StubItemParsingWorker(asyncItemParsingWorker)
+    fun linkParser(asyncLinkParser: AsyncLinkParser): StubLinkParser =
+        StubLinkParser(asyncLinkParser)
 
     @Bean
     @Primary
-    fun imageParsingWorker(asyncImageParsingWorker: AsyncImageParsingWorker): StubImageParsingWorker =
-        StubImageParsingWorker(asyncImageParsingWorker)
+    fun imageParser(asyncImageParser: AsyncImageParser): StubImageParser =
+        StubImageParser(asyncImageParser)
 
     @Bean
     @Primary

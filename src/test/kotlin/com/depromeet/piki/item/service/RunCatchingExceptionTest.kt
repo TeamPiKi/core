@@ -40,8 +40,8 @@ class RunCatchingExceptionTest {
         // 그 자리에서만 Error 가 다시 삼켜지는데, 그건 리뷰로만 걸러야 해서 조용히 새기 쉽다 — 기계로 못 박는다.
         val workers =
             listOf(
-                "AsyncItemParsingWorker.kt",
-                "AsyncImageParsingWorker.kt",
+                "AsyncLinkParser.kt",
+                "AsyncImageParser.kt",
             ).map { java.io.File("src/main/kotlin/com/depromeet/piki/item/service/$it") }
 
         val offenders =

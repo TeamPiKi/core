@@ -9,7 +9,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.AsyncItemParsingWorker
+import com.depromeet.piki.item.service.AsyncLinkParser
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -19,7 +19,7 @@ import com.depromeet.piki.product.service.remote.ProductExtractorException
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
@@ -68,7 +68,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     private lateinit var objectMapper: ObjectMapper
 
     @Autowired
-    private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     @Autowired
     private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
@@ -100,7 +100,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000) }
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000) }
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
 
             mockMvc
@@ -129,7 +129,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
+            stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val readyBefore = parseCount("ready", "none")
@@ -157,11 +157,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // 실패 원장 라인도 latency 를 갖는 계약(#916)을 라인 모양으로 고정한다 — 성공만 latency 를 가지면
         // 타임아웃형(느린) 실패가 로그 기반 소요 통계에서 통째로 사라진다.
         val workerLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val workerLogger = LoggerFactory.getLogger(AsyncItemParsingWorker::class.java) as Logger
+        val workerLogger = LoggerFactory.getLogger(AsyncLinkParser::class.java) as Logger
         workerLogger.addAppender(workerLogs)
         try {
             // 파싱 결과 실패는 동기 400 이 아니라 FAILED 상태로 남는다 (등록 응답은 이미 201 로 끝났으므로).
-            stubProductLinkExtractor.build = { throw ProductSnapshotException.notProductPage() }
+            stubLinkSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val notProductBefore = parseCount("failed", "not_product")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/not-a-product")
 
@@ -194,7 +194,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. 예전에는 READY 불변식(name 필수)에 걸려
             // FAILED 로 떨어졌지만, 이제는 채운 만큼을 남기고 INCOMPLETE 로 안착해 사용자가 나머지를 채운다(#944).
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
             val incompleteBefore = parseCount("incomplete", "none")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
 
@@ -218,7 +218,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "기본 상품") }
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "기본 상품") }
             // 이 파일의 다른 테스트와 URL 을 공유하지 않는다 — 정체성 매칭(별칭)이 테스트 간 상태가 되므로 전용 URL 로 격리.
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/9942"))
             val auth = "Bearer ${memberToken(userId)}"
@@ -406,7 +406,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     fun `link 있는 stale PROCESSING 을 recover 가 재실행해 READY 로 되살린다`() {
         // 디스패처가 집은 직후 워커가 크래시해 **실행 0회**로 PROCESSING 에 갇힌 상황(그래서 attempt 는 0 이다 —
         // 집기는 예산을 소모하지 않는다). recover 가 되살려 완성시킨다 — execution at-least-once 의 핵심(#461).
-        stubProductLinkExtractor.build = {
+        stubLinkSnapshotExtractor.build = {
             ProductSnapshot(link = it, name = "되살아난 상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
         }
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/revive")))
@@ -549,7 +549,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
         // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
         val calls = AtomicInteger(0)
-        stubProductLinkExtractor.build = {
+        stubLinkSnapshotExtractor.build = {
             calls.incrementAndGet()
             throw ProductExtractorException.transientFailure(RuntimeException("원격 503"))
         }
@@ -591,7 +591,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
             // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다.
-            stubProductLinkExtractor.build = { throw ProductExtractorException.blockedByTarget() }
+            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedByTarget() }
             val blockedBefore = parseCount("failed", "blocked")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 

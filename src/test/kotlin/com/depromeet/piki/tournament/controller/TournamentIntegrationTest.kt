@@ -12,9 +12,9 @@ import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageParsingWorker
+import com.depromeet.piki.support.StubImageParser
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubItemParsingWorker
+import com.depromeet.piki.support.StubLinkParser
 import com.depromeet.piki.support.StubRefreshTokenStore
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
@@ -109,9 +109,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var wishRepository: WishRepository
 
-    @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
+    @Autowired private lateinit var stubLinkParser: StubLinkParser
 
-    @Autowired private lateinit var stubImageParsingWorker: StubImageParsingWorker
+    @Autowired private lateinit var stubImageParser: StubImageParser
 
     @Autowired private lateinit var stubImageStorage: StubImageStorage
 
@@ -2599,7 +2599,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `POST tournaments-id-items-link 는 참여자이면 PENDING 아이템을 생성하고 tournamentItemId 를 반환한다`() {
-        stubItemParsingWorker.enabled = false
+        stubLinkParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2627,13 +2627,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
             assertEquals(ItemStatus.PENDING, snapshot?.status)
         } finally {
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
         }
     }
 
     @Test
     fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
-        stubItemParsingWorker.enabled = false
+        stubLinkParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2658,7 +2658,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
                 .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
         } finally {
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
         }
     }
 
@@ -2757,7 +2757,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `링크 아이템 추가 시 TournamentItemAdded 이벤트가 발행된다`() {
-        stubItemParsingWorker.enabled = false
+        stubLinkParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2775,13 +2775,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             assertEquals(tournamentId, added.first().tournamentId)
             assertEquals(userId, added.first().actorId)
         } finally {
-            stubItemParsingWorker.enabled = true
+            stubLinkParser.enabled = true
         }
     }
 
     @Test
     fun `이미지 아이템 추가는 여러 장이어도 TournamentItemAdded 를 한 번만 발행한다`() {
-        stubImageParsingWorker.enabled = false
+        stubImageParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2794,7 +2794,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             assertEquals(tournamentId, added.first().tournamentId)
             assertEquals(userId, added.first().actorId)
         } finally {
-            stubImageParsingWorker.enabled = true
+            stubImageParser.enabled = true
         }
     }
 

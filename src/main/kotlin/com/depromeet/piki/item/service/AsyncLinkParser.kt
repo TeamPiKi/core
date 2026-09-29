@@ -5,7 +5,7 @@ import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.exception.HttpMappable
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.service.ProductLinkExtractor
+import com.depromeet.piki.product.service.LinkSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
@@ -23,15 +23,15 @@ import org.springframework.stereotype.Component
 // 전이 호출(markReady/markFailed)은 runCatchingException 으로 감싸 워커 스레드로 예외가 새지 않게 한다
 // (recover 와의 레이스로 이미 전이됐거나, 추출값이 도메인 불변식을 위반하는 경우).
 @Component
-class AsyncItemParsingWorker(
-    private val productLinkExtractor: ProductLinkExtractor,
+class AsyncLinkParser(
+    private val linkSnapshotExtractor: LinkSnapshotExtractor,
     private val itemParsingService: ItemParsingService,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val transitionRetry: TransitionRetry,
     private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
     private val observationRegistry: ObservationRegistry,
-) : ItemParsingWorker {
+) : LinkParser {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
@@ -57,7 +57,7 @@ class AsyncItemParsingWorker(
                 },
             ) { attempt ->
                 val started = System.nanoTime()
-                runCatchingException { productLinkExtractor.extract(link) }
+                runCatchingException { linkSnapshotExtractor.extract(link) }
                     .onSuccess { snapshot -> onExtracted(itemId, snapshotId, link, snapshot, started, attempt, observation) }
                     .onFailure { e ->
                         observation.error(e)
@@ -243,7 +243,7 @@ class AsyncItemParsingWorker(
 
     companion object {
         // 파싱 단건 트레이스 span 이름. 대시보드 트레이스 "아이템" 탭이 TraceQL `name = "item.parse"` 로 이걸 거른다.
-        // 이미지 파싱(AsyncImageParsingWorker)도 같은 이름을 공유한다 — 대시보드 필터가 링크·이미지를 한 탭으로 본다.
+        // 이미지 파싱(AsyncImageParser)도 같은 이름을 공유한다 — 대시보드 필터가 링크·이미지를 한 탭으로 본다.
         internal const val PARSE_OBSERVATION = "item.parse"
 
         // 재시도(일시)로 볼지 판정. 분류 가능한 HttpMappable 은 category 로 가르고(RETRYABLE 만 재시도), 그 외

@@ -41,8 +41,8 @@ import java.time.LocalDateTime
 @Component
 class ItemParsingScheduler(
     private val itemParsingService: ItemParsingService,
-    private val itemParsingWorker: ItemParsingWorker,
-    private val imageParsingWorker: ImageParsingWorker,
+    private val linkParser: LinkParser,
+    private val imageParser: ImageParser,
     @Qualifier(AsyncConfig.ITEM_PARSING_EXECUTOR) private val itemParsingExecutor: ThreadPoolTaskExecutor,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -57,11 +57,11 @@ class ItemParsingScheduler(
         val claimed = itemParsingService.claimDuePending(free)
         if (claimed.isEmpty()) return
         log.info("PENDING {}건 claim → 워커 디스패치 (가용 슬롯 {})", claimed.size, free)
-        claimed.forEach { dispatchToWorker(it) }
+        claimed.forEach { submit(it) }
     }
 
     // 지금 당장 실행에 넣을 수 있는 작업 수. 큐가 없으므로 maxPoolSize 가 곧 동시 실행 상한이다.
-    // 제출자가 이 스케줄러 하나뿐이고(두 워커 모두 dispatchToWorker 에서만 호출) @Scheduled 는 단일 스레드라
+    // 제출자가 이 스케줄러 하나뿐이고(두 워커 모두 submit 에서만 호출) @Scheduled 는 단일 스레드라
     // dispatch·recover 가 동시에 돌지 않는다 — 계산과 제출 사이에 끼어드는 제출자가 없어, 그 사이 activeCount 는
     // 줄기만 한다(작업 완료). 즉 이 값은 과소 추정될 뿐 과대 추정되지 않는다.
     private fun freeSlots(): Int = itemParsingExecutor.maxPoolSize - itemParsingExecutor.activeCount
@@ -70,11 +70,11 @@ class ItemParsingScheduler(
     // 발화하지 않는 레이스 안전망)되면 PROCESSING 그대로 둔다 — recover 가 stale 로 잡아 재실행한다(execution at-least-once).
     // "claim 됐는데 실행 0회" 도 되살릴 대상이라 종결하지 않는다.
     // (#411 까지는 거부 시 즉시 FAILED 였으나, 실패·재시도 판정을 recover 한 곳으로 모으면서 여기선 종결하지 않는다.)
-    private fun dispatchToWorker(claimed: ClaimedItem) {
+    private fun submit(claimed: ClaimedItem) {
         runCatching {
             when (claimed) {
-                is LinkClaim -> itemParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.expectedAttempt)
-                is ImageClaim -> imageParsingWorker.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.expectedAttempt)
+                is LinkClaim -> linkParser.parse(claimed.itemId, claimed.snapshotId, claimed.link, claimed.expectedAttempt)
+                is ImageClaim -> imageParser.parse(claimed.itemId, claimed.snapshotId, claimed.imageKey, claimed.expectedAttempt)
             }
         }.onFailure { e -> log.warn("item {} 워커 디스패치 거부 → PROCESSING 유지, recover 가 재실행: {}", claimed.itemId, e.message) }
     }
@@ -98,7 +98,7 @@ class ItemParsingScheduler(
         val outcome = itemParsingService.reviveOrFailStale(threshold, SCAN_LIMIT, freeSlots())
         if (outcome.toRevive.isNotEmpty()) {
             log.warn("stale PROCESSING {}건 되살림 디스패치", outcome.toRevive.size)
-            outcome.toRevive.forEach { dispatchToWorker(it) }
+            outcome.toRevive.forEach { submit(it) }
         }
         if (outcome.failedCount > 0) {
             log.warn("stale PROCESSING {}건 → FAILED (실행 상한 도달 또는 되살릴 수 없음)", outcome.failedCount)

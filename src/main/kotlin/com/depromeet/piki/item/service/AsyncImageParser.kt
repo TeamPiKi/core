@@ -20,13 +20,13 @@ import org.springframework.stereotype.Component
 // 위임하고, 이 워커는 상태 전이·재시도 정책·raw 회수만 진다.
 // 외부 호출은 트랜잭션 바깥에서 끝내고, 상태 전이 영속화만 ItemParsingService(@Transactional)에 위임한다.
 //
-// 결과는 넷으로 갈린다(AsyncItemParsingWorker 와 동일한 execution at-least-once 정책, #461):
+// 결과는 넷으로 갈린다(AsyncLinkParser 와 동일한 execution at-least-once 정책, #461):
 //   - 성공 → READY. 파싱이 끝났으니 raw 원본을 회수(delete)한다.
 //   - 부분 성공(일부 필드만 채움) → INCOMPLETE + raw 회수. 사용자가 나머지를 채워 완성한다(#944).
 //   - 확정 실패(상품 아님·추출값 신뢰 불가·값 0개) → 즉시 FAILED + raw 회수. 다시 해도 결과가 같다.
 //   - 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등 RETRYABLE) → 소유권 반납(release, PROCESSING→PENDING). raw 는 보존하고 다음 tick 이 다시 집는다.
 @Component
-class AsyncImageParsingWorker(
+class AsyncImageParser(
     private val imageSnapshotExtractor: ImageSnapshotExtractor,
     private val imageStorage: ImageStorage,
     private val itemParsingService: ItemParsingService,
@@ -34,7 +34,7 @@ class AsyncImageParsingWorker(
     private val parsingHeartbeat: ParsingHeartbeat,
     private val meterRegistry: MeterRegistry,
     private val observationRegistry: ObservationRegistry,
-) : ImageParsingWorker {
+) : ImageParser {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
@@ -51,7 +51,7 @@ class AsyncImageParsingWorker(
         // 특히 raw 원본 회수(deleteRaw)를 하지 않는다(소유권을 쥔 새 시도가 그 원본으로 재실행해야 하므로). deleteRaw 는 body 안에만 있다.
         // 링크 워커와 같은 이유로 실패 경로가 observation.error() 를 직접 마킹한다 — runCatchingException 이 예외를 삼켜
         // 그냥 두면 실패 span 이 정상(status 미설정)으로 남는다(#902).
-        val observation = Observation.createNotStarted(AsyncItemParsingWorker.PARSE_OBSERVATION, observationRegistry)
+        val observation = Observation.createNotStarted(AsyncLinkParser.PARSE_OBSERVATION, observationRegistry)
         observation.observe {
             parsingHeartbeat.guarded(
                 snapshotId,
@@ -238,7 +238,7 @@ class AsyncImageParsingWorker(
             }.getOrDefault(false)
 
     companion object {
-        // AsyncItemParsingWorker.isRetryable 과 달리 비-HttpMappable 예외를 재시도하지 않는다 — 이미지 경로의 외부
+        // AsyncLinkParser.isRetryable 과 달리 비-HttpMappable 예외를 재시도하지 않는다 — 이미지 경로의 외부
         // 오류(원격 extractor 5xx·연결 실패)는 전부 HttpMappable(RETRYABLE)로 분류돼 오고, 그 밖은 코드 버그성이라 즉시
         // 종결한다. 원격 클라이언트의 계약 번역이 이 판정과 맞물리므로 테스트가 이 함수로 직접 단언한다(companion 공개 이유).
         internal fun isRetryable(e: Throwable): Boolean = e is HttpMappable && e.category == ErrorCategory.RETRYABLE
