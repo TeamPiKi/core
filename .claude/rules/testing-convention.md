@@ -33,23 +33,23 @@ fun `같은 guest 가 같은 URL 을 두 번 등록하면 409 CONFLICT 가 반�
 - **`kotlin.test` 를 기본으로 한다.** 단순 단언(`assertEquals` · `assertNotNull` · `assertFailsWith`)은 이쪽이 짧고, 코드베이스 실태도 사실상 `kotlin.test` 단독이다.
 - **AssertJ(`assertThat`)는 표현력 차이가 큰 경우에 한해** 쓴다 — 컬렉션 비교 · 객체 그래프 깊은 비교 · soft assertions. 단순 동등 비교를 AssertJ 로 풀지 않는다. 둘 다 `spring-boot-starter-test` 에 포함되어 추가 의존성은 없다.
 - 한 테스트 메서드 안에서 두 스타일을 섞지 않는다 (가독성 일관성).
-- Kotest · Strikt 는 별도 의존성이라 현재 사용 금지 (이후 도입 검토).
+- Kotest · Strikt 는 쓰지 않는다 (별도 의존성).
 
 ### stub 구현 형태
 
 "기본 동작을 throw 로 둔다" 는 원칙의 Kotlin 구현:
 
 ```kotlin
-class StubProductExtractor : ProductExtractor {
+class StubProductLinkExtractor : ProductLinkExtractor {
     // 동작 가능한 기본값을 두면 명시 세팅을 빠뜨려도 통과해버린다. 그래서 기본을 throw 로 둔다.
-    var build: (ProductLink) -> Product = {
+    var build: (ProductLink) -> ProductSnapshot = {
         error("stub.build 를 테스트 본문에서 명시 세팅해야 한다.")
     }
-    override fun extract(link: ProductLink): Product = build(link)
+    override fun extract(link: ProductLink): ProductSnapshot = build(link)
 }
 
 // 테스트 본문
-stubExtractor.build = { link -> Product(link, name = "나이키", price = 99_000) }
+stubProductLinkExtractor.build = { link -> ProductSnapshot(link = link, name = "나이키", price = 99_000) }
 ```
 
 ## DB 바인딩 (이 repo 는 MySQL 을 쓴다)
@@ -102,4 +102,4 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 **강제력의 범위**: 이 메타 테스트는 `./gradlew test` 에 포함되고 `dev` 가 `build`·`test` 를 required status check(strict)로 두므로 **PR 머지 경로에서 위반이 막힌다.** 통합 테스트가 되려면 `@SpringBootTest` 가 필요한데 그건 `IntegrationTestSupport` 한 곳에만 허용되므로, 파일명을 어떻게 짓든 통합 테스트는 그 베이스를 거친다 (네이밍 회피로 빠져나가지 못한다).
 
-**안 닫히는 구멍**: `enforce_admins:false` 라 관리자 직접 push 는 게이트를 우회하고, PR 승인 요구가 0 이라 에이전트가 자기 PR 을 머지할 수도 있다. 둘 다 branch protection 설정 변경(팀 결정)이 필요하다.
+**안 닫히는 구멍**: 필수 체크는 관리자가 PR 머지 시 건너뛸 수 있고, 승인 요구가 0 이라 에이전트가 자기 PR 을 머지할 수 있다. 둘 다 GitHub 보호 설정 변경(팀 결정)이 필요하다.

@@ -11,7 +11,6 @@
 **`== null` / `!= null` 분기를 제거한다.** 모든 nullable 처리는 Elvis(`?:`) + early return / throw / default 로 표현한다.
 
 ### 규칙
-- **`== null` / `!= null` 사용 금지** — Elvis(`?:`)로 대체한다.
 - **`requireNotNull` / `checkNotNull` 은 허용한다.** "non-null이어야 한다"는 의도가 시그니처에 명확히 드러나는 Kotlin 표준 idiom이며, 금지 대상은 어디까지나 `== null` / `!= null` 분기 패턴 한정이다.
 - **Elvis + early return 패턴을 기본으로 한다.**
   ```kotlin
@@ -49,16 +48,17 @@
 | `error(MISSING_ID)` — 영속화 전 `getId()` | 개발자(버그) | 불변식 | `error` | 500 |
 | 닉네임 17자 | 클라이언트 | 계약 | 커스텀 | 400 |
 | 이미 완료된 토너먼트에 재요청 | 클라이언트 | 계약 | 커스텀 | 409 |
-| `winnerId` 가 참가 목록에 없음 (서비스가 보장한 값) | 개발자(버그) | 불변식 | `require` | 500 |
+| 서비스가 보장한 id 가 목록에 없음 | 개발자(버그) | 불변식 | `require` | 500 |
 
 ### 규칙
 - `require` 로 우연히 400 이 나오는 건 캐치올 핸들러 덕분. throw 지점에 "이건 400이다"가 박혀 있지 않다. 커스텀 예외는 `status` · `category` 가 코드에 박힌다.
 - **도메인이 자기방어** 한다. 도메인 메서드가 직접 커스텀 예외를 던지면 호출 위치(서비스 / 다른 도메인 / 테스트)에 무관하게 같은 결과가 나온다. 서비스에서 `check` 와 같은 조건을 사전 `if` 로 막는 패턴은 도메인에 동일 검증을 옮긴 뒤 제거 가능.
 - **한 메서드 안에 `require` 와 커스텀 예외가 공존하는 게 정상.** 각 줄이 다른 질문("누가 터뜨리나")에 답하고 있을 뿐.
   ```kotlin
-  fun complete(winnerWishItemId: Long) {
-      if (isCompleted()) throw TournamentException.alreadyCompleted()      // 계약: 클라이언트 도달 가능 → 409
-      require(winnerWishItemId in wishItemIds) { "우승자가 참가 목록에 없음" }  // 불변식: 서비스가 보장 → 500
+  // 가상 예시
+  fun cancel(refundItemId: Long) {
+      if (isCancelled()) throw OrderException.alreadyCancelled()          // 계약: 클라이언트 도달 가능 → 409
+      require(refundItemId in itemIds) { "환불 항목이 주문 목록에 없음" }  // 불변식: 서비스가 보장 → 500
   }
   ```
 
@@ -69,9 +69,6 @@
 - **입력 경계** (컨트롤러 요청 DTO, 외부 추출 파이프라인 등) — *계약* 검증. 각 입력 경로가 자기 경계에서 책임진다. 생성 경로가 새로 늘면 그 경로가 자기 계약 검증을 더한다.
 - **엔티티 생성자** — *불변식* 검증(`require`). 엔티티는 누가 어떤 경로로 만들든 스스로 유효함을 보장하는 최후의 보루다. 정상 흐름에선 경계가 다 걸러 여기 닿지 않는다. 닿았다면 어떤 경계가 검증을 빠뜨린 것이므로 `500`.
 - 엔티티 생성자에 HTTP status 같은 전송 계층 계약을 박지 않는다. status 는 각 입력 경계가 정한다.
-
-### 한 줄 외울 것
-코드 모양 보지 말고 **"멀쩡한 클라이언트가 정상 요청으로 여기 닿을 수 있나?"** 만 물을 것. 닿으면 커스텀, 못 닿으면 `require` / `check` / `error`.
 
 ### 예외 클래스·message·code 를 만질 때
 
@@ -86,15 +83,15 @@ YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위�
 
 ## 기본 브랜치
 
-**이 프로젝트의 기본 브랜치는 `dev`.** `main` 은 옛 상태에 머물러 PR / worktree 분기 base 로 사용하지 않는다. PR 은 항상 `dev` 를 향하고, 새 worktree·branch 도 `origin/dev` 기준으로 분기한다.
+**이 프로젝트의 기본 브랜치는 `dev`.** `main` 은 prod 승격 전용이다(`promote.yml`). 직접 커밋·PR base·분기 base 로 쓰지 않는다. PR 은 항상 `dev` 를 향하고, 새 worktree·branch 도 `origin/dev` 기준으로 분기한다.
 
 ## 별도 작업은 worktree 로 분리
 
 현재 브랜치의 목적과 다른 작업(다른 이슈·기능)을 요청받으면 곧장 현재 브랜치에 얹지 않고, `AskUserQuestion` 으로 worktree 분리를 첫 번째(recommend) 옵션으로 묻는다. 같은 이슈의 후속 단계면 묻지 않고 이어간다. 생성·진입·정리 절차는 `/issue`·`/session-close` 스킬과 루트의 로비 규칙(`.claude/rules/piki-workspace.md`)이 담당하고, 여기에는 이 repo 의 정책만 둔다.
 
-- **분기 base 는 항상 `origin/dev`.** `git worktree add ... origin/dev` 로 만든 뒤 `EnterWorktree path=` 로 진입한다. 진입 여부는 분리를 묻는 그 질문에서 함께 확인하고, 묻지 않은 자동 진입은 하지 않는다. 진입하지 않고 메인 cwd 에 남으면 statusline·하단 경로·PR 표시가 전부 메인 브랜치 기준이 돼 작업 위치가 보이지 않으므로, 그 사실을 알리고 `git -C` 로 격리한다. `EnterWorktree name=` 단독 생성은 base 가 `worktree.baseRef` 설정에 의존해 `dev` 가 아닐 수 있다.
+- **분기 base 는 항상 `origin/dev`.** 생성·진입은 로비 규칙(`git worktree add … origin/dev` 후 `EnterWorktree path=`)을 따른다. 진입 여부는 분리를 묻는 그 질문에서 함께 확인한다.
 - **스택 브랜치는 쓰지 않는다.** 다른 feature 브랜치 위에 쌓지 않고, 의존하는 작업이 `dev` 에 머지될 때까지 기다린 뒤 분기한다(시퀀싱). 여러 사람이 squash/rebase 로 머지하는 환경에서 스택은 base 가 바뀔 때마다 하위 브랜치가 꼬인다. 기다릴 수 없으면 사용자에게 먼저 알린다.
-- **정리는 이벤트에 얹는다.** 작업 종료·PR 머지 직후와 새 worktree 생성 직전에, clean 이고 머지·삭제된 브랜치인 worktree 만 제거한다. `--force` 는 쓰지 않고, dirty 면 작업 중일 수 있어 그대로 둔다. 주기 검사(타이머)는 두지 않는다.
+- **정리는 `/session-close` 가 한다.** `--force` 는 쓰지 않는다. 주기 검사(타이머)는 두지 않는다.
 
 ## 의존성 관리
 
@@ -121,15 +118,12 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: extractor 원격 추출 호출) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
 
 - 외부 호출은 트랜잭션 바깥에서 끝내고, **영속화만 별도 빈에 위임**해 짧은 트랜잭션으로 묶는다.
-- 예: `WishlistService.registerFromUrl` 은 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임.
-
-### self-invocation 주의
-같은 빈 안에서 `@Transactional` 메서드를 직접 호출하면 Spring AOP proxy 를 거치지 않아 트랜잭션이 무력화된다. 경계를 분리하려면 **별도 빈으로 추출**해 proxy 를 거치게 한다.
+- 예: `WishlistService.registerFromUrl` 은 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임(같은 빈 호출은 proxy 를 안 거친다).
 
 ## 로깅
 
 ### Logger 선언
-`private val log = LoggerFactory.getLogger(javaClass)` 로 통일한다.
+`private val log = LoggerFactory.getLogger(javaClass)` 로 통일한다. 메시지는 `{}` placeholder 로 바인딩한다.
 
 ### 민감 정보는 마스킹해서 찍는다
 URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대로 남기지 않는다. URL 은 `ProductLink.safeLogString()` (host + path 만, 쿼리스트링 제외) 처럼 마스킹 헬퍼를 거친다.
@@ -141,14 +135,11 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 - **warn** — 외부 호출 실패·재시도, 방어적으로 차단한 비정상 요청 (SSRF 등).
 - **error** — 예상 못한 서버 버그. 스택 트레이스를 함께 남긴다 (`log.error(msg, e)`).
 
-### SLF4J placeholder
-문자열 연결 대신 `{}` placeholder + 파라미터 바인딩을 쓴다 (`log.info("latency={}ms", ms)`).
-
 ## 도메인 용어
 
 - **product** — 외부 상품(쇼핑몰 페이지)과 그 추출 파이프라인. `ProductLink`(외부 URL) · `ProductLinkExtractor` · `ProductSnapshot`(추출 시점 결과).
 - **item** — 상품의 정체성(`link`). 추출값·상태·이력은 버전(`ItemSnapshot`)이 들고, item 은 wish · tournament 가 참조하는 안정적 식별 단위다.
-- **item_snapshot** (`ItemSnapshot`) — item 의 한 추출 버전(name · price · image · currency · status · extracted_at · created_by). item 갱신 때마다 새 행이 쌓여 가격·이름 이력을 보존한다. 화면값은 버전들에서 계산한다(`ItemVersions`, 내 맥락의 값 vs 공유 READY). wish 는 item 을 참조하고 "기다리는 행"(`waitingSnapshotId`)만 따로 들며, tournament_item 은 출전 시점 고정 버전(pin)을 가리킨다.
+- **item_snapshot** (`ItemSnapshot`) — item 의 한 추출 버전. item 갱신 때마다 새 행이 쌓여 가격·이름 이력을 보존한다. 화면값은 버전들에서 계산한다(`ItemVersions`, 내 맥락의 값 vs 공유 READY). wish 는 item 을 참조하고 "기다리는 행"(`waitingSnapshotId`)만 따로 들며, tournament_item 은 출전 시점 고정 버전(pin)을 가리킨다.
 - **wish** — user 가 item 을 위시리스트에 담은 기록 (`user_id` + `item_id`).
 - **tournament** — item 들로 겨루는 토너먼트. `tournament_item`(출전 아이템) · `tournament_user`(참여자).
 
@@ -178,15 +169,15 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 - **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 원격 추출 응답 DTO 의 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
 - **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `companion object` 정적 팩토리. 예: `ItemSnapshot.pending(...)`, `ItemSnapshot.manual(...)`.
 
-매핑 분기·정규화는 단위 테스트로 검증한다 (`.claude/rules/testing-principles.md` 의 "테스트 분류" 가 말하는 매퍼 함수 분기).
+매핑 분기·정규화는 단위 테스트로 검증한다 (`.claude/rules/testing-principles.md` 의 "분기 위치 결정 트리" (3) 매퍼 함수 분기).
 
 ## 컨트롤러 / OpenAPI 문서
 
-**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
+**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지, 3xx 리다이렉트·SSE 구독은 예외). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
 
 ## 웹 요청 경계
 
-경로 판정·CSRF·세션 고정·permitAll·SSR 예외 처리·필터 순서·브라우저 폴링·CDN SRI 에서 실제로 났던 결함과 그 교정은 `.claude/rules/web-request-boundary.md` 에 있다. `SecurityConfig`·필터·admin 패키지·템플릿을 다룰 때 자동 로드되고, 그 파일들을 열지 않는 경로로 보안 설정을 바꿀 때는 직접 읽는다. 기계가 판정할 수 있는 것(X-Forwarded-For 직접 읽기·`th:utext`·`param.x` 직접 비교·admin 빈의 조건 어노테이션 누락)은 `.claude/settings.json` 훅이 차단한다.
+경로 판정·CSRF·세션 고정·permitAll·SSR 예외 처리·필터 순서·브라우저 폴링·CDN SRI 에서 실제로 났던 결함과 그 교정은 `.claude/rules/web-request-boundary.md` 에 있다. frontmatter `paths` 의 파일을 다룰 때 자동 로드되고, 그 파일들을 열지 않는 경로로 보안 설정을 바꿀 때는 직접 읽는다. 기계가 판정할 수 있는 것(X-Forwarded-For 직접 읽기·`th:utext`·`param.x` 직접 비교·admin 빈의 조건 어노테이션 누락)은 `.claude/settings.json` 훅이 차단한다. 단 로비에서 hop 한 세션에서는 훅이 돌지 않아 직접 지킨다.
 
 ## PR 생성·갱신
 

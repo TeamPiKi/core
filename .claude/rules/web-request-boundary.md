@@ -4,7 +4,7 @@ paths: ["src/main/**/SecurityConfig.kt", "src/main/**/*Filter.kt", "src/main/**/
 
 # 웹 요청 경계에서 반복해 틀리는 것
 
-전부 실제로 이 repo 에서 한 번씩 났던 결함이다(#986·#988). 문법이 멀쩡하고 테스트도 초록불이라 **코드만 봐서는 티가 안 나는 종류**라 여기 못박는다.
+전부 실제로 이 repo 에서 한 번씩 났던 결함이다. 문법이 멀쩡하고 테스트도 초록불이라 **코드만 봐서는 티가 안 나는 종류**라 여기 못박는다.
 
 ## 판단이 필요해 사람·모델이 지켜야 하는 것
 
@@ -19,7 +19,7 @@ paths: ["src/main/**/SecurityConfig.kt", "src/main/**/*Filter.kt", "src/main/**/
 
 ## 훅이 차단하는 것 (`.claude/settings.json`)
 
-기계가 오탐 없이 판정하므로 산문으로 반복하지 않는다. 차단 메시지가 옳은 형태를 알려준다.
+차단 메시지가 옳은 형태를 알려준다. 단 로비에서 hop 한 세션에는 프로젝트 훅이 돌지 않으므로 아래 넷은 직접 지킨다.
 
 - 클라이언트 IP 를 `X-Forwarded-For` 에서 직접 읽기 → `ClientIp.of`
 - `th:utext` → `th:text` (값 출처가 DB 로 바뀌면 저장형 XSS)
