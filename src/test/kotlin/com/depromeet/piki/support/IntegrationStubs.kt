@@ -2,8 +2,7 @@ package com.depromeet.piki.support
 
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.redis.RefreshTokenStore
-import com.depromeet.piki.item.service.AsyncImageParser
-import com.depromeet.piki.item.service.AsyncLinkParser
+import com.depromeet.piki.item.service.AsyncItemParser
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
@@ -46,19 +45,14 @@ class IntegrationStubs {
     @Primary
     fun fcmMessageSender(): StubFcmMessageSender = StubFcmMessageSender()
 
-    // LinkParser·ImageParser 는 내부 비동기 워커를 래핑한 configurable stub.
+    // ItemParser 는 내부 비동기 워커를 래핑한 configurable stub.
     // enabled=true (기본): 실제 워커로 위임 — WishlistRegisterAsyncIntegrationTest 는 이 경로를 사용한다.
     // enabled=false: no-op — @Transactional 통합 테스트에서 미커밋 item 접근으로 발생하는 warn 로그 노이즈를
     //   없애려면 테스트 본문에서 false 로 설정한다(설정한 테스트가 직접 복원한다).
     @Bean
     @Primary
-    fun linkParser(asyncLinkParser: AsyncLinkParser): StubLinkParser =
-        StubLinkParser(asyncLinkParser)
-
-    @Bean
-    @Primary
-    fun imageParser(asyncImageParser: AsyncImageParser): StubImageParser =
-        StubImageParser(asyncImageParser)
+    fun itemParser(asyncItemParser: AsyncItemParser): StubItemParser =
+        StubItemParser(asyncItemParser)
 
     @Bean
     @Primary

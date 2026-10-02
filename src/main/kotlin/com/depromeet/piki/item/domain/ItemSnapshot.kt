@@ -10,97 +10,106 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 import java.util.UUID
 
-// item(정체성=link)의 한 추출 버전. 추출값(name·price·image·currency)·상태(status)·추출시각을 들고,
-// item 이 갱신될 때마다 새 행이 쌓여 가격·이름·이미지 이력을 보존한다.
-// 4a 부터 추출값·상태는 전적으로 이 버전이 보유한다 — item 은 link(정체성)만 남고, 추출·검증·전이의 무게중심이 여기로 모였다.
-// itemId 는 정체성(items)을 raw 로 참조한다 (FK 제약 없음 — 프로젝트 정책). 같은 item 의 여러 버전이 1:N.
-// 버전 순서는 id(단조증가)로 충분해 별도 version 컬럼을 두지 않는다.
-//
-// 전이의 계약 검증(이미 READY·PROCESSING 은 클라이언트가 못 바꿈)도 이 버전이 직접 던진다 — 추출값·상태가 여기로 모이면서
-// item 이 들고 있던 자기방어 책임이 함께 옮겨왔다(4a). 여러 버전(v2·v3)은 5단계 갱신부터 쌓인다.
 @Entity
 @Table(name = "item_snapshots")
 class ItemSnapshot(
-    @Column(name = "item_id", nullable = false)
+    @Column(nullable = false, updatable = false)
     val itemId: Long,
     name: String? = null,
     imageUrl: String? = null,
     price: Int? = null,
     currency: String? = null,
-    status: ItemStatus = ItemStatus.PROCESSING,
+    status: ItemStatus = ItemStatus.PENDING,
     extractedAt: LocalDateTime? = null,
-    attemptCount: Int = 0,
     source: ItemSnapshotSource? = null,
     createdBy: UUID? = null,
 ) : LongBaseEntity() {
-    // 이 버전을 만든 맥락의 사람(#1051) — 서버 행은 파싱을 시킨 사람(등록자·새로고침한 사람), MANUAL 행은 고친 사람.
-    // 카드 표시값(ItemVersions)이 "내 맥락의 행" 을 가르는 유일한 근거다. 도입 전 행은 추정 백필로 채우되 아무도
-    // 가리키지 않던 옛 이력은 null(모름)로 남는다. 옛 edited_by 컬럼은 여기에 흡수돼 제거됐다(V20260909171435).
-    @Column(name = "created_by", columnDefinition = "BINARY(16)")
+    @Column(columnDefinition = "BINARY(16)")
     var createdBy: UUID? = createdBy
         protected set
 
-    // 이 버전의 출처(#825 결정 4) — SERVER(파서)/SERVER_LLM(LLM)/MANUAL(수기). 카드·가격 추적은 마지막
-    // SERVER* READY 만 믿는다. 도입 전 기존 행은 소급 불가라 null("모름")로 남는다(forward-only).
     @Enumerated(EnumType.STRING)
-    @Column(name = "source", length = 16)
+    @Column(length = 16)
     var source: ItemSnapshotSource? = source
         protected set
 
-
-    // 추출 필드 — setter 직접 노출 대신, 의도가 박힌 명령(markReady·markFailed·recover)으로만 바꾼다.
-    @Column(name = "name", length = 512)
+    @Column(length = 512)
     var name: String? = name
         protected set
 
-    @Column(name = "image_url", length = 2048)
+    @Column(length = 2048)
     var imageUrl: String? = imageUrl
         protected set
 
-    @Column(name = "price")
     var price: Int? = price
         protected set
 
-    @Column(name = "currency", length = 8)
+    @Column(length = 8)
     var currency: String? = currency
         protected set
 
-    // 이 버전의 추출 생애주기. PENDING(대기)→PROCESSING(추출 중)→READY(완료)/INCOMPLETE(일부만 채움)/FAILED(실패).
-    // 상태는 되돌리지 않는다 — 수기 수정은 이 행을 고치지 않고 MANUAL 새 버전을 쌓는다(#825 결정 4).
+    // TODO: #1176 2단계에서 삭제 예정. 진행 상태는 ItemParseOutboxStatus 가 정본이고 버전은 성공 시에만 생김
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 16)
+    @Column(nullable = false, length = 16)
     var status: ItemStatus = status
         protected set
 
-    // 추출이 완료(READY)된 시각. PROCESSING 동안은 비어 있다(null). 정체성 row 생성 시각(created_at)과 구분된다.
-    @Column(name = "extracted_at")
     var extractedAt: LocalDateTime? = extractedAt
         protected set
 
-    // **실행을 실제로 시작한 횟수** (execution at-least-once, #461). 워커가 실행에 진입하는 순간 원자적으로 +1 하며
-    // 그 시도의 소유권을 가져간다(ParsingOwnership.acquire). 집기(claim)·되살림(revive)은 이 값을 건드리지 않는다 —
-    // 집혔지만 워커 제출이 거부돼 실행이 0회인 행이 예산을 소모하는 불공정을 없애기 위해서다(#802).
-    // recover 가 이 값으로 "상한 도달 → FAILED 종결" 을 판단한다. 동시에 소유권 fencing 토큰이다: 획득 시점의 값을
-    // 워커까지 실어, 소유권이 넘어간 뒤 뒤늦게 도착한 좀비 워커의 박동(renew)·전이(markReady/markFailed)를 불일치로 걸러낸다.
-    // "얼마나 오래 끌 수 있나" 는 이 값이 아니라 created_at 기준 마감이 책임진다 (예산과 마감의 역할 분리).
-    @Column(name = "attempt_count", nullable = false)
-    var attemptCount: Int = attemptCount
-        protected set
-
-    // 엔티티 불변식 — 최후의 보루. 범위·길이만 보고 null 은 통과시킨다.
-    // kotlin("plugin.jpa") 가 합성하는 no-arg 생성자가 Hibernate 하이드레이션 시점에 이 init 을 실행하는데,
-    // 그 순간 필드는 아직 주입 전이라 전부 null/기본값이다. 그래서 상태-의존·필수값 불변식은 여기 두지 않고
-    // (두면 행 하이드레이션이 깨진다), 범위·길이만 본다.
+    // JPA 가 빈 인스턴스로 이 블록을 먼저 실행하므로 필수값·상태 의존 검사는 둘 수 없다.
     init {
         validate(name, price, imageUrl, currency)
     }
 
-    // 추출 필드를 갈아끼우는 코어. 들어온 필드만 갱신하고 생성 때와 같은 불변식을 재검증한다.
-    private fun apply(
-        name: String? = null,
-        price: Int? = null,
-        imageUrl: String? = null,
-        currency: String? = null,
+    fun markExtracted(extracted: ProductSnapshot): ItemStatus {
+        check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
+        fillValues(extracted.name, extracted.price, extracted.imageUrl, extracted.currency)
+        source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod)
+        status = extractedStatus()
+        if (hasValue()) extractedAt = LocalDateTime.now()
+        return status
+    }
+
+    fun markFailed() {
+        check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
+        status = ItemStatus.FAILED
+    }
+
+    fun isReady(): Boolean = status == ItemStatus.READY
+
+    fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
+
+    fun isFailed(): Boolean = status == ItemStatus.FAILED
+
+    fun isInProgress(): Boolean = status == ItemStatus.PENDING || status == ItemStatus.PROCESSING
+
+    fun hasValue(): Boolean = isReady() || isIncomplete()
+
+    fun isUnresolved(): Boolean = isFailed() || isIncomplete()
+
+    fun isManual(): Boolean = source == ItemSnapshotSource.MANUAL
+
+    fun isOwnedBy(user: UUID): Boolean = createdBy == user
+
+    // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다.
+    fun isSharedValue(): Boolean = isReady() && !isManual()
+
+    private fun extractedStatus(): ItemStatus =
+        when (extractedFields().size) {
+            0 -> ItemStatus.FAILED
+            READY_FIELD_COUNT -> ItemStatus.READY
+            else -> ItemStatus.INCOMPLETE
+        }
+
+    // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
+    private fun extractedFields(): List<Any> = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
+
+    private fun fillValues(
+        name: String?,
+        price: Int?,
+        imageUrl: String?,
+        currency: String?,
     ) {
         val newName = name ?: this.name
         val newPrice = price ?: this.price
@@ -111,145 +120,6 @@ class ItemSnapshot(
         this.price = newPrice
         this.imageUrl = newImageUrl
         this.currency = newCurrency
-    }
-
-    // PENDING → PROCESSING. 디스패처가 작업 큐에서 작업을 집을(claim) 때 전이한다.
-    // PENDING 이 아닌데 호출되면 디스패처가 잘못된 버전을 집은 코드 버그이므로 check(500).
-    // **attemptCount 는 건드리지 않는다** — 집기는 "이 작업을 워커에게 넘긴다"는 지목일 뿐이고, 시도 소모는 워커가
-    // 실행에 진입할 때(ParsingOwnership.acquire) 일어난다. 제출이 거부돼 실행이 0회인 행이 예산을 잃지 않게 하는 분리다.
-    // 이 전이로 updated_at 이 갱신돼 recover 의 stale 판정 시계가 여기서 시작한다.
-    fun markProcessing() {
-        check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 PROCESSING 으로 claim 할 수 없다" }
-        status = ItemStatus.PROCESSING
-    }
-
-    // PROCESSING → PENDING. 일시 오류로 이번 실행이 결론 없이 끝났을 때, 워커가 소유권을 **즉시 반납**한다.
-    // 반납하지 않으면 다음 실행이 stale 판정(마지막 박동 + 임계)을 기다려야 해, 산 워커가 멀쩡히 박동한 시간만큼
-    // 회수가 통째로 늦어진다 — 박동이 "죽음 감지"를 정확하게 만든 대가로 생긴 지연이라 반납으로 되돌린다(#802).
-    // attemptCount 는 유지한다: 실행은 실제로 한 번 일어났으므로 예산은 소모된 게 맞다. 상한 도달 여부는 서비스가 보고
-    // 반납 대신 종결한다 — 도메인은 "되돌린다"는 사실만 표현한다.
-    fun release() {
-        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 반납할 수 없다" }
-        status = ItemStatus.PENDING
-    }
-
-    // PENDING·PROCESSING → FAILED. 마감(created_at 기준 상한) 초과로 종결한다.
-    // attempt 예산·박동과 무관한 벽시계 판정이라, 아직 집히지 않은 PENDING 도 대상이다(영구 정체 방지).
-    // 이미 터미널인 행에 호출되면 recover 가 잘못된 행을 집은 코드 버그이므로 check(500).
-    fun expire() {
-        check(status == ItemStatus.PENDING || status == ItemStatus.PROCESSING) {
-            "이미 종결된 snapshot(status=$status)은 마감 종결할 수 없다"
-        }
-        status = ItemStatus.FAILED
-    }
-
-    // PROCESSING → READY / INCOMPLETE / FAILED. 백그라운드 파싱이 끝나 추출 결과(snapshot)를 채우며 전이한다.
-    // 전이 가능 상태가 아닌데 호출되면 워커가 잘못된 버전을 집은 코드 버그이므로 check(500).
-    // extractedAt 은 전이 시점의 now() — Wish.delete() 등 도메인이 시간을 만드는 프로젝트 관례를 따른다.
-    //
-    // 결과는 **추출이 무엇을 건졌는지**로만 갈린다 (#944):
-    //   - 세 필드(name·price·imageUrl)를 다 얻음 → READY
-    //   - 일부만 얻음 → INCOMPLETE. 사용자가 나머지를 채워 완성한다. 사진에 가격이 없는 것은 정상 입력이라,
-    //     여기서 실패로 끝내면 "쇼핑몰 화면을 캡처한 것"만 통과하는 계약이 된다.
-    //   - 하나도 못 얻음 → FAILED. 사용자에게 무엇을 채우라 할 근거조차 없다.
-    // 반환값은 확정된 상태다 — 호출부(서비스)가 이 값으로 발행할 이벤트를, 워커가 로그·메트릭을 가른다.
-    fun markExtracted(snapshot: ProductSnapshot): ItemStatus {
-        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
-        apply(
-            name = snapshot.name,
-            price = snapshot.price,
-            imageUrl = snapshot.imageUrl,
-            currency = snapshot.currency,
-        )
-        // 출처(#825 결정 4) — 어느 기계가 뽑았는지를 버전에 박는다. 구버전 extractor 응답(method 없음)은 null(미기록).
-        this.source = ItemSnapshotSource.fromWireMethod(snapshot.extractionMethod)
-        // 건진 값이 없으면 추출시각도 남기지 않는다 — 추출한 값이 없는데 "언제 추출했나"는 의미가 없다.
-        if (hasNoExtractedValue()) {
-            status = ItemStatus.FAILED
-            return status
-        }
-        // 추출 결과와 추출시각을 채운 뒤 불변식을 검사한다 — 각 상태가 보장하는 필드를 한 자리에서 확정하려고
-        // set 을 검사 앞에 둔다.
-        this.extractedAt = LocalDateTime.now()
-        if (!hasAllReadyFields()) {
-            requireIncompleteInvariant()
-            status = ItemStatus.INCOMPLETE
-            return status
-        }
-        requireReadyInvariant()
-        status = ItemStatus.READY
-        return status
-    }
-
-    // PROCESSING → FAILED. 파싱 실패(상품 아님·신뢰 불가·타임아웃)를 동기 400 대신 상태로 남긴다.
-    fun markFailed() {
-        check(status == ItemStatus.PROCESSING) { "PROCESSING 이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
-        status = ItemStatus.FAILED
-    }
-
-    // 파싱이 끝나 추출 결과가 채워진 버전인지. 토너먼트 출전·목록 노출처럼 "완성된 버전만" 요구하는 게이트에서 쓴다.
-    // PROCESSING(파싱 중)·FAILED(실패)는 false — 이름·가격이 비어 출전에 부적합하다.
-    // INCOMPLETE 도 false 다 — 사용자가 나머지를 채우기 전까지는 같은 이유로 부적합하다(#944).
-    fun isReady(): Boolean = status == ItemStatus.READY
-
-    // 파싱은 끝났으나 사용자 입력을 기다리는 버전인지. 클라이언트가 "나머지를 채워 주세요" 화면으로 유도하는 근거다.
-    fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
-
-    // 추출이 실패로 종결된 버전인지. 새로고침의 FAILED 차단(수기 수정 유도) 등 상태 분기에서 쓴다.
-    fun isFailed(): Boolean = status == ItemStatus.FAILED
-
-    // 추출 작업이 아직 끝나지 않은(진행 중) 버전인지 — PENDING(claim 대기)·PROCESSING(파싱 중). 수동 새로고침의 멱등
-    // 가드에서 쓴다: 이미 진행 중이면 새 추출 버전을 만들지 않는다. READY/FAILED 만 새로고침으로 새 버전을 띄운다.
-    fun isInProgress(): Boolean = status == ItemStatus.PENDING || status == ItemStatus.PROCESSING
-
-    // 카드에 보일 값을 가진 버전인지 — READY(완성)와 INCOMPLETE(일부). FAILED·진행 중은 값이 없다.
-    fun hasValue(): Boolean = isReady() || isIncomplete()
-
-    // 아직 사람 손이 필요한 종결 상태인지 — FAILED(값 없음)·INCOMPLETE(일부만). 해소 통지(#1028)가 "멈춰 있던 카드" 를
-    // 가르는 어휘다. 진행 중은 종결이 아니라 여기 들지 않는다.
-    fun isUnresolved(): Boolean = isFailed() || isIncomplete()
-
-    fun isManual(): Boolean = source == ItemSnapshotSource.MANUAL
-
-    // 이 버전이 user 의 맥락에서 만들어졌는지(그 사람이 시켰거나 고쳤는지). 표시값 판정(ItemVersions)의 근거.
-    fun isOwnedBy(user: UUID): Boolean = createdBy == user
-
-    // 누구의 카드에나 보이는 공유 값인지 — 수기가 아닌 READY. 출처 미상(도입 전 행)도 수기라 볼 근거가 없어 공유로
-    // 취급한다. 만든 사람은 보지 않는다 — 추정 백필이 옛 행에도 만든 사람을 채우므로 그것으로 가르면 옛 값이 사라진다.
-    fun isSharedValue(): Boolean = isReady() && !isManual()
-
-    // READY 불변식 — 유저가 가격·이미지·이름을 보고 아이템을 선택하고, 가격 이력은 추출시각(extractedAt)을 축으로
-    // 보여주므로 이 네 필드가 다 있어야 쓸 수 있는 버전이다. READY 를 만드는 두 경로(markReady·manual)가
-    // 값과 extractedAt 을 채운 뒤 이 검증을 거쳐 "READY ⟹ 네 필드 non-null" 을 엔티티가 보장한다(최후의 보루).
-    // 정상 흐름에선 입력 경계(manual 의 *RequiredForReady, 추출 워커의 FAILED 흡수)가 먼저 거른다.
-    // 메시지에 status 를 넣지 않는다 — 이 검사는 status 를 READY 로 바꾸기 전에 호출돼 전이 직전 상태가 찍히면 오해를 부른다.
-    private fun requireReadyInvariant() {
-        require(!name.isNullOrBlank()) { "READY snapshot 은 name 이 있어야 한다" }
-        requireNotNull(price) { "READY snapshot 은 price 가 있어야 한다" }
-        requireNotNull(imageUrl) { "READY snapshot 은 imageUrl 이 있어야 한다" }
-        requireNotNull(extractedAt) { "READY snapshot 은 extractedAt 이 있어야 한다" }
-    }
-
-    // INCOMPLETE 불변식 — 사용자가 나머지를 채워 완성할 수 있는 버전이라, 추출이 최소 하나는 건졌고 그 시각이 남아 있어야
-    // 한다. 하나도 못 건졌으면 FAILED 로 끝냈어야 하는 행이므로 여기 닿으면 markExtracted 의 분기가 깨진 코드 버그다.
-    private fun requireIncompleteInvariant() {
-        require(!hasNoExtractedValue()) { "INCOMPLETE snapshot 은 추출값이 최소 하나 있어야 한다" }
-        requireNotNull(extractedAt) { "INCOMPLETE snapshot 은 extractedAt 이 있어야 한다" }
-    }
-
-    // READY 세 필드를 다 채웠는지 (extractedAt 은 전이가 직접 채우므로 여기서 보지 않는다).
-    private fun hasAllReadyFields(): Boolean {
-        if (name.isNullOrBlank()) return false
-        price ?: return false
-        imageUrl ?: return false
-        return true
-    }
-
-    // 추출값을 하나도 못 얻었는지 — 사용자에게 무엇을 채우라 할 근거조차 없는 상태. currency 는 READY 필수가 아니라
-    // 단독으로는 "건졌다"의 근거가 되지 못하므로 세지 않는다.
-    private fun hasNoExtractedValue(): Boolean {
-        val extracted = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
-        return extracted.isEmpty()
     }
 
     private fun validate(
@@ -268,27 +138,13 @@ class ItemSnapshot(
         const val NAME_MAX_LENGTH = 512
         const val IMAGE_URL_MAX_LENGTH = 2048
         const val CURRENCY_MAX_LENGTH = 8
+        private const val READY_FIELD_COUNT = 3
 
-        // 등록 시작점 — 추출 전 PENDING 버전(작업 큐 적재). URL·이미지 두 경로가 공유한다(이미지 입력도 S3 raw 로 durable
-        // 적재되므로 같은 작업 큐에 태운다). 등록은 이 행을 커밋만 하고 즉시 반환하며, 디스패처가 PENDING 을 집어
-        // markProcessing 으로 claim 한 뒤 워커가 파싱한다. @Async 유실(인스턴스 재시작 등)과 무관하게 DB 의 PENDING 행이
-        // 작업의 진실 원천이라, **마감 안에 슬롯이 나기만 하면** 반드시 claim 돼 실행이 시작된다.
-        // (마감까지 슬롯이 끝내 나지 않으면 실행 0회로 FAILED 종결된다 — expire. 지속 과부하에서 무한 대기하느니
-        //  사용자에게 결론을 주는 쪽을 택한 것이고, 그 빈도는 REASON_DEADLINE 메트릭이 관측한다.)
-        // requestedBy 는 이 파싱을 시킨 사람(#1051) — 등록자 또는 새로고침한 사람. 카드 표시값과 파싱 알림 수신자의 근거.
         fun pending(
             itemId: Long,
             requestedBy: UUID,
-        ): ItemSnapshot = ItemSnapshot(itemId = itemId, status = ItemStatus.PENDING, createdBy = requestedBy)
+        ): ItemSnapshot = ItemSnapshot(itemId = itemId, createdBy = requestedBy)
 
-        // 수기 수정 버전(#825 결정 4) — 사용자가 입력한 값으로 만드는 새 READY 버전. 기존 행을 고치지 않는 이유:
-        // 기계 버전은 불변이어야 이력이 보존되고, 카드·가격 추적이 "마지막 SERVER* READY" 를 믿는 구조에서
-        // 수기값은 출처 MANUAL 의 별도 행이어야 기본 뷰에서 접힌다. 상태 제한이 없다 — 어떤 상태의 버전이든
-        // base 삼아 새 행을 쌓을 뿐, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
-        //
-        // base(현재 활성 버전)의 값 위에 입력을 덮어 병합하며, 병합 결과에 필수 필드가 없으면 쓸 수 없는
-        // 버전이라 계약 예외(400)로 막는다 — 멀쩡한 클라이언트가 빈 항목(FAILED base)에 일부 필드만 보내면
-        // 닿는 경로라 require 가 아니라 커스텀 예외다. 엔티티 불변식(validate)은 생성자가 최후 보루로 다시 본다.
         fun manual(
             base: ItemSnapshot,
             name: String?,
@@ -300,7 +156,6 @@ class ItemSnapshot(
             val mergedName = name ?: base.name
             val mergedPrice = price ?: base.price
             val mergedImage = imageUrl ?: base.imageUrl
-            val mergedCurrency = currency ?: base.currency
             if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
             mergedPrice ?: throw ItemException.priceRequiredForReady()
             mergedImage ?: throw ItemException.imageRequiredForReady()
@@ -309,7 +164,7 @@ class ItemSnapshot(
                 name = mergedName,
                 imageUrl = mergedImage,
                 price = mergedPrice,
-                currency = mergedCurrency,
+                currency = currency ?: base.currency,
                 status = ItemStatus.READY,
                 extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.MANUAL,

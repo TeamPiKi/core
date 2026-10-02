@@ -2,7 +2,6 @@ package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
-import com.depromeet.piki.item.service.AsyncLinkParser
 import com.depromeet.piki.item.service.ItemParsingMetrics
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.domain.ProductLinkException
@@ -25,11 +24,9 @@ import org.springframework.web.client.RestClient
 import java.io.IOException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
-// 원격 추출 응답(계약 3갈래: 2xx / 422+code / 그 외)이 워커의 재시도 판정(category)과 정확히 맞물리게
+// 원격 추출 응답(계약 3갈래: 2xx / 422+code / 그 외)이 확정/일시 실패(category)로 정확히
 // 번역되는지, 그리고 2xx 값이 경계 정규화(fromExtracted — 모든 추출 경로의 단일 진실 원천)를 거치는지 검증한다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpPageFetcher 테스트와 같은 방식).
 class HttpLinkSnapshotExtractorTest {
@@ -206,7 +203,6 @@ class HttpLinkSnapshotExtractorTest {
             }
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
-        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -241,13 +237,11 @@ class HttpLinkSnapshotExtractorTest {
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
         assertEquals(ItemParsingMetrics.REASON_NOT_PRODUCT, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncLinkParser.isRetryable(e), "확정 실패는 워커가 재시도하면 안 된다")
     }
 
     @Test
-    fun `422 확정 실패 code 는 전이 판정은 그대로 둔 채 bucket 별 reason 으로만 갈린다`() {
-        // 원격 code 를 우리 예외로 번역하는 분기 망라(#936). code 마다 다른 건 **reason 뿐**이고, "422 = 확정 실패
-        // (비 RETRYABLE)" 라는 전이 판정은 전부 같다 — 그 두 축이 섞이지 않았음을 한 테스트에서 함께 고정한다.
+    fun `422 확정 실패 code 는 bucket 별 reason 으로 갈린다`() {
+        // 원격 code 를 우리 예외로 번역하는 분기 망라(#936).
         // 카탈로그 bucket 과 이 reason 이 같은지는 ExtractionErrorCatalogTest 가 별도로 대조한다.
         val expected =
             mapOf(
@@ -277,7 +271,6 @@ class HttpLinkSnapshotExtractorTest {
 
             val e = assertFailsWith<BaseException> { extractor.extract(link) }
             assertEquals(reason, ItemParsingMetrics.reasonOf(e), "$code 의 메트릭 reason")
-            assertFalse(AsyncLinkParser.isRetryable(e), "$code 는 422 라 재시도 대상이 아니어야 한다")
         }
     }
 
@@ -296,7 +289,6 @@ class HttpLinkSnapshotExtractorTest {
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
         // 이름을 모르는 실패를 다른 바구니에 섞지 않는다 — 조사 대상(internal_error)으로 센다.
         assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -312,13 +304,12 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
-        assertFalse(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
     fun `422 가 아닌 4xx(404 등)도 일시 실패다 - 422 만 확정, 나머지는 RETRYABLE`() {
         // translate 의 "422 만 확정 실패, 그 외 전부 일시" 의도를 고정한다. 잘못된 base-url 로 인한 404·인증 401 같은
-        // 4xx 도 fail-safe 로 재시도 경로를 타야 한다(recover 상한이 바운드). 5xx 와 같은 패턴.
+        // 4xx 도 fail-safe 로 일시 실패로 분류한다. 5xx 와 같은 패턴.
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link"))
@@ -327,7 +318,6 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -368,14 +358,12 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
     fun `blank name 만 담긴 2xx 도 값이 없는 것으로 본다 - 경계 정규화가 어차피 떨군다`() {
         // currency 도 단독으로는 "건졌다"의 근거가 되지 못한다(READY 필수가 아니다). 이 판정 기준은
-        // 도메인(ItemSnapshot.hasNoExtractedValue)과 같아야 한다 — 어긋나면 경계를 통과한 응답이
-        // 곧바로 FAILED 로 떨어져 재시도 예산만 태운다.
+        // 도메인(ItemSnapshot.extractedFields)과 같아야 한다 — 어긋나면 경계를 통과한 응답이 곧바로 FAILED 로 떨어진다.
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
@@ -391,7 +379,7 @@ class HttpLinkSnapshotExtractorTest {
     }
 
     @Test
-    fun `5xx 는 일시 실패다 - RETRYABLE 로 워커가 PROCESSING 유지 후 재시도`() {
+    fun `5xx 는 일시 실패다 - RETRYABLE 로 분류한다`() {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(withServerError())
@@ -399,7 +387,6 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     @Test
@@ -413,7 +400,6 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.RETRYABLE, e.category)
-        assertTrue(AsyncLinkParser.isRetryable(e))
     }
 
     // 모델 지정(백오피스·DB)이 LINK 축에서 요청 힌트로 실린다. 지정이 없으면 싣지 않아 extractor 기본 모델로

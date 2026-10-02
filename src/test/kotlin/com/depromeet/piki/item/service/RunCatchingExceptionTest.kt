@@ -38,11 +38,7 @@ class RunCatchingExceptionTest {
     fun `파싱 워커는 표준 runCatching 을 쓰지 않는다`() {
         // 위 포획 범위는 워커가 이 함수를 쓸 때만 의미가 있다. 한 곳이라도 표준 runCatching 으로 되돌아가면
         // 그 자리에서만 Error 가 다시 삼켜지는데, 그건 리뷰로만 걸러야 해서 조용히 새기 쉽다 — 기계로 못 박는다.
-        val workers =
-            listOf(
-                "AsyncLinkParser.kt",
-                "AsyncImageParser.kt",
-            ).map { java.io.File("src/main/kotlin/com/depromeet/piki/item/service/$it") }
+        val workers = listOf(java.io.File("src/main/kotlin/com/depromeet/piki/item/service/AsyncItemParser.kt"))
 
         val offenders =
             workers.filter { file ->

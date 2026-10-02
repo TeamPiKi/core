@@ -3,7 +3,7 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubLinkParser
+import com.depromeet.piki.support.StubItemParser
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.junit.jupiter.api.Test
@@ -38,7 +38,7 @@ class WishlistEntryPointIntegrationTest : IntegrationTestSupport() {
     private lateinit var jwtProvider: JwtProvider
 
     @Autowired
-    private lateinit var stubLinkParser: StubLinkParser
+    private lateinit var stubItemParser: StubItemParser
 
     @Test
     fun `공유 시트로 넘어온 담기는 SHARE_SHEET 로 기록된다`() {
@@ -83,11 +83,11 @@ class WishlistEntryPointIntegrationTest : IntegrationTestSupport() {
         entryPoint?.let { request.header(ExternalEntry.HEADER, it) }
 
         // 파싱은 이 테스트의 관심사가 아니고, 켜 두면 워커가 미커밋 item 을 읽어 warn 을 쏟는다.
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         try {
             buildMockMvc().perform(request).andExpect(status().isCreated)
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 

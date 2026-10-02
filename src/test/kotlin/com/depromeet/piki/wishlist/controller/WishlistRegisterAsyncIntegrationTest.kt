@@ -4,15 +4,12 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.AsyncLinkParser
+import com.depromeet.piki.item.service.AsyncItemParser
 import com.depromeet.piki.item.service.ItemParsingScheduler
-import com.depromeet.piki.item.service.ItemParsingService
-import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ProductExtractorException
@@ -21,6 +18,7 @@ import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
+import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
@@ -43,9 +41,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.time.Duration
-import java.time.LocalDateTime
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -157,7 +153,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         // 실패 원장 라인도 latency 를 갖는 계약(#916)을 라인 모양으로 고정한다 — 성공만 latency 를 가지면
         // 타임아웃형(느린) 실패가 로그 기반 소요 통계에서 통째로 사라진다.
         val workerLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val workerLogger = LoggerFactory.getLogger(AsyncLinkParser::class.java) as Logger
+        val workerLogger = LoggerFactory.getLogger(AsyncItemParser::class.java) as Logger
         workerLogger.addAppender(workerLogs)
         try {
             // 파싱 결과 실패는 동기 400 이 아니라 FAILED 상태로 남는다 (등록 응답은 이미 201 로 끝났으므로).
@@ -285,7 +281,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 확정 실패(상품 아님)는 다시 해도 결과가 같아 즉시 FAILED 로 종결한다 (일시 외부 오류는 PROCESSING 유지 — 아래 별도 테스트).
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val itemId = registerImageAndGetItemId(mockMvc, userId)
 
@@ -293,36 +288,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
             assertNull(snapshot.name)
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `이미지 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
-        // URL 경로와 동일 — 일시 외부 오류(원격 추출 서비스 5xx 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고,
-        // 소유권을 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 곧바로 다시 집게 한다.
-        // 이미지 입력은 S3 raw 로 durable 하므로 재실행이 그 key 로 원본을 다시 읽는다(#461).
-        //
-        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
-        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
-        val calls = AtomicInteger(0)
-        stubImageSnapshotExtractor.build = {
-            calls.incrementAndGet()
-            throw ProductExtractorException.transientFailure(RuntimeException("원격 503"))
-        }
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            val itemId = registerImageAndGetItemId(mockMvc, userId)
-            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(20)) { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
-            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
-            }
-            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
         } finally {
             cleanup(userId)
         }
@@ -403,194 +368,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `link 있는 stale PROCESSING 을 recover 가 재실행해 READY 로 되살린다`() {
-        // 디스패처가 집은 직후 워커가 크래시해 **실행 0회**로 PROCESSING 에 갇힌 상황(그래서 attempt 는 0 이다 —
-        // 집기는 예산을 소모하지 않는다). recover 가 되살려 완성시킨다 — execution at-least-once 의 핵심(#461).
-        stubLinkSnapshotExtractor.build = {
-            ProductSnapshot(link = it, name = "되살아난 상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
-        }
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/revive")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
-        val itemId = item.getId()
-        try {
-            // 이 행의 updated_at 만 과거로 밀어 stale 로 만든다. 현실적 threshold(스케줄러의 now-60초)라
-            // 다른 테스트가 막 만든 최근 PROCESSING 은 안 건드리고, 이 행만 대상이 된다(공유 컨텍스트 격리).
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
-
-            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
-
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("되살아난 상품", recovered.name)
-            // 실행은 되살림으로 시작한 이 한 번뿐이다 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았다.
-            assertEquals(1, recovered.attemptCount)
-        } finally {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
-        }
-    }
-
-    @Test
-    fun `재시도 상한에 도달한 stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
-        // 이미 상한(2회)까지 **실행**된 채 stale — 더 되살리지 않고 종결한다 (무한 재큐잉 방지).
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/exhausted")))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
-        val itemId = item.getId()
-        // 종결 구조화 로그(#902)는 알림 룰·대시보드가 소비하는 계약이라 라인 모양까지 여기서 고정한다.
-        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
-        serviceLogger.addAppender(terminalLogs)
-        try {
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET attempt_count = 2, updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
-
-            val exhaustedBefore = parseCount("failed", "retry_exhausted")
-            itemParsingScheduler.recover() // attempt 2 >= 2 → FAILED (재실행 없음, 동기 종결)
-
-            assertEquals(ItemStatus.FAILED, latestSnapshot(itemId)?.status)
-            // 결과 메트릭(#506): recover 가 재시도 상한 소진으로 종결 → result=failed,reason=retry_exhausted +1 (recover 동기라 즉시 단언).
-            assertTrue(parseCount("failed", "retry_exhausted") - exhaustedBefore >= 1.0, "retry_exhausted 메트릭이 증가해야 한다")
-            assertTrue(
-                terminalLogs.list.any {
-                    it.formattedMessage.contains("item.parse.result") &&
-                        it.formattedMessage.contains("result=failed") &&
-                        it.formattedMessage.contains("reason=retry_exhausted") &&
-                        it.formattedMessage.contains("url=shop.example.com/products/exhausted")
-                },
-                "종결 시 item.parse.result 구조화 로그(url 포함)를 남겨야 한다",
-            )
-        } finally {
-            serviceLogger.detachAppender(terminalLogs)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
-        }
-    }
-
-    @Test
-    fun `imageKey 있는 stale PROCESSING 은 recover 가 재실행해 READY 로 되살린다`() {
-        // 이미지 경로도 원본을 S3 raw 로 durable 적재하므로(link 와 대칭), 크래시로 stale 된 PROCESSING 을 recover 가 재실행해
-        // 워커가 그 key 로 원본을 다시 읽어 완성시킨다 — 메모리 ByteArray 시절의 "이미지는 복구 불가" 비대칭이 사라졌다(#461).
-        stubImageSnapshotExtractor.build = {
-            ProductSnapshot(link = null, name = "되살아난 이미지", price = 2_000, currency = "KRW", imageUrl = "https://img.example.com/revive.png")
-        }
-        val item = itemRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
-        val itemId = item.getId()
-        try {
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
-
-            itemParsingScheduler.recover() // 되살림 지목 + 디스패치 (attempt 는 워커가 실행에 진입할 때 소모)
-
-            await().atMost(Duration.ofSeconds(5)).until { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            val recovered = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("되살아난 이미지", recovered.name)
-            // link 경로와 대칭 — 실행 0회로 갇혔던 초회는 예산을 태우지 않았으므로 실행은 한 번뿐이다.
-            assertEquals(1, recovered.attemptCount)
-        } finally {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
-        }
-    }
-
-    @Test
-    fun `link·imageKey 둘 다 없는 orphan stale PROCESSING 은 recover 가 FAILED 로 종결한다`() {
-        // 정상 흐름엔 없는 "입력 없는 행"(영속화 경로가 깨진 신호) — 되살릴 입력이 없으므로 attempt 와 무관하게 종결한다.
-        val item = itemRepository.save(Item(link = null))
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = UUID.randomUUID()).apply { markProcessing() })
-        val itemId = item.getId()
-        // 종결 구조화 로그(#902) — url 없는(입력 부재) 종결도 같은 계약의 라인을 남긴다.
-        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
-        serviceLogger.addAppender(terminalLogs)
-        try {
-            jdbcTemplate.update(
-                "UPDATE item_snapshots SET updated_at = ? WHERE id = ?",
-                LocalDateTime.now().minusSeconds(120),
-                snapshot.getId(),
-            )
-
-            val noSourceBefore = parseCount("failed", "no_source")
-            itemParsingScheduler.recover() // 입력 없음 → FAILED
-
-            assertEquals(ItemStatus.FAILED, latestSnapshot(itemId)?.status)
-            // 결과 메트릭(#506): 되살릴 입력 없음 종결 → result=failed,reason=no_source +1.
-            assertTrue(parseCount("failed", "no_source") - noSourceBefore >= 1.0, "no_source 메트릭이 증가해야 한다")
-            assertTrue(
-                terminalLogs.list.any {
-                    it.formattedMessage.contains("item.parse.result") &&
-                        it.formattedMessage.contains("result=failed") &&
-                        it.formattedMessage.contains("reason=no_source")
-                },
-                "입력 없는 종결도 item.parse.result 구조화 로그를 남겨야 한다",
-            )
-        } finally {
-            serviceLogger.detachAppender(terminalLogs)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
-        }
-    }
-
-    @Test
-    fun `URL 파싱이 일시 외부 오류면 소유권을 반납해 곧바로 재실행되고 예산을 다 쓴 뒤에야 FAILED 가 된다`() {
-        // 일시 외부 오류(원격 추출 서비스 5xx·연결 실패 등)는 확정 실패가 아니므로 워커가 즉시 종결하지 않고, 소유권을
-        // 반납(PROCESSING→PENDING)해 디스패처가 다음 tick(1s)에 다시 집게 한다. 종결 판정은 여전히 서비스 몫이다(#461).
-        //
-        // **재실행이 초 단위로 일어난다는 것 자체가 반납의 증거다** — 반납이 없으면 stale 판정(마지막 박동 + 60s)을
-        // 기다려야 해서 이 대기 안에 2회차가 오지 않는다(#802).
-        val calls = AtomicInteger(0)
-        stubLinkSnapshotExtractor.build = {
-            calls.incrementAndGet()
-            throw ProductExtractorException.transientFailure(RuntimeException("원격 503"))
-        }
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        // 종결 구조화 로그(#902) — release 예산 소진 종결도 같은 계약의 라인을 남긴다 (이 라인은 url 없이 남는 경로).
-        val terminalLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val serviceLogger = LoggerFactory.getLogger(ItemParsingService::class.java) as Logger
-        serviceLogger.addAppender(terminalLogs)
-        try {
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
-            // 반납 → 재집힘이 실제로 돌아 실행 예산(MAX_ATTEMPTS)을 다 쓸 때까지.
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(20)) { calls.get() >= ItemParsingService.MAX_ATTEMPTS }
-            // 예산을 다 쓴 뒤에야 종결된다 — 첫 일시 오류에 FAILED 로 떨어지지 않는다.
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) {
-                latestSnapshot(itemId)?.status == ItemStatus.FAILED
-            }
-            assertEquals(ItemParsingService.MAX_ATTEMPTS, latestSnapshot(itemId)?.attemptCount)
-            assertTrue(
-                terminalLogs.list.any {
-                    it.formattedMessage.contains("item.parse.result") &&
-                        it.formattedMessage.contains("result=failed") &&
-                        it.formattedMessage.contains("reason=retry_exhausted")
-                },
-                "release 예산 소진 종결도 item.parse.result 구조화 로그를 남겨야 한다",
-            )
-        } finally {
-            serviceLogger.detachAppender(terminalLogs)
-            cleanup(userId)
-        }
-    }
-
-    @Test
     fun `URL 파싱이 대상 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 blocked 로 센다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
-            // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다.
             stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedByTarget() }
             val blockedBefore = parseCount("failed", "blocked")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
@@ -792,6 +574,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 별칭(item_links)도 함께 지운다 — 남기면 다음 실행에서 stale 별칭이 삭제된 item 을 가리켜
             // 공유 정체성 매칭(resolveExistingItem)이 null 로 빠지고 재등록 409 계약 검증이 어긋난다.
             jdbcTemplate.update("DELETE FROM item_links WHERE item_id IN (${it.joinToString(",")})")
+            jdbcTemplate.deleteParseOutboxOf(it)
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
             jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
         }

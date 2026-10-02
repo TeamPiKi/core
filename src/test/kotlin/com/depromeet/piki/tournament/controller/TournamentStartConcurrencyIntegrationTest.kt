@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -124,6 +125,7 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
         jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
         jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
         jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
+        jdbcTemplate.deleteParseOutboxOf(listOf(item1.getId(), item2.getId()))
         jdbcTemplate.update("DELETE FROM item_snapshots WHERE id IN (?, ?)", snapshot1.getId(), snapshot2.getId())
         jdbcTemplate.update("DELETE FROM items WHERE id IN (?, ?)", item1.getId(), item2.getId())
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))

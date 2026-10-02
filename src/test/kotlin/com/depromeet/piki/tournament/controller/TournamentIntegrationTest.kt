@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
+import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -12,10 +13,10 @@ import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageParser
+import com.depromeet.piki.support.StubItemParser
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubLinkParser
 import com.depromeet.piki.support.StubRefreshTokenStore
+import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.Tournament
@@ -75,6 +76,8 @@ import kotlin.test.assertTrue
 @RecordApplicationEvents
 @Transactional
 class TournamentIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var entityManager: EntityManager
+
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired private lateinit var objectMapper: ObjectMapper
@@ -105,13 +108,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
+
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
     @Autowired private lateinit var wishRepository: WishRepository
 
-    @Autowired private lateinit var stubLinkParser: StubLinkParser
-
-    @Autowired private lateinit var stubImageParser: StubImageParser
+    @Autowired private lateinit var stubItemParser: StubItemParser
 
     @Autowired private lateinit var stubImageStorage: StubImageStorage
 
@@ -430,7 +432,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createTournament(mockMvc)
         // 위시에는 등록되어 있지만 item 테이블에는 없는 ID — wish 확인 통과 후 item 존재 확인에서 404.
         // itemId 단일 출처는 snapshot 이므로, item 행 없이 itemId=999999 를 가리키는 snapshot 만 시딩해 wish 가 가리키게 한다(FK 없음).
-        val danglingSnapshotId = itemSnapshotJpaRepository.save(ItemSnapshot.pending(999999L, requestedBy = userId).apply { markProcessing() }).getId()
+        val danglingSnapshotId = itemSnapshotJpaRepository.save(ItemSnapshot.pending(999999L, requestedBy = userId)).getId()
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = danglingSnapshotId, itemId = 999999L))
 
         mockMvc
@@ -443,13 +445,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items 에서 아직 파싱 중(PROCESSING)인 아이템이면 409 를 반환한다`() {
+    fun `POST tournaments-id-items 에서 아직 파싱 중(PENDING)인 아이템이면 409 를 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val processingItemId = itemJpaRepository.save(Item()).getId()
-        // 활성 snapshot 이 PROCESSING — 표시값·상태는 snapshot 소관이라 PROCESSING snapshot 을 만들어 wish 가 가리키게 한다.
+        // 활성 snapshot 이 PENDING — 표시값·상태는 snapshot 소관이라 PENDING snapshot 을 만들어 wish 가 가리키게 한다.
         val processingSnapshotId =
-            itemSnapshotJpaRepository.save(ItemSnapshot.pending(processingItemId, requestedBy = userId).apply { markProcessing() }).getId()
+            itemSnapshotJpaRepository.save(ItemSnapshot.pending(processingItemId, requestedBy = userId)).getId()
         // 위시에도 등록 — wish 확인 통과 후 READY 상태 확인에서 409
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = processingSnapshotId, itemId = processingItemId))
 
@@ -2599,7 +2601,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `POST tournaments-id-items-link 는 참여자이면 PENDING 아이템을 생성하고 tournamentItemId 를 반환한다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2627,13 +2629,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
             assertEquals(ItemStatus.PENDING, snapshot?.status)
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
     @Test
     fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2658,7 +2660,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
                 .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -2757,7 +2759,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `링크 아이템 추가 시 TournamentItemAdded 이벤트가 발행된다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2775,13 +2777,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             assertEquals(tournamentId, added.first().tournamentId)
             assertEquals(userId, added.first().actorId)
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
     @Test
     fun `이미지 아이템 추가는 여러 장이어도 TournamentItemAdded 를 한 번만 발행한다`() {
-        stubImageParser.enabled = false
+        stubItemParser.enabled = false
         try {
             val mockMvc = buildMockMvc()
             val tournamentId = createTournament(mockMvc)
@@ -2794,7 +2796,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             assertEquals(tournamentId, added.first().tournamentId)
             assertEquals(userId, added.first().actorId)
         } finally {
-            stubImageParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -3045,18 +3047,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
     // 등록 API 를 타지 않고 행을 직접 심는다 — 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이고,
     // 등록 경로 자체(발급·확정)는 TournamentItemImagePresignedIntegrationTest 가 따로 덮는다.
-    // 적재 후 claim(PROCESSING)→markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
+    // 적재 후 markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
         wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
-        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
-        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
         )
         return item.getId()
     }
@@ -3070,9 +3068,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         price: Int = 89_000,
     ) {
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
-        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             // extractionMethod 를 실어야 source 가 SERVER 로 남는다 - 표시값 파생은 출처가 기계인 READY 만 후보로
             // 보므로, 이걸 빼면 status 만 READY 인 "출처 불명" 버전이 되어 파생에 안 걸린다(실제 추출은 항상 싣는다).
             ProductSnapshot(
@@ -3082,7 +3079,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 imageUrl = "https://img.example.com/b.png",
                 extractionMethod = "STRUCTURED",
             ),
-            expectedAttempt = 0,
         )
     }
 
@@ -3092,11 +3088,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
         wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
         )
         return item.getId()
     }

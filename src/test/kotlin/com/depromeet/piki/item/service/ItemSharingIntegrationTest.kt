@@ -7,8 +7,9 @@ import com.depromeet.piki.item.repository.ItemLinkJpaRepository
 import com.depromeet.piki.item.repository.ItemLinkRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubLinkParser
+import com.depromeet.piki.support.StubItemParser
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -40,9 +41,8 @@ import kotlin.test.assertTrue
 // 돌고 native 문장이 영속성 컨텍스트를 우회하므로, 테스트가 트랜잭션을 공유하면 stale 읽기로 운영과 다른 분기를
 // 탄다(ItemIdentityRecordingIntegrationTest 와 같은 이유). 각 테스트가 자기 행을 finally 에서 명시 정리한다.
 //
-// 각 테스트가 본문에서 stubLinkParser.enabled=false 로 워커를 무력화한다 — 비트랜잭션이라 커밋된 PENDING 을
-// 라이브 디스패처(@Scheduled)가 집어 전이시키면 "진행 중" 전제가 무너져 flake 한다. 상태 시딩(READY)은 도메인 전이
-// 대신 JDBC 로 한다: markProcessing 은 PENDING 전제라 디스패처의 claim 과 경합하면 check 로 깨진다.
+// 각 테스트가 본문에서 stubItemParser.enabled=false 로 워커를 무력화한다 — 비트랜잭션이라 커밋된 PENDING 을
+// 디스패처가 집어 전이시키면 "진행 중" 전제가 무너져 flake 한다. 상태 시딩(READY)도 같은 이유로 도메인 전이 대신 JDBC 로 한다.
 class ItemSharingIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var wishPersistenceService: WishPersistenceService
 
@@ -58,7 +58,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var userJpaRepository: UserJpaRepository
 
-    @Autowired private lateinit var stubLinkParser: StubLinkParser
+    @Autowired private lateinit var stubItemParser: StubItemParser
 
     @Autowired private lateinit var jwtProvider: JwtProvider
 
@@ -68,7 +68,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `같은 링크의 두 번째 등록은 새 item 없이 기존 item 의 진행 중 파싱에 합류한다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100001"
@@ -79,14 +79,14 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             assertEquals(first.item.getId(), second.item.getId())
             assertEquals(first.snapshot.getId(), second.snapshot.getId())
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(first.item.getId()), listOf(userA, userB))
         }
     }
 
     @Test
     fun `기계 READY 가 신선하면 재등록이 파싱 없이 그 버전을 재사용하고 갱신 권고 없이 내려간다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100002"
@@ -103,14 +103,14 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             // 새 PENDING 이 만들어지지 않았다 — 재사용은 파싱 비용 0 이 본질.
             assertNull(itemSnapshotRepository.findLatestInProgressByItemId(first.item.getId()))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(first.item.getId()), listOf(userA, userB))
         }
     }
 
     @Test
     fun `낡은 READY 도 재사용하되 refreshNeeded 로 갱신을 권고한다 - 등록은 자동 재추출을 만들지 않는다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100003"
@@ -127,14 +127,14 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             // 등록이 새 파싱을 만들지 않았다 — 위시 행 수에 비례하는 자동 부하를 만들지 않는 것이 본질.
             assertNull(itemSnapshotRepository.findLatestInProgressByItemId(first.item.getId()))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(first.item.getId()), listOf(userA, userB))
         }
     }
 
     @Test
     fun `캐시 재사용 등록의 HTTP 응답에 reused·refreshNeeded 플래그가 내려간다`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val userA = newMember()
         val userB = newMember()
         val url = "https://www.musinsa.com/products/8100006"
@@ -159,14 +159,14 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.reused").value(true))
                 .andExpect(jsonPath("$.data.refreshNeeded").value(true))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(first.item.getId()), listOf(userA, userB))
         }
     }
 
     @Test
     fun `같은 사용자가 같은 상품을 다시 담으면 409 - 링크 모양이 달라도 정체성 기준`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val user = newMember()
         val first = wishPersistenceService.persist(user, ProductLink.parse("https://www.musinsa.com/products/8100004"))
         try {
@@ -188,14 +188,14 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("WISH-009"))
                 .andExpect(jsonPath("$.detail").value("이미 위시리스트에 등록된 상품이에요."))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(first.item.getId()), listOf(user))
         }
     }
 
     @Test
     fun `귀결점 충돌은 병합된다 - 스냅샷 재부모화 + 별칭 이관 + 임시 item 폐기 + 이후 등록은 승자에 붙음`() {
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val userA = newMember()
         val userB = newMember()
         val userC = newMember()
@@ -229,7 +229,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             val third = wishPersistenceService.persist(userC, ProductLink.parse("https://musinsa.onelink.me/PvkC/share0002"))
             assertEquals(winnerId, third.item.getId())
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
             cleanup(listOf(winnerId, loserId), listOf(userA, userB, userC))
         }
     }
@@ -247,8 +247,6 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         return userId
     }
 
-    // 파싱 완료(기계 READY)를 JDBC 로 시딩한다 — 도메인 전이(markProcessing→markReady)는 라이브 디스패처의
-    // claim 과 경합하면 상태 check 로 깨지므로, 결정론을 위해 행을 직접 원하는 상태로 둔다.
     private fun seedMachineReady(
         snapshotId: Long,
         extractedHoursAgo: Long,
@@ -273,6 +271,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         itemIds.forEach { id ->
             // 리포지토리 @Modifying 대신 JDBC — 비트랜잭션 테스트라 트랜잭션 없는 @Modifying 호출은 실패한다.
             jdbcTemplate.update("DELETE FROM item_links WHERE item_id = ?", id)
+            jdbcTemplate.deleteParseOutboxOf(listOf(id))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", id)
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", id)
         }

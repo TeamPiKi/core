@@ -28,27 +28,28 @@ class Item(
     val link: ProductLink? = null,
     // 이미지 등록 경로의 입력 — S3 에 durable 적재한 raw 이미지 object key. link 와 대칭이라 둘 중 하나만 채워진다.
     // 워커가 이 key 로 S3 에서 원본을 다시 읽어 파싱하므로, 메모리 ByteArray 와 달리 유실돼도 recover 가 재실행할 수 있다.
-    @Column(name = "source_image_key", nullable = true, length = 255, unique = true)
+    @Column(nullable = true, length = 255, unique = true)
     val sourceImageKey: String? = null,
 ) : LongBaseEntity() {
     // 정규화된 귀결점(#825 정체성 키). 파싱 성공 시점에 claimCanonical 로 확정되므로 그 전(PENDING·FAILED)엔 null 이다.
     // 이미지 등록 item(link 없음)과 기존 행(forward-only 소급 제외)도 null 로 남는다.
-    @Column(name = "canonical_url", length = 2048)
+    @Column(length = 2048)
     var canonicalUrl: String? = null
         protected set
 
     // canonical_url 의 SHA-256 hex — unique 인덱스용 고정 길이 대리키 (utf8mb4 인덱스 상한이 2048자 직접 unique 를 막는다).
-    @Column(name = "canonical_hash", length = 64)
+    @Column(length = 64)
     var canonicalHash: String? = null
         protected set
 
-    // 입력은 link XOR sourceImageKey 다 — 둘 다 채워지면 toClaim 이 link 를 우선해 imageKey 가 조용히 무시되는 모호성이 생긴다.
-    // 정상 경로(URL 추출 / 이미지 추출)는 한쪽만 채우므로, 둘 다 들어오면 호출부 버그 → 불변식으로 즉시 깬다(둘 다 비어도 됨: 테스트 픽스처).
+    // 둘 다 채워지면 링크가 우선돼 이미지 키가 조용히 무시됨. 둘 다 비는 것은 테스트 픽스처라 허용
     init {
         require(listOfNotNull(link, sourceImageKey).size <= 1) {
             "Item 은 link 와 sourceImageKey 중 하나만 가질 수 있다"
         }
     }
+
+    fun hasParsingInput(): Boolean = listOfNotNull(link, sourceImageKey).isNotEmpty()
 
     // 파싱이 알아낸 귀결점으로 정체성을 확정한다. 정체성은 불변이 원칙이라 재확정은 코드 버그다(check 500) —
     // 재추출(갱신)은 이미 canonical 이 확정된 item 의 새 버전을 만들 뿐 이 메서드를 다시 타지 않는다.

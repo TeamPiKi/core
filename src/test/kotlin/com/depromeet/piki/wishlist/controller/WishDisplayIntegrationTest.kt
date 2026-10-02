@@ -161,10 +161,7 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
         saveVersion(itemId, "수기 복구값", 70_000, ItemSnapshotSource.MANUAL, by = userA)
         val failed =
             itemSnapshotRepository.save(
-                ItemSnapshot.pending(itemId, requestedBy = userA).apply {
-                    markProcessing()
-                    markFailed()
-                },
+                ItemSnapshot.pending(itemId, requestedBy = userA).apply { markFailed() },
             )
         saveWish(userA, itemId, failed.getId())
 

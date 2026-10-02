@@ -13,9 +13,8 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageParser
+import com.depromeet.piki.support.StubItemParser
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubLinkParser
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -77,10 +76,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     private lateinit var objectMapper: ObjectMapper
 
     @Autowired
-    private lateinit var stubLinkParser: StubLinkParser
-
-    @Autowired
-    private lateinit var stubImageParser: StubImageParser
+    private lateinit var stubItemParser: StubItemParser
 
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
@@ -223,7 +219,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
-        stubImageParser.enabled = false
+        stubItemParser.enabled = false
         // 공유 stub 이라 이 테스트가 쓰는 동작을 명시 세팅한다 — "업로드가 끝났다"(exists=true)가 confirm 의 전제다.
         stubImageStorage.existsBehavior = stubImageStorage.defaultExistsBehavior
 
@@ -254,7 +250,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             // 발급 시점에 이미 깎았으므로 확정은 0 이다. 여기서 또 깎으면 이미지 한 장이 두 번 세어진다.
             assertEquals(2L, currentCount(userId))
         } finally {
-            stubImageParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -296,7 +292,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
         // 파싱 워커가 미커밋 item 을 집어 warn 을 쏟지 않도록 끈다(이 테스트의 관심사는 차감 귀속이다).
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
 
         try {
             val (tournamentId, inviteCode) = createTournament(mockMvc, ownerId)
@@ -314,7 +310,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             assertEquals(1L, currentCount(ownerId))
             assertNull(currentCount(guestId))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -324,7 +320,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
         fillQuota(ownerId, settings.current().userLimit)
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
 
         try {
             val (tournamentId, _) = createTournament(mockMvc, ownerId)
@@ -341,7 +337,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 // 카운터는 하나지만 응답 code 는 경로가 소유한다 — 토너먼트에서 막혔으면 토너먼트 code 다.
                 .andExpect(jsonPath("$.code").value(ItemErrorCode.QUOTA_EXCEEDED.code))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -350,7 +346,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
 
         try {
             val (tournamentId, _) = createTournament(mockMvc, ownerId)
@@ -373,7 +369,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             // 두 경로가 각자 카운터를 가지면 여기서 1 과 1 이 되어 이 단언이 깨진다.
             assertEquals(2L, currentCount(ownerId))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -406,7 +402,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
         // 파싱이 돌면 canonical 확정·병합이 끼어들어 정체성 판정이 흔들린다 — 등록 시점 별칭만으로 판정되게 꺼 둔다.
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val url = "https://www.musinsa.com/products/8100004"
         try {
             val created =
@@ -443,7 +439,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
             // 핵심: 담기지 않은 요청이 몫을 깎으면 사용자는 재시도할수록 한도만 잃는다.
             assertEquals(1L, currentCount(userId))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -452,7 +448,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertUser(userId, IdentityType.MEMBER)
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val url = "https://www.musinsa.com/products/8100006"
         try {
             mockMvc
@@ -476,7 +472,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isConflict)
                 .andExpect(jsonPath("$.code").value(WishErrorCode.ALREADY_EXISTS.code))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -485,7 +481,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
         val url = "https://www.musinsa.com/products/8100005"
         try {
             val (tournamentId, _) = createTournament(mockMvc, ownerId)
@@ -518,7 +514,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
 
             assertEquals(1L, currentCount(ownerId))
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 
@@ -527,7 +523,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        stubLinkParser.enabled = false
+        stubItemParser.enabled = false
 
         try {
             val (tournamentId, inviteCode) = createTournament(mockMvc, ownerId)
@@ -553,7 +549,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
                 assertFalse(message.contains(it), "429 문구가 오너의 사용량을 드러낸다: $message")
             }
         } finally {
-            stubLinkParser.enabled = true
+            stubItemParser.enabled = true
         }
     }
 

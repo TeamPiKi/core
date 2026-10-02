@@ -33,7 +33,7 @@ import java.util.UUID
 // 한 item 에 버전을 직접 쌓아 "갱신·새로고침·수기 수정이 누적된 상태"를 시딩한다.
 //
 // 고정하는 계약: 출처가 남은 READY 버전(서버 추출·수기 모두, 편집자 무관)을 최신순으로, 출처 미상(null)·
-// 미완성(PENDING/PROCESSING/FAILED)·soft-delete 는 제외, 상한 50건. 수기는 editedByMe 로 본인 것인지만 구분하고
+// 미완성(PENDING/FAILED)·soft-delete 는 제외, 상한 50건. 수기는 editedByMe 로 본인 것인지만 구분하고
 // 편집자 식별자는 내리지 않는다. 그리고 **item 과 priceHistory 가 별개의 축**이라는 것 — item 은 맥락 스코프를 거친
 // 표시값이고 이력은 그 필터를 타지 않아, 이력 첫 항목이 표시값과 다를 수 있다.
 @Transactional
@@ -194,7 +194,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `가격 이력에는 READY 버전만 포함되고 PENDING·PROCESSING·FAILED 는 제외된다`() {
+    fun `가격 이력에는 READY 버전만 포함되고 PENDING·FAILED 는 제외된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -202,7 +202,6 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val ready = saveMachineReady(itemId, "완성 버전", 50_000, LocalDateTime.now())
         // 같은 item 에 가격 없는 버전들을 섞어 둔다 — 이력에서 빠져야 한다.
         itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = userId))
-        itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = userId).apply { markProcessing() })
         itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, status = ItemStatus.FAILED))
         val wishId = saveWish(userId, ready)
 

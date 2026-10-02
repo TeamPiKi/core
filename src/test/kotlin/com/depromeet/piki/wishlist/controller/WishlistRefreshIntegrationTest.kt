@@ -1,5 +1,7 @@
 package com.depromeet.piki.wishlist.controller
 
+import org.springframework.transaction.support.TransactionTemplate
+import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -9,7 +11,6 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.item.service.ItemParsingService
-import com.depromeet.piki.item.service.ParsingOwnership
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
@@ -17,6 +18,8 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
+import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
@@ -49,6 +52,10 @@ import kotlin.test.assertNull
 // 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 전이를 기다린다(awaitTicking 이 디스패처 tick 을 직접 돌린다).
 // 자기가 만든 행은 격리 userId 로 정리한다.
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var entityManager: EntityManager
+
+    @Autowired private lateinit var transactionTemplate: TransactionTemplate
+
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
 
@@ -78,9 +85,6 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemParsingScheduler: ItemParsingScheduler
-
-    @Autowired
-    private lateinit var parsingOwnership: ParsingOwnership
 
     @Autowired
     private lateinit var wishPersistenceService: WishPersistenceService
@@ -132,7 +136,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/inprogress")))
-            val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
+            val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
             val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
             val itemId = item.getId()
             val before = countSnapshots(itemId)
@@ -142,7 +146,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                     post("/api/v1/wishlists/${wish.getId()}/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
-                .andExpect(jsonPath("$.data.item.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
 
             assertEquals(before, countSnapshots(itemId))
             assertEquals(snapshot.getId(), wishRepository.findById(wish.getId())?.waitingSnapshotId)
@@ -372,29 +376,27 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `markExtracted 는 claim 한 snapshot 만 전이하고 같은 item 의 다른 진행 중 버전은 건드리지 않는다`() {
         // F2 회귀 — 갱신은 한 item 에 여러 진행 중 snapshot 을 만든다. 전이가 findLatestByItemId(최신)가 아니라
-        // claim 한 snapshotId 를 짚어야, stale·좀비 워커가 다른(새) 버전을 오전이하지 않는다.
+        // claim 한 작업의 snapshotId 를 짚어야 다른(새) 버전을 오전이하지 않는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/two-versions")))
         try {
-            val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
-            val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
+            val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
+            val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
 
             // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
-            // 집기는 attempt 를 안 올리므로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
-            val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
             itemParsingService.markExtracted(
-                v1.getId(),
+                transactionTemplate.execute { entityManager.claimParseOutbox(v1) }!!,
                 ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-                expectedAttempt = attempt,
             )
 
             assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(v1.getId())?.status)
             assertEquals("버전1", itemSnapshotRepository.findById(v1.getId())?.name)
-            // 최신(v2)은 그대로 PROCESSING — claim 한 행만 정확히 전이됐다.
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(v2.getId())?.status)
+            // 최신(v2)은 그대로 PENDING — claim 한 행만 정확히 전이됐다.
+            assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(v2.getId())?.status)
             assertNull(itemSnapshotRepository.findById(v2.getId())?.name)
         } finally {
+            jdbcTemplate.deleteParseOutboxOf(listOf(item.getId()))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
@@ -404,19 +406,16 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `manualEdit 은 위시 활성 버전을 base 로 MANUAL 새 버전을 쌓아 스왑하고 기존 행들은 건드리지 않는다`() {
         // 수기 수정(#825 결정 4) 회귀 — 활성(FAILED) 버전이 최신이 아니어도 base 는 wish 활성 포인터가 결정하고,
-        // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PROCESSING) 행도 그대로 남는다.
+        // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PENDING) 행도 그대로 남는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
         val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/recover-version")))
         try {
             val failed =
                 itemSnapshotRepository.save(
-                    ItemSnapshot.pending(item.getId(), requestedBy = userId).apply {
-                        markProcessing()
-                        markFailed()
-                    },
+                    ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markFailed() },
                 )
-            val newer = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
+            val newer = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
             val wish = wishRepository.save(Wish(userId, failed.getId(), failed.itemId))
 
             val result =
@@ -439,11 +438,12 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals("보정", active.name)
             assertEquals(ItemSnapshotSource.MANUAL, active.source)
             assertEquals(userId, active.createdBy)
-            // 기존 행들은 불변 — FAILED 는 FAILED 로(이력), 최신 PROCESSING 은 파싱 계속.
+            // 기존 행들은 불변 — FAILED 는 FAILED 로(이력), 최신 PENDING 은 파싱 계속.
             assertEquals(ItemStatus.FAILED, itemSnapshotRepository.findById(failed.getId())?.status)
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(newer.getId())?.status)
+            assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(newer.getId())?.status)
         } finally {
             jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
+            jdbcTemplate.deleteParseOutboxOf(listOf(item.getId()))
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
@@ -519,6 +519,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         itemIds.takeIf { it.isNotEmpty() }?.let {
             val ph = it.joinToString(",")
             jdbcTemplate.update("DELETE FROM tournament_items WHERE snapshot_id IN (SELECT id FROM item_snapshots WHERE item_id IN ($ph))")
+            jdbcTemplate.deleteParseOutboxOf(it)
             jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN ($ph)")
             jdbcTemplate.update("DELETE FROM items WHERE id IN ($ph)")
         }
