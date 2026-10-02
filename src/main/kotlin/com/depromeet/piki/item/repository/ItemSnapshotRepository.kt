@@ -5,8 +5,6 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 interface ItemSnapshotRepository {
     fun save(snapshot: ItemSnapshot): ItemSnapshot
 
-    fun saveAll(snapshots: List<ItemSnapshot>): List<ItemSnapshot>
-
     fun findLatestByItemId(itemId: Long): ItemSnapshot?
 
     fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot?

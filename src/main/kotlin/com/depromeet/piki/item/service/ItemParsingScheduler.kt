@@ -24,7 +24,7 @@ class ItemParsingScheduler(
     }
 
     private fun submit(itemParseOutboxId: Long) {
-        runCatching { itemParser.parse(itemParseOutboxId) }.onFailure { e ->
+        runCatchingException { itemParser.parse(itemParseOutboxId) }.onFailure { e ->
             log.warn("item parse outbox {} 파서 제출 거부, 대기로 되돌림: {}", itemParseOutboxId, e.message)
             requeueQuietly(itemParseOutboxId)
         }
@@ -32,7 +32,7 @@ class ItemParsingScheduler(
 
     // 되돌리기가 실패해도 같은 배치의 나머지 제출은 계속한다.
     private fun requeueQuietly(itemParseOutboxId: Long) {
-        runCatching { itemParsingService.requeue(itemParseOutboxId) }
+        runCatchingException { itemParsingService.requeue(itemParseOutboxId) }
             .onFailure { e -> log.error("item parse outbox {} 대기로 되돌리기 실패", itemParseOutboxId, e) }
     }
 

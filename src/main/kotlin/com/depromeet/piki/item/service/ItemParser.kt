@@ -31,13 +31,13 @@ class ItemParser(
     fun parse(itemParseOutboxId: Long) {
         val item = itemParsingService.itemToParse(itemParseOutboxId) ?: return failWithoutSource(itemParseOutboxId)
         item.link?.let { parseLink(item.getId(), itemParseOutboxId, it) }
-        item.sourceImageKey?.let { parseImage(item.getId(), itemParseOutboxId, it) }
+            ?: item.sourceImageKey?.let { parseImage(item.getId(), itemParseOutboxId, it) }
+            ?: failWithoutSource(itemParseOutboxId)
     }
 
     private fun failWithoutSource(itemParseOutboxId: Long) {
         log.error("item parse outbox {} 에 파싱할 입력이 없어 실패로 종결", itemParseOutboxId)
-        runCatchingException { itemParsingService.markFailed(itemParseOutboxId) }
-            .onFailure { e -> log.error("item parse outbox {} FAILED 전이 실패, 회수 대기", itemParseOutboxId, e) }
+        markFailedQuietly(itemParseOutboxId)
     }
 
     private fun parseLink(
@@ -151,14 +151,15 @@ class ItemParser(
         reason: ParseFailureReason,
         started: Long,
     ): ParsingOutcome {
-        val applied =
-            runCatchingException { itemParsingService.markFailed(itemParseOutboxId) }
-                .onFailure { e -> log.error("item {} FAILED 전이 실패, 회수 대기", itemId, e) }
-                .getOrDefault(false)
-        if (!applied) return ParsingOutcome.NotApplied
+        if (!markFailedQuietly(itemParseOutboxId)) return ParsingOutcome.NotApplied
         recordResult(itemId, ItemParsingMetrics.RESULT_FAILED, reason.metricLabel, started, logSubject)
         return ParsingOutcome.Failed
     }
+
+    private fun markFailedQuietly(itemParseOutboxId: Long): Boolean =
+        runCatchingException { itemParsingService.markFailed(itemParseOutboxId) }
+            .onFailure { e -> log.error("item parse outbox {} FAILED 전이 실패, 회수 대기", itemParseOutboxId, e) }
+            .getOrDefault(false)
 
     private fun recordResult(
         itemId: Long,
@@ -197,6 +198,6 @@ class ItemParser(
     }
 
     companion object {
-        const val PARSE_OBSERVATION = "item.parse"
+        private const val PARSE_OBSERVATION = "item.parse"
     }
 }

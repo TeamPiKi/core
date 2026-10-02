@@ -203,7 +203,7 @@ class HttpLinkSnapshotExtractorTest {
             }
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
-        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.reasonOf(e))
+        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.failureReasonOf(e).metricLabel)
     }
 
     @Test
@@ -237,7 +237,7 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
-        assertEquals(ItemParsingMetrics.REASON_NOT_PRODUCT, ItemParsingMetrics.reasonOf(e))
+        assertEquals(ItemParsingMetrics.REASON_NOT_PRODUCT, ItemParsingMetrics.failureReasonOf(e).metricLabel)
     }
 
     @Test
@@ -271,7 +271,7 @@ class HttpLinkSnapshotExtractorTest {
                 }
 
             val e = assertFailsWith<BaseException> { extractor.extract(link) }
-            assertEquals(reason, ItemParsingMetrics.reasonOf(e), "$code 의 메트릭 reason")
+            assertEquals(reason, ItemParsingMetrics.failureReasonOf(e).metricLabel, "$code 의 메트릭 reason")
         }
     }
 
@@ -289,7 +289,7 @@ class HttpLinkSnapshotExtractorTest {
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
         assertEquals(ErrorCategory.SERVER_ERROR, e.category)
         // 이름을 모르는 실패를 다른 바구니에 섞지 않는다 — 조사 대상(internal_error)으로 센다.
-        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
+        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.failureReasonOf(e).metricLabel)
     }
 
     @Test
@@ -304,7 +304,7 @@ class HttpLinkSnapshotExtractorTest {
             }
 
         val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
-        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(e))
+        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.failureReasonOf(e).metricLabel)
     }
 
     @Test

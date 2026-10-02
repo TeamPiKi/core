@@ -9,9 +9,9 @@ import io.micrometer.core.instrument.MeterRegistry
 // 모든 경로가 같은 라벨 키를 쓴다. 키가 어긋나면 Prometheus 가 뒤 시계열을 조용히 버린다(#465).
 // host 는 카디널리티가 무한이라 라벨에 넣지 않고 로그로 본다.
 object ItemParsingMetrics {
-    const val METRIC = "item.parsing"
-    const val TAG_RESULT = "result"
-    const val TAG_REASON = "reason"
+    private const val METRIC = "item.parsing"
+    private const val TAG_RESULT = "result"
+    private const val TAG_REASON = "reason"
 
     const val RESULT_READY = "ready"
     const val RESULT_INCOMPLETE = "incomplete"
@@ -43,8 +43,6 @@ object ItemParsingMetrics {
         extracted.imageUrl ?: missing.add("imageUrl")
         return missing.joinToString("+")
     }
-
-    fun reasonOf(e: Throwable): String = failureReasonOf(e).metricLabel
 
     fun failureReasonOf(e: Throwable): ParseFailureReason {
         val bucket = ((e as? HttpMappable)?.errorCode as? ExtractionFailureCode)?.bucket ?: return ParseFailureReason.INTERNAL_ERROR

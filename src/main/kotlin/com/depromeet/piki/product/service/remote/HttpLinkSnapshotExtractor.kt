@@ -17,12 +17,15 @@ class HttpLinkSnapshotExtractor(
     private val modelSettings: ExtractionModelSettings,
 ) : LinkSnapshotExtractor {
     override fun extract(link: ProductLink): ProductSnapshot {
+        // 등록 경계도 막지만 이미 담긴 아이템의 재파싱·새로고침은 여기가 유일한 출구
         if (accessPolicy.blocked(link)) throw ProductLinkException.unsupportedPlatform()
         val request =
             LinkExtractionRequest
                 .newBuilder()
                 .setUrl(link.value.toString())
+                // 허락 원장은 core DB 에만 있고 extractor·renderer 는 무상태라 요청마다 실음
                 .setAuthorized(accessPolicy.authorizedFor(link))
+        // extractor 박스를 여러 환경이 공유해 저쪽 환경변수로 모델을 잡으면 dev 실험이 prod 를 덮음
         modelSettings.modelOf(ExtractionTarget.LINK)?.let(request::setModel)
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,

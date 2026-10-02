@@ -284,7 +284,9 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
+            }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 

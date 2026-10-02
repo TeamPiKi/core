@@ -64,7 +64,7 @@ class ItemSnapshot(
 
     fun markExtracted(extracted: ProductSnapshot): ItemStatus {
         check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
-        fillValues(extracted.name, extracted.price, extracted.imageUrl, extracted.currency)
+        fillValues(extracted)
         source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod)
         status = extractedStatus()
         if (hasValue()) extractedAt = LocalDateTime.now()
@@ -105,21 +105,12 @@ class ItemSnapshot(
     // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
     private fun extractedFields(): List<Any> = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
 
-    private fun fillValues(
-        name: String?,
-        price: Int?,
-        imageUrl: String?,
-        currency: String?,
-    ) {
-        val newName = name ?: this.name
-        val newPrice = price ?: this.price
-        val newImageUrl = imageUrl ?: this.imageUrl
-        val newCurrency = currency ?: this.currency
-        validate(newName, newPrice, newImageUrl, newCurrency)
-        this.name = newName
-        this.price = newPrice
-        this.imageUrl = newImageUrl
-        this.currency = newCurrency
+    private fun fillValues(extracted: ProductSnapshot) {
+        validate(extracted.name, extracted.price, extracted.imageUrl, extracted.currency)
+        name = extracted.name
+        price = extracted.price
+        imageUrl = extracted.imageUrl
+        currency = extracted.currency
     }
 
     private fun validate(

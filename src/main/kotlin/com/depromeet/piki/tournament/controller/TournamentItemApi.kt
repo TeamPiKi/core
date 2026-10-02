@@ -196,7 +196,7 @@ interface TournamentItemApi {
             PENDING 상태의 토너먼트에 URL 링크를 통해 아이템을 추가한다.
             플레이 링크로 생성된 복제 토너먼트에는 추가 불가. 토너먼트 참여자만 추가할 수 있다.
             아이템이 PENDING 상태로 즉시 생성되어 tournamentItemId 가 반환된다.
-            파싱은 비동기로 진행되며, 디스패처가 PENDING 을 집어 PROCESSING 으로 전이한 뒤 READY 또는 FAILED 상태로 전환된다.
+            파싱은 비동기로 진행되며, PENDING 에서 READY·INCOMPLETE·FAILED 상태로 전환된다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )

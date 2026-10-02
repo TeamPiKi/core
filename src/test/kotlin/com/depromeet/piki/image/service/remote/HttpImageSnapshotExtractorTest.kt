@@ -124,7 +124,7 @@ class HttpImageSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(imageKey) }
         assertEquals(ErrorCategory.INVALID_INPUT, e.category)
-        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.reasonOf(e))
+        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.failureReasonOf(e).metricLabel)
     }
 
     @Test

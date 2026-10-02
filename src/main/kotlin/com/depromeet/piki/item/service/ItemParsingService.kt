@@ -35,7 +35,7 @@ class ItemParsingService(
     fun itemToParse(itemParseOutboxId: Long): Item? {
         val outbox = itemParseOutboxRepository.findById(itemParseOutboxId) ?: return null
         val snapshot = itemSnapshotRepository.findById(outbox.itemSnapshotId) ?: return null
-        return itemRepository.findById(snapshot.itemId)?.takeIf { it.hasParsingInput() }
+        return itemRepository.findById(snapshot.itemId)
     }
 
     // 이미 끝난 행이면 null 을 돌려주고 아무것도 쓰지 않는다.
@@ -52,10 +52,14 @@ class ItemParsingService(
         return status
     }
 
+    // 버전이 없거나 이미 끝났어도 아웃박스는 닫음. 남겨 두면 PROCESSING 으로 영영 멈춤
     @Transactional
     fun markFailed(itemParseOutboxId: Long): Boolean {
         val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
-        failWith(outbox, itemSnapshotRepository.findById(outbox.itemSnapshotId))
+        val snapshot = itemSnapshotRepository.findById(outbox.itemSnapshotId)
+        snapshot?.takeIf { it.isInProgress() }?.markFailed()
+        outbox.fail()
+        snapshot?.let { eventPublisher.publishEvent(ItemParsingFailed(it.itemId, it.getId())) }
         return true
     }
 
@@ -70,16 +74,6 @@ class ItemParsingService(
     private fun snapshotOf(outbox: ItemParseOutbox): ItemSnapshot =
         itemSnapshotRepository.findById(outbox.itemSnapshotId)
             ?: error("item parse outbox ${outbox.getId()} 의 snapshot ${outbox.itemSnapshotId} 이 없다")
-
-    // 버전이 없거나 이미 끝났어도 아웃박스는 닫음. 남겨 두면 PROCESSING 으로 영영 멈춤
-    private fun failWith(
-        outbox: ItemParseOutbox,
-        snapshot: ItemSnapshot?,
-    ) {
-        snapshot?.takeIf { it.isInProgress() }?.markFailed()
-        outbox.fail()
-        snapshot?.let { eventPublisher.publishEvent(ItemParsingFailed(it.itemId, it.getId())) }
-    }
 
     private fun parsingFact(
         status: ItemStatus,

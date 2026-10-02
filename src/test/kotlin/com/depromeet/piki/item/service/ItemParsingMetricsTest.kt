@@ -26,14 +26,14 @@ class ItemParsingMetricsTest {
     fun `확정 실패 예외는 자기 bucket 에 해당하는 reason 으로 집계된다`() {
         classified.forEach { (e, reason) ->
             val code = (e as HttpMappable).errorCode?.code
-            assertEquals(reason, ItemParsingMetrics.reasonOf(e), "$code 의 메트릭 reason")
+            assertEquals(reason, ItemParsingMetrics.failureReasonOf(e).metricLabel, "$code 의 메트릭 reason")
         }
     }
 
     @Test
     fun `bucket 5종이 서로 다른 reason 으로 빠짐없이 나뉜다`() {
         // 두 bucket 이 같은 라벨로 뭉치면 "늘면 무엇을 하는가"가 다시 섞인다(#936 이 permanent_error 에서 겪은 문제).
-        val reasons = classified.map { (e, _) -> ItemParsingMetrics.reasonOf(e) }.toSet()
+        val reasons = classified.map { (e, _) -> ItemParsingMetrics.failureReasonOf(e).metricLabel }.toSet()
 
         assertEquals(ExtractionFailureBucket.entries.size, reasons.size, "bucket 수와 reason 라벨 수가 다르다: $reasons")
     }
@@ -45,14 +45,14 @@ class ItemParsingMetricsTest {
         // 치명적 JVM 오류(Error)는 여기 표본에 없다 — 파서가 잡지 않고 전파하므로 집계 자체에 닿지 않는다(#941).
         val internalError = ItemParsingMetrics.REASON_INTERNAL_ERROR
 
-        assertEquals(internalError, ItemParsingMetrics.reasonOf(IllegalStateException("boom")))
-        assertEquals(internalError, ItemParsingMetrics.reasonOf(NullPointerException()))
+        assertEquals(internalError, ItemParsingMetrics.failureReasonOf(IllegalStateException("boom")).metricLabel)
+        assertEquals(internalError, ItemParsingMetrics.failureReasonOf(NullPointerException()).metricLabel)
     }
 
     @Test
     fun `bucket 없는 일시 실패는 internal_error 로 센다`() {
         val transient = ProductExtractorException.transientFailure(RuntimeException("원격 502"))
 
-        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(transient))
+        assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.failureReasonOf(transient).metricLabel)
     }
 }

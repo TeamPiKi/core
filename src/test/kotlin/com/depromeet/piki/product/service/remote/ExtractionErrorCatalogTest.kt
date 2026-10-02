@@ -115,7 +115,7 @@ class ExtractionErrorCatalogTest {
             catalog.filter { it.isParsingPermanent }.mapNotNull { entry ->
                 val bucket = entry.bucket ?: return@mapNotNull "${entry.code}: 카탈로그에 bucket 이 없다(확정 실패는 bucket 필수)"
                 val translate = RemoteExtractionContract.PERMANENT_TRANSLATIONS[entry.code] ?: return@mapNotNull null
-                val reason = ItemParsingMetrics.reasonOf(translate())
+                val reason = ItemParsingMetrics.failureReasonOf(translate()).metricLabel
                 reason.takeIf { it != bucket }?.let { "${entry.code}: 카탈로그 bucket=$bucket 인데 메트릭 reason=$it 로 집계된다" }
             }
 

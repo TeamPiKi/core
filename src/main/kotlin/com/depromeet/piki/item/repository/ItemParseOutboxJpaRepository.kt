@@ -1,7 +1,6 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import jakarta.persistence.LockModeType
 import jakarta.persistence.QueryHint
 import org.springframework.data.domain.Limit
@@ -17,11 +16,13 @@ private const val SKIP_LOCKED = "-2"
 interface ItemParseOutboxJpaRepository : JpaRepository<ItemParseOutbox, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(QueryHint(name = "jakarta.persistence.lock.timeout", value = SKIP_LOCKED))
-    @Query("select o from ItemParseOutbox o where o.status = :status and o.deletedAt is null order by o.createdAt asc, o.id asc")
-    fun findByStatusForUpdate(
-        @Param("status") status: ItemParseOutboxStatus,
-        limit: Limit,
-    ): List<ItemParseOutbox>
+    @Query(
+        "select o from ItemParseOutbox o where o.status = com.depromeet.piki.item.domain.ItemParseOutboxStatus.PENDING " +
+            "and o.deletedAt is null order by o.createdAt asc, o.id asc",
+    )
+    fun findPendingForUpdate(limit: Limit): List<ItemParseOutbox>
+
+    fun findByIdAndDeletedAtIsNull(id: Long): ItemParseOutbox?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from ItemParseOutbox o where o.id = :id and o.deletedAt is null")

@@ -10,8 +10,6 @@ class ItemSnapshotRepositoryImpl(
 ) : ItemSnapshotRepository {
     override fun save(snapshot: ItemSnapshot): ItemSnapshot = itemSnapshotJpaRepository.save(snapshot)
 
-    override fun saveAll(snapshots: List<ItemSnapshot>): List<ItemSnapshot> =
-        itemSnapshotJpaRepository.saveAll(snapshots)
 
     override fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestInProgressByItemId(itemId)
 
