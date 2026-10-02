@@ -10,13 +10,9 @@ data class RemoteExtractionProperties(
     // 비면 부팅에서 즉시 실패한다(RemoteExtractionHttpClientConfig — env 누락의 침묵 창 차단).
     val baseUrl: String = "",
     val connectTimeoutMs: Int = 2_000,
-    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 한다. heartbeat 도입 후 산 워커는
-    // 박동이 stale 을 막아 주지만, 이 제약은 그와 별개로 **read 가 stale 창을 넘겨 무한정 늘어지지 않는다**는 상한을 준다 —
-    // 넘기면 마감(3분) 예산을 한 번의 read 가 통째로 먹고, 반납(release)으로 다음 실행을 앞당길 기회도 사라진다.
-    // 이미지 경로도 같은 값을 씀. extractor 의 처리 시간 예산은 계약 문서(extractor repo docs/api-contract.md §3)가 정함
-    // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
-    // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
-    // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음).
+    // 회수(#1176 4단계)의 stale 판정보다 작아야 함. 크면 살아 있는 호출의 행을 회수가 다시 집어 중복 발주함
+    // read 마다의 상한이라 조금씩 오는 응답은 넘을 수 있음. extractor 가 무상태라 대가는 LLM 1회
+    // 이미지 경로도 같은 값. extractor 처리 시간 예산은 extractor repo docs/api-contract.md §3
     val readTimeoutMs: Int = 55_000,
 ) {
     init {
@@ -26,16 +22,12 @@ data class RemoteExtractionProperties(
         // 0/음수는 HttpURLConnection 에서 '무한 타임아웃'이라, 상한 검사만 있으면 워커 스레드가 영구 블록될 수 있다.
         require(readTimeoutMs > 0) { "read-timeout($readTimeoutMs ms)은 양수여야 한다 — 0 은 무한 대기다." }
         require(readTimeoutMs < STALE_TIMEOUT_MS) {
-            "read-timeout($readTimeoutMs ms)은 작업 큐 stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
+            "read-timeout($readTimeoutMs ms)은 회수 stale 판정(60s)보다 작아야 한다 — 중복 발주 방지."
         }
     }
 
     companion object {
-        // ItemParsingScheduler.STALE_TIMEOUT_SECONDS(60L, 초) 를 ms 로 옮긴 복제값. 스케줄러 상수를 직접 참조하면
-        // 순환 의존(item→product 가 이미 있는데 product→item 을 더하는 꼴)이라 값을 복제하고 주석으로 결속한다.
-        // 한계: 이 결속은 기계 강제가 아니라 주석이라, 스케줄러 쪽 60L 을 바꾸면 여기 60_000 도 함께 봐야 한다
-        // (한쪽만 바꾸면 유령 중복 방지 불변식이 조용히 깨진다). 두 값을 공용 상수로 올리는 건 item↔product 패키지
-        // 경계를 건드리는 별도 작업이라 복제+주석으로 둔다.
+        // TODO: 4단계 회수 도입 시 그쪽 stale 판정 상수와 묶음
         private const val STALE_TIMEOUT_MS = 60_000
     }
 }

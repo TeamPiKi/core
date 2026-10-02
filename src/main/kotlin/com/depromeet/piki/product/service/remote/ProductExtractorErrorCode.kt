@@ -5,21 +5,9 @@ import com.depromeet.piki.product.service.ExtractionFailureBucket
 import com.depromeet.piki.product.service.ExtractionFailureCode
 
 // ProductExtractorException 의 code 배정표(에픽 #728). 번호는 append-only — 재배치·결번 침범 금지.
-//
-// ⚠️ 이 enum 은 ErrorCodeRegistry.all 에 **의도적으로 등록하지 않는다**(ProductSnapshotErrorCode 와 같은 이유).
-// 생성 경로인 RemoteExtractionContract 의 유일한 소비자가 비동기 파싱 워커라, GlobalExceptionHandler 를 거치지
-// 않고 워커의 재시도 판정(isRetryable)·item FAILED 전이로만 관측된다. 클라 대면 공개 카탈로그 대상이 아니다.
-//
-// 세 사유가 같은 message 를 공유한다 — 원격이 왜 실패했는지는 사용자 관심사가 아니고, 구분은 category·bucket·로그가 진다.
-// 재시도 여부만 갈린다: TRANSIENT_FAILURE 는 RETRYABLE(워커가 소유권을 반납해 다음 tick 이 재실행),
-// 나머지는 비 RETRYABLE(즉시 FAILED).
-//
-// bucket 은 확정 실패를 메트릭에서 무엇으로 셀지의 정본이다(#936). 일시(TRANSIENT_FAILURE)는 종결 집계에
-// 닿지 않으므로 bucket 이 없다(카탈로그의 transient code 와 같은 모양).
-//
-// status 교정: 종전엔 두 팩토리 모두 502 를 직접 들었으나, category 가 status 를 소유하게 되며
-// PERMANENT_FAILURE(SERVER_ERROR)는 500 으로 파생된다(에픽 결정 2 의 OAuthException.misconfigured 502→500 과 동형).
-// 이 예외는 응답으로 나가지 않아 wire 상 변화가 없고, 워커는 category 만 보므로 재시도 판정도 그대로다.
+// 소비처가 파서뿐이라 응답 code 로 나가지 않아 ErrorCodeRegistry 에 등록하지 않음
+// 세 사유가 message 를 공유함. 원격 실패 이유는 사용자 관심사가 아니고 구분은 category·bucket·로그가 맡음
+// 일시 실패(TRANSIENT_FAILURE)는 종결 사유가 아니라 bucket 없음
 enum class ProductExtractorErrorCode(
     override val code: String,
     override val category: ErrorCategory,

@@ -26,8 +26,7 @@ class Item(
     @Convert(converter = ProductLinkConverter::class)
     @Column(name = "source_url", nullable = true, length = 2048)
     val link: ProductLink? = null,
-    // 이미지 등록 경로의 입력 — S3 에 durable 적재한 raw 이미지 object key. link 와 대칭이라 둘 중 하나만 채워진다.
-    // 워커가 이 key 로 S3 에서 원본을 다시 읽어 파싱하므로, 메모리 ByteArray 와 달리 유실돼도 recover 가 재실행할 수 있다.
+    // 바이트 대신 S3 key 를 들어 파싱을 다시 돌려도 원본을 읽을 수 있음
     @Column(nullable = true, length = 255, unique = true)
     val sourceImageKey: String? = null,
 ) : LongBaseEntity() {

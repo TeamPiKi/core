@@ -145,8 +145,7 @@ internal object RemoteExtractionContract {
         target: String,
     ): BaseException {
         if (!e.statusCode.isSameCodeAs(HttpStatus.UNPROCESSABLE_ENTITY)) {
-            // 실제 원격 status(401·404·5xx 등)를 여기서 남긴다 — 예외는 category 만 들고 httpStatus 는 항상 502 라,
-            // 워커의 재시도 warn 로그엔 실제 원격 status 가 드러나지 않는다(그럼 잘못된 base-url 404·인증 401 을 502 로 오인).
+            // 예외는 원격 status 를 싣지 않아 여기서 남기지 않으면 base-url 404·인증 401 이 일시 실패로만 보임
             log.warn("remote extract transient status={} {}", e.statusCode.value(), target)
             return ProductExtractorException.transientFailure(e)
         }

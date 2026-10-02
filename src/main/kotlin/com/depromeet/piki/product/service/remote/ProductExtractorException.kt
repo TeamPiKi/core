@@ -6,12 +6,8 @@ import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
-// 원격 추출기(extractor, 도메인 용어 product 의 ProductExtractor) 호출 실패. 워커(AsyncItemParser)의
-// 재시도 판정이 category 만 보므로, extractor 계약의 3갈래 중 "일시(그 외 전부)"는 RETRYABLE 로, "확정(422)"는 SERVER_ERROR 로 번역한다.
-// (확정 실패라도 "이 링크로는 상품 스냅샷을 만들 수 없다"는 사유 — 상품 아님·못 읽음·값 불신 — 는 이 예외가
-// 아니라 ProductSnapshotException 으로 되돌린다. 어느 code 가 어디로 가는지는 RemoteExtractionContract 참고.)
-// message·category·httpStatus 는 전부 errorCode 하나에서 파생한다(ProductExtractorErrorCode 가 single source).
-// errorCode 는 클래스 모양 통일 목적이며, 비동기 워커 전용이라 공개 카탈로그에 등록하지 않는다.
+// extractor 호출 실패. 일시 실패는 RETRYABLE, 확정 실패(422)는 SERVER_ERROR 로 번역함. code 별 행선지는 RemoteExtractionContract
+// 소비처가 파서뿐이라 응답 code 로 나가지 않아 공개 카탈로그에 등록하지 않음
 class ProductExtractorException private constructor(
     override val errorCode: ErrorCode,
     cause: Throwable? = null,
@@ -21,7 +17,7 @@ class ProductExtractorException private constructor(
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
-        // 원격 호출이 일시적으로 실패(5xx·타임아웃·연결 실패·빈 응답). 워커가 소유권을 반납(PROCESSING→PENDING) → 다음 tick 이 다시 집는다.
+        // 5xx·타임아웃·연결 실패·빈 응답
         fun transientFailure(cause: Throwable?): ProductExtractorException =
             ProductExtractorException(ProductExtractorErrorCode.TRANSIENT_FAILURE, cause)
 

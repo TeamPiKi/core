@@ -2,17 +2,9 @@ package com.depromeet.piki.product.service
 
 import com.depromeet.piki.common.exception.ErrorCategory
 
-// ProductSnapshotException 의 code 배정표(에픽 #728). 번호는 append-only — 재배치·결번 침범 금지.
-//
-// ⚠️ 이 enum 은 ErrorCodeRegistry.all 에 **의도적으로 등록하지 않는다**(AnnouncementImageErrorCode 와 같은 선례).
-// 유일한 생성 경로인 ProductSnapshot.fromExtracted · RemoteExtractionContract.translate 는 비동기 파싱
-// 워커(AsyncItemParser)에서만 호출된다 — 워커가 예외를 잡아 item 을 FAILED 로
-// 전이시키고 메트릭 reason(아래 bucket 에서 파생)으로 집계할 뿐, GlobalExceptionHandler 를 거치지 않아 응답 code 로 나가지 않는다.
-// 클라가 절대 받을 수 없는 code 를 공개 카탈로그에 넣으면 code→문구 매핑에 노이즈만 된다.
-// 여기서 code 를 부여하는 목적은 오직 예외 클래스 모양을 다른 도메인 예외와 통일(errorCode 참조)하는 것뿐이다.
-//
-// bucket 은 그 실패를 메트릭에서 무엇으로 셀지의 정본이다(#936) — 파싱 메트릭 reason 이 여기서 파생하므로,
-// code 를 더할 때 bucket 도 함께 정한다. 원격 code → 여기의 어느 엔트리인지는 RemoteExtractionContract 가 정한다.
+// ProductSnapshotException 의 code 배정표(#728). 번호는 append-only
+// 소비처가 파서뿐이라 응답 code 로 나가지 않아 ErrorCodeRegistry 에 등록하지 않음
+// bucket 이 파싱 메트릭 reason 의 정본(#936). code 를 더하면 bucket 도 함께 정함
 enum class ProductSnapshotErrorCode(
     override val code: String,
     override val category: ErrorCategory,
