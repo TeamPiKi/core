@@ -37,7 +37,9 @@ class ItemParser(
 
     private fun failWithoutSource(itemParseOutboxId: Long) {
         log.error("item parse outbox {} 에 파싱할 입력이 없어 실패로 종결", itemParseOutboxId)
-        markFailedQuietly(itemParseOutboxId)
+        if (markFailedQuietly(itemParseOutboxId)) {
+            ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ParseFailureReason.INTERNAL_ERROR.metricLabel)
+        }
     }
 
     private fun parseLink(

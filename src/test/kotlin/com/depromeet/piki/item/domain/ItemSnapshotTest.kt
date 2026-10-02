@@ -303,4 +303,20 @@ class ItemSnapshotTest {
         )
         assertFalse(ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }.isInProgress())
     }
+
+    @Test
+    fun `예전 큐가 남긴 PROCESSING 버전도 실패로 닫을 수 있다`() {
+        val snapshot = ItemSnapshot(itemId = 1L, status = ItemStatus.PROCESSING)
+
+        snapshot.markFailed()
+
+        assertEquals(ItemStatus.FAILED, snapshot.status)
+    }
+
+    @Test
+    fun `끝난 버전은 다시 실패로 닫을 수 없다`() {
+        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }
+
+        assertFailsWith<IllegalStateException> { snapshot.markFailed() }
+    }
 }

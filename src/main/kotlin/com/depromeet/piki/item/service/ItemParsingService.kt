@@ -56,10 +56,9 @@ class ItemParsingService(
     @Transactional
     fun markFailed(itemParseOutboxId: Long): Boolean {
         val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
-        val snapshot = itemSnapshotRepository.findById(outbox.itemSnapshotId)
-        snapshot?.takeIf { it.isInProgress() }?.markFailed()
+        val failed = itemSnapshotRepository.findById(outbox.itemSnapshotId)?.takeIf { it.isInProgress() }?.apply { markFailed() }
         outbox.fail()
-        snapshot?.let { eventPublisher.publishEvent(ItemParsingFailed(it.itemId, it.getId())) }
+        failed?.let { eventPublisher.publishEvent(ItemParsingFailed(it.itemId, it.getId())) }
         return true
     }
 

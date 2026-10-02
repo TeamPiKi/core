@@ -63,7 +63,7 @@ class ItemSnapshot(
     }
 
     fun markExtracted(extracted: ProductSnapshot): ItemStatus {
-        check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
+        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
         fillValues(extracted)
         source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod)
         status = extractedStatus()
@@ -72,7 +72,7 @@ class ItemSnapshot(
     }
 
     fun markFailed() {
-        check(status == ItemStatus.PENDING) { "PENDING 이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
+        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
         status = ItemStatus.FAILED
     }
 
