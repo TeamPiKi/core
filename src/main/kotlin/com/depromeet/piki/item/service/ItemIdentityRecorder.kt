@@ -41,7 +41,7 @@ class ItemIdentityRecorder(
         record(canonical, item.getId())
     }
 
-    // 파싱 완료 후 귀결점(finalUrl)으로 canonical 을 확정하고 귀결점 별칭을 남긴다(워커가 READY 전이 커밋 후 호출).
+    // 파싱 완료 후 귀결점(finalUrl)으로 canonical 을 확정하고 귀결점 별칭을 남긴다(링크 파서가 결과 반영 커밋 후 호출).
     //
     // claim 블록만 TransactionTemplate 로 격리한다. 이유: canonical unique 충돌(병합 후보)은 SQL 오류라
     // 그 트랜잭션 세션을 rollback-only 로 오염시킨다 — 메서드 전체가 한 트랜잭션이면 예외를 잡아도 커밋에서

@@ -114,7 +114,7 @@ internal object RemoteExtractionContract {
         return response.toProductSnapshot(link)
     }
 
-    // 이 응답이 2xx 로 온 것 자체가 계약 위반이다. 판정 기준의 정본은 ItemSnapshot.hasNoExtractedValue 다.
+    // 이 응답이 2xx 로 온 것 자체가 계약 위반이다. 판정 기준의 정본은 ItemSnapshot.extractedFields 다.
     private fun ExtractionResult.hasNoExtractedValue(): Boolean =
         !(hasName() && name.isNotBlank()) && !hasImageUrl() && !hasCurrentPrice()
 
