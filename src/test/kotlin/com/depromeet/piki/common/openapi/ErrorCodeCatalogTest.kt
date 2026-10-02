@@ -114,11 +114,7 @@ class ErrorCodeCatalogTest {
     }
 
     @Test
-    fun `Snapshot·Extractor code 는 공개 카탈로그에 등록되지 않는다 (비동기 파싱 워커 전용)`() {
-        // ProductSnapshotException·ProductExtractorException 의 유일한 소비자는 비동기 파싱 워커
-        // (AsyncItemParser)다. 워커가 잡아 item 을 FAILED 로 전이시키고 메트릭으로
-        // 집계할 뿐 GlobalExceptionHandler 를 거치지 않아 wire code 로 나가지 않는다 — 클라가 절대 못 받는 code 를
-        // 공개 카탈로그에 넣으면 code→문구 매핑에 노이즈만 된다. 실수로 registry 에 등록되는 회귀를 막는 가드.
+    fun `Snapshot·Extractor code 는 공개 카탈로그에 등록되지 않는다 (파서 전용)`() {
         val md = errorCodeCatalogMarkdown(ErrorCodeRegistry.all)
 
         assertTrue(ErrorCodeRegistry.all.none { it.code.startsWith("SNAPSHOT-") }, "ProductSnapshot code 가 registry 에 새어들어옴")

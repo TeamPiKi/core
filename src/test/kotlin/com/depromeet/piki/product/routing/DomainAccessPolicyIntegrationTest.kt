@@ -3,7 +3,7 @@ package com.depromeet.piki.product.routing
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
-import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
@@ -208,11 +208,7 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        itemIds.takeIf { it.isNotEmpty() }?.let {
-            jdbcTemplate.deleteParseOutboxOf(it)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
-        }
+        jdbcTemplate.deleteItems(itemIds.filterNotNull())
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

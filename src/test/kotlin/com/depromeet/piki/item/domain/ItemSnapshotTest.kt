@@ -1,7 +1,6 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.product.service.ProductSnapshot
-import org.springframework.http.HttpStatus
 import java.time.LocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,8 +80,6 @@ class ItemSnapshotTest {
         assertEquals(8, snapshot.currency?.length)
         assertEquals(0, snapshot.price)
     }
-
-    // --- 전이 (2단계: item 평행 추적) ---
 
     @Test
     fun `PENDING 스냅샷을 markExtracted 하면 추출 결과로 채워지고 READY 와 extractedAt 이 설정된다`() {
@@ -190,8 +187,6 @@ class ItemSnapshotTest {
         }
     }
 
-    // --- 수기 수정(manual) 계약 검증(#825 결정 4) — 새 MANUAL 버전 생성, 기존 행 불변, 병합 400 은 도메인이 직접 던진다 ---
-
     @Test
     fun `manual 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
         val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
@@ -247,11 +242,10 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `manual 은 상태 제한이 없다 - PENDING·PROCESSING·FAILED base 로도 새 버전을 만든다`() {
+    fun `manual 은 상태 제한이 없다 - PENDING·FAILED base 로도 새 버전을 만든다`() {
         val editor = java.util.UUID.randomUUID()
         listOf(
             ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()),
-            ItemSnapshot(itemId = 1L),
             ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() },
         ).forEach { base ->
             val manual = ItemSnapshot.manual(

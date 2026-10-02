@@ -42,7 +42,7 @@ class ItemParsingMetricsTest {
     fun `분류 밖 예외는 internal_error 로 집계된다`() {
         // 코드 버그성 예외(HttpMappable 아님)가 확정 실패 경로로 들어올 수 있다. 이름 없는 실패를 다른 바구니에
         // 섞지 않고 "조사 대상"으로 몰아, 다른 reason 의 추세를 오염시키지 않는다.
-        // 치명적 JVM 오류(Error)는 여기 표본에 없다 — 워커가 잡지 않고 전파하므로 집계 자체에 닿지 않는다(#941).
+        // 치명적 JVM 오류(Error)는 여기 표본에 없다 — 파서가 잡지 않고 전파하므로 집계 자체에 닿지 않는다(#941).
         val internalError = ItemParsingMetrics.REASON_INTERNAL_ERROR
 
         assertEquals(internalError, ItemParsingMetrics.reasonOf(IllegalStateException("boom")))
@@ -50,9 +50,7 @@ class ItemParsingMetricsTest {
     }
 
     @Test
-    fun `bucket 이 없는 일시 실패 예외가 섞여 들어와도 internal_error 로 둔다`() {
-        // 일시 실패는 소유권 반납으로 되살아나 종결 집계에 닿지 않는다 — 여기 닿았다면 재시도 판정이 어긋난 것이라
-        // 정상 분류가 아니라 조사 대상이다.
+    fun `bucket 없는 일시 실패는 internal_error 로 센다`() {
         val transient = ProductExtractorException.transientFailure(RuntimeException("원격 502"))
 
         assertEquals(ItemParsingMetrics.REASON_INTERNAL_ERROR, ItemParsingMetrics.reasonOf(transient))

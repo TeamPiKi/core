@@ -203,6 +203,7 @@ class HttpLinkSnapshotExtractorTest {
             }
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
+        assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.reasonOf(e))
     }
 
     @Test
@@ -224,7 +225,7 @@ class HttpLinkSnapshotExtractorTest {
     }
 
     @Test
-    fun `422 NOT_PRODUCT_PAGE 는 기존 ProductSnapshotException 으로 되돌려 워커 의미(not_product)를 보존한다`() {
+    fun `422 NOT_PRODUCT_PAGE 는 기존 ProductSnapshotException 으로 되돌려 메트릭 reason(not_product)을 보존한다`() {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
@@ -323,7 +324,7 @@ class HttpLinkSnapshotExtractorTest {
     @Test
     fun `2xx 부분값은 막지 않고 통과시킨다 - 채운 값을 보존해 도메인이 INCOMPLETE 로 판정하게 둔다`() {
         // extractor 는 값이 하나라도 있으면 200 으로 내려보낸다(extractor#37). 경계가 세 필드를 다 요구하면
-        // 그 200 이 계약 위반으로 튕겨 재시도 후 FAILED 가 되고, INCOMPLETE 로 가는 길이 닫힌다(#950 의 prod 사고).
+        // 그 200 이 계약 위반으로 튕겨 곧바로 FAILED 가 되고, INCOMPLETE 로 가는 길이 닫힌다(#950 의 prod 사고).
         // 여기서 통과시켜야 markExtracted 가 "일부만 얻음 → INCOMPLETE" 를 판정할 수 있다.
         val extractor =
             extractorWith { server ->
@@ -345,7 +346,7 @@ class HttpLinkSnapshotExtractorTest {
     @Test
     fun `2xx 인데 값이 하나도 없으면 계약 위반이라 일시 실패로 걸러진다`() {
         // 하나도 못 건진 경우는 extractor 가 422(UNTRUSTWORTHY_VALUE)로 닫는 계약이라, 그게 200 으로 오면
-        // 저쪽 버그다 — 빈 스냅샷이 조용히 흘러 들어가지 않게 경계에서 일시 실패로 걸러 재시도한다.
+        // 저쪽 버그다 — 빈 스냅샷이 조용히 흘러 들어가지 않게 경계에서 RETRYABLE 로 번역한다.
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(

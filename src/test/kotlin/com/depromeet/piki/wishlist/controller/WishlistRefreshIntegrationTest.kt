@@ -18,7 +18,7 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
-import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -47,10 +47,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
-// 위시 새로고침(#358)은 등록과 같은 비동기 작업 큐 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
-// 디스패처가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
-// 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 전이를 기다린다(awaitTicking 이 디스패처 tick 을 직접 돌린다).
-// 자기가 만든 행은 격리 userId 로 정리한다.
+// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var entityManager: EntityManager
 
@@ -237,8 +234,8 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `추출 실패(FAILED) 위시를 새로고침하면 409 로 거부된다`() {
-        // 표시값까지 FAILED(같은 item 에 기계 READY 부재)면 재추출도 결정론적으로 재실패한다 — 보정(recover,
-        // 수기 수정)으로 유도한다. 아래 "남이 채운 READY" 테스트의 대조군: 이게 없으면 판정을 통째로 지워도 초록불이다.
+        // 표시값까지 FAILED(같은 item 에 기계 READY 부재)면 재추출도 결정론적으로 재실패한다 — 보정(수기
+        // 수정)으로 유도한다. 아래 "남이 채운 READY" 테스트의 대조군: 이게 없으면 판정을 통째로 지워도 초록불이다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -338,7 +335,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `위시를 새로고침해 파싱이 완료되면 본인에게 새로고침 완료 알림이 발행된다`() {
-        // refresh 도 등록과 동일한 markReady→ItemParsingCompleted 경로를 타지만, 위시가 새 버전보다 먼저 있었다는
+        // refresh 도 등록과 동일한 markExtracted→ItemParsingCompleted 경로를 타지만, 위시가 새 버전보다 먼저 있었다는
         // 사실로 등록과 갈려(#1036) 위시 주인(본인)에게 ITEM_REFRESH_COMPLETED 가 발행되고 등록 완료 알림은 오지 않는다.
         // 그 갈림을 실제 HTTP→디스패처→리스너 경로로 end-to-end 고정한다(수신자 해석 단위는 NotificationRecipientResolutionIntegrationTest).
         val mockMvc = buildMockMvc()
@@ -357,7 +354,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
 
             itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            // 새로고침 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
+            // 새로고침 완료 알림이 본인에게 저장됐다 (markExtracted 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
             await().atMost(Duration.ofSeconds(5)).until {
                 notificationRepository
                     .findPage(userId, cursor = null, limit = 10)
@@ -375,7 +372,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `markExtracted 는 claim 한 snapshot 만 전이하고 같은 item 의 다른 진행 중 버전은 건드리지 않는다`() {
-        // F2 회귀 — 갱신은 한 item 에 여러 진행 중 snapshot 을 만든다. 전이가 findLatestByItemId(최신)가 아니라
+        // 갱신은 한 item 에 여러 진행 중 snapshot 을 만든다. 전이가 findLatestByItemId(최신)가 아니라
         // claim 한 작업의 snapshotId 를 짚어야 다른(새) 버전을 오전이하지 않는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -396,9 +393,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(v2.getId())?.status)
             assertNull(itemSnapshotRepository.findById(v2.getId())?.name)
         } finally {
-            jdbcTemplate.deleteParseOutboxOf(listOf(item.getId()))
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
+            jdbcTemplate.deleteItems(listOf(item.getId()))
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
         }
     }
@@ -409,7 +404,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PENDING) 행도 그대로 남는다.
         val userId = UUID.randomUUID()
         insertMember(userId)
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/recover-version")))
+        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/manual-version")))
         try {
             val failed =
                 itemSnapshotRepository.save(
@@ -443,9 +438,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(newer.getId())?.status)
         } finally {
             jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-            jdbcTemplate.deleteParseOutboxOf(listOf(item.getId()))
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
+            jdbcTemplate.deleteItems(listOf(item.getId()))
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
         }
     }
@@ -506,7 +499,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private fun countSnapshots(itemId: Long): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?", Int::class.java, itemId) ?: 0
 
-    // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 행을 직접 정리한다. wishes 는 snapshot_id 만 들어(4b)
+    // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 행을 직접 정리한다. wishes 는 snapshot_id 만 들어
     // item_snapshots 를 조인해 itemId 에 도달하고, tournament_item 은 snapshot_id 로 그 itemId 의 버전들을 가리킨다.
     private fun cleanup(userId: UUID) {
         val itemIds =
@@ -519,9 +512,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         itemIds.takeIf { it.isNotEmpty() }?.let {
             val ph = it.joinToString(",")
             jdbcTemplate.update("DELETE FROM tournament_items WHERE snapshot_id IN (SELECT id FROM item_snapshots WHERE item_id IN ($ph))")
-            jdbcTemplate.deleteParseOutboxOf(it)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN ($ph)")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN ($ph)")
+            jdbcTemplate.deleteItems(it.filterNotNull())
         }
         jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))

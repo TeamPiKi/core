@@ -3,7 +3,7 @@ package com.depromeet.piki.item.service
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.deleteItems
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.springframework.beans.factory.annotation.Autowired
@@ -45,16 +45,14 @@ class ItemParsingClaimConcurrencyIntegrationTest : IntegrationTestSupport() {
         }
 
         try {
-            assertTrue(inserted.await(5, TimeUnit.SECONDS), "미커밋 PENDING insert 가 준비되어야 한다")
+            assertTrue(inserted.await(5, TimeUnit.SECONDS), "미커밋 적재가 준비되어야 한다")
 
             val claim = CompletableFuture.supplyAsync { itemParsingService.claim(100) }
             claim.get(2, TimeUnit.SECONDS)
         } finally {
             release.countDown()
             holder.join(10_000)
-            jdbcTemplate.deleteParseOutboxOf(listOf(insertedItemId.get()))
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", insertedItemId.get())
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", insertedItemId.get())
+            jdbcTemplate.deleteItems(listOf(insertedItemId.get()))
         }
     }
 }

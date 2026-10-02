@@ -4,11 +4,12 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.AsyncItemParser
+import com.depromeet.piki.item.service.ItemParser
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
@@ -18,7 +19,8 @@ import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
-import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
@@ -47,9 +49,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// 등록은 비동기(@Async)다. @Transactional 자동 롤백 패턴으로는 워커(별도 스레드·새 트랜잭션)가
-// 미커밋 데이터를 못 보므로, 여기서는 @Transactional 없이 실제 커밋하고 상태 전이를 기다린다(awaitTicking 이 디스패처 tick 을 돌린다).
-// (CLAUDE.md '동시성·시간 의존 통합 테스트' 별도 분류.) 자기가 만든 행은 격리 userId 로 구분해 메서드 끝에서 정리한다.
+// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -132,14 +132,15 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/42")
 
             itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            // 결과 메트릭(#506): 성공은 result=ready,reason=none 으로 +1 (워커 비동기라 메트릭 증가도 await).
+            // 결과 메트릭(#506): 성공은 result=ready,reason=none 으로 +1 (파서 비동기라 메트릭 증가도 await).
             await().atMost(Duration.ofSeconds(2)).until { parseCount("ready", "none") - readyBefore >= 1.0 }
 
-            // 표시값·상태는 활성 snapshot 이 보유한다(4a) — item 은 정체성(link)만 든다.
+            // 표시값·상태는 활성 snapshot 이 보유한다. item 은 정체성(link)만 든다.
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals("나이키 에어포스", snapshot.name)
             assertEquals(99_000, snapshot.price)
             assertEquals("KRW", snapshot.currency)
+            assertEquals(ItemParseOutboxStatus.SUCCEEDED, jdbcTemplate.parseOutboxStatusOf(itemId))
         } finally {
             cleanup(userId)
         }
@@ -152,9 +153,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         // 실패 원장 라인도 latency 를 갖는 계약(#916)을 라인 모양으로 고정한다 — 성공만 latency 를 가지면
         // 타임아웃형(느린) 실패가 로그 기반 소요 통계에서 통째로 사라진다.
-        val workerLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val workerLogger = LoggerFactory.getLogger(AsyncItemParser::class.java) as Logger
-        workerLogger.addAppender(workerLogs)
+        val parserLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val parserLogger = LoggerFactory.getLogger(ItemParser::class.java) as Logger
+        parserLogger.addAppender(parserLogs)
         try {
             // 파싱 결과 실패는 동기 400 이 아니라 FAILED 상태로 남는다 (등록 응답은 이미 201 로 끝났으므로).
             stubLinkSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
@@ -167,17 +168,17 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
-            // 실패 항목은 추출 결과가 비어 있다.
             assertNull(snapshot.name)
+            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(itemId))
             // item 을 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 하고, latency 는 값 형식(\d+ms)까지 조인다.
             val expectedResultLog =
                 Regex("""item\.parse\.result item=$itemId result=failed reason=not_product latency=\d+ms""")
             assertTrue(
-                workerLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
+                parserLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
                 "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
             )
         } finally {
-            workerLogger.detachAppender(workerLogs)
+            parserLogger.detachAppender(parserLogs)
             cleanup(userId)
         }
     }
@@ -324,7 +325,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                             .content(objectMapper.writeValueAsString(mapOf("imageKeys" to imageKeys))),
                     ).andExpect(status().isCreated)
                     .andExpect(jsonPath("$.data.length()").value(5))
-                    // 등록 직후 응답은 모두 PENDING 이어야 한다 — 이미지도 link 처럼 작업 큐에 적재되고, 서버가 즉시 READY/PROCESSING 을 내리는 회귀를 잡는다.
+                    // 이미지도 link 처럼 등록 직후 READY 를 내리는 회귀를 잡음
                     .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
                     .andExpect(jsonPath("$.data[4].item.status").value("PENDING"))
                     .andReturn()
@@ -379,12 +380,31 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
             itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
             // 결과 메트릭(#506·#936): 대상이 막아 확정 실패한 건은 result=failed,reason=blocked 로 +1.
-            // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 워커→메트릭 배선까지 함께 고정한다.
+            // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 파서에서 메트릭까지 배선을 함께 고정한다.
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
             assertNull(snapshot.name)
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `URL 파싱이 일시 외부 오류면 재시도 없이 FAILED 로 종결하고 internal_error 로 센다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.transientFailure(null) }
+            val internalErrorBefore = parseCount("failed", "internal_error")
+            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
+
+            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
+
+            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(itemId))
         } finally {
             cleanup(userId)
         }
@@ -551,7 +571,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
-    // 표시값·상태는 item 의 활성(최신) snapshot 이 보유한다(4a). 폴링·단언이 이 snapshot 을 읽는다.
+    // 표시값·상태는 item 의 활성(최신) snapshot 이 보유한다. 폴링·단언이 이 snapshot 을 읽는다.
     private fun latestSnapshot(itemId: Long): ItemSnapshot? = itemSnapshotRepository.findLatestByItemId(itemId)
 
     // item.parsing 카운터의 현재 값. 공유 컨텍스트라 누적되므로 호출 전후 증가분(delta)으로 단언한다(#468 패턴).
@@ -562,7 +582,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 user·wish·item·snapshot 을 직접 정리한다.
     private fun cleanup(userId: UUID) {
-        // wishes 는 item_id 를 더 들지 않는다(4b 정규화) — snapshot_id 로 item_snapshots 를 조인해 itemId 에 도달한다.
+        // wishes 는 item_id 를 더 들지 않아 snapshot_id 로 item_snapshots 를 조인해 itemId 에 도달한다.
         val itemIds =
             jdbcTemplate.queryForList(
                 "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.user_id = ?",
@@ -570,14 +590,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        itemIds.takeIf { it.isNotEmpty() }?.let {
-            // 별칭(item_links)도 함께 지운다 — 남기면 다음 실행에서 stale 별칭이 삭제된 item 을 가리켜
-            // 공유 정체성 매칭(resolveExistingItem)이 null 로 빠지고 재등록 409 계약 검증이 어긋난다.
-            jdbcTemplate.update("DELETE FROM item_links WHERE item_id IN (${it.joinToString(",")})")
-            jdbcTemplate.deleteParseOutboxOf(it)
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
-        }
+        jdbcTemplate.deleteItems(itemIds.filterNotNull())
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

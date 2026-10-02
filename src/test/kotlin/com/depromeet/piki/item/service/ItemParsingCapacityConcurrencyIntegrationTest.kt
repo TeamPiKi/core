@@ -2,11 +2,14 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubItemParser
-import com.depromeet.piki.support.deleteParseOutboxOf
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
+import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.parseOutboxStatusOf
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -30,7 +33,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemRepository: ItemRepository
 
-    @Autowired private lateinit var stubItemParser: StubItemParser
+    @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -43,7 +46,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Test
     @Timeout(90)
     fun `풀이 가득 차면 집지 않고 슬롯이 나면 그때 집는다`() {
-        stubItemParser.enabled = false
+        stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "상품", price = 1_000) }
         val release = CountDownLatch(1)
         val slots = itemParsingExecutor.maxPoolSize
         var itemId = 0L
@@ -56,27 +59,15 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             TransactionTemplate(transactionManager).executeWithoutResult { parsingEnqueuer.enqueue(itemId, requestedBy = UUID.randomUUID()) }
 
             itemParsingScheduler.dispatch()
-            assertEquals("PENDING", statusOf(itemId), "가용 슬롯이 없으면 대기해야 한다")
+            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(itemId), "가용 슬롯이 없으면 대기해야 한다")
 
             release.countDown()
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             itemParsingScheduler.dispatch()
-            await().atMost(Duration.ofSeconds(10)).until { statusOf(itemId) == "PROCESSING" }
+            await().atMost(Duration.ofSeconds(10)).until { jdbcTemplate.parseOutboxStatusOf(itemId) == ItemParseOutboxStatus.SUCCEEDED }
         } finally {
             release.countDown()
-            stubItemParser.enabled = true
-            deleteItem(itemId)
+            if (itemId != 0L) jdbcTemplate.deleteItems(listOf(itemId))
         }
-    }
-
-    private fun statusOf(itemId: Long): String =
-        jdbcTemplate.queryForObject("SELECT o.status FROM item_parse_outbox o JOIN item_snapshots s ON s.id = o.item_snapshot_id WHERE s.item_id = ?", String::class.java, itemId)
-            ?: error("item $itemId 의 아웃박스 행이 없다")
-
-    private fun deleteItem(itemId: Long) {
-        if (itemId == 0L) return
-        jdbcTemplate.deleteParseOutboxOf(listOf(itemId))
-        jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", itemId)
-        jdbcTemplate.update("DELETE FROM items WHERE id = ?", itemId)
     }
 }

@@ -96,10 +96,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    // 조회·수정·삭제 시나리오의 데이터 시딩. 등록 API(비동기)를 거치지 않고 영속화 빈으로 READY item+wish 를
-    // 바로 만든다 — 이 테스트들의 관심사는 "완성된 위시가 있을 때"이지 등록 흐름이 아니기 때문.
-    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(작업 큐 적재)으로 시작하므로
-    // 그 작업을 임대한 뒤 markExtracted 로 추출값을 채운다 — 등록 후 파싱 성공과 동형이다.
+    // 등록 후 파싱 성공과 같은 경로로 READY 를 만듦
     private fun seedReadyWish(
         userId: UUID,
         url: String,
@@ -125,8 +122,6 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         return result.wish.getId()
     }
 
-    // FAILED 상태 item+wish 시딩 — 추출 실패 항목을 사용자가 직접 보정하는 시나리오용.
-    // 등록(PENDING)→임대→markFailed(FAILED) 순으로 전이시켜 영속화한다(등록 후 파싱 실패와 동형).
     private fun seedFailedWish(
         userId: UUID,
         url: String,
@@ -136,7 +131,6 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         return result.wish.getId()
     }
 
-    // 파싱 중(PENDING) item+wish 시딩 — 등록만 하고 워커를 태우지 않는다.
     private fun seedPendingWish(
         userId: UUID,
         url: String,
@@ -665,7 +659,6 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.PRICE_MIN_MESSAGE))
     }
 
-    // 전역 카운트는 다른 item 의 비동기 파싱 행에 오염될 수 있어, 대상 wish 가 가리키는 item 으로 한정한다.
     private fun itemIdOf(wishId: Long): Long =
         jdbcTemplate.queryForObject(
             "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.id = ?",
