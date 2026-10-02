@@ -19,7 +19,7 @@ paths: ["src/main/**/SecurityConfig.kt", "src/main/**/*Filter.kt", "src/main/**/
 
 ## 훅이 차단하는 것 (`.claude/settings.json`)
 
-차단 메시지가 옳은 형태를 알려준다. 단 로비에서 hop 한 세션에는 프로젝트 훅이 돌지 않으므로 아래 넷은 직접 지킨다.
+로비에서 hop 한 세션에는 프로젝트 훅이 돌지 않으므로 아래 넷은 직접 지킨다. 화살표 오른쪽이 옳은 형태다.
 
 - 클라이언트 IP 를 `X-Forwarded-For` 에서 직접 읽기 → `ClientIp.of`
 - `th:utext` → `th:text` (값 출처가 DB 로 바뀌면 저장형 XSS)

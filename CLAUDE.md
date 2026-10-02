@@ -89,9 +89,9 @@ YAGNI 는 **가설적·먼 미래**(올지 안 올지 모르는 요구)를 위�
 
 현재 브랜치의 목적과 다른 작업(다른 이슈·기능)을 요청받으면 곧장 현재 브랜치에 얹지 않고, `AskUserQuestion` 으로 worktree 분리를 첫 번째(recommend) 옵션으로 묻는다. 같은 이슈의 후속 단계면 묻지 않고 이어간다. 생성·진입·정리 절차는 `/issue`·`/session-close` 스킬과 루트의 로비 규칙(`.claude/rules/piki-workspace.md`)이 담당하고, 여기에는 이 repo 의 정책만 둔다.
 
-- **분기 base 는 항상 `origin/dev`.** 생성·진입은 로비 규칙(`git worktree add … origin/dev` 후 `EnterWorktree path=`)을 따른다. 진입 여부는 분리를 묻는 그 질문에서 함께 확인한다.
+- **분기 base 는 항상 `origin/dev`.** 진입 방식(이 세션에서 hop / 그 워크트리에서 새 세션)은 분리를 묻는 그 질문에서 함께 확인한다.
 - **스택 브랜치는 쓰지 않는다.** 다른 feature 브랜치 위에 쌓지 않고, 의존하는 작업이 `dev` 에 머지될 때까지 기다린 뒤 분기한다(시퀀싱). 여러 사람이 squash/rebase 로 머지하는 환경에서 스택은 base 가 바뀔 때마다 하위 브랜치가 꼬인다. 기다릴 수 없으면 사용자에게 먼저 알린다.
-- **정리는 `/session-close` 가 한다.** `--force` 는 쓰지 않는다. 주기 검사(타이머)는 두지 않는다.
+- **정리는 `/session-close` 가 한다**(clean·머지된 현재 자리만). 수동 정리도 `--force` 없이 한다.
 
 ## 의존성 관리
 
@@ -118,7 +118,7 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: extractor 원격 추출 호출) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
 
 - 외부 호출은 트랜잭션 바깥에서 끝내고, **영속화만 별도 빈에 위임**해 짧은 트랜잭션으로 묶는다.
-- 예: `WishlistService.registerFromUrl` 은 트랜잭션 없이 추출을 끝낸 뒤 `WishPersistenceService.persist`(`@Transactional`) 로 영속화만 위임(같은 빈 호출은 proxy 를 안 거친다).
+- 예: `AsyncItemParsingWorker` 는 트랜잭션 없이 추출을 끝낸 뒤 상태 전이 영속화만 `ItemParsingService`(`@Transactional`)에 위임한다. 같은 빈 안 호출은 proxy 를 거치지 않아 `@Transactional` 이 걸리지 않으므로 별도 빈이어야 한다.
 
 ## 로깅
 
@@ -147,7 +147,7 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 테스트
 
-테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**(분류·가치 판단·결정 트리·모킹 금지·셋업·네이밍·기계 강제 + JVM/Spring 공통)이고 `install.sh` 가 설치하며 아래로 항상 로드된다. **이 repo 의 Kotlin·MySQL 바인딩**(좌표·단언 라이브러리·stub 형태·통합 테스트 세부)은 `.claude/rules/testing-convention.md` 가 갖는다.
+테스트 규약은 두 파일로 나뉜다. **원칙은 infra 정본**이고 `install.sh` 가 설치하며 아래로 항상 로드된다. **이 repo 의 Kotlin·MySQL 바인딩**(좌표·단언 라이브러리·stub 형태·통합 테스트 세부)은 `.claude/rules/testing-convention.md` 가 갖는다.
 
 **테스트를 작성·수정하기 전에 `.claude/rules/testing-convention.md` 를 읽는다.** 이 파일은 `src/test/**` 의 기존 파일을 열면 자동으로 붙지만, 새 테스트 파일을 곧장 생성하는 경로에서는 안 붙는다(실측). 그 경우 직접 읽어야 규약이 적용된다.
 
@@ -173,7 +173,7 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 ## 컨트롤러 / OpenAPI 문서
 
-**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지, 3xx 리다이렉트·SSE 구독은 예외). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
+**컨트롤러는 `*Api` 인터페이스를 구현하고, 모든 응답은 `ApiResponseBody` 래퍼로 감싼다(204 금지, 3xx 리다이렉트·SSE 구독은 예외). `*Api.kt` 는 도달 가능한 모든 응답(성공 + 실패)을 `@ApiResponse` + `*ApiExamples` 로 전수 문서화한다.** 상세 규약(인터페이스/구현체 어노테이션 분리 · example 객체화 · 응답 전수 문서화 조사 대상 · fail detail single source)은 `.claude/rules/openapi-controller.md` 에 있고, frontmatter `paths` 의 파일을 다룰 때 자동 로드된다. 그 파일들을 직접 열지 않는 경로로 엔드포인트·응답·예외 계약을 바꿀 때는 직접 읽는다.
 
 ## 웹 요청 경계
 

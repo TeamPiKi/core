@@ -4,7 +4,7 @@ paths: ["src/main/**/domain/**/*.kt", "src/main/**/*Entity.kt", "src/main/kotlin
 
 # DB 스키마 (외래 키 · 마이그레이션)
 
-`CLAUDE.md` 의 `## DB 스키마` 스텁이 불변식을 갖고, 이 파일이 상세 규약이다. 엔티티(`*/domain/**`·`*Entity.kt`·admin·metrics 패키지)와 마이그레이션 파일을 다룰 때 자동 로드된다. `domain/` 밖(admin·common·metrics·product)에도 엔티티가 있어 패턴을 여럿 둔다.
+`CLAUDE.md` 의 `## DB 스키마` 스텁이 불변식을 갖고, 이 파일이 상세 규약이다. 엔티티가 `domain/` 밖에도 있어 frontmatter `paths` 가 여러 패턴으로 잡는다. 마이그레이션 파일도 포함한다.
 
 ## 테이블 간 외래 키
 
