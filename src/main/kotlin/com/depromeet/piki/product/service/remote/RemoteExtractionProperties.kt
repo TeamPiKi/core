@@ -13,9 +13,7 @@ data class RemoteExtractionProperties(
     // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 한다. heartbeat 도입 후 산 워커는
     // 박동이 stale 을 막아 주지만, 이 제약은 그와 별개로 **read 가 stale 창을 넘겨 무한정 늘어지지 않는다**는 상한을 준다 —
     // 넘기면 마감(3분) 예산을 한 번의 read 가 통째로 먹고, 반납(release)으로 다음 실행을 앞당길 기회도 사라진다.
-    // 이미지 경로(HttpImageSnapshotExtractor)도 같은 클라이언트·같은 값을 쓴다 — extractor 내부 이미지 예산
-    // (S3 download + Gemini OCR 30s cap + crop + 결과 upload, 최악 40s대)이 이 값 미만이어야 하며,
-    // 예산 합의는 계약 문서(extractor repo docs/api-contract.md §3)가 진다.
+    // 이미지 경로도 같은 값을 씀. extractor 의 처리 시간 예산은 계약 문서(extractor repo docs/api-contract.md §3)가 정함
     // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
     // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
     // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음).
