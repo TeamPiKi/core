@@ -4,9 +4,9 @@ paths: ["src/main/**/*Api.kt", "src/main/**/*Controller.kt", "src/main/**/*ApiEx
 
 # 컨트롤러 / OpenAPI 문서
 
-`CLAUDE.md` 의 상주 스텁이 핵심 불변식을 갖고, 이 파일이 상세 규약 정본이다. `*Api.kt` · `*Controller.kt` · `*ApiExamples.kt` · `SecurityConfig.kt` 를 다룰 때 자동 로드된다.
+`CLAUDE.md` 의 상주 스텁이 핵심 불변식을 갖고, 이 파일이 상세 규약 정본이다. frontmatter `paths` 의 파일을 다룰 때 자동 로드된다.
 
-**컨트롤러는 `*Api` 인터페이스를 구현한다.** 이 규칙은 **공개 JSON API 엔드포인트**에 적용된다 — 어드민 백오피스(Thymeleaf SSR: `AdminSessionController` · `DiscordAccessController` · `AdminViewController` · `AdminTemplateController` · `AdminAnnouncementController` · `AdminExtractionPolicyController` · `AdminSourcePlatformController`)와 `HealthController` · `MetricsController`(메트릭 대시보드)는 공개 JSON 응답면이 아니므로 `*Api` 를 구현하지 않으며, 이는 위반이 아니라 정당한 예외다. OpenAPI 어노테이션은 인터페이스, 매핑/검증 어노테이션은 구현체로 분리한다. example 은 평문 JSON 으로 박지 않고 `*ApiExamples` 의 `OperationCustomizer` 빈으로 객체화한다.
+**컨트롤러는 `*Api` 인터페이스를 구현한다.** 이 규칙은 **공개 JSON API 엔드포인트**에 적용된다 — 어드민 백오피스(`admin/**` 의 컨트롤러 전부, 클래스에 `@Hidden`)와 `HealthController` · `MetricsController`(메트릭 대시보드)는 공개 JSON 응답면이 아니므로 `*Api` 를 구현하지 않으며, 이는 위반이 아니라 정당한 예외다. OpenAPI 어노테이션은 인터페이스, 매핑/검증 어노테이션은 구현체로 분리한다. example 은 평문 JSON 으로 박지 않고 `*ApiExamples` 의 `OperationCustomizer` 빈으로 객체화한다.
 
 ## 규칙
 - **인터페이스 (`*Api.kt`)**: `@Tag`, `@Operation`, `@ApiResponse(s)`, `@Schema` 만 둔다. 메서드 시그니처는 평범한 함수 (`@PostMapping` 등 매핑 어노테이션 / `@RequestBody` 등 파라미터 어노테이션 / `@Valid` / `@ResponseStatus` 모두 두지 않는다).
@@ -64,6 +64,7 @@ ApiResponse(responseCode = "400", description = "잘못된 요청 (URL 이 비�
 **모든 응답은 `ApiResponseBody` 래퍼로 감싼다.** 컨트롤러 메서드는 항상 `ApiResponseBody<T>` 를 반환하고, 직접 `ResponseEntity` / raw DTO 를 노출하지 않는다.
 
 - **예외: 리다이렉트 응답(3xx)은 래퍼로 감싸지 않는다.** 클라이언트가 body 가 아니라 `Location` 헤더를 소비하므로 `ResponseEntity<Void>` 를 직접 반환한다 — 예: `AppleCallbackController` 의 303 리다이렉트.
+- **예외: SSE 구독은 래퍼로 감싸지 않는다.** 스트림을 열어 두는 응답이라 `SseEmitter` 를 직접 반환한다 — 예: `NotificationSseController.subscribe`.
 - 성공 응답은 `ApiResponseBody.ok(...)` / `ApiResponseBody.created(...)`. 실패 응답은 `GlobalExceptionHandler` 가 `ApiResponseBody.fail(...)` 로 매핑한다.
 - **HTTP 204 No Content 는 사용하지 않는다.** 래퍼가 항상 body 를 만들기 때문에 RFC 7231 상 "body 없음" 이 본질인 204 와 충돌한다. 내릴 데이터가 없는 응답은 200 OK + `ApiResponseBody.ok()` (data=null) 로 표현한다.
 - 비기본 status (`201 CREATED` 등) 는 컨트롤러 메서드에 `@ResponseStatus` 를 명시한다. body 의 `status` 필드와 HTTP 상태 코드를 항상 일치시킨다.
