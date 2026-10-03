@@ -1,6 +1,7 @@
 package com.depromeet.piki.image.service.remote
 
 import com.depromeet.piki.common.storage.S3Properties
+import com.depromeet.piki.contracts.extraction.v1.ImageExtractionRequest
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.remote.ExtractionModelSettings
@@ -30,16 +31,19 @@ class HttpImageSnapshotExtractor(
         // 이미지 파싱 발주 원장. key 는 내부 식별자(items/raw/{uuid})라 로그에 안전하다.
         // route=remote 토큰은 기존 로그 쿼리 호환용이다.
         log.info("image extract route=remote key={}", imageKey)
+        val request =
+            ImageExtractionRequest
+                .newBuilder()
+                .setBucket(s3Properties.bucket)
+                .setKey(imageKey)
+        // 링크와 축이 갈려 있어 IMAGE 지정만 따른다 — 이미지는 vision 이라 링크에 맞는 모델이 여기서 맞지 않을 수 있다.
+        // 지정이 없으면 필드를 안 실어 extractor 의 기본 모델로 간다.
+        modelSettings.modelOf(ExtractionTarget.IMAGE)?.let(request::setModel)
         // 이미지 추출엔 원본 URL 이 없어 link=null (extractor 계약 §2 image 와 동일).
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
             path = IMAGE_EXTRACTION_PATH,
-            request =
-                RemoteImageExtractionRequest(
-                    bucket = s3Properties.bucket,
-                    key = imageKey,
-                    model = modelSettings.modelOf(ExtractionTarget.IMAGE),
-                ),
+            request = request.build(),
             link = null,
             target = "key=$imageKey",
         )
@@ -49,12 +53,3 @@ class HttpImageSnapshotExtractor(
         private const val IMAGE_EXTRACTION_PATH = "/internal/extractions/image"
     }
 }
-
-// wire 요청 모델 — 이 클라이언트 밖에서 쓰지 않는다(file-private). 응답은 링크와 공유(RemoteExtractionResponse).
-// model 이 null 이면 extractor 가 자기 기본 모델을 쓴다(계약 §2). 링크와 축이 갈려 있어 이미지 경로는
-// IMAGE 지정만 따른다 — 이미지는 vision 이라 링크에 맞는 모델이 여기서 맞지 않을 수 있다.
-private data class RemoteImageExtractionRequest(
-    val bucket: String,
-    val key: String,
-    val model: String?,
-)

@@ -1,6 +1,7 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
+import com.depromeet.piki.contracts.extraction.v1.ModelProbeRequest
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
@@ -49,7 +50,13 @@ class HttpExtractionModelProbe(
                 .post()
                 .uri(PROBE_PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(ProbeRequest(model = model, target = target.name))
+                .body(
+                    ModelProbeRequest
+                        .newBuilder()
+                        .setModel(model)
+                        .setTarget(target.toContract())
+                        .build(),
+                )
                 .retrieve()
                 .toBodilessEntity()
         } catch (e: RestClientResponseException) {
@@ -87,6 +94,12 @@ class HttpExtractionModelProbe(
         )
     }
 
+    private fun ExtractionTarget.toContract(): ModelProbeRequest.Target =
+        when (this) {
+            ExtractionTarget.LINK -> ModelProbeRequest.Target.LINK
+            ExtractionTarget.IMAGE -> ModelProbeRequest.Target.IMAGE
+        }
+
     // internal 인 이유: 이 사유 문구가 곧 백오피스 화면에 뜨는 계약이라 테스트가 같은 상수로 단언한다.
     // 테스트에 문자열을 다시 적으면 한쪽만 바뀌었을 때 어긋난 채로 통과한다.
     companion object {
@@ -101,10 +114,3 @@ class HttpExtractionModelProbe(
         internal const val MESSAGE_UNAVAILABLE = "지금은 모델을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
     }
 }
-
-// wire 모델 — 이 클래스 밖에서 쓰지 않는다(file-private). 실패 응답은 추출 계약과 모양이 같아
-// RemoteExtractionFailureResponse 를 공유한다.
-private data class ProbeRequest(
-    val model: String,
-    val target: String,
-)
