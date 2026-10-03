@@ -19,11 +19,6 @@ class WishRepositoryImpl(
         toItemId: Long,
     ): Int = wishJpaRepository.reparentItem(fromItemId, toItemId)
 
-    override fun countByIdsAndUserId(
-        ids: List<Long>,
-        userId: UUID,
-    ): Long = wishJpaRepository.countByIdInAndUserId(ids, userId)
-
     override fun countByItemIdsAndUserId(
         itemIds: List<Long>,
         userId: UUID,

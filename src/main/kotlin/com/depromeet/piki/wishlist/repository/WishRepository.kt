@@ -16,11 +16,6 @@ interface WishRepository {
         toItemId: Long,
     ): Int
 
-    fun countByIdsAndUserId(
-        ids: List<Long>,
-        userId: UUID,
-    ): Long
-
     fun countByItemIdsAndUserId(
         itemIds: List<Long>,
         userId: UUID,

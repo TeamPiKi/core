@@ -36,11 +36,6 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("itemId") itemId: Long,
     ): List<WishCardView>
 
-    fun countByIdInAndUserId(
-        ids: Collection<Long>,
-        userId: UUID,
-    ): Long
-
     // 출전 소유 체크용 — 위시가 item 을 직접 참조하므로(#1051) 조인 없이 센다.
     @Query(
         "SELECT COUNT(DISTINCT w.id) FROM Wish w " +
