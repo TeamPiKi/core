@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.controller
 
+import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
 import com.depromeet.piki.item.domain.Item
@@ -8,6 +9,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
+import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
@@ -41,6 +43,8 @@ import kotlin.test.assertEquals
 // 등록 PENDING 응답·파싱 전이는 WishlistRegisterAsyncIntegrationTest 가 검증한다.
 @Transactional
 class WishlistCrudIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var entityManager: EntityManager
+
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
 
@@ -92,10 +96,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    // 조회·수정·삭제 시나리오의 데이터 시딩. 등록 API(비동기)를 거치지 않고 영속화 빈으로 READY item+wish 를
-    // 바로 만든다 — 이 테스트들의 관심사는 "완성된 위시가 있을 때"이지 등록 흐름이 아니기 때문.
-    // item 은 정체성(link)만 들고, 표시값·상태는 활성 snapshot 이 보유한다(4a). 등록은 PENDING(작업 큐 적재)으로 시작하므로
-    // 디스패처 claim(claimDuePending)을 재현해 PROCESSING 으로 전이한 뒤 markReady 로 추출값을 채운다 — 등록 후 파싱 성공과 동형이다.
+    // 등록 후 파싱 성공과 같은 경로로 READY 를 만듦
     private fun seedReadyWish(
         userId: UUID,
         url: String,
@@ -107,11 +108,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         extractionMethod: String? = null,
     ): Long {
         val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
-        itemParsingService.claimDuePending(100)
-        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
-        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            result.snapshot.getId(),
+            entityManager.claimParseOutbox(result.snapshot),
             ProductSnapshot(
                 link = ProductLink.parse(url),
                 name = name,
@@ -120,35 +118,23 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                 imageUrl = imageUrl,
                 extractionMethod = extractionMethod,
             ),
-            expectedAttempt = 0,
         )
         return result.wish.getId()
     }
 
-    // FAILED 상태 item+wish 시딩 — 추출 실패 항목을 사용자가 직접 보정하는 시나리오용.
-    // 등록(PENDING)→디스패처 claim(PROCESSING)→markFailed(FAILED) 순으로 전이시켜 영속화한다(등록 후 파싱 실패와 동형).
     private fun seedFailedWish(
         userId: UUID,
         url: String,
     ): Long {
         val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
-        itemParsingService.claimDuePending(100)
-        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
-        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
-        itemParsingService.markFailed(result.snapshot.getId(), expectedAttempt = 0)
+        itemParsingService.markFailed(entityManager.claimParseOutbox(result.snapshot))
         return result.wish.getId()
     }
 
-    // PROCESSING 상태 item+wish 시딩 — 파싱 중 항목에 클라이언트가 끼어드는(409) 시나리오용.
-    // 등록(PENDING) 후 디스패처 claim 만 재현해 PROCESSING 까지 전이하고(워커 미제출) 그 상태에 멈춰 둔다.
-    private fun seedProcessingWish(
+    private fun seedPendingWish(
         userId: UUID,
         url: String,
-    ): Long {
-        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
-        itemParsingService.claimDuePending(100)
-        return result.wish.getId()
-    }
+    ): Long = wishPersistenceService.persist(userId, ProductLink.parse(url)).wish.getId()
 
     @Test
     fun `게스트가 URL 로 위시 등록을 시도하면 403 과 회원 전용 안내가 반환된다`() {
@@ -529,14 +515,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `파싱 중(PROCESSING)인 위시 item 도 필수값을 채워 수기 수정하면 200 이다 - 병합할 base 가 비면 400`() {
-        // 상태 제한이 없다(#825 결정 4). 단 PROCESSING base 는 값이 비어 있어, 일부 필드만 보내면
+    fun `파싱 중(PENDING)인 위시 item 도 필수값을 채워 수기 수정하면 200 이다 - 병합할 base 가 비면 400`() {
+        // 상태 제한이 없다(#825 결정 4). 단 PENDING base 는 값이 비어 있어, 일부 필드만 보내면
         // 병합 결과에 필수값이 없어 400(ITEM-003 등)이다 — 상태 충돌(409)이 아니라 입력 계약의 문제다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
-        val wishId = seedProcessingWish(userId, "https://shop.example.com/products/1")
+        val wishId = seedPendingWish(userId, "https://shop.example.com/products/1")
 
         // 일부 필드만 — 병합해도 가격·이미지가 없어 400.
         mockMvc
@@ -673,7 +659,6 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.PRICE_MIN_MESSAGE))
     }
 
-    // 전역 카운트는 다른 item 의 비동기 파싱 행에 오염될 수 있어, 대상 wish 가 가리키는 item 으로 한정한다.
     private fun itemIdOf(wishId: Long): Long =
         jdbcTemplate.queryForObject(
             "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.id = ?",

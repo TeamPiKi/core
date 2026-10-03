@@ -21,7 +21,7 @@ import org.springframework.web.client.RestClientResponseException
 // 우리 요청은 responseSchema · thinkingLevel 을 싣고, 그 비호환은 파싱 전건 실패로 이어진다.
 //
 // 인터페이스로 두는 것은 이것이 외부 호출 경계이기 때문이다 — 통합 테스트가 실제 extractor 없이 저장 게이트의
-// 성공·거절 시나리오를 돌릴 수 있어야 한다 (ProductLinkExtractor 와 같은 구조).
+// 성공·거절 시나리오를 돌릴 수 있어야 한다 (LinkSnapshotExtractor 와 같은 구조).
 interface ExtractionModelProbe {
     // 유효하면 그냥 반환하고, 아니면 화면에 그대로 띄울 사유를 담아 던진다. 백오피스 컨트롤러가
     // IllegalArgumentException 을 화면 에러로 흡수하는 기존 관례(AdminExtractionPolicyController)를 따른다.

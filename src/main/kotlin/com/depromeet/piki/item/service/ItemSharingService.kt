@@ -2,7 +2,6 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemLinkRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -73,7 +72,7 @@ class ItemSharingService(
         }
         return SharedAttachment(
             item = item,
-            snapshot = parsingEnqueuer.enqueue(itemId, requestedBy, ParseTrigger.REGISTER),
+            snapshot = parsingEnqueuer.enqueue(itemId, requestedBy),
             reused = false,
             refreshNeeded = false,
         )

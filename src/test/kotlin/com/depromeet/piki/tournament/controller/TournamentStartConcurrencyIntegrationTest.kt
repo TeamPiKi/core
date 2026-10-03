@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -73,7 +74,7 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
         ).andReturn()
         val tournamentId = objectMapper.readTree(createResult.response.contentAsString)["data"]["tournamentId"].asLong()
 
-        // tournament_item 은 고정 snapshot 을 참조한다(4a). item 은 정체성(link)만 들고, 표시값·상태는 READY snapshot 이 보유한다.
+        // tournament_item 은 고정 snapshot 을 참조한다. item 은 정체성(link)만 들고, 표시값·상태는 READY snapshot 이 보유한다.
         val item1 = itemJpaRepository.save(Item())
         val item2 = itemJpaRepository.save(Item())
         val snapshot1 = itemSnapshotJpaRepository.save(
@@ -124,8 +125,7 @@ class TournamentStartConcurrencyIntegrationTest : IntegrationTestSupport() {
         jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
         jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
         jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
-        jdbcTemplate.update("DELETE FROM item_snapshots WHERE id IN (?, ?)", snapshot1.getId(), snapshot2.getId())
-        jdbcTemplate.update("DELETE FROM items WHERE id IN (?, ?)", item1.getId(), item2.getId())
+        jdbcTemplate.deleteItems(listOf(item1.getId(), item2.getId()))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
     }
 }

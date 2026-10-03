@@ -3,8 +3,9 @@ package com.depromeet.piki.product.routing
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.junit.jupiter.api.Test
@@ -45,7 +46,7 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
     private lateinit var accessPolicy: DbDomainAccessPolicy
 
     @Autowired
-    private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
@@ -118,7 +119,7 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
         // 도메인은 테스트 격리용 유니크 값 — 서브도메인(shop.)까지 매칭되는지 함께 본다.
         val domain = "blocked-${UUID.randomUUID()}.example.com"
         val body = """{"url": "https://shop.$domain/p/1"}"""
-        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
+        stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
         try {
             // 정책 추가 + reload — 배포 없이 곧바로 등록이 거부된다(백오피스 저장 → afterCommit reload 와 같은 경로).
             policyRepository.save(DomainAccessPolicyEntity(domain = domain, access = DomainAccess.BLOCKED.name, reason = "테스트"))
@@ -160,7 +161,7 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         val domain = "allowed-${UUID.randomUUID()}.example.com"
-        stubProductLinkExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
+        stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "테스트 상품", price = 9_900) }
         try {
             policyRepository.save(
                 DomainAccessPolicyEntity(
@@ -207,10 +208,7 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        itemIds.takeIf { it.isNotEmpty() }?.let {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
-        }
+        jdbcTemplate.deleteItems(itemIds.filterNotNull())
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

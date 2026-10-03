@@ -372,6 +372,7 @@ class MetricsRepository(
         )
 
     // 파싱 평균 시도 횟수(추출 건강도). 확정 상태(READY/FAILED)만. 대상이 없으면 null.
+    // TODO: #1176 1단계부터 attempt_count 를 쓰지 않아 새 행은 0. 3단계 재시도에서 아웃박스 기준으로 다시 연결
     fun avgParsingAttempts(
         from: LocalDateTime,
         to: LocalDateTime,

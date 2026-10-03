@@ -181,7 +181,7 @@
  ┃  ┣ 📂 structured ─────── JSON-LD · OpenGraph 파싱
  ┃  ┗ 📂 gemini ─────────── 구조화로 못 채운 필드만 LLM 보완
  ┃
- ┣ 📂 image ─────────────── 상품 이미지에서 추출 · 상품 영역 크롭
+ ┣ 📂 image ─────────────── 상품 이미지에서 상품 정보 추출
  ┣ 📂 probe ─────────────── LLM 모델 가용성 점검
  ┣ 📂 domain ────────────── ProductLink · ProductSnapshot
  ┗ 📂 common ────────────── 설정 · 예외 · S3 스토리지

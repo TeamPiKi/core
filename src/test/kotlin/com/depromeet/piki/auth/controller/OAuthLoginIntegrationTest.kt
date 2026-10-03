@@ -229,7 +229,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         val guestId = UUID.fromString(guest.userId)
         // 게스트 상태에서 위시 1건 생성 (user_id = 게스트 id). 승격은 id 를 유지하므로 이 행이 그대로 따라와야 한다.
         // wish 는 활성 snapshot 을 가리키므로(snapshotId NOT NULL) 대응 snapshot 을 먼저 시딩하고 그 id 를 넘긴다.
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(itemId = 1L, requestedBy = guestId).apply { markProcessing() }).getId()
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(itemId = 1L, requestedBy = guestId)).getId()
         wishRepository.save(Wish(userId = guestId, waitingSnapshotId = snapshotId, itemId = 1L))
         kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_inherit", null) }
 
@@ -592,7 +592,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createLegacyGuestTournament(guestId, "게스트가 만든 토너먼트")
         val snapshotId =
             itemSnapshotRepository
-                .save(ItemSnapshot.pending(itemId = 9001L, requestedBy = guestId).apply { markProcessing() })
+                .save(ItemSnapshot.pending(itemId = 9001L, requestedBy = guestId))
                 .getId()
         tournamentItemRepository.save(TournamentItem(tournamentId = tournamentId, userId = guestId, snapshotId = snapshotId))
 
@@ -736,7 +736,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
             .forEach { (owner, itemId) ->
                 val snapshotId =
                     itemSnapshotRepository
-                        .save(ItemSnapshot.pending(itemId = itemId, requestedBy = owner).apply { markProcessing() })
+                        .save(ItemSnapshot.pending(itemId = itemId, requestedBy = owner))
                         .getId()
                 tournamentItemRepository.save(
                     TournamentItem(tournamentId = sharedId, userId = owner, snapshotId = snapshotId),

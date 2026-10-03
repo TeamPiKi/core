@@ -18,7 +18,7 @@ import kotlin.test.assertFailsWith
 
 // 저장 게이트의 판정이 원격 응답 3갈래(200 / 422+code / 그 외)와 정확히 맞물리는지 고정한다. 여기서 나온
 // 메시지가 그대로 백오피스 화면의 거절 사유가 되므로, 사유별 문구까지 상수로 단언한다.
-// 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpProductLinkExtractorTest 와 같은 방식).
+// 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpLinkSnapshotExtractorTest 와 같은 방식).
 class HttpExtractionModelProbeTest {
     private val probeUrl = "http://extractor.test${HttpExtractionModelProbe.PROBE_PATH}"
 

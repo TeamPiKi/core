@@ -18,7 +18,7 @@ import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 
 // 원격 추출 서비스(extractor) 계약(정본: infra contracts/)의 공용 절반.
-// link(HttpProductLinkExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResult)과
+// link(HttpLinkSnapshotExtractor)·image(HttpImageSnapshotExtractor) 두 클라이언트가 같은 응답 모양(ExtractionResult)과
 // 같은 3갈래 번역을 쓰므로 호출·번역 전체를 한 곳에 모은다 — 계약이 진화할 때 두 클라이언트가 조용히 어긋나는 것을 막는다.
 // 클라이언트별로 갈리는 건 요청 모양(URL vs bucket·key)과 로그 컨텍스트(target)뿐이다.
 //
@@ -114,7 +114,7 @@ internal object RemoteExtractionContract {
         return response.toProductSnapshot(link)
     }
 
-    // 이 응답이 2xx 로 온 것 자체가 계약 위반이다. 판정 기준의 정본은 ItemSnapshot.hasNoExtractedValue 다.
+    // 이 응답이 2xx 로 온 것 자체가 계약 위반이다. 판정 기준의 정본은 ItemSnapshot.extractedFields 다.
     private fun ExtractionResult.hasNoExtractedValue(): Boolean =
         !(hasName() && name.isNotBlank()) && !hasImageUrl() && !hasCurrentPrice()
 
@@ -145,8 +145,7 @@ internal object RemoteExtractionContract {
         target: String,
     ): BaseException {
         if (!e.statusCode.isSameCodeAs(HttpStatus.UNPROCESSABLE_ENTITY)) {
-            // 실제 원격 status(401·404·5xx 등)를 여기서 남긴다 — 예외는 category 만 들고 httpStatus 는 항상 502 라,
-            // 워커의 재시도 warn 로그엔 실제 원격 status 가 드러나지 않는다(그럼 잘못된 base-url 404·인증 401 을 502 로 오인).
+            // 예외는 원격 status 를 싣지 않아 여기서 남기지 않으면 base-url 404·인증 401 이 일시 실패로만 보임
             log.warn("remote extract transient status={} {}", e.statusCode.value(), target)
             return ProductExtractorException.transientFailure(e)
         }

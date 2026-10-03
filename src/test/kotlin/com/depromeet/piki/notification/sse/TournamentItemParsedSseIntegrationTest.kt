@@ -174,8 +174,8 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // 파싱 중(PROCESSING) 버전을 하나 시딩한다 — pin(snapshotId)과 브로드캐스트 키가 같은 버전을 가리켜야 라우팅이 맞아떨어진다.
-    private fun snapshotIdFor(itemId: Long): Long = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()).apply { markProcessing() }).getId()
+    // 파싱 중(PENDING) 버전을 하나 시딩한다 — pin(snapshotId)과 브로드캐스트 키가 같은 버전을 가리켜야 라우팅이 맞아떨어진다.
+    private fun snapshotIdFor(itemId: Long): Long = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID())).getId()
 }
 
 // send(SseEventBuilder) 를 가로채 실제 IO 없이 전송 내용을 기록한다. build() 가 내놓는 data 항목

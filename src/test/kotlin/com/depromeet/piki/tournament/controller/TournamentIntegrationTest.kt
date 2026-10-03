@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
+import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -12,10 +13,9 @@ import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageParsingWorker
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.StubItemParsingWorker
 import com.depromeet.piki.support.StubRefreshTokenStore
+import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.Tournament
@@ -75,6 +75,8 @@ import kotlin.test.assertTrue
 @RecordApplicationEvents
 @Transactional
 class TournamentIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var entityManager: EntityManager
+
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired private lateinit var objectMapper: ObjectMapper
@@ -105,13 +107,11 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
 
+
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
     @Autowired private lateinit var wishRepository: WishRepository
 
-    @Autowired private lateinit var stubItemParsingWorker: StubItemParsingWorker
-
-    @Autowired private lateinit var stubImageParsingWorker: StubImageParsingWorker
 
     @Autowired private lateinit var stubImageStorage: StubImageStorage
 
@@ -430,7 +430,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createTournament(mockMvc)
         // 위시에는 등록되어 있지만 item 테이블에는 없는 ID — wish 확인 통과 후 item 존재 확인에서 404.
         // itemId 단일 출처는 snapshot 이므로, item 행 없이 itemId=999999 를 가리키는 snapshot 만 시딩해 wish 가 가리키게 한다(FK 없음).
-        val danglingSnapshotId = itemSnapshotJpaRepository.save(ItemSnapshot.pending(999999L, requestedBy = userId).apply { markProcessing() }).getId()
+        val danglingSnapshotId = itemSnapshotJpaRepository.save(ItemSnapshot.pending(999999L, requestedBy = userId)).getId()
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = danglingSnapshotId, itemId = 999999L))
 
         mockMvc
@@ -443,13 +443,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items 에서 아직 파싱 중(PROCESSING)인 아이템이면 409 를 반환한다`() {
+    fun `POST tournaments-id-items 에서 아직 파싱 중(PENDING)인 아이템이면 409 를 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val processingItemId = itemJpaRepository.save(Item()).getId()
-        // 활성 snapshot 이 PROCESSING — 표시값·상태는 snapshot 소관이라 PROCESSING snapshot 을 만들어 wish 가 가리키게 한다.
+        // 활성 snapshot 이 PENDING — 표시값·상태는 snapshot 소관이라 PENDING snapshot 을 만들어 wish 가 가리키게 한다.
         val processingSnapshotId =
-            itemSnapshotJpaRepository.save(ItemSnapshot.pending(processingItemId, requestedBy = userId).apply { markProcessing() }).getId()
+            itemSnapshotJpaRepository.save(ItemSnapshot.pending(processingItemId, requestedBy = userId)).getId()
         // 위시에도 등록 — wish 확인 통과 후 READY 상태 확인에서 409
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = processingSnapshotId, itemId = processingItemId))
 
@@ -2387,7 +2387,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val failedItem = itemJpaRepository.save(Item())
-        // imageUrl 있는 FAILED — recover 시 imageUrl 파라미터를 보내지 않아도 apply 가 기존 값을 유지해 READY 불변식 통과
+        // imageUrl 있는 FAILED — 보정 시 imageUrl 파라미터를 보내지 않아도 apply 가 기존 값을 유지해 READY 불변식 통과
         val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED, imageUrl = "https://img.example.com/a.png")
         tournamentItemJpaRepository.save(
             TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
@@ -2599,67 +2599,55 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `POST tournaments-id-items-link 는 참여자이면 PENDING 아이템을 생성하고 tournamentItemId 를 반환한다`() {
-        stubItemParsingWorker.enabled = false
-        try {
-            val mockMvc = buildMockMvc()
-            val tournamentId = createTournament(mockMvc)
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
 
-            val result =
-                mockMvc
-                    .perform(
-                        post("/api/v1/tournaments/$tournamentId/items/link")
-                            .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content("""{"url":"https://example.com/product"}"""),
-                    ).andExpect(status().isOk)
-                    .andExpect(jsonPath("$.data.tournamentItemId").isNumber)
-                    .andReturn()
+        val result =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"url":"https://example.com/product"}"""),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.tournamentItemId").isNumber)
+                .andReturn()
 
-            val tournamentItemId = objectMapper.readTree(result.response.contentAsString)["data"]["tournamentItemId"].asLong()
-            val tournamentItem = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).also {
-                assertEquals(1, it.size)
-            }.first()
-            assertEquals(tournamentItemId, tournamentItem.getId())
-            // 상태는 활성 snapshot 이 보유한다(4a) — 링크 등록 직후라 PENDING(작업 큐 적재)으로 시작한다.
-            // @Transactional 테스트라 등록이 커밋되지 않아 디스패처(별도 트랜잭션)가 이 PENDING 을 집지 못한다 → PENDING 고정.
-            // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
-            val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
-            val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
-            assertEquals(ItemStatus.PENDING, snapshot?.status)
-        } finally {
-            stubItemParsingWorker.enabled = true
-        }
+        val tournamentItemId = objectMapper.readTree(result.response.contentAsString)["data"]["tournamentItemId"].asLong()
+        val tournamentItem = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).also {
+            assertEquals(1, it.size)
+        }.first()
+        assertEquals(tournamentItemId, tournamentItem.getId())
+        // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
+        val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
+        val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
+        assertEquals(ItemStatus.PENDING, snapshot?.status)
     }
 
     @Test
     fun `POST tournaments-id-items-link 에서 같은 상품을 다른 링크 모양으로 다시 담으면 409 를 반환한다 - 정체성 기준 중복`() {
-        stubItemParsingWorker.enabled = false
-        try {
-            val mockMvc = buildMockMvc()
-            val tournamentId = createTournament(mockMvc)
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
 
-            mockMvc
-                .perform(
-                    post("/api/v1/tournaments/$tournamentId/items/link")
-                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
-                ).andExpect(status().isOk)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
+            ).andExpect(status().isOk)
 
-            // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
-            // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
-            mockMvc
-                .perform(
-                    post("/api/v1/tournaments/$tournamentId/items/link")
-                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
-                ).andExpect(status().isConflict)
-                .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
-                .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
-        } finally {
-            stubItemParsingWorker.enabled = true
-        }
+        // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
+        // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
+            .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
     }
 
     @Test
@@ -2757,45 +2745,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `링크 아이템 추가 시 TournamentItemAdded 이벤트가 발행된다`() {
-        stubItemParsingWorker.enabled = false
-        try {
-            val mockMvc = buildMockMvc()
-            val tournamentId = createTournament(mockMvc)
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
 
-            mockMvc
-                .perform(
-                    post("/api/v1/tournaments/$tournamentId/items/link")
-                        .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""{"url":"https://example.com/product"}"""),
-                ).andExpect(status().isOk)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"url":"https://example.com/product"}"""),
+            ).andExpect(status().isOk)
 
-            val added = applicationEvents.stream(TournamentItemAdded::class.java).toList()
-            assertEquals(1, added.size)
-            assertEquals(tournamentId, added.first().tournamentId)
-            assertEquals(userId, added.first().actorId)
-        } finally {
-            stubItemParsingWorker.enabled = true
-        }
+        val added = applicationEvents.stream(TournamentItemAdded::class.java).toList()
+        assertEquals(1, added.size)
+        assertEquals(tournamentId, added.first().tournamentId)
+        assertEquals(userId, added.first().actorId)
     }
 
     @Test
     fun `이미지 아이템 추가는 여러 장이어도 TournamentItemAdded 를 한 번만 발행한다`() {
-        stubImageParsingWorker.enabled = false
-        try {
-            val mockMvc = buildMockMvc()
-            val tournamentId = createTournament(mockMvc)
-            val imageKeys = presignImageKeys(mockMvc, tournamentId, count = 2)
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val imageKeys = presignImageKeys(mockMvc, tournamentId, count = 2)
 
-            confirmImages(mockMvc, tournamentId, imageKeys).andExpect(status().isOk)
+        confirmImages(mockMvc, tournamentId, imageKeys).andExpect(status().isOk)
 
-            val added = applicationEvents.stream(TournamentItemAdded::class.java).toList()
-            assertEquals(1, added.size)
-            assertEquals(tournamentId, added.first().tournamentId)
-            assertEquals(userId, added.first().actorId)
-        } finally {
-            stubImageParsingWorker.enabled = true
-        }
+        val added = applicationEvents.stream(TournamentItemAdded::class.java).toList()
+        assertEquals(1, added.size)
+        assertEquals(tournamentId, added.first().tournamentId)
+        assertEquals(userId, added.first().actorId)
     }
 
     // 삭제(#1027 Phase 3): "이미지 아이템 추가 presigned 발급 시 복제 토너먼트면 403(TOURNAMENT-032)" 은 클론 id 로만
@@ -2964,10 +2942,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // 위시 없이 item 정체성만 저장 — wish 소유 확인 실패(403) 시나리오용. 표시값·상태는 snapshot 소관이라 여기선 빈 item 만.
     private fun saveItem(): Long = itemJpaRepository.save(Item()).getId()
 
-    // 직접 저장하는 tournament_item 에 3단계 쓰기 계약(고정 snapshot)을 맞춰준다 — 원하는 표시값·상태를 가진
-    // snapshot 을 만들고 그 id 를 박아 저장한다. 조회 경로(getTournamentById·getTournamentItem)가 snapshot 을 읽기 때문이다.
-    // item 은 정체성(link)만 들고 추출값·상태는 snapshot 이 보유한다(4a).
-    // (서비스 경유 시딩 saveWishItem+addItemsToTournament 은 엔드포인트가 이미 snapshotId 를 채운다.)
     // 파생(#857) 검증용 — 다른 참조의 갱신이 만든 새 기계(SERVER) READY 버전을 시딩한다. 포인터는 안 움직인다.
     private fun saveMachineVersion(
         itemId: Long,
@@ -2987,6 +2961,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ),
         )
 
+    // 조회 경로(getTournamentById·getTournamentItem)가 고정 snapshot 을 읽어 표시값·상태를 snapshot 에 담아 연결함
     private fun saveTournamentItemFor(
         tournamentId: Long,
         item: Item,
@@ -3019,8 +2994,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
     }
 
-    // 원하는 상태·표시값을 가진 snapshot 을 한 행 저장한다 — tournament_item 의 snapshotId 가 가리킬 고정 버전용.
-    // 추출값·상태가 snapshot 으로 모였으므로(4a), FAILED/PROCESSING 시드는 이 snapshot 을 만들어 연결한다.
+    // tournament_item 의 snapshotId 가 가리킬 고정 버전용
     private fun saveSnapshot(
         itemId: Long,
         status: ItemStatus,
@@ -3045,18 +3019,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
     // 등록 API 를 타지 않고 행을 직접 심는다 — 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이고,
     // 등록 경로 자체(발급·확정)는 TournamentItemImagePresignedIntegrationTest 가 따로 덮는다.
-    // 적재 후 claim(PROCESSING)→markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
+    // 적재 후 markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
         val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
         wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
-        // 이 시딩은 워커를 태우지 않고 전이만 재현한다 — 실행이 없었으므로 attempt 는 집기 직후 값(0) 그대로이고,
-        // 전이의 fencing 토큰도 그 값이다. (실행까지 재현하는 흐름은 WishlistRegisterAsyncIntegrationTest 가 덮는다.)
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
         )
         return item.getId()
     }
@@ -3070,9 +3040,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         price: Int = 89_000,
     ) {
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
-        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             // extractionMethod 를 실어야 source 가 SERVER 로 남는다 - 표시값 파생은 출처가 기계인 READY 만 후보로
             // 보므로, 이걸 빼면 status 만 READY 인 "출처 불명" 버전이 되어 파생에 안 걸린다(실제 추출은 항상 싣는다).
             ProductSnapshot(
@@ -3082,7 +3051,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                 imageUrl = "https://img.example.com/b.png",
                 extractionMethod = "STRUCTURED",
             ),
-            expectedAttempt = 0,
         )
     }
 
@@ -3092,11 +3060,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
         wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
         )
         return item.getId()
     }
@@ -3129,7 +3095,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val sourceUrl = "https://www.nike.com/kr/t/air-max/example"
-        // link(원본 URL)는 정체성이라 item 에, 표시값은 READY snapshot 에 둔다(4a).
+        // link(원본 URL)는 정체성이라 item 에, 표시값은 READY snapshot 에 둔다.
         val linkItem = itemJpaRepository.save(Item(link = ProductLink.parse(sourceUrl)))
         saveTournamentItemFor(tournamentId, linkItem, name = "나이키", price = 100_000, currency = "KRW")
         val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()

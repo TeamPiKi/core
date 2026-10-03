@@ -189,8 +189,8 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Test
     fun `토너먼트 아이템 삭제 변수 itemName 은 상품명이 아직 없으면 fallback 이다`() {
-        // 파싱 전(PROCESSING) 아이템을 지운 경우 — snapshot.name 이 null 이라 fallback 문구로 채운다.
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(7203L, requestedBy = UUID.randomUUID()).apply { markProcessing() }).getId()
+        // 파싱 전(PENDING) 아이템을 지운 경우 — snapshot.name 이 null 이라 fallback 문구로 채운다.
+        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(7203L, requestedBy = UUID.randomUUID())).getId()
 
         val variables =
             itemDeletedHandler.resolveActorContext(
@@ -858,7 +858,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     // 따라서 그 itemId 로 시딩한 snapshot 의 id 를 wish/tournament_item 의 snapshotId 로 넘겨야 역조회가 맞아떨어진다.
     private fun snapshotIdFor(itemId: Long): Long =
         itemSnapshotRepository
-            .save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()).apply { markProcessing() })
+            .save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
             .getId()
 
     // 해소 통지(#1028)는 카드 표시값이 미완성이었는지로 수신자를 가르므로, 상태를 지정해 버전을 깐다.

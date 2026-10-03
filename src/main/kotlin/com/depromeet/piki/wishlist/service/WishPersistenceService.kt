@@ -3,7 +3,6 @@ package com.depromeet.piki.wishlist.service
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.DisplayCard
@@ -92,7 +91,7 @@ class WishPersistenceService(
     ): WishWithItem {
         val saved = itemRepository.save(item)
         itemIdentityRecorder.recordRegistrationAlias(saved)
-        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId, triggerType = ParseTrigger.REGISTER)
+        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId)
         val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = saved.getId()))
         return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
     }
@@ -216,7 +215,7 @@ class WishPersistenceService(
             throw WishException.failedNotRefreshable()
         }
         // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다. 요청자는 새로고침한 본인(#1051).
-        val newSnapshot = parsingEnqueuer.enqueue(item.getId(), requestedBy = userId, triggerType = ParseTrigger.REFRESH)
+        val newSnapshot = parsingEnqueuer.enqueue(item.getId(), requestedBy = userId)
         wish.waitFor(newSnapshot.getId())
         return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)
     }

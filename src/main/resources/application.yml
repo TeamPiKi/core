@@ -160,7 +160,7 @@ product:
       base-url: ${EXTRACT_REMOTE_BASE_URL:}
 
 s3:
-  # 크롭한 상품 이미지 저장 버킷. 자격증명은 EC2 instance role / 로컬 환경변수(DefaultCredentialsProvider).
+  # 상품 이미지 저장 버킷. 자격증명은 EC2 instance role / 로컬 환경변수(DefaultCredentialsProvider).
   bucket: ${S3_BUCKET:}
   region: ${S3_REGION:ap-northeast-2}
   public-base-url: ${S3_PUBLIC_BASE_URL:}

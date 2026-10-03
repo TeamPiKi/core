@@ -6,11 +6,12 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.awaitTicking
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.awaitTicking
-import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.hamcrest.Matchers.nullValue
@@ -283,7 +284,9 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubImageSnapshotExtractor.build = { StubImageSnapshotExtractor.defaultSnapshot() }
+            stubImageSnapshotExtractor.build = {
+                ProductSnapshot(name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
+            }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 
@@ -463,10 +466,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                 uuidToBytes(userId),
             )
         jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        itemIds.takeIf { it.isNotEmpty() }?.let {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
-        }
+        jdbcTemplate.deleteItems(itemIds.filterNotNull())
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

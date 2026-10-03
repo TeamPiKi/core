@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
+import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -8,6 +9,7 @@ import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.claimParseOutbox
 import com.depromeet.piki.tournament.repository.TournamentHistoryJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -40,6 +42,8 @@ import org.junit.jupiter.api.Test
 // "GET 이 내려준 currentMatch 를 POST 에 그대로 되돌려주면 통과한다" 가 이 엔드포인트 쌍의 핵심 계약이다.
 @Transactional
 class TournamentMatchIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var entityManager: EntityManager
+
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired private lateinit var objectMapper: ObjectMapper
@@ -51,6 +55,7 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
+
 
     @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
 
@@ -467,11 +472,9 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
         val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
         wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
         itemParsingService.markExtracted(
-            snapshot.getId(),
+            entityManager.claimParseOutbox(snapshot),
             ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
         )
         return item.getId()
     }

@@ -2,7 +2,6 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ParseTrigger
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.DisplayCard
@@ -163,7 +162,7 @@ class TournamentItemPersistenceService(
     ): PersistedTournamentItem {
         val saved = itemRepository.save(item)
         itemIdentityRecorder.recordRegistrationAlias(saved)
-        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId, triggerType = ParseTrigger.REGISTER)
+        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId)
         val tournamentItem =
             tournamentItemRepository.save(
                 TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
