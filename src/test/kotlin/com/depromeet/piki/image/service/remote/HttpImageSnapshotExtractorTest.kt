@@ -162,4 +162,23 @@ class HttpImageSnapshotExtractorTest {
 
         assertEquals("나이키", extractor.extract(imageKey).name)
     }
+
+    // 생성 클래스 전환 전에는 null 이 나갔다. extractor 는 둘 다 기본 모델로 읽지만 와이어가 달라진 자리라 고정한다.
+    @Test
+    fun `IMAGE 축 지정이 없으면 model 은 빈 문자열로 나간다`() {
+        val extractor =
+            extractorWith { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/image"))
+                    .andExpect(jsonPath("$.model").value(""))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://img.test/items/x.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(imageKey).name)
+    }
 }
