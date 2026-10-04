@@ -9,7 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 // 확정 실패 예외 → 메트릭 reason 라벨의 분기를 망라한다. 이 라벨이 곧 대시보드·알림의 축이라, 예외가 늘거나
-// bucket 배정이 바뀌면 여기가 먼저 깨져야 한다. (카탈로그와의 대조는 ExtractionErrorCatalogTest 가 따로 진다 —
+// bucket 배정이 바뀌면 여기가 먼저 깨져야 한다. (계약과의 대조는 ExtractionErrorCatalogTest 가 따로 진다 —
 // 여기는 "우리 예외가 어떤 라벨이 되나", 저기는 "그 라벨이 계약의 bucket 과 같나"를 본다.)
 class ItemParsingMetricsTest {
     // 확정 실패 예외 전량과 기대 라벨. bucket 5종을 하나씩 대표한다.

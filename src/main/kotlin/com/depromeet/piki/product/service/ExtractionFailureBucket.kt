@@ -4,7 +4,7 @@ import com.depromeet.piki.common.exception.ErrorCode
 
 // 확정 실패(원격 422)를 **운영 액션 축**으로 나눈 분류(#936). "이 숫자가 늘면 누가 무엇을 하는가"가 기준이라,
 // 실패의 기술적 원인이 아니라 대응이 같은 것끼리 묶인다.
-// 계약 카탈로그(shared-infra/contracts/extraction-error-codes.yaml)의 bucket 과 1:1 이고, 파싱 메트릭의
+// 계약 정본(shared-infra/contracts/extraction.proto)의 Bucket 과 1:1 이고, 파싱 메트릭의
 // reason 라벨(ItemParsingMetrics)도 여기서 파생한다 — 셋(카탈로그·예외·메트릭)이 어긋나면
 // ExtractionErrorCatalogTest 가 잡는다.
 enum class ExtractionFailureBucket {
