@@ -248,7 +248,7 @@ class HttpProductLinkExtractorTest {
     fun `422 확정 실패 code 는 전이 판정은 그대로 둔 채 bucket 별 reason 으로만 갈린다`() {
         // 원격 code 를 우리 예외로 번역하는 분기 망라(#936). code 마다 다른 건 **reason 뿐**이고, "422 = 확정 실패
         // (비 RETRYABLE)" 라는 전이 판정은 전부 같다 — 그 두 축이 섞이지 않았음을 한 테스트에서 함께 고정한다.
-        // 카탈로그 bucket 과 이 reason 이 같은지는 ExtractionErrorCatalogTest 가 별도로 대조한다.
+        // 계약 bucket 과 이 reason 이 같은지는 ExtractionErrorCatalogTest 가 별도로 대조한다.
         val expected =
             mapOf(
                 "NOT_PRODUCT_PAGE" to ItemParsingMetrics.REASON_NOT_PRODUCT,

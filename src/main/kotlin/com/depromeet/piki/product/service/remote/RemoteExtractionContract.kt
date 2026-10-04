@@ -34,7 +34,7 @@ internal object RemoteExtractionContract {
             JsonFormat.printer().alwaysPrintFieldsWithNoPresence(),
         ).apply { supportedMediaTypes = listOf(MediaType.APPLICATION_JSON) }
 
-    // 확정 실패(422) code 전수 → 우리 예외. 계약 카탈로그(shared-infra/contracts/extraction-error-codes.yaml)의
+    // 확정 실패(422) code 전수 → 우리 예외. 계약 정본(shared-infra/contracts/extraction.proto)의
     // permanent code 를 빠짐없이 여기에 명시한다 — 표에 없는 code 는 아래 fallback 으로 떨어져 internal_error 로
     // 세지므로, 매핑 누락이 "우리가 이름을 아는 실패"인 척 묻히지 않는다.
     // 표를 when 대신 값으로 둔 이유: 카탈로그와의 전수 대조(ExtractionErrorCatalogTest)가 이 키 집합을 직접 읽는다.
