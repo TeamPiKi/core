@@ -4,6 +4,7 @@ import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.contracts.extraction.v1.ImageExtractionRequest
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.product.service.remote.ExtractionEndpoints
 import com.depromeet.piki.product.service.remote.ExtractionModelSettings
 import com.depromeet.piki.product.service.remote.ExtractionTarget
 import com.depromeet.piki.product.service.remote.RemoteExtractionContract
@@ -42,14 +43,10 @@ class HttpImageSnapshotExtractor(
         // 이미지 추출엔 원본 URL 이 없어 link=null (extractor 계약 §2 image 와 동일).
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
-            path = IMAGE_EXTRACTION_PATH,
+            path = ExtractionEndpoints.IMAGE_EXTRACTION,
             request = request.build(),
             link = null,
             target = "key=$imageKey",
         )
-    }
-
-    companion object {
-        private const val IMAGE_EXTRACTION_PATH = "/internal/extractions/image"
     }
 }

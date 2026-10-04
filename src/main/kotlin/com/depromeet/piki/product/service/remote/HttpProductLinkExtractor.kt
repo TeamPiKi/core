@@ -51,14 +51,10 @@ class HttpProductLinkExtractor(
         modelSettings.modelOf(ExtractionTarget.LINK)?.let(request::setModel)
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
-            path = LINK_EXTRACTION_PATH,
+            path = ExtractionEndpoints.LINK_EXTRACTION,
             request = request.build(),
             link = link,
             target = "url=${link.safeLogString()}",
         )
-    }
-
-    companion object {
-        private const val LINK_EXTRACTION_PATH = "/internal/extractions/link"
     }
 }

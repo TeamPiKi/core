@@ -48,7 +48,7 @@ class HttpExtractionModelProbe(
         try {
             restClient
                 .post()
-                .uri(PROBE_PATH)
+                .uri(ExtractionEndpoints.MODEL_PROBE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(
                     ModelProbeRequest
@@ -103,8 +103,6 @@ class HttpExtractionModelProbe(
     // internal 인 이유: 이 사유 문구가 곧 백오피스 화면에 뜨는 계약이라 테스트가 같은 상수로 단언한다.
     // 테스트에 문자열을 다시 적으면 한쪽만 바뀌었을 때 어긋난 채로 통과한다.
     companion object {
-        internal const val PROBE_PATH = "/internal/models/probe"
-
         internal const val CODE_MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
         internal const val CODE_MODEL_INCOMPATIBLE = "MODEL_INCOMPATIBLE"
 
