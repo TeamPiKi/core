@@ -20,7 +20,7 @@ import kotlin.test.assertFailsWith
 // 메시지가 그대로 백오피스 화면의 거절 사유가 되므로, 사유별 문구까지 상수로 단언한다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpProductLinkExtractorTest 와 같은 방식).
 class HttpExtractionModelProbeTest {
-    private val probeUrl = "http://extractor.test${HttpExtractionModelProbe.PROBE_PATH}"
+    private val probeUrl = "http://extractor.test/internal/models/probe"
 
     private fun probeWith(server: (MockRestServiceServer) -> Unit): HttpExtractionModelProbe {
         val builder =
