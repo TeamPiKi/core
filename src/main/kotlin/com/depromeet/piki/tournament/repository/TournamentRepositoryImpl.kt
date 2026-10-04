@@ -63,9 +63,6 @@ class TournamentRepositoryImpl(
         )
     }
 
-    override fun findBySourceTournamentId(sourceTournamentId: Long): List<Tournament> =
-        tournamentJpaRepository.findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId)
-
 
     override fun findTournamentByInviteCode(code: String): Tournament? =
         tournamentJpaRepository.findFirstByActiveInviteCode(code)

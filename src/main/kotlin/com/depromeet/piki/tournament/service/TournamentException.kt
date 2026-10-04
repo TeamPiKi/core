@@ -84,8 +84,6 @@ class TournamentException private constructor(
         fun clonedTournamentCannotSharePlayLink(): TournamentException =
             TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK)
 
-        fun playLinkAlreadyCreated(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_ALREADY_CREATED)
-
         fun playLinkNotCreated(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_NOT_CREATED)
 
         fun playLinkExpired(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_EXPIRED)
