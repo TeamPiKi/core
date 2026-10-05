@@ -8,7 +8,7 @@ import com.depromeet.piki.common.exception.ErrorCode
 // 응답 detail·로그·OpenAPI 카탈로그는 message 로 파생된다.
 //
 // 공개 JSON API 도달이라 ErrorCodeRegistry 에 등록한다(어드민 SSR 전용이라 미등록인
-// AnnouncementImageErrorCode 와 갈리는 지점). 던지는 곳은 ItemSnapshot.manual(수기 수정 병합 검증)이며,
+// AnnouncementImageErrorCode 와 갈리는 지점). 던지는 곳은 ManualValues.merge(수기 수정 병합 검증)이며,
 // 위시 보정(PATCH /wishlists/{id})·토너먼트 아이템 보정(PATCH /tournaments/{id}/items/{itemId}) 두
 // 엔드포인트에서 GlobalExceptionHandler 를 거쳐 wire code 로 나간다.
 //

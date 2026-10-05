@@ -10,83 +10,50 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 import java.util.UUID
 
+// 파싱 성공·수동 보정 때만 생기고 바뀌지 않는다. 값이 하나도 없는 버전은 만들지 않는다.
 @Entity
 @Table(name = "item_snapshots")
 class ItemSnapshot(
     @Column(nullable = false, updatable = false)
     val itemId: Long,
-    name: String? = null,
-    imageUrl: String? = null,
-    price: Int? = null,
-    currency: String? = null,
-    status: ItemStatus = ItemStatus.PENDING,
-    extractedAt: LocalDateTime? = null,
-    source: ItemSnapshotSource? = null,
-    createdBy: UUID? = null,
+    name: String?,
+    imageUrl: String?,
+    price: Int?,
+    currency: String?,
+    extractedAt: LocalDateTime,
+    source: ItemSnapshotSource?,
+    createdBy: UUID,
 ) : LongBaseEntity() {
     @Column(columnDefinition = "BINARY(16)")
-    var createdBy: UUID? = createdBy
-        protected set
+    val createdBy: UUID? = createdBy
 
     @Enumerated(EnumType.STRING)
     @Column(length = 16)
-    var source: ItemSnapshotSource? = source
-        protected set
+    val source: ItemSnapshotSource? = source
 
-    @Column(length = 512)
-    var name: String? = name
-        protected set
+    @Column(length = NAME_MAX_LENGTH)
+    val name: String? = name
 
-    @Column(length = 2048)
-    var imageUrl: String? = imageUrl
-        protected set
+    @Column(length = IMAGE_URL_MAX_LENGTH)
+    val imageUrl: String? = imageUrl
 
-    var price: Int? = price
-        protected set
+    val price: Int? = price
 
-    @Column(length = 8)
-    var currency: String? = currency
-        protected set
+    @Column(length = CURRENCY_MAX_LENGTH)
+    val currency: String? = currency
 
-    // TODO: #1176 2단계에서 삭제 예정. 진행 상태는 ItemParseOutboxStatus 가 정본이고 버전은 성공 시에만 생김
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
-    var status: ItemStatus = status
-        protected set
+    val extractedAt: LocalDateTime? = extractedAt
 
-    var extractedAt: LocalDateTime? = extractedAt
-        protected set
-
-    // JPA 가 빈 인스턴스로 이 블록을 먼저 실행하므로 필수값·상태 의존 검사는 둘 수 없다.
     init {
-        validate(name, price, imageUrl, currency)
+        require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
+        require((name?.length ?: 0) <= NAME_MAX_LENGTH) { "name 길이가 ${NAME_MAX_LENGTH}자를 초과했다" }
+        require((imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH) { "imageUrl 길이가 ${IMAGE_URL_MAX_LENGTH}자를 초과했다" }
+        require((currency?.length ?: 0) <= CURRENCY_MAX_LENGTH) { "currency 길이가 ${CURRENCY_MAX_LENGTH}자를 초과했다" }
     }
 
-    fun markExtracted(extracted: ProductSnapshot): ItemStatus {
-        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
-        fillValues(extracted)
-        source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod)
-        status = extractedStatus()
-        if (hasValue()) extractedAt = LocalDateTime.now()
-        return status
-    }
+    fun isReady(): Boolean = filledFieldCount() == READY_FIELD_COUNT
 
-    fun markFailed() {
-        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
-        status = ItemStatus.FAILED
-    }
-
-    fun isReady(): Boolean = status == ItemStatus.READY
-
-    fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
-
-    fun isFailed(): Boolean = status == ItemStatus.FAILED
-
-    fun isInProgress(): Boolean = status == ItemStatus.PENDING || status == ItemStatus.PROCESSING
-
-    fun hasValue(): Boolean = isReady() || isIncomplete()
-
-    fun isUnresolved(): Boolean = isFailed() || isIncomplete()
+    fun isIncomplete(): Boolean = !isReady()
 
     fun isManual(): Boolean = source == ItemSnapshotSource.MANUAL
 
@@ -95,35 +62,10 @@ class ItemSnapshot(
     // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다.
     fun isSharedValue(): Boolean = isReady() && !isManual()
 
-    private fun extractedStatus(): ItemStatus =
-        when (extractedFields().size) {
-            0 -> ItemStatus.FAILED
-            READY_FIELD_COUNT -> ItemStatus.READY
-            else -> ItemStatus.INCOMPLETE
-        }
+    fun isCreatedAtOrBefore(at: LocalDateTime): Boolean = !createdAt.isAfter(at)
 
     // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
-    private fun extractedFields(): List<Any> = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
-
-    private fun fillValues(extracted: ProductSnapshot) {
-        validate(extracted.name, extracted.price, extracted.imageUrl, extracted.currency)
-        name = extracted.name
-        price = extracted.price
-        imageUrl = extracted.imageUrl
-        currency = extracted.currency
-    }
-
-    private fun validate(
-        name: String?,
-        price: Int?,
-        imageUrl: String?,
-        currency: String?,
-    ) {
-        require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
-        require((name?.length ?: 0) <= NAME_MAX_LENGTH) { "name 길이가 ${NAME_MAX_LENGTH}자를 초과했다" }
-        require((imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH) { "imageUrl 길이가 ${IMAGE_URL_MAX_LENGTH}자를 초과했다" }
-        require((currency?.length ?: 0) <= CURRENCY_MAX_LENGTH) { "currency 길이가 ${CURRENCY_MAX_LENGTH}자를 초과했다" }
-    }
+    private fun filledFieldCount(): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size
 
     companion object {
         const val NAME_MAX_LENGTH = 512
@@ -131,36 +73,47 @@ class ItemSnapshot(
         const val CURRENCY_MAX_LENGTH = 8
         private const val READY_FIELD_COUNT = 3
 
-        fun pending(
+        // 값이 하나도 없거나 칸 길이를 넘는 추출 결과는 버전이 되지 못한다. 호출부가 파싱 실패로 닫는다
+        fun accepts(extracted: ProductSnapshot): Boolean = hasAnyValue(extracted) && fitsColumns(extracted)
+
+        private fun hasAnyValue(extracted: ProductSnapshot): Boolean =
+            listOfNotNull(extracted.name?.takeIf { it.isNotBlank() }, extracted.price, extracted.imageUrl).isNotEmpty()
+
+        private fun fitsColumns(extracted: ProductSnapshot): Boolean =
+            (extracted.name?.length ?: 0) <= NAME_MAX_LENGTH && (extracted.imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH
+
+        fun extracted(
             itemId: Long,
+            extracted: ProductSnapshot,
             requestedBy: UUID,
-        ): ItemSnapshot = ItemSnapshot(itemId = itemId, createdBy = requestedBy)
+        ): ItemSnapshot {
+            require(accepts(extracted)) { "버전이 될 수 없는 추출 결과다" }
+            return ItemSnapshot(
+                itemId = itemId,
+                name = extracted.name,
+                imageUrl = extracted.imageUrl,
+                price = extracted.price,
+                currency = extracted.currency,
+                extractedAt = LocalDateTime.now(),
+                source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod),
+                createdBy = requestedBy,
+            )
+        }
 
         fun manual(
-            base: ItemSnapshot,
-            name: String?,
-            price: Int?,
-            imageUrl: String?,
-            currency: String?,
+            itemId: Long,
+            values: ManualValues,
             createdBy: UUID,
-        ): ItemSnapshot {
-            val mergedName = name ?: base.name
-            val mergedPrice = price ?: base.price
-            val mergedImage = imageUrl ?: base.imageUrl
-            if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
-            mergedPrice ?: throw ItemException.priceRequiredForReady()
-            mergedImage ?: throw ItemException.imageRequiredForReady()
-            return ItemSnapshot(
-                itemId = base.itemId,
-                name = mergedName,
-                imageUrl = mergedImage,
-                price = mergedPrice,
-                currency = currency ?: base.currency,
-                status = ItemStatus.READY,
+        ): ItemSnapshot =
+            ItemSnapshot(
+                itemId = itemId,
+                name = values.name,
+                imageUrl = values.imageUrl,
+                price = values.price,
+                currency = values.currency,
                 extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.MANUAL,
                 createdBy = createdBy,
             )
-        }
     }
 }
