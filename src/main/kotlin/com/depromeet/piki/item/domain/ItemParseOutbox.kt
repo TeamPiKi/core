@@ -21,6 +21,10 @@ class ItemParseOutbox(
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
+    val purpose: ParsePurpose,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
     val inputType: ParseInputType,
 
     @Column(nullable = false, length = ProductLink.MAX_LENGTH)
@@ -38,6 +42,8 @@ class ItemParseOutbox(
     val requester: ParseRequester get() = ParseRequester(requesterType, requesterId)
 
     val input: ParseInput get() = ParseInput(inputType, inputValue)
+
+    fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
 
     fun isProcessing(): Boolean = status == ItemParseOutboxStatus.PROCESSING
 
@@ -67,11 +73,13 @@ class ItemParseOutbox(
 
         fun of(
             requester: ParseRequester,
+            purpose: ParsePurpose,
             input: ParseInput,
         ): ItemParseOutbox =
             ItemParseOutbox(
                 requesterType = requester.type,
                 requesterId = requester.id,
+                purpose = purpose,
                 inputType = input.type,
                 inputValue = input.value,
                 urlWithoutTracking = input.linkOrNull()?.let(::urlWithoutTrackingOf),

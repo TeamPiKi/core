@@ -2,6 +2,7 @@ CREATE TABLE item_parse_outbox (
     id               BIGINT        NOT NULL AUTO_INCREMENT,
     requester_type   VARCHAR(32)   NOT NULL,
     requester_id     BIGINT        NOT NULL,
+    purpose          VARCHAR(16)   NOT NULL,
     input_type       VARCHAR(16)   NOT NULL,
     input_value      VARCHAR(2048) NOT NULL,
     -- 대소문자만 다른 단축 코드가 같은 요청으로 묶이지 않게 바이트 단위로 비교한다
