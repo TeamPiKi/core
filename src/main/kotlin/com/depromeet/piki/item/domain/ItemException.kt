@@ -26,5 +26,7 @@ class ItemException private constructor(
         fun priceRequiredForReady(): ItemException = ItemException(ItemErrorCode.PRICE_REQUIRED_FOR_READY)
 
         fun imageRequiredForReady(): ItemException = ItemException(ItemErrorCode.IMAGE_REQUIRED_FOR_READY)
+
+        fun notRefreshable(): ItemException = ItemException(ItemErrorCode.NOT_REFRESHABLE)
     }
 }
