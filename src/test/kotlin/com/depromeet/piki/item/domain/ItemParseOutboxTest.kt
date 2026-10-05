@@ -13,44 +13,40 @@ class ItemParseOutboxTest {
     }
 
     @Test
-    fun `링크 입력은 원본 URL 과 추적 파라미터를 뺀 URL 을 들고 이미지 키는 비운다`() {
+    fun `링크 입력은 원본 URL 과 추적 파라미터를 뺀 URL 을 든다`() {
         val link = ProductLink.parse("https://shop.example.com/p/1?utm_source=x")
 
-        val outbox = ItemParseOutbox.of(ParseRequester.wish(7L), ParseInput.Link(link))
+        val outbox = ItemParseOutbox.of(ParseRequester.wish(7L), ParseInput.ofLink(link))
 
         assertEquals(ParseRequester.wish(7L), outbox.requester)
-        assertEquals(link, outbox.sourceUrl)
-        assertEquals("https://shop.example.com/p/1", outbox.sourceUrlWithoutTracking)
-        assertNull(outbox.sourceImageKey)
-        assertEquals(ParseInput.Link(link), outbox.input)
+        assertEquals(ParseInputType.LINK, outbox.inputType)
+        assertEquals("https://shop.example.com/p/1?utm_source=x", outbox.inputValue)
+        assertEquals("https://shop.example.com/p/1", outbox.urlWithoutTracking)
+        assertEquals(link, outbox.input.toLink())
     }
 
     @Test
-    fun `이미지 입력은 이미지 키만 든다`() {
-        val outbox = ItemParseOutbox.of(ParseRequester.tournamentItem(3L), ParseInput.Image("images/a.png"))
+    fun `이미지 입력은 이미지 키를 값으로 들고 추적 파라미터를 뺀 URL 이 없다`() {
+        val outbox = ItemParseOutbox.of(ParseRequester.tournamentItem(3L), ParseInput.ofImage("images/a.png"))
 
         assertEquals(ParseRequesterType.TOURNAMENT_ITEM, outbox.requesterType)
-        assertNull(outbox.sourceUrl)
-        assertNull(outbox.sourceUrlWithoutTracking)
-        assertEquals(ParseInput.Image("images/a.png"), outbox.input)
+        assertEquals(ParseInputType.IMAGE, outbox.inputType)
+        assertEquals("images/a.png", outbox.inputValue)
+        assertNull(outbox.urlWithoutTracking)
+        assertNull(outbox.input.linkOrNull())
+        assertEquals(ParseInput.ofImage("images/a.png"), outbox.input)
     }
 
     @Test
-    fun `URL 과 이미지 키를 둘 다 들거나 둘 다 비우면 생성에 실패한다`() {
-        val link = ProductLink.parse("https://shop.example.com/p/1")
-        assertFailsWith<IllegalArgumentException> {
-            ItemParseOutbox(ParseRequesterType.WISH, 1L, link, null, "images/a.png")
-        }
-        assertFailsWith<IllegalArgumentException> {
-            ItemParseOutbox(ParseRequesterType.WISH, 1L, null, null, null)
-        }
+    fun `링크가 아닌 입력에서 링크를 꺼내면 코드 버그로 본다`() {
+        assertFailsWith<IllegalStateException> { ParseInput.ofImage("images/a.png").toLink() }
     }
 
     @Test
     fun `저장 상한을 넘는 URL 은 추적 파라미터를 뺀 URL 을 남기지 않는다`() {
         val link = ProductLink.parse("https://shop.example.com/p/1?q=" + "a".repeat(ProductLink.MAX_LENGTH))
 
-        assertNull(ItemParseOutbox.sourceUrlWithoutTrackingOf(link))
+        assertNull(ItemParseOutbox.urlWithoutTrackingOf(link))
     }
 
     @Test
@@ -95,7 +91,7 @@ class ItemParseOutboxTest {
     }
 
     private fun pending(): ItemParseOutbox =
-        ItemParseOutbox.of(ParseRequester.wish(1L), ParseInput.Link(ProductLink.parse("https://shop.example.com/p/1")))
+        ItemParseOutbox.of(ParseRequester.wish(1L), ParseInput.ofLink(ProductLink.parse("https://shop.example.com/p/1")))
 
     private fun processing(): ItemParseOutbox = pending().apply { claim() }
 }
