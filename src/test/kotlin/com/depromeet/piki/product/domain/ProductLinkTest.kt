@@ -72,6 +72,20 @@ class ProductLinkTest {
     }
 
     @Test
+    fun `URI 로는 읽히지만 host 가 없는 raw 는 형식 오류로 거부한다`() {
+        listOf(
+            "https:foo",
+            "https:///products/1",
+            "https://exa_mple.com/products/1",
+            "https://user@/products/1",
+            "https://.com/products/1",
+        ).forEach { raw ->
+            val e = assertFailsWith<ProductLinkException>("'$raw' 는 거부되어야 함") { ProductLink.parse(raw) }
+            assertEquals(ProductLinkErrorCode.INVALID_FORMAT, e.errorCode)
+        }
+    }
+
+    @Test
     fun `대문자 scheme 도 case-insensitive 로 통과한다`() {
         val link = ProductLink.parse("HTTPS://shop.example.com/items/42")
         assertTrue(link.value.scheme.equals("https", ignoreCase = true))

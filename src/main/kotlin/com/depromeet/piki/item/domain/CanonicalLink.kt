@@ -31,7 +31,7 @@ value class CanonicalLink private constructor(
 
         // fragment 는 서버로 가지 않아 상품을 바꾸지 못한다. 경로와 쿼리만 다시 조립하므로 저절로 빠진다
         fun of(link: ProductLink): CanonicalLink {
-            val host = requireNotNull(link.normalizedHost()) { "host 없는 링크는 canonical 을 만들 수 없다" }
+            val host = link.normalizedHost()
             val path = normalizePath(host, link.value.rawPath.orEmpty())
             val kept = keptParams(link.value.rawQuery)
             val url =
