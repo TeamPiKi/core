@@ -32,6 +32,6 @@ interface ImageStorage {
     // prefix 에 객체가 없으면 no-op. 객체가 없는 경우에도 안전하게 호출할 수 있다.
     fun deleteByPrefix(prefix: String)
 
-    // 단일 객체를 삭제한다 — 파싱이 끝난 raw 원본(items/raw/...)을 회수하는 데 쓴다. 객체가 없어도 no-op(멱등).
+    // 객체가 없어도 no-op(멱등)
     fun delete(key: String)
 }

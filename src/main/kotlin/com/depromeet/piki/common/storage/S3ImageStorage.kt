@@ -128,7 +128,7 @@ class S3ImageStorage(
     }
 
     override fun delete(key: String) {
-        // 단건 raw 원본 회수. 객체가 없어도 S3 deleteObject 는 성공(멱등)이라 별도 존재 확인이 필요 없다.
+        // 객체가 없어도 S3 deleteObject 는 성공(멱등)이라 별도 존재 확인이 필요 없다
         runCatching {
             s3Client.deleteObject(
                 DeleteObjectRequest.builder().bucket(s3Properties.bucket).key(key).build(),

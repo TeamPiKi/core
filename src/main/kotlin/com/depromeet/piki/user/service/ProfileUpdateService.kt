@@ -75,7 +75,7 @@ class ProfileUpdateService(
             userService.updateProfile(userId, nickname, url)
         }.onFailure { deleteQuietly(key) }
             .getOrThrow()
-            // 확정본이 자리를 잡은 뒤에만 raw 를 회수한다. 실패해도 items/raw/ lifecycle(1일)이 만료하므로 best-effort.
+            // 확정본이 자리를 잡은 뒤에만 raw 를 회수한다. best-effort 라 실패하면 raw 가 남는다
             .also { deleteQuietly(imageKey) }
     }
 
