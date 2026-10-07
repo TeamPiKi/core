@@ -12,16 +12,21 @@ import kotlin.random.Random
 @Entity
 @Table(name = "tournaments")
 class Tournament(
+
     ownerTournamentUserId: Long,
+
     @Column(name = "name", nullable = false)
     val name: String,
+
     @Column(name = "invite_code", nullable = false, length = 6)
     val inviteCode: String,
+
     inviteExpiresAt: LocalDateTime,
 
     @Enumerated(value = EnumType.STRING)
     @Column(columnDefinition = "varchar(50)")
     var status: TournamentStatus = TournamentStatus.PENDING,
+
     @Column(name = "source_tournament_id")
     val sourceTournamentId: Long? = null,
 ) : LongBaseEntity() {
@@ -37,6 +42,9 @@ class Tournament(
 
     val inviteExpiresAt: LocalDateTime get() = _inviteExpiresAt
 
+    var startedAt: LocalDateTime? = null
+        protected set
+
     @Column(name = "play_link_expires_at")
     var playLinkExpiresAt: LocalDateTime? = null
 
@@ -51,9 +59,11 @@ class Tournament(
         _ownerTournamentUserId = tournamentUserId
     }
 
+    // 출전 값은 이 시각까지의 버전으로 계산한다. 호출부가 출전 아이템 행을 잠근 뒤 불러야 버전 생성과 순서가 맞는다
     fun start() {
         check(isPending()) { "start는 PENDING 상태에서만 호출 가능" }
         this.status = TournamentStatus.IN_PROGRESS
+        this.startedAt = LocalDateTime.now()
     }
 
     fun complete() {
