@@ -19,7 +19,7 @@ object ItemParsingMetrics {
 
     const val REASON_NONE = "none"
 
-    // 값은 infra 의 extraction-error-codes.yaml bucket 과 같아야 한다. ExtractionErrorCatalogTest 가 대조한다.
+    // 값은 계약(shared-infra/contracts/extraction.proto)의 Bucket 이름을 소문자로 쓴 것. ExtractionErrorCatalogTest 가 대조한다
     const val REASON_NOT_PRODUCT = "not_product"
     const val REASON_UNREADABLE = "unreadable"
     const val REASON_BLOCKED = "blocked"

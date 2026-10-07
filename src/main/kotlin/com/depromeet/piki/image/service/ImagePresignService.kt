@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.UUID
 
-// 등록에 매이지 못한 raw 는 지우지 않는다. 등록된 raw 가 아이템의 정체 값이라 lifecycle 만료도 걸지 않는다
+// 등록에 매이지 못한 raw 는 지우지 않는다. 등록된 raw 가 이미지 아이템의 정체 값이 되므로(#1180) lifecycle 만료도 걸지 않는다
 @Service
 class ImagePresignService(
     private val imageStorage: ImageStorage,
