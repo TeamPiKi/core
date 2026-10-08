@@ -25,7 +25,7 @@ class ProductLinkException private constructor(
         fun unsupportedScheme(): ProductLinkException = ProductLinkException(ProductLinkErrorCode.UNSUPPORTED_SCHEME)
 
         // fetch 로 상품 정보를 가져올 수 없는 플랫폼(직접 접근을 봇 차단하는 쇼핑몰)을 등록 시점에 거른다.
-        // 어느 플랫폼인지는 message 에 박지 않는다(safeLogString 으로 로그). 사용자에겐 "아직 안 되는 곳" 안내만.
+        // 어느 플랫폼인지는 message 에 박지 않는다. 사용자에겐 "아직 안 되는 곳" 안내만.
         fun unsupportedPlatform(): ProductLinkException = ProductLinkException(ProductLinkErrorCode.UNSUPPORTED_PLATFORM)
     }
 }

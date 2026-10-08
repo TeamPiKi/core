@@ -65,6 +65,7 @@ class ProfileUpdateService(
         val declaredMimeType = ProfileImageFile.mimeTypeForExtension(raw.extension)
         val profileImage = ProfileImageFile.of(imageStorage.download(raw.value), declaredMimeType)
 
+        // raw 를 그대로 가리키지 않고 사용자 접두 아래로 옮겨 심는다. 탈퇴 cascade 가 이 접두로 통째로 지워야 PII 가 안 남는다
         val key = "$PROFILE_PREFIX$userId/${UUID.randomUUID()}.${profileImage.extension}"
         // 업로드부터 영속화까지를 한 묶음으로 보고, 어느 단계에서 떨어지든 이 key 를 회수한다. 영속화가 떨어지면
         // 방금 올린 객체가 아무도 안 가리키는 orphan 으로 남고(닉네임 중복 409 가 흔한 트리거), 활성 확인과 영속화

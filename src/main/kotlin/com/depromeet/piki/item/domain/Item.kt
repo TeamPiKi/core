@@ -30,7 +30,6 @@ class Item(
         return canonicalUrl?.toLink()
     }
 
-    // 원본 이미지는 파싱 뒤 지우므로 지금은 링크만 다시 가져올 수 있다
     fun refreshInput(): ParseInput {
         val canonical = canonicalUrl ?: throw ItemException.notRefreshable()
         if (sourceType != ParseInputType.LINK) throw ItemException.notRefreshable()

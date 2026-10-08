@@ -31,8 +31,7 @@ class HttpLinkSnapshotExtractor(
             restClient = restClient,
             path = ExtractionEndpoints.LINK_EXTRACTION,
             request = request.build(),
-            link = link,
-            target = "url=${link.safeLogString()}",
+            target = "url=\"$link\"",
         )
     }
 }

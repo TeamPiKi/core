@@ -7,9 +7,6 @@ class ProductLink private constructor(
 ) {
     override fun toString(): String = value.toString()
 
-    // 쿼리와 fragment 에는 토큰이 실릴 수 있어 로그에는 host 와 path 만 남긴다
-    fun safeLogString(): String = "${value.host}${value.rawPath.orEmpty()}"
-
     // 부분 문자열이 아니라 도메인 단위로 본다. evil-naver.com 이 naver.com 으로 통과하면 안 된다
     // domains 는 소문자이고 끝에 점이 없어야 한다. 그 정규화는 목록을 만드는 쪽이 한다
     fun matchesAnyDomain(domains: Collection<String>): Boolean {
