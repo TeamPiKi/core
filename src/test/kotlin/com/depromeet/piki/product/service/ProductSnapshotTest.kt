@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service
 
+import com.depromeet.piki.product.domain.ProductLink
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -65,5 +66,15 @@ class ProductSnapshotTest {
     @Test
     fun `price 가 양수이면 그대로 통과한다`() {
         assertEquals(1_000, ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW").price)
+    }
+
+    @Test
+    fun `finalUrl 은 상품 주소 규칙에 맞을 때만 링크로 들고 아니면 null 이다`() {
+        assertEquals(
+            ProductLink.parse("https://www.musinsa.com/products/1"),
+            ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "https://www.musinsa.com/products/1").finalUrl,
+        )
+        assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "not a url").finalUrl)
+        assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "http://insecure.example.com/p/1").finalUrl)
     }
 }

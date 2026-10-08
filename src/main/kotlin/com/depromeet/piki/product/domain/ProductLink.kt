@@ -34,6 +34,16 @@ class ProductLink private constructor(
 
         private val HTTP_SCHEMES = setOf("https")
 
+        // 상품 주소 규칙에 안 맞는 값은 없는 것으로 본다. 추출기가 돌려준 귀결점처럼 우리가 검증하지 않은 출처에서 쓴다
+        fun parseOrNull(raw: String): ProductLink? =
+            try {
+                parse(raw)
+            } catch (e: ProductLinkException) {
+                null
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+
         fun parse(raw: String): ProductLink {
             val trimmed = raw.trim()
             // 빈 값은 요청 DTO 가 먼저 걸러 여기 닿지 않는다. 닿으면 캐치올이 이 문구를 응답 detail 로 내보내므로 사용자 문구로 둔다

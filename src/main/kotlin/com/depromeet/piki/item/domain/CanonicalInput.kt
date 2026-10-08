@@ -13,5 +13,5 @@ value class CanonicalInput(
     fun toLink(): ProductLink = ProductLink.parse(value)
 
     // 정체 값을 그대로 다시 파싱 입력으로 쓴다
-    fun toParseInput(type: ParseInputType): ParseInput = ParseInput(type, value)
+    fun toParseInput(type: ParseInputType): ParseInput = ParseInput.of(type, value)
 }

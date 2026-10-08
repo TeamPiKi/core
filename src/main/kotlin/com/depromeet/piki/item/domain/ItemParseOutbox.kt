@@ -42,7 +42,7 @@ class ItemParseOutbox(
 
     val requester: ParseRequester get() = ParseRequester(requesterType, requesterId)
 
-    val input: ParseInput get() = ParseInput(inputType, inputValue)
+    val input: ParseInput get() = ParseInput.of(inputType, inputValue)
 
     fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
 

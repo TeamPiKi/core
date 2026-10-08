@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.image.domain.ImageKey
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import org.springframework.stereotype.Repository
@@ -32,11 +33,16 @@ class TournamentItemRepositoryImpl(
         normalized: NormalizedInput,
     ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, normalized).firstOrNull()
 
-    override fun findRequestedInputs(
+    override fun findRequestedImageKeys(
         tournamentId: Long,
-        values: Collection<String>,
-    ): Set<String> =
-        if (values.isEmpty()) emptySet() else tournamentItemJpaRepository.findRequestedInputsByTournamentId(tournamentId, values).toSet()
+        keys: Collection<ImageKey>,
+    ): Set<ImageKey> {
+        if (keys.isEmpty()) return emptySet()
+        return tournamentItemJpaRepository
+            .findRequestedInputsByTournamentId(tournamentId, keys.map { it.value })
+            .map(ImageKey::parse)
+            .toSet()
+    }
 
     override fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView> =
         tournamentItemJpaRepository.findPendingCardsByItemId(itemId)

@@ -81,7 +81,7 @@ class TournamentItemController(
         @PathVariable tournamentId: Long,
         @RequestBody request: ConfirmImageUploadRequest,
     ): ApiResponseBody<AddTournamentItemsFromImagesResponse> {
-        val tournamentItemIds = tournamentItemService.confirmImageRegistration(userId, tournamentId, request.imageKeys)
+        val tournamentItemIds = tournamentItemService.confirmImageRegistration(userId, tournamentId, request.toImageKeys())
         return ApiResponseBody.ok(AddTournamentItemsFromImagesResponse(tournamentItemIds))
     }
 

@@ -15,7 +15,11 @@ value class NormalizedInput private constructor(
     companion object {
         // 저장 상한을 넘으면 정규화 값이 없다. 절단은 다른 상품과 충돌할 수 있는 거짓 정체성이라 쓰지 않는다(#843)
         fun of(input: ParseInput): NormalizedInput? {
-            val value = input.linkOrNull()?.let(::normalize) ?: input.value
+            val value =
+                when (input) {
+                    is ParseInput.Link -> normalize(input.link)
+                    is ParseInput.Image -> input.value
+                }
             return value.takeIf { it.length <= ProductLink.MAX_LENGTH }?.let(::NormalizedInput)
         }
 

@@ -1,6 +1,7 @@
 package com.depromeet.piki.user.service
 
 import com.depromeet.piki.common.storage.ImageStorage
+import com.depromeet.piki.image.domain.ImageKey
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
@@ -58,10 +59,11 @@ class ProfileUpdateService(
         // (authorization before payload processing). 발급 단계에서 이미 막지만, 확정도 스스로 방어한다.
         requireMemberForProfileImage(userId)
         // 우리가 발급한 key 형식인지 + 실제로 올라왔는지. 아니면 400/502 로 여기서 끝난다.
-        imagePresignService.verifyUploaded(listOf(imageKey))
+        val raw = ImageKey.parse(imageKey)
+        imagePresignService.verifyUploaded(listOf(raw))
         // 발급 때 우리가 붙인 확장자로 "클라가 선언했던" MIME 을 되찾아, 실제 바이트와 일치하는지 교차검증한다.
-        val declaredMimeType = ProfileImageFile.mimeTypeForExtension(imagePresignService.extensionOf(imageKey))
-        val profileImage = ProfileImageFile.of(imageStorage.download(imageKey), declaredMimeType)
+        val declaredMimeType = ProfileImageFile.mimeTypeForExtension(raw.extension)
+        val profileImage = ProfileImageFile.of(imageStorage.download(raw.value), declaredMimeType)
 
         val key = "$PROFILE_PREFIX$userId/${UUID.randomUUID()}.${profileImage.extension}"
         // 업로드부터 영속화까지를 한 묶음으로 보고, 어느 단계에서 떨어지든 이 key 를 회수한다. 영속화가 떨어지면
@@ -76,7 +78,7 @@ class ProfileUpdateService(
         }.onFailure { deleteQuietly(key) }
             .getOrThrow()
             // 확정본이 자리를 잡은 뒤에만 raw 를 회수한다. best-effort 라 실패하면 raw 가 남는다
-            .also { deleteQuietly(imageKey) }
+            .also { deleteQuietly(raw.value) }
     }
 
     // 프로필 이미지 변경은 MEMBER 전용 — 게스트는 PII 를 갖지 않는다.

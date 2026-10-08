@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.image.domain.ImageKey
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import java.util.UUID
@@ -25,10 +26,11 @@ interface TournamentItemRepository {
         normalized: NormalizedInput,
     ): Long?
 
-    fun findRequestedInputs(
+    // 이 토너먼트에 이미 요청된 이미지 키
+    fun findRequestedImageKeys(
         tournamentId: Long,
-        values: Collection<String>,
-    ): Set<String>
+        keys: Collection<ImageKey>,
+    ): Set<ImageKey>
 
     // 이 상품을 대기실(PENDING) 토너먼트에 출전시킨 카드 — 해소 통지 수신자 후보(#1028·#1051).
     fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView>
