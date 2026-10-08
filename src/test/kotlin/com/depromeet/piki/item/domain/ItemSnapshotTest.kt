@@ -80,20 +80,20 @@ class ItemSnapshotTest {
 
     @Test
     fun `extracted 는 추출값과 요청자로 버전을 만든다`() {
-        val requester = UUID.randomUUID()
+        val slot = UUID.randomUUID()
 
         val snapshot =
             ItemSnapshot.extracted(
                 itemId = 1L,
                 extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, currency = "KRW"),
-                requestedBy = requester,
+                requestedBy = slot,
             )
 
         assertEquals(1L, snapshot.itemId)
         assertEquals("나이키", snapshot.name)
         assertEquals(99_000, snapshot.price)
         assertEquals("KRW", snapshot.currency)
-        assertEquals(requester, snapshot.createdBy)
+        assertEquals(slot, snapshot.createdBy)
         assertTrue(snapshot.isReady())
     }
 

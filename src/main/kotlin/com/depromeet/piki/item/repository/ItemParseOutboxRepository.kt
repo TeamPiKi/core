@@ -1,8 +1,8 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ParseRequester
-import com.depromeet.piki.item.domain.ParseRequesterType
+import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ItemSlotType
 
 interface ItemParseOutboxRepository {
     fun save(outbox: ItemParseOutbox): ItemParseOutbox
@@ -13,10 +13,10 @@ interface ItemParseOutboxRepository {
 
     fun findByIdForUpdate(id: Long): ItemParseOutbox?
 
-    fun findLatestByRequesters(
-        type: ParseRequesterType,
+    fun findLatestBySlots(
+        type: ItemSlotType,
         ids: Collection<Long>,
     ): List<ItemParseOutbox>
 
-    fun findLatestByRequester(requester: ParseRequester): ItemParseOutbox?
+    fun findLatestBySlot(slot: ItemSlot): ItemParseOutbox?
 }

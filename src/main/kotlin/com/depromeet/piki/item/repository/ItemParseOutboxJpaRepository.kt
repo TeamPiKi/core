@@ -1,7 +1,7 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ParseRequesterType
+import com.depromeet.piki.item.domain.ItemSlotType
 import jakarta.persistence.LockModeType
 import jakarta.persistence.QueryHint
 import org.springframework.data.domain.Limit
@@ -32,12 +32,12 @@ interface ItemParseOutboxJpaRepository : JpaRepository<ItemParseOutbox, Long> {
     ): ItemParseOutbox?
 
     @Query(
-        "select o from ItemParseOutbox o where o.requesterType = :type and o.requesterId in :ids and o.deletedAt is null " +
-            "and o.id = (select max(o2.id) from ItemParseOutbox o2 where o2.requesterType = o.requesterType " +
-            "and o2.requesterId = o.requesterId and o2.deletedAt is null)",
+        "select o from ItemParseOutbox o where o.slotType = :type and o.slotId in :ids and o.deletedAt is null " +
+            "and o.id = (select max(o2.id) from ItemParseOutbox o2 where o2.slotType = o.slotType " +
+            "and o2.slotId = o.slotId and o2.deletedAt is null)",
     )
-    fun findLatestByRequesters(
-        @Param("type") type: ParseRequesterType,
+    fun findLatestBySlots(
+        @Param("type") type: ItemSlotType,
         @Param("ids") ids: Collection<Long>,
     ): List<ItemParseOutbox>
 }

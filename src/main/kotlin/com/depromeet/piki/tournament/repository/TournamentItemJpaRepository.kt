@@ -55,7 +55,7 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     // 같은 입력으로 파싱을 요청한 적 있는 출전. 한 토너먼트의 출전으로 먼저 좁혀져 입력 인덱스가 필요 없다
     @Query(
         "SELECT t.id FROM TournamentItem t, ItemParseOutbox o " +
-            "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
+            "WHERE o.slotType = com.depromeet.piki.item.domain.ItemSlotType.TOURNAMENT_ITEM AND o.slotId = t.id " +
             "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.normalizedInput = :value",
     )
     fun findIdsByTournamentIdAndNormalizedInput(
@@ -65,7 +65,7 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
 
     @Query(
         "SELECT o.normalizedInput FROM TournamentItem t, ItemParseOutbox o " +
-            "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
+            "WHERE o.slotType = com.depromeet.piki.item.domain.ItemSlotType.TOURNAMENT_ITEM AND o.slotId = t.id " +
             "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.normalizedInput IN :values",
     )
     fun findRequestedInputsByTournamentId(

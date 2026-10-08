@@ -13,7 +13,6 @@ sealed interface ItemCard {
     val status: ItemStatus
     val display: ItemSnapshot?
     val refreshing: Boolean
-
     val pendingLink: ProductLink?
 
     val itemId: Long? get() = display?.itemId

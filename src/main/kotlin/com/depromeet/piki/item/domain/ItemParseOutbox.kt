@@ -14,10 +14,10 @@ class ItemParseOutbox(
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
-    val requesterType: ParseRequesterType,
+    val slotType: ItemSlotType,
 
     @Column(nullable = false)
-    val requesterId: Long,
+    val slotId: Long,
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -30,7 +30,7 @@ class ItemParseOutbox(
     @Column(nullable = false, length = ProductLink.MAX_LENGTH)
     val inputValue: String,
 
-    // 같은 요청자의 중복 요청 판정 키. 귀결점을 따라가기 전의 값이라 아이템의 정체 값과 다를 수 있다
+    // 같은 슬롯의 중복 요청 판정 키. 귀결점을 따라가기 전의 값이라 아이템의 정체 값과 다를 수 있다
     @Column(length = ProductLink.MAX_LENGTH)
     val normalizedInput: NormalizedInput?,
 
@@ -40,7 +40,7 @@ class ItemParseOutbox(
     var status: ItemParseOutboxStatus = ItemParseOutboxStatus.PENDING
         protected set
 
-    val requester: ParseRequester get() = ParseRequester(requesterType, requesterId)
+    val slot: ItemSlot get() = ItemSlot(slotType, slotId)
 
     val input: ParseInput get() = ParseInput.of(inputType, inputValue)
 
@@ -70,13 +70,13 @@ class ItemParseOutbox(
 
     companion object {
         fun of(
-            requester: ParseRequester,
+            slot: ItemSlot,
             purpose: ParsePurpose,
             input: ParseInput,
         ): ItemParseOutbox =
             ItemParseOutbox(
-                requesterType = requester.type,
-                requesterId = requester.id,
+                slotType = slot.type,
+                slotId = slot.id,
                 purpose = purpose,
                 inputType = input.type,
                 inputValue = input.value,

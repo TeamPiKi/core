@@ -1,8 +1,8 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ParseRequester
-import com.depromeet.piki.item.domain.ParseRequesterType
+import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ItemSlotType
 import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Repository
 
@@ -19,11 +19,11 @@ class ItemParseOutboxRepositoryImpl(
 
     override fun findByIdForUpdate(id: Long): ItemParseOutbox? = itemParseOutboxJpaRepository.findByIdForUpdate(id)
 
-    override fun findLatestByRequesters(
-        type: ParseRequesterType,
+    override fun findLatestBySlots(
+        type: ItemSlotType,
         ids: Collection<Long>,
-    ): List<ItemParseOutbox> = if (ids.isEmpty()) emptyList() else itemParseOutboxJpaRepository.findLatestByRequesters(type, ids)
+    ): List<ItemParseOutbox> = if (ids.isEmpty()) emptyList() else itemParseOutboxJpaRepository.findLatestBySlots(type, ids)
 
-    override fun findLatestByRequester(requester: ParseRequester): ItemParseOutbox? =
-        findLatestByRequesters(requester.type, listOf(requester.id)).firstOrNull()
+    override fun findLatestBySlot(slot: ItemSlot): ItemParseOutbox? =
+        findLatestBySlots(slot.type, listOf(slot.id)).firstOrNull()
 }

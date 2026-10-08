@@ -2,7 +2,7 @@ package com.depromeet.piki.wishlist.domain
 
 import com.depromeet.piki.common.domain.LongBaseEntity
 import com.depromeet.piki.item.domain.CardQuery
-import com.depromeet.piki.item.domain.ParseRequester
+import com.depromeet.piki.item.domain.ItemSlot
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Table
@@ -31,15 +31,15 @@ class Wish(
         itemId?.let { require(it > 0) { "itemId 는 양수여야 한다: $it" } }
     }
 
-    val requester: ParseRequester get() = ParseRequester.wish(getId())
+    val slot: ItemSlot get() = ItemSlot.wish(getId())
 
-    fun cardQuery(): CardQuery = CardQuery(requester = requester, itemId = itemId, owner = userId)
+    fun cardQuery(): CardQuery = CardQuery(slot = slot, itemId = itemId, owner = userId)
 
     fun verifyOwnedBy(userId: UUID) {
         if (this.userId != userId) throw WishException.forbiddenWishItems()
     }
 
-    fun resolveItem(itemId: Long) {
+    fun fill(itemId: Long) {
         this.itemId?.let {
             check(it == itemId) { "위시 ${getIdOrNull()} 는 이미 아이템 $it 로 확정됐다" }
             return

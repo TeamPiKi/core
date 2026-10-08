@@ -62,7 +62,7 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
     // 같은 입력으로 파싱을 요청한 적 있는 위시. 한 사용자의 위시로 먼저 좁혀져 입력 인덱스가 필요 없다
     @Query(
         "SELECT w.id FROM Wish w, ItemParseOutbox o " +
-            "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.WISH AND o.requesterId = w.id " +
+            "WHERE o.slotType = com.depromeet.piki.item.domain.ItemSlotType.WISH AND o.slotId = w.id " +
             "AND w.userId = :userId AND w.deletedAt IS NULL AND o.normalizedInput = :value",
     )
     fun findIdsByUserIdAndNormalizedInput(

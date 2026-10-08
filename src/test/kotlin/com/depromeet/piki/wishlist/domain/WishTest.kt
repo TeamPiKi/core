@@ -1,6 +1,6 @@
 package com.depromeet.piki.wishlist.domain
 
-import com.depromeet.piki.item.domain.ParseRequester
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.CardQuery
 import com.depromeet.piki.support.withId
 import java.util.UUID
@@ -22,10 +22,10 @@ class WishTest {
     }
 
     @Test
-    fun `resolveItem 은 비어 있던 아이템을 확정한다`() {
+    fun `fill 은 비어 있던 아이템을 확정한다`() {
         val wish = Wish(userId = UUID.randomUUID(), itemId = null)
 
-        wish.resolveItem(3L)
+        wish.fill(3L)
 
         assertEquals(3L, wish.itemId)
     }
@@ -34,7 +34,7 @@ class WishTest {
     fun `같은 아이템으로 다시 확정하면 멱등이다`() {
         val wish = Wish(userId = UUID.randomUUID(), itemId = 3L)
 
-        wish.resolveItem(3L)
+        wish.fill(3L)
 
         assertEquals(3L, wish.itemId)
     }
@@ -43,14 +43,14 @@ class WishTest {
     fun `이미 확정된 위시를 다른 아이템으로 확정하면 코드 버그다`() {
         val wish = Wish(userId = UUID.randomUUID(), itemId = 3L)
 
-        assertFailsWith<IllegalStateException> { wish.resolveItem(4L) }
+        assertFailsWith<IllegalStateException> { wish.fill(4L) }
     }
 
     @Test
-    fun `resolveItem 에 0 이하 id 를 주면 실패한다`() {
+    fun `fill 에 0 이하 id 를 주면 실패한다`() {
         val wish = Wish(userId = UUID.randomUUID(), itemId = null)
 
-        assertFailsWith<IllegalArgumentException> { wish.resolveItem(0L) }
+        assertFailsWith<IllegalArgumentException> { wish.fill(0L) }
     }
 
     @Test
@@ -58,7 +58,7 @@ class WishTest {
         val owner = UUID.randomUUID()
         val wish = Wish(userId = owner, itemId = 3L).withId(9L)
 
-        assertEquals(CardQuery(requester = ParseRequester.wish(9L), itemId = 3L, owner = owner), wish.cardQuery())
+        assertEquals(CardQuery(slot = ItemSlot.wish(9L), itemId = 3L, owner = owner), wish.cardQuery())
     }
 
     @Test

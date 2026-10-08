@@ -1,6 +1,6 @@
 package com.depromeet.piki.item.domain
 
-enum class ParseRequesterType(
+enum class ItemSlotType(
     val description: String,
 ) {
     WISH("위시 등록·새로고침"),

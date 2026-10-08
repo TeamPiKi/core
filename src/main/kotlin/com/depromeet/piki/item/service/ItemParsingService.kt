@@ -25,7 +25,7 @@ class ItemParsingService(
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemParseOutboxRepository: ItemParseOutboxRepository,
     private val itemResolver: ItemResolver,
-    private val parseRequesters: ParseRequesters,
+    private val itemSlots: ItemSlots,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -47,23 +47,23 @@ class ItemParsingService(
         extracted: ProductSnapshot,
     ): ItemStatus? {
         val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return null
-        val requester = parseRequesters.find(outbox.requester) ?: return discard(outbox)
+        val slot = itemSlots.find(outbox.slot) ?: return discard(outbox)
         if (!ItemSnapshot.accepts(extracted)) {
-            close(outbox, requester)
+            close(outbox, slot)
             return ItemStatus.FAILED
         }
-        val item = itemOf(outbox, requester, extracted.finalUrl)
-        val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, requester.owner))
-        requester.itemId ?: parseRequesters.resolveItem(outbox.requester, item.getId())
+        val item = itemOf(outbox, slot, extracted.finalUrl)
+        val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, slot.owner))
+        slot.itemId ?: itemSlots.fill(outbox.slot, item.getId())
         outbox.succeed()
-        eventPublisher.publishEvent(parsingFact(outbox, requester, version))
+        eventPublisher.publishEvent(parsingFact(outbox, slot, version))
         return if (version.isReady()) ItemStatus.READY else ItemStatus.INCOMPLETE
     }
 
     @Transactional
     fun markFailed(itemParseOutboxId: Long): Boolean {
         val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
-        parseRequesters.find(outbox.requester)?.let { close(outbox, it) } ?: discard(outbox)
+        itemSlots.find(outbox.slot)?.let { close(outbox, it) } ?: discard(outbox)
         return true
     }
 
@@ -75,7 +75,7 @@ class ItemParsingService(
     private fun findProcessingForUpdate(itemParseOutboxId: Long): ItemParseOutbox? =
         itemParseOutboxRepository.findByIdForUpdate(itemParseOutboxId)?.takeIf { it.isProcessing() }
 
-    // 탈퇴로 요청자 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
+    // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
     private fun discard(outbox: ItemParseOutbox): Nothing? {
         outbox.fail()
         return null
@@ -84,25 +84,25 @@ class ItemParsingService(
     // 아이템 행을 잠가 토너먼트 시작과 버전 생성을 직렬화한다
     private fun itemOf(
         outbox: ItemParseOutbox,
-        requester: ParseRequesterState,
+        slot: ItemSlotState,
         finalUrl: ProductLink?,
     ): Item {
-        val resolvedId = requester.itemId ?: itemResolver.resolve(outbox.input, finalUrl).getId()
+        val resolvedId = slot.itemId ?: itemResolver.resolve(outbox.input, finalUrl).getId()
         val item = itemRepository.findByIdForUpdate(resolvedId) ?: error("item $resolvedId 이 없다")
-        requester.itemId?.let { itemResolver.warnIfDrifted(item, finalUrl) }
+        slot.itemId?.let { itemResolver.warnIfDrifted(item, finalUrl) }
         return item
     }
 
     private fun close(
         outbox: ItemParseOutbox,
-        requester: ParseRequesterState,
+        slot: ItemSlotState,
     ) {
         outbox.fail()
-        if (outbox.isRefresh()) logRefreshFailure(outbox, requester)
+        if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
         eventPublisher.publishEvent(
             ItemParsingFailed(
-                requester = outbox.requester,
-                owner = requester.owner,
+                slot = outbox.slot,
+                owner = slot.owner,
                 refresh = outbox.isRefresh(),
             ),
         )
@@ -111,26 +111,26 @@ class ItemParsingService(
     // 정체 URL 은 리다이렉트의 끝이라 앞선 홉이 만든 쿠키·상태 없이는 안 열리는 페이지일 수 있다. 대응 코드를 두기 전에 실제로 생기는지 본다
     private fun logRefreshFailure(
         outbox: ItemParseOutbox,
-        requester: ParseRequesterState,
+        slot: ItemSlotState,
     ) {
         log.error(
             "item.refresh.failed outbox={} item={} url=\"{}\" 정체 URL 로 다시 가져오지 못함",
             outbox.getId(),
-            requester.itemId,
+            slot.itemId,
             outbox.inputValue,
         )
     }
 
     private fun parsingFact(
         outbox: ItemParseOutbox,
-        requester: ParseRequesterState,
+        slot: ItemSlotState,
         version: ItemSnapshot,
     ): Any {
         val refresh = outbox.isRefresh()
         return if (version.isReady()) {
-            ItemParsingCompleted(outbox.requester, requester.owner, version.itemId, version.getId(), refresh)
+            ItemParsingCompleted(outbox.slot, slot.owner, version.itemId, version.getId(), refresh)
         } else {
-            ItemParsingIncomplete(outbox.requester, requester.owner, version.itemId, version.getId(), refresh)
+            ItemParsingIncomplete(outbox.slot, slot.owner, version.itemId, version.getId(), refresh)
         }
     }
 }

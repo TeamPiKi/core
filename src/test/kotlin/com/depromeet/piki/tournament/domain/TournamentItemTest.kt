@@ -1,6 +1,6 @@
 package com.depromeet.piki.tournament.domain
 
-import com.depromeet.piki.item.domain.ParseRequester
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.CardQuery
 import com.depromeet.piki.support.withId
 import org.junit.jupiter.api.Test
@@ -46,14 +46,14 @@ class TournamentItemTest {
     }
 
     @Test
-    fun `resolveItem 은 비어 있던 아이템을 한 번만 확정한다`() {
+    fun `fill 은 비어 있던 아이템을 한 번만 확정한다`() {
         val tournamentItem = TournamentItem(tournamentId = 1, userId = UUID.randomUUID(), itemId = null)
 
-        tournamentItem.resolveItem(3L)
-        tournamentItem.resolveItem(3L)
+        tournamentItem.fill(3L)
+        tournamentItem.fill(3L)
 
         assertEquals(3L, tournamentItem.itemId)
-        assertFailsWith<IllegalStateException> { tournamentItem.resolveItem(4L) }
+        assertFailsWith<IllegalStateException> { tournamentItem.fill(4L) }
     }
 
     @Test
@@ -63,7 +63,7 @@ class TournamentItemTest {
         val tournamentItem = TournamentItem(tournamentId = 1, userId = owner, itemId = 3L).withId(9L)
 
         assertEquals(
-            CardQuery(requester = ParseRequester.tournamentItem(9L), itemId = 3L, owner = owner, asOf = startedAt),
+            CardQuery(slot = ItemSlot.tournamentItem(9L), itemId = 3L, owner = owner, asOf = startedAt),
             tournamentItem.cardQuery(startedAt),
         )
     }

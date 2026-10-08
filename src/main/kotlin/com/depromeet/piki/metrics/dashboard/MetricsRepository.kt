@@ -130,7 +130,7 @@ class MetricsRepository(
         val rows =
             jdbcTemplate.query(
                 """
-                SELECT o.requester_type = 'WISH' AS is_wish, o.status, COUNT(*)
+                SELECT o.slot_type = 'WISH' AS is_wish, o.status, COUNT(*)
                 FROM item_parse_outbox o
                 WHERE o.updated_at >= ? AND o.updated_at < ? AND o.status IN ('SUCCEEDED','FAILED')
                 GROUP BY is_wish, o.status
@@ -411,7 +411,7 @@ class MetricsRepository(
 
     companion object {
         private const val IS_IMAGE_WISH =
-            "EXISTS(SELECT 1 FROM item_parse_outbox o WHERE o.requester_type = 'WISH' AND o.requester_id = w.id " +
+            "EXISTS(SELECT 1 FROM item_parse_outbox o WHERE o.slot_type = 'WISH' AND o.slot_id = w.id " +
                 "AND o.input_type = 'IMAGE')"
 
         // 개발진 user_id 명단(developers 테이블). "개발진 포함" 토글이 꺼져 있을 때(기본) 이 user_id 들을 집계에서 뺀다.
