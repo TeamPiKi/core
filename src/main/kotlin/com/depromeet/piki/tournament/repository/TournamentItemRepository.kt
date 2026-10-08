@@ -19,7 +19,7 @@ interface TournamentItemRepository {
 
     fun findByIdIncludingDeleted(id: Long): TournamentItem?
 
-    fun findIdByTournamentIdAndCanonicalInput(
+    fun findIdByTournamentIdAndNormalizedInput(
         tournamentId: Long,
         value: String,
     ): Long?

@@ -23,7 +23,7 @@ class ItemParseOutboxTest {
         assertEquals(ParseRequester.wish(7L), outbox.requester)
         assertEquals(ParseInputType.LINK, outbox.inputType)
         assertEquals("https://shop.example.com/p/1?utm_source=x", outbox.inputValue)
-        assertEquals("https://shop.example.com/p/1", outbox.canonicalInput)
+        assertEquals("https://shop.example.com/p/1", outbox.normalizedInput)
         assertEquals(link, outbox.input.toLink())
     }
 
@@ -34,7 +34,7 @@ class ItemParseOutboxTest {
         assertEquals(ParseRequesterType.TOURNAMENT_ITEM, outbox.requesterType)
         assertEquals(ParseInputType.IMAGE, outbox.inputType)
         assertEquals("images/a.png", outbox.inputValue)
-        assertEquals("images/a.png", outbox.canonicalInput)
+        assertEquals("images/a.png", outbox.normalizedInput)
         assertNull(outbox.input.linkOrNull())
         assertEquals(ParseInput.ofImage("images/a.png"), outbox.input)
     }
@@ -56,7 +56,7 @@ class ItemParseOutboxTest {
     fun `저장 상한을 넘는 URL 은 중복 판정 키를 남기지 않는다`() {
         val link = ProductLink.parse("https://shop.example.com/p/1?q=" + "a".repeat(ProductLink.MAX_LENGTH))
 
-        assertNull(ItemParseOutbox.canonicalInputOf(ParseInput.ofLink(link)))
+        assertNull(ItemParseOutbox.of(ParseRequester.wish(1L), ParsePurpose.REGISTER, ParseInput.ofLink(link)).normalizedInput)
     }
 
     @Test

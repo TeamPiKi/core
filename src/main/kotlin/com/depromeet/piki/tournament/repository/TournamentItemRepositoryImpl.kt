@@ -26,10 +26,10 @@ class TournamentItemRepositoryImpl(
 
     override fun findByIdIncludingDeleted(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdIncludingDeleted(id)
 
-    override fun findIdByTournamentIdAndCanonicalInput(
+    override fun findIdByTournamentIdAndNormalizedInput(
         tournamentId: Long,
         value: String,
-    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndCanonicalInput(tournamentId, value).firstOrNull()
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, value).firstOrNull()
 
     override fun findRequestedInputs(
         tournamentId: Long,

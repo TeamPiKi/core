@@ -14,6 +14,9 @@ data class ParseInput(
 
     fun toLink(): ProductLink = linkOrNull() ?: error("$type 입력은 링크가 아니다")
 
+    // 저장 상한을 넘는 값은 정체 값이 될 수 없다. 절단은 다른 상품과 충돌할 수 있는 거짓 정체성이라 쓰지 않는다(#843)
+    fun normalizedOrNull(): NormalizedInput? = NormalizedInput.of(this).takeUnless { it.exceedsStorageLimit }
+
     companion object {
         fun ofLink(link: ProductLink): ParseInput = ParseInput(ParseInputType.LINK, link.toString())
 

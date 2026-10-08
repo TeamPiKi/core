@@ -2,16 +2,22 @@ package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.product.domain.ProductLink
 
+// 입력을 규칙대로 다듬은 값. 링크는 추적 파라미터를 뗀 URL, 이미지는 키 그대로. 귀결점에 적용한 것이 아이템의 정체 값이 된다
 @JvmInline
-value class CanonicalLink private constructor(
-    val url: String,
+value class NormalizedInput private constructor(
+    val value: String,
 ) {
     val exceedsStorageLimit: Boolean
-        get() = url.length > ProductLink.MAX_LENGTH
+        get() = value.length > ProductLink.MAX_LENGTH
 
-    override fun toString(): String = url
+    override fun toString(): String = value
 
     companion object {
+        fun of(input: ParseInput): NormalizedInput {
+            val link = input.linkOrNull() ?: return NormalizedInput(input.value)
+            return of(link)
+        }
+
         // 지워도 같은 상품이 열리는 것을 실제 요청으로 확인한 이름만 지운다. 모르는 이름은 남긴다
         private val TRACKING_PARAM_PREFIXES = listOf("utm_", APPSFLYER_PREFIX, "airbridge")
         private val TRACKING_PARAM_NAMES =
@@ -30,16 +36,16 @@ value class CanonicalLink private constructor(
         private val ZIGZAG_SHORT_PATH = Regex("^/p/(\\d+)$")
 
         // fragment 는 서버로 가지 않아 상품을 바꾸지 못한다. 경로와 쿼리만 다시 조립하므로 저절로 빠진다
-        fun of(link: ProductLink): CanonicalLink {
+        fun of(link: ProductLink): NormalizedInput {
             val host = link.normalizedHost()
             val path = normalizePath(host, link.value.rawPath.orEmpty())
             val kept = keptParams(link.value.rawQuery)
-            val url =
+            val value =
                 buildString {
                     append("https://").append(host).append(path)
                     if (kept.isNotEmpty()) append('?').append(kept.joinToString("&"))
                 }
-            return CanonicalLink(url)
+            return NormalizedInput(value)
         }
 
         private fun normalizePath(

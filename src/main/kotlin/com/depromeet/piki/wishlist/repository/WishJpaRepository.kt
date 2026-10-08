@@ -62,9 +62,9 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
     @Query(
         "SELECT w.id FROM Wish w, ItemParseOutbox o " +
             "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.WISH AND o.requesterId = w.id " +
-            "AND w.userId = :userId AND w.deletedAt IS NULL AND o.canonicalInput = :value",
+            "AND w.userId = :userId AND w.deletedAt IS NULL AND o.normalizedInput = :value",
     )
-    fun findIdsByUserIdAndCanonicalInput(
+    fun findIdsByUserIdAndNormalizedInput(
         @Param("userId") userId: UUID,
         @Param("value") value: String,
     ): List<Long>

@@ -30,9 +30,9 @@ class ItemParseOutbox(
     @Column(nullable = false, length = ProductLink.MAX_LENGTH)
     val inputValue: String,
 
-    // 같은 요청자의 중복 요청 판정 키. 링크는 추적 파라미터를 뗀 URL, 이미지는 키 그대로
+    // 같은 요청자의 중복 요청 판정 키. 귀결점을 따라가기 전의 값이라 아이템의 정체 값과 다를 수 있다
     @Column(length = ProductLink.MAX_LENGTH)
-    val canonicalInput: String?,
+    val normalizedInput: String?,
 
 ) : LongBaseEntity() {
     @Enumerated(EnumType.STRING)
@@ -80,13 +80,7 @@ class ItemParseOutbox(
                 purpose = purpose,
                 inputType = input.type,
                 inputValue = input.value,
-                canonicalInput = canonicalInputOf(input),
+                normalizedInput = input.normalizedOrNull()?.value,
             )
-
-        // 저장 상한을 넘는 URL 은 중복 판정에서 빠진다
-        fun canonicalInputOf(input: ParseInput): String? {
-            val link = input.linkOrNull() ?: return input.value
-            return CanonicalLink.of(link).takeUnless { it.exceedsStorageLimit }?.url
-        }
     }
 }

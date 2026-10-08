@@ -42,7 +42,7 @@ interface WishRepository {
 
     fun findByIdIncludingDeletedForUpdate(id: Long): Wish?
 
-    fun findIdByUserIdAndCanonicalInput(
+    fun findIdByUserIdAndNormalizedInput(
         userId: UUID,
         value: String,
     ): Long?

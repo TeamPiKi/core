@@ -55,17 +55,17 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     @Query(
         "SELECT t.id FROM TournamentItem t, ItemParseOutbox o " +
             "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
-            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.canonicalInput = :value",
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.normalizedInput = :value",
     )
-    fun findIdsByTournamentIdAndCanonicalInput(
+    fun findIdsByTournamentIdAndNormalizedInput(
         @Param("tournamentId") tournamentId: Long,
         @Param("value") value: String,
     ): List<Long>
 
     @Query(
-        "SELECT o.canonicalInput FROM TournamentItem t, ItemParseOutbox o " +
+        "SELECT o.normalizedInput FROM TournamentItem t, ItemParseOutbox o " +
             "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
-            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.canonicalInput IN :values",
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.normalizedInput IN :values",
     )
     fun findRequestedInputsByTournamentId(
         @Param("tournamentId") tournamentId: Long,

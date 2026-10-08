@@ -38,8 +38,9 @@ class Item(
     }
 
     companion object {
-        fun ofLink(canonical: CanonicalLink): Item = Item(ParseInputType.LINK, canonical.url)
-
-        fun ofImage(key: String): Item = Item(ParseInputType.IMAGE, key)
+        fun of(
+            sourceType: ParseInputType,
+            normalized: NormalizedInput,
+        ): Item = Item(sourceType, normalized.value)
     }
 }
