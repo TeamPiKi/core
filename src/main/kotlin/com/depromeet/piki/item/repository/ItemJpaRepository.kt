@@ -15,7 +15,7 @@ interface ItemJpaRepository : JpaRepository<Item, Long> {
         @Param("id") id: Long,
     ): Item?
 
-    fun findByCanonicalHashAndDeletedAtIsNull(canonicalHash: ByteArray): Item?
+    fun findByCanonicalUrlAndDeletedAtIsNull(canonicalUrl: String): Item?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from Item i where i.id in :ids and i.deletedAt is null order by i.id")

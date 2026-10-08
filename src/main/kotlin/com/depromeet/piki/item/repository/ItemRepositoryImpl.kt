@@ -13,7 +13,7 @@ class ItemRepositoryImpl(
 
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
 
-    override fun findByCanonicalUrl(url: String): Item? = itemJpaRepository.findByCanonicalHashAndDeletedAtIsNull(Item.hashOf(url))
+    override fun findByCanonicalUrl(url: String): Item? = itemJpaRepository.findByCanonicalUrlAndDeletedAtIsNull(url)
 
     override fun findByIdForUpdate(id: Long): Item? = itemJpaRepository.findByIdForUpdate(id)
 

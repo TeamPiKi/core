@@ -29,8 +29,8 @@ class ProductLink private constructor(
     override fun hashCode(): Int = value.hashCode()
 
     companion object {
-        // 받는 링크와 저장하는 링크의 길이 상한. 요청 검증과 링크를 담는 칸이 모두 이 값을 쓴다
-        const val MAX_LENGTH = 2048
+        // 모든 URL 길이 상한
+        const val MAX_LENGTH = 768
 
         private val HTTP_SCHEMES = setOf("https")
 
