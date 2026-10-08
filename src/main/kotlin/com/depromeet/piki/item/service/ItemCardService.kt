@@ -2,11 +2,13 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.CardQuery
 import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemVersions
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import org.springframework.stereotype.Component
+import java.time.LocalDateTime
 
 @Component
 class ItemCardService(
@@ -18,8 +20,8 @@ class ItemCardService(
     fun cardsOf(queries: Collection<CardQuery>): Map<CardQuery, ItemCard> {
         if (queries.isEmpty()) return emptyMap()
         val latestRequests = latestRequestsOf(queries.map { it.slot })
-        val versionsByItemId = versionsByItemId(queries.mapNotNull { it.itemId })
-        return queries.associateWith { query -> cardFor(query, latestRequests, versionsByItemId) }
+        val versionsByScope = versionsByScope(queries)
+        return queries.associateWith { query -> cardFor(query, latestRequests, versionsByScope) }
     }
 
     fun versionsOf(itemId: Long): ItemVersions = ItemVersions.of(itemSnapshotRepository.findAllByItemIds(listOf(itemId)))
@@ -27,13 +29,14 @@ class ItemCardService(
     private fun cardFor(
         query: CardQuery,
         latestRequests: Map<ItemSlot, ItemParseOutbox>,
-        versionsByItemId: Map<Long, ItemVersions>,
+        versionsByScope: Map<VersionScope, ItemVersions>,
     ): ItemCard {
         val itemId = query.itemId ?: return unresolvedCardOf(query.slot, latestRequests)
-        val versions = versionsByItemId[itemId] ?: error("item $itemId 의 버전이 없다")
-        val refreshing = isRefreshing(query.slot, latestRequests)
-        val startedAt = query.asOf ?: return ItemCard.current(versions, query.owner, refreshing)
-        return ItemCard.fixedAt(startedAt, versions, query.owner)
+        val versions = versionsByScope[VersionScope(itemId, query.asOf)] ?: error("item $itemId 의 버전이 없다")
+        val display = versions.displayFor(query.owner)
+        // 시작한 토너먼트는 시작 뒤의 새로고침이 보이지 않는다
+        query.asOf ?: return ItemCard.Resolved(display, isRefreshing(query.slot, latestRequests))
+        return ItemCard.Resolved(display, refreshing = false)
     }
 
     // 아이템이 없는 카드는 요청과 함께 생기므로 요청이 없을 수 없다
@@ -60,10 +63,28 @@ class ItemCardService(
         return latestRequests.associateBy { it.slot }
     }
 
-    private fun versionsByItemId(itemIds: Collection<Long>): Map<Long, ItemVersions> {
-        val snapshots = itemSnapshotRepository.findAllByItemIds(itemIds.distinct())
-        return snapshots
-            .groupBy { it.itemId }
-            .mapValues { (_, versions) -> ItemVersions.of(versions) }
+    // 시작한 토너먼트는 시작 시각까지의 버전만 읽는다. 그 뒤 버전은 메모리에도 오지 않는다
+    private fun versionsByScope(queries: Collection<CardQuery>): Map<VersionScope, ItemVersions> =
+        queries
+            .mapNotNull { query -> query.itemId?.let { VersionScope(it, query.asOf) } }
+            .distinct()
+            .groupBy({ it.asOf }, { it.itemId })
+            .flatMap { (asOf, itemIds) ->
+                snapshotsOf(itemIds, asOf)
+                    .groupBy { it.itemId }
+                    .map { (itemId, versions) -> VersionScope(itemId, asOf) to ItemVersions.of(versions) }
+            }.toMap()
+
+    private fun snapshotsOf(
+        itemIds: List<Long>,
+        asOf: LocalDateTime?,
+    ): List<ItemSnapshot> {
+        asOf ?: return itemSnapshotRepository.findAllByItemIds(itemIds)
+        return itemSnapshotRepository.findAllByItemIdsAsOf(itemIds, asOf)
     }
+
+    private data class VersionScope(
+        val itemId: Long,
+        val asOf: LocalDateTime?,
+    )
 }

@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
+import java.time.LocalDateTime
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
@@ -24,4 +25,9 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
     fun findByIdInAndDeletedAtIsNull(ids: Collection<Long>): List<ItemSnapshot>
 
     fun findByItemIdInAndDeletedAtIsNullOrderByIdAsc(itemIds: Collection<Long>): List<ItemSnapshot>
+
+    fun findByItemIdInAndCreatedAtLessThanEqualAndDeletedAtIsNullOrderByIdAsc(
+        itemIds: Collection<Long>,
+        at: LocalDateTime,
+    ): List<ItemSnapshot>
 }

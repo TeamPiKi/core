@@ -87,24 +87,6 @@ class ItemVersionsTest {
     }
 
     @Test
-    fun `asOf 는 그 시각 뒤에 생긴 버전을 빼고 계산한다`() {
-        val startedAt = LocalDateTime.of(2026, 10, 1, 12, 0)
-        val before = machineReady(1, by = other, createdAt = startedAt.minusMinutes(1))
-        val after = machineReady(2, by = other, createdAt = startedAt.plusMinutes(1))
-
-        assertEquals(before, ItemVersions.of(listOf(before, after)).asOf(startedAt).displayFor(me))
-    }
-
-    @Test
-    fun `asOf 는 그 시각에 생긴 버전을 포함한다`() {
-        val startedAt = LocalDateTime.of(2026, 10, 1, 12, 0)
-        val before = machineReady(1, by = other, createdAt = startedAt.minusMinutes(1))
-        val atStart = manual(2, by = me, createdAt = startedAt)
-
-        assertEquals(atStart, ItemVersions.of(listOf(before, atStart)).asOf(startedAt).displayFor(me))
-    }
-
-    @Test
     fun `내 INCOMPLETE 를 보던 카드는 남의 서버 READY 가 생기면 채워진다`() {
         val myIncomplete = incomplete(1, by = me)
         val othersReady = machineReady(2, by = other)

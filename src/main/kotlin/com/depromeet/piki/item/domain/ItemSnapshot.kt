@@ -62,7 +62,6 @@ class ItemSnapshot(
     // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다.
     fun isSharedValue(): Boolean = isReady() && !isManual()
 
-    fun isCreatedAtOrBefore(at: LocalDateTime): Boolean = !createdAt.isAfter(at)
 
     // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
     private fun filledFieldCount(): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size

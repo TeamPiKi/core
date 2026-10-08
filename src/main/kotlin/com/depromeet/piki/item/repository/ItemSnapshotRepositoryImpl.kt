@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
+import java.time.LocalDateTime
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Repository
 
@@ -14,6 +15,15 @@ class ItemSnapshotRepositoryImpl(
         itemIds
             .takeIf { it.isNotEmpty() }
             ?.let { itemSnapshotJpaRepository.findByItemIdInAndDeletedAtIsNullOrderByIdAsc(it) }
+            .orEmpty()
+
+    override fun findAllByItemIdsAsOf(
+        itemIds: Collection<Long>,
+        at: LocalDateTime,
+    ): List<ItemSnapshot> =
+        itemIds
+            .takeIf { it.isNotEmpty() }
+            ?.let { itemSnapshotJpaRepository.findByItemIdInAndCreatedAtLessThanEqualAndDeletedAtIsNullOrderByIdAsc(it, at) }
             .orEmpty()
 
     override fun findPriceHistoryByItemId(

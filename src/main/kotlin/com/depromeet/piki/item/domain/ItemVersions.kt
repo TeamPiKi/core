@@ -1,6 +1,5 @@
 package com.depromeet.piki.item.domain
 
-import java.time.LocalDateTime
 import java.util.UUID
 
 // 한 상품의 버전들 중 카드에 보일 버전을 고른다(#1051)
@@ -17,9 +16,6 @@ class ItemVersions private constructor(
         listOfNotNull(mine, shared).maxByOrNull { it.getId() }?.let { return it }
         return versions.lastOrNull { !it.isManual() } ?: versions.last()
     }
-
-    // 시작한 토너먼트의 출전 값. 시작과 버전 생성이 같은 아이템 행 잠금을 거쳐서 시각 순서가 커밋 순서와 같다
-    fun asOf(at: LocalDateTime): ItemVersions = of(versions.filter { it.isCreatedAtOrBefore(at) })
 
     // 직전까지 미완이던 카드가 이 버전으로 채워지는가(#1028). 이 버전을 요청한 카드는 호출부가 뺀다
     // 뒤에 쌓인 버전을 빼고 판정한다. 성공이 연달아 와도 앞 버전의 알림이 뒤 버전에 가려지지 않게 한다
