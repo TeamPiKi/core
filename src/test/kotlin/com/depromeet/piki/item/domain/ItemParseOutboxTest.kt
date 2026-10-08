@@ -23,7 +23,7 @@ class ItemParseOutboxTest {
         assertEquals(ParseRequester.wish(7L), outbox.requester)
         assertEquals(ParseInputType.LINK, outbox.inputType)
         assertEquals("https://shop.example.com/p/1?utm_source=x", outbox.inputValue)
-        assertEquals("https://shop.example.com/p/1", outbox.normalizedInput)
+        assertEquals("https://shop.example.com/p/1", outbox.normalizedInput?.value)
         assertEquals(link, outbox.input.toLink())
     }
 
@@ -34,7 +34,7 @@ class ItemParseOutboxTest {
         assertEquals(ParseRequesterType.TOURNAMENT_ITEM, outbox.requesterType)
         assertEquals(ParseInputType.IMAGE, outbox.inputType)
         assertEquals("images/a.png", outbox.inputValue)
-        assertEquals("images/a.png", outbox.normalizedInput)
+        assertEquals("images/a.png", outbox.normalizedInput?.value)
         assertNull(outbox.input.linkOrNull())
         assertEquals(ParseInput.ofImage("images/a.png"), outbox.input)
     }

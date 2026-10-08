@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import org.springframework.data.domain.Limit
@@ -50,6 +51,6 @@ class WishRepositoryImpl(
 
     override fun findIdByUserIdAndNormalizedInput(
         userId: UUID,
-        value: String,
-    ): Long? = wishJpaRepository.findIdsByUserIdAndNormalizedInput(userId, value).firstOrNull()
+        normalized: NormalizedInput,
+    ): Long? = wishJpaRepository.findIdsByUserIdAndNormalizedInput(userId, normalized).firstOrNull()
 }

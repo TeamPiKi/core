@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import java.util.UUID
 
@@ -21,7 +22,7 @@ interface TournamentItemRepository {
 
     fun findIdByTournamentIdAndNormalizedInput(
         tournamentId: Long,
-        value: String,
+        normalized: NormalizedInput,
     ): Long?
 
     fun findRequestedInputs(

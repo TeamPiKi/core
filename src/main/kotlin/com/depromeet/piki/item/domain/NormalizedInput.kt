@@ -7,15 +7,16 @@ import com.depromeet.piki.product.domain.ProductLink
 value class NormalizedInput private constructor(
     val value: String,
 ) {
-    val exceedsStorageLimit: Boolean
-        get() = value.length > ProductLink.MAX_LENGTH
-
     override fun toString(): String = value
 
+    // 귀결점의 정규화 값을 아이템의 정체로 삼을 때
+    fun asCanonical(): CanonicalInput = CanonicalInput(value)
+
     companion object {
-        fun of(input: ParseInput): NormalizedInput {
-            val link = input.linkOrNull() ?: return NormalizedInput(input.value)
-            return of(link)
+        // 저장 상한을 넘으면 정규화 값이 없다. 절단은 다른 상품과 충돌할 수 있는 거짓 정체성이라 쓰지 않는다(#843)
+        fun of(input: ParseInput): NormalizedInput? {
+            val value = input.linkOrNull()?.let(::normalize) ?: input.value
+            return value.takeIf { it.length <= ProductLink.MAX_LENGTH }?.let(::NormalizedInput)
         }
 
         // 지워도 같은 상품이 열리는 것을 실제 요청으로 확인한 이름만 지운다. 모르는 이름은 남긴다
@@ -36,16 +37,14 @@ value class NormalizedInput private constructor(
         private val ZIGZAG_SHORT_PATH = Regex("^/p/(\\d+)$")
 
         // fragment 는 서버로 가지 않아 상품을 바꾸지 못한다. 경로와 쿼리만 다시 조립하므로 저절로 빠진다
-        fun of(link: ProductLink): NormalizedInput {
+        private fun normalize(link: ProductLink): String {
             val host = link.normalizedHost()
             val path = normalizePath(host, link.value.rawPath.orEmpty())
             val kept = keptParams(link.value.rawQuery)
-            val value =
-                buildString {
-                    append("https://").append(host).append(path)
-                    if (kept.isNotEmpty()) append('?').append(kept.joinToString("&"))
-                }
-            return NormalizedInput(value)
+            return buildString {
+                append("https://").append(host).append(path)
+                if (kept.isNotEmpty()) append('?').append(kept.joinToString("&"))
+            }
         }
 
         private fun normalizePath(

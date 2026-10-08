@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
@@ -59,7 +60,7 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     )
     fun findIdsByTournamentIdAndNormalizedInput(
         @Param("tournamentId") tournamentId: Long,
-        @Param("value") value: String,
+        @Param("value") normalized: NormalizedInput,
     ): List<Long>
 
     @Query(

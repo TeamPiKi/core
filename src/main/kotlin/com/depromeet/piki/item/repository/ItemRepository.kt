@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.CanonicalInput
 
 interface ItemRepository {
     fun save(item: Item): Item
@@ -9,7 +10,7 @@ interface ItemRepository {
 
     fun findById(id: Long): Item?
 
-    fun findByCanonicalUrl(url: String): Item?
+    fun findByCanonical(canonical: CanonicalInput): Item?
 
     fun findByIdForUpdate(id: Long): Item?
 

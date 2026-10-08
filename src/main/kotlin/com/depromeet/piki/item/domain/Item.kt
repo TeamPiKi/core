@@ -16,31 +16,31 @@ class Item(
     @Column(nullable = false, length = 16)
     val sourceType: ParseInputType,
 
-    canonicalUrl: String,
+    canonical: CanonicalInput,
 
 ) : LongBaseEntity() {
-    // 링크는 정체 URL, 이미지는 이미지 키
+    // 귀결점을 정규화한 값. 링크는 정체 URL, 이미지는 이미지 키
     // TODO: 값이 빈 옛 행을 지운 뒤 non-null 로 바꾼다
     @Column(unique = true, length = ProductLink.MAX_LENGTH)
-    val canonicalUrl: String? = canonicalUrl
+    val canonicalUrl: CanonicalInput? = canonical
 
     // 출처 표시용. 이미지 아이템은 쇼핑몰 주소가 없다
     fun sourceLink(): ProductLink? {
         if (sourceType != ParseInputType.LINK) return null
-        return canonicalUrl?.let(ProductLink::parse)
+        return canonicalUrl?.toLink()
     }
 
     // 원본 이미지는 파싱 뒤 지우므로 지금은 링크만 다시 가져올 수 있다
     fun refreshInput(): ParseInput {
-        val url = canonicalUrl ?: throw ItemException.notRefreshable()
+        val canonical = canonicalUrl ?: throw ItemException.notRefreshable()
         if (sourceType != ParseInputType.LINK) throw ItemException.notRefreshable()
-        return ParseInput(sourceType, url)
+        return canonical.toParseInput(sourceType)
     }
 
     companion object {
         fun of(
             sourceType: ParseInputType,
-            normalized: NormalizedInput,
-        ): Item = Item(sourceType, normalized.value)
+            canonical: CanonicalInput,
+        ): Item = Item(sourceType, canonical)
     }
 }

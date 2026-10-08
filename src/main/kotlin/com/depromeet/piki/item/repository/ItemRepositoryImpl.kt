@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.CanonicalInput
 import org.springframework.stereotype.Repository
 
 @Repository
@@ -13,7 +14,7 @@ class ItemRepositoryImpl(
 
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
 
-    override fun findByCanonicalUrl(url: String): Item? = itemJpaRepository.findByCanonicalUrlAndDeletedAtIsNull(url)
+    override fun findByCanonical(canonical: CanonicalInput): Item? = itemJpaRepository.findByCanonicalUrlAndDeletedAtIsNull(canonical)
 
     override fun findByIdForUpdate(id: Long): Item? = itemJpaRepository.findByIdForUpdate(id)
 

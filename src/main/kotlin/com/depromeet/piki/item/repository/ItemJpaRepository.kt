@@ -1,5 +1,6 @@
 package com.depromeet.piki.item.repository
 
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.Item
 import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
@@ -15,7 +16,7 @@ interface ItemJpaRepository : JpaRepository<Item, Long> {
         @Param("id") id: Long,
     ): Item?
 
-    fun findByCanonicalUrlAndDeletedAtIsNull(canonicalUrl: String): Item?
+    fun findByCanonicalUrlAndDeletedAtIsNull(canonicalUrl: CanonicalInput): Item?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from Item i where i.id in :ids and i.deletedAt is null order by i.id")

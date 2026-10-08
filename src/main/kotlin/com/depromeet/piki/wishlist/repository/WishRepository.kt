@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import java.util.UUID
@@ -44,6 +45,6 @@ interface WishRepository {
 
     fun findIdByUserIdAndNormalizedInput(
         userId: UUID,
-        value: String,
+        normalized: NormalizedInput,
     ): Long?
 }

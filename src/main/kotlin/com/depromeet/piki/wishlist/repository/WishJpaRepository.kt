@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Limit
@@ -66,7 +67,7 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
     )
     fun findIdsByUserIdAndNormalizedInput(
         @Param("userId") userId: UUID,
-        @Param("value") value: String,
+        @Param("value") normalized: NormalizedInput,
     ): List<Long>
 
     // 출전·메모용 — 한 유저가 이 itemId 들을 담은 wish. 위시가 item 을 직접 참조하므로(#1051) 조인이 없다.

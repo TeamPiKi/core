@@ -32,7 +32,7 @@ class ItemParseOutbox(
 
     // 같은 요청자의 중복 요청 판정 키. 귀결점을 따라가기 전의 값이라 아이템의 정체 값과 다를 수 있다
     @Column(length = ProductLink.MAX_LENGTH)
-    val normalizedInput: String?,
+    val normalizedInput: NormalizedInput?,
 
 ) : LongBaseEntity() {
     @Enumerated(EnumType.STRING)
@@ -80,7 +80,7 @@ class ItemParseOutbox(
                 purpose = purpose,
                 inputType = input.type,
                 inputValue = input.value,
-                normalizedInput = input.normalizedOrNull()?.value,
+                normalizedInput = NormalizedInput.of(input),
             )
     }
 }

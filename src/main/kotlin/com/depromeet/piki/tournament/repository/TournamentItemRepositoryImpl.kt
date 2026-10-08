@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
@@ -28,8 +29,8 @@ class TournamentItemRepositoryImpl(
 
     override fun findIdByTournamentIdAndNormalizedInput(
         tournamentId: Long,
-        value: String,
-    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, value).firstOrNull()
+        normalized: NormalizedInput,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, normalized).firstOrNull()
 
     override fun findRequestedInputs(
         tournamentId: Long,

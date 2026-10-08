@@ -10,6 +10,6 @@ fun linkItem(url: String): Item = itemOf(ParseInput.ofLink(ProductLink.parse(url
 
 fun imageItem(): Item = itemOf(ParseInput.ofImage("items/raw/${UUID.randomUUID()}.png"))
 
-fun canonicalUrlOf(url: String): String = NormalizedInput.of(ProductLink.parse(url)).value
+fun normalizedOf(url: String): NormalizedInput = requireNotNull(NormalizedInput.of(ParseInput.ofLink(ProductLink.parse(url))))
 
-private fun itemOf(input: ParseInput): Item = Item.of(input.type, NormalizedInput.of(input))
+private fun itemOf(input: ParseInput): Item = Item.of(input.type, requireNotNull(NormalizedInput.of(input)).asCanonical())

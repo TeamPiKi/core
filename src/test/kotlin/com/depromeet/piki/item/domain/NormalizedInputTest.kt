@@ -6,10 +6,12 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 // 목록에 이름을 올리려면 그 이름이 붙은 실제 URL 과, 지워도 같은 상품이 열린다는 확인이 먼저다
 class NormalizedInputTest {
-    private fun normalized(raw: String): NormalizedInput = NormalizedInput.of(ProductLink.parse(raw))
+    private fun normalized(raw: String): NormalizedInput = requireNotNull(NormalizedInput.of(ParseInput.ofLink(ProductLink.parse(raw))))
 
     // --- 실제로 관측한 URL ---
 
@@ -179,11 +181,9 @@ class NormalizedInputTest {
     }
 
     @Test
-    fun `저장 상한을 넘는 URL 은 exceedsStorageLimit 로 표시된다 - 절단은 거짓 정체성이라 하지 않는다`() {
+    fun `저장 상한을 넘는 URL 은 정규화 값이 없다 - 절단은 거짓 정체성이라 하지 않는다`() {
         val longPath = "/product/" + "%EC%A0%80".repeat(300)
-        val over = normalized("https://unknown-mall.example.com$longPath")
-        kotlin.test.assertTrue(over.value.length > ProductLink.MAX_LENGTH)
-        kotlin.test.assertTrue(over.exceedsStorageLimit)
-        kotlin.test.assertFalse(normalized("https://unknown-mall.example.com/p/1").exceedsStorageLimit)
+        assertNull(NormalizedInput.of(ParseInput.ofLink(ProductLink.parse("https://unknown-mall.example.com$longPath"))))
+        assertNotNull(NormalizedInput.of(ParseInput.ofLink(ProductLink.parse("https://unknown-mall.example.com/p/1"))))
     }
 }
