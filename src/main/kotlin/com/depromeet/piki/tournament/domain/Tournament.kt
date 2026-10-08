@@ -30,17 +30,13 @@ class Tournament(
     @Column(name = "source_tournament_id")
     val sourceTournamentId: Long? = null,
 ) : LongBaseEntity() {
-    // open class에서 private set이 금지되므로 backing field로 캡슐화한다.
-    // Hibernate는 field access로 직접 접근하고, 외부에서는 getter만 노출된다.
-    @Column(name = "owner_tournament_user_id", nullable = false)
-    private var _ownerTournamentUserId: Long = ownerTournamentUserId
+    @Column(nullable = false)
+    var ownerTournamentUserId: Long = ownerTournamentUserId
+        protected set
 
-    val ownerTournamentUserId: Long get() = _ownerTournamentUserId
-
-    @Column(name = "invite_expires_at", nullable = false)
-    private var _inviteExpiresAt: LocalDateTime = inviteExpiresAt
-
-    val inviteExpiresAt: LocalDateTime get() = _inviteExpiresAt
+    @Column(nullable = false)
+    var inviteExpiresAt: LocalDateTime = inviteExpiresAt
+        protected set
 
     var startedAt: LocalDateTime? = null
         protected set
@@ -56,7 +52,7 @@ class Tournament(
     val activeInviteCode: String? = null
 
     fun assignOwner(tournamentUserId: Long) {
-        _ownerTournamentUserId = tournamentUserId
+        ownerTournamentUserId = tournamentUserId
     }
 
     // 출전 값은 이 시각까지의 버전으로 계산한다. 호출부가 출전 아이템 행을 잠근 뒤 불러야 버전 생성과 순서가 맞는다
@@ -95,7 +91,7 @@ class Tournament(
 
     fun updateInviteExpiry(newExpiresAt: LocalDateTime) {
         check(isPending()) { "updateInviteExpiry는 PENDING 상태에서만 호출 가능" }
-        _inviteExpiresAt = newExpiresAt
+        inviteExpiresAt = newExpiresAt
     }
 
     fun isInviteValid(): Boolean = LocalDateTime
