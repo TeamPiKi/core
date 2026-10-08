@@ -1,16 +1,15 @@
 package com.depromeet.piki.tournament.repository
 
-import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentStatus
-import java.time.LocalDateTime
-import java.util.UUID
 import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.LocalDateTime
+import java.util.UUID
 
 interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     fun countByTournamentIdAndDeletedAtIsNull(tournamentId: Long): Int
@@ -26,47 +25,16 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     @Query("SELECT t.id FROM TournamentItem t WHERE t.tournamentId = :tournamentId AND t.deletedAt IS NULL ORDER BY t.id ASC")
     fun findIdsByTournamentId(@Param("tournamentId") tournamentId: Long): List<Long>
 
-    // 수기 수정의 조회→검사→새 버전 저장→pin 이동 흐름을 행 락으로 직렬화한다(WishJpaRepository.findByIdForUpdate 와 같은 결).
-    // 락 없이는 동시 수정 두 건이 같은 pin 을 읽고 나중 커밋이 먼저 만든 MANUAL 버전 포인터를 덮어써 유령 버전이 남는다.
+    // 아이템이 비어 있는 카드를 수기 수정과 파싱 성공이 동시에 확정하면 아이템이 둘 생기므로 행 락으로 직렬화한다
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM TournamentItem t WHERE t.id = :id AND t.deletedAt IS NULL")
     fun findByIdForUpdate(@Param("id") id: Long): TournamentItem?
 
-    // 이 버전(snapshot)을 pin 해 올린 사람들(adder). 파싱 알림 수신자 역조회 — 파싱 사실의 주체가 버전이라
-    // 버전으로 직결한다(#576): 같은 item 의 다른 버전을 pin 한 출전(과거 버전·갱신 전 버전)은 이 파싱의 수신자가 아니다.
-    // 공유(#825)로 한 버전이 여러 출전에 pin 되면 각 adder 가 받는다(DISTINCT).
+    // 해소 통지(#1028) 후보. 시작한 토너먼트는 시작 시각 기준으로 값이 고정돼 채워질 카드가 없다
     @Query(
-        "SELECT DISTINCT t.userId FROM TournamentItem t " +
-            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL",
-    )
-    fun findUserIdsBySnapshotId(@Param("snapshotId") snapshotId: Long): List<UUID>
-
-    // 이 버전(snapshot)을 pin 한 토너먼트 출전 좌표(tournamentId·tournament_item id). 파싱 알림 딥링크·SSE 카드
-    // 라우팅 역조회(#408·#576). 버전 직결이라 이벤트 status 가 어느 좌표에서든 참이다 — itemId 라우팅 시절의
-    // spurious 갱신(다른 버전 카드에 남의 완료·실패가 전파)이 구조적으로 사라진다. id 오름차순은 결정성용.
-    @Query(
-        "SELECT t.tournamentId AS tournamentId, t.id AS tournamentItemId FROM TournamentItem t " +
-            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL ORDER BY t.id ASC",
-    )
-    fun findRoutingBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemRoutingView>
-
-    // 위와 같되 등록자(userId)를 함께 싣는다 — 파싱 알림의 수신자별 토너먼트 딥링크 역조회(#933).
-    // 한 유저가 같은 버전을 여러 토너먼트에 올렸으면 여러 행이라, id 오름차순으로 결정성만 확보하고
-    // 수신자별 해석에서 유저당 첫 좌표를 고른다.
-    @Query(
-        "SELECT t.userId AS userId, t.tournamentId AS tournamentId, t.id AS tournamentItemId FROM TournamentItem t " +
-            "WHERE t.snapshotId = :snapshotId AND t.deletedAt IS NULL ORDER BY t.id ASC",
-    )
-    fun findRoutingsWithUserBySnapshotId(@Param("snapshotId") snapshotId: Long): List<TournamentItemUserRoutingView>
-
-    // 이 상품을 대기실(PENDING) 토너먼트에 출전시킨 카드(등록자, 토너먼트 좌표, pin) — 해소 통지(#1028) 수신자 후보(#1051).
-    // 출전은 snapshot 만 참조하므로 pin 의 itemId 로 상품에 도달한다. 시작된 토너먼트는 pin 을 박제해 읽어 파생을 타지
-    // 않으므로 후보가 아니다. 최종 판정은 알림 쪽이 표시값 규칙으로 한다.
-    @Query(
-        "SELECT t.userId AS userId, t.tournamentId AS tournamentId, " +
-            "t.id AS tournamentItemId, t.snapshotId AS snapshotId " +
-            "FROM TournamentItem t, ItemSnapshot s, Tournament tour " +
-            "WHERE t.snapshotId = s.id AND s.itemId = :itemId AND t.deletedAt IS NULL " +
+        "SELECT t.userId AS userId, t.tournamentId AS tournamentId, t.id AS tournamentItemId " +
+            "FROM TournamentItem t, Tournament tour " +
+            "WHERE t.itemId = :itemId AND t.deletedAt IS NULL " +
             "AND tour.id = t.tournamentId AND tour.status = :status AND tour.deletedAt IS NULL " +
             "ORDER BY t.id ASC",
     )
@@ -74,6 +42,25 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
         @Param("itemId") itemId: Long,
         @Param("status") status: TournamentStatus = TournamentStatus.PENDING,
     ): List<TournamentItemCardView>
+
+    // 파싱 결과는 지워진 출전에도 기록한다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM TournamentItem t WHERE t.id = :id")
+    fun findByIdIncludingDeletedForUpdate(@Param("id") id: Long): TournamentItem?
+
+    @Query("SELECT t FROM TournamentItem t WHERE t.id = :id")
+    fun findByIdIncludingDeleted(@Param("id") id: Long): TournamentItem?
+
+    // 같은 URL 로 파싱을 요청한 적 있는 출전. 한 토너먼트의 출전으로 먼저 좁혀져 URL 인덱스가 필요 없다
+    @Query(
+        "SELECT t.id FROM TournamentItem t, ItemParseOutbox o " +
+            "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.urlWithoutTracking = :url",
+    )
+    fun findIdsByTournamentIdAndUrlWithoutTracking(
+        @Param("tournamentId") tournamentId: Long,
+        @Param("url") url: String,
+    ): List<Long>
 
     @Modifying
     @Query(

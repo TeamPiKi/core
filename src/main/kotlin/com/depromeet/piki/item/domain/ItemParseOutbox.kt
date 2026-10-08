@@ -34,6 +34,10 @@ class ItemParseOutbox(
     val urlWithoutTracking: String?,
 
 ) : LongBaseEntity() {
+    // DB 가 input_type = IMAGE 일 때만 input_value 를 복사해 두는 생성 컬럼
+    @Column(unique = true, insertable = false, updatable = false)
+    val imageKey: String? = null
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     var status: ItemParseOutboxStatus = ItemParseOutboxStatus.PENDING

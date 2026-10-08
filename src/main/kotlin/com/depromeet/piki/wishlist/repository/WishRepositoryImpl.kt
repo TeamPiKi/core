@@ -14,11 +14,6 @@ class WishRepositoryImpl(
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = wishJpaRepository.hardDeleteAllByUserId(userId)
 
-    override fun reparentItem(
-        fromItemId: Long,
-        toItemId: Long,
-    ): Int = wishJpaRepository.reparentItem(fromItemId, toItemId)
-
     override fun countByItemIdsAndUserId(
         itemIds: List<Long>,
         userId: UUID,
@@ -49,8 +44,12 @@ class WishRepositoryImpl(
         userId: UUID,
     ): List<Wish> = wishJpaRepository.findByItemIdInAndUserIdAndDeletedAtIsNull(itemIds, userId)
 
-    override fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView> =
-        wishJpaRepository.findOwnerWishIdsBySnapshotId(snapshotId)
-
     override fun findCardsByItemId(itemId: Long): List<WishCardView> = wishJpaRepository.findCardsByItemId(itemId)
+
+    override fun findByIdIncludingDeletedForUpdate(id: Long): Wish? = wishJpaRepository.findByIdIncludingDeletedForUpdate(id)
+
+    override fun findIdByUserIdAndUrlWithoutTracking(
+        userId: UUID,
+        url: String,
+    ): Long? = wishJpaRepository.findIdsByUserIdAndUrlWithoutTracking(userId, url).firstOrNull()
 }

@@ -9,27 +9,14 @@ class ItemRepositoryImpl(
 ) : ItemRepository {
     override fun save(item: Item): Item = itemJpaRepository.save(item)
 
-    override fun saveAll(items: List<Item>): List<Item> = itemJpaRepository.saveAll(items)
-
     override fun findByIds(ids: List<Long>): List<Item> = itemJpaRepository.findAllById(ids)
 
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
 
-    override fun findBySourceImageKeys(keys: Collection<String>): List<Item> =
-        if (keys.isEmpty()) emptyList() else itemJpaRepository.findBySourceImageKeyInAndDeletedAtIsNull(keys)
-
-    override fun claimCanonicalIfAbsent(
-        id: Long,
-        canonicalUrl: String,
-        canonicalHash: String,
-    ): Boolean = itemJpaRepository.claimCanonicalIfAbsent(id, canonicalUrl, canonicalHash) == 1
-
-    override fun findByCanonicalHash(canonicalHash: String): Item? =
-        itemJpaRepository.findByCanonicalHashAndDeletedAtIsNull(canonicalHash)
+    override fun findByCanonicalUrl(url: String): Item? = itemJpaRepository.findByCanonicalHashAndDeletedAtIsNull(Item.hashOf(url))
 
     override fun findByIdForUpdate(id: Long): Item? = itemJpaRepository.findByIdForUpdate(id)
 
-    override fun softDeleteById(id: Long) {
-        itemJpaRepository.softDeleteById(id)
-    }
+    override fun findByIdsForUpdate(ids: Collection<Long>): List<Item> =
+        if (ids.isEmpty()) emptyList() else itemJpaRepository.findByIdsForUpdate(ids)
 }

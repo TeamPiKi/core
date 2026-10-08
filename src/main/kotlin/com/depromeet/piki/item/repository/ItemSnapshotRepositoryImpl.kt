@@ -10,24 +10,11 @@ class ItemSnapshotRepositoryImpl(
 ) : ItemSnapshotRepository {
     override fun save(snapshot: ItemSnapshot): ItemSnapshot = itemSnapshotJpaRepository.save(snapshot)
 
-
-    override fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestInProgressByItemId(itemId)
-
-    override fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestMachineReadyByItemId(itemId)
-
     override fun findAllByItemIds(itemIds: Collection<Long>): List<ItemSnapshot> =
         itemIds
             .takeIf { it.isNotEmpty() }
             ?.let { itemSnapshotJpaRepository.findByItemIdInAndDeletedAtIsNullOrderByIdAsc(it) }
             .orEmpty()
-
-    override fun reparentAll(
-        fromItemId: Long,
-        toItemId: Long,
-    ): Int = itemSnapshotJpaRepository.reparentAll(fromItemId, toItemId)
-
-    override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
-        itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
 
     override fun findPriceHistoryByItemId(
         itemId: Long,

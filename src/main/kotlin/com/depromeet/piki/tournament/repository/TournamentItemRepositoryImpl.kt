@@ -1,9 +1,9 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.tournament.domain.TournamentItem
+import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
 import java.util.UUID
-import org.springframework.stereotype.Repository
 
 @Repository
 class TournamentItemRepositoryImpl(
@@ -21,14 +21,15 @@ class TournamentItemRepositoryImpl(
 
     override fun findByIdForUpdate(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdForUpdate(id)
 
-    override fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID> =
-        tournamentItemJpaRepository.findUserIdsBySnapshotId(snapshotId)
+    override fun findByIdIncludingDeletedForUpdate(id: Long): TournamentItem? =
+        tournamentItemJpaRepository.findByIdIncludingDeletedForUpdate(id)
 
-    override fun findRoutingBySnapshotId(snapshotId: Long): List<TournamentItemRoutingView> =
-        tournamentItemJpaRepository.findRoutingBySnapshotId(snapshotId)
+    override fun findByIdIncludingDeleted(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdIncludingDeleted(id)
 
-    override fun findRoutingsWithUserBySnapshotId(snapshotId: Long): List<TournamentItemUserRoutingView> =
-        tournamentItemJpaRepository.findRoutingsWithUserBySnapshotId(snapshotId)
+    override fun findIdByTournamentIdAndUrlWithoutTracking(
+        tournamentId: Long,
+        url: String,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndUrlWithoutTracking(tournamentId, url).firstOrNull()
 
     override fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView> =
         tournamentItemJpaRepository.findPendingCardsByItemId(itemId)

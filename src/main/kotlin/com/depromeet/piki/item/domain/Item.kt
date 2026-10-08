@@ -7,6 +7,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
+import java.security.MessageDigest
 
 @Entity
 @Table(name = "items")
@@ -19,11 +20,14 @@ class Item(
     canonicalUrl: String,
 
 ) : LongBaseEntity() {
-    // 유니크는 DB에서 처리 -> V20261004060615__generate_items_canonical_hash.sql
     // 링크는 정체 URL, 이미지는 이미지 키
     // TODO: 값이 빈 옛 행을 지운 뒤 non-null 로 바꾼다
     @Column(length = ProductLink.MAX_LENGTH)
     val canonicalUrl: String? = canonicalUrl
+
+    // DB 가 canonical_url 로 만드는 생성 컬럼. 앱은 쓰지 않고 hashOf 로 같은 값을 만들어 찾기만 한다
+    @Column(unique = true, insertable = false, updatable = false, columnDefinition = "BINARY(32)")
+    val canonicalHash: ByteArray? = null
 
     // 출처 표시용. 이미지 아이템은 쇼핑몰 주소가 없다
     fun sourceLink(): ProductLink? {
@@ -39,6 +43,9 @@ class Item(
     }
 
     companion object {
+        // 생성 컬럼 식 UNHEX(SHA2(canonical_url, 256)) 과 같은 바이트
+        fun hashOf(canonicalUrl: String): ByteArray = MessageDigest.getInstance("SHA-256").digest(canonicalUrl.toByteArray())
+
         fun ofLink(canonical: CanonicalLink): Item = Item(ParseInputType.LINK, canonical.url)
 
         fun ofImage(key: String): Item = Item(ParseInputType.IMAGE, key)
