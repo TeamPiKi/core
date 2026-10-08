@@ -42,8 +42,8 @@ interface WishRepository {
 
     fun findByIdIncludingDeletedForUpdate(id: Long): Wish?
 
-    fun findIdByUserIdAndUrlWithoutTracking(
+    fun findIdByUserIdAndCanonicalInput(
         userId: UUID,
-        url: String,
+        value: String,
     ): Long?
 }

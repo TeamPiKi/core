@@ -48,8 +48,8 @@ class WishRepositoryImpl(
 
     override fun findByIdIncludingDeletedForUpdate(id: Long): Wish? = wishJpaRepository.findByIdIncludingDeletedForUpdate(id)
 
-    override fun findIdByUserIdAndUrlWithoutTracking(
+    override fun findIdByUserIdAndCanonicalInput(
         userId: UUID,
-        url: String,
-    ): Long? = wishJpaRepository.findIdsByUserIdAndUrlWithoutTracking(userId, url).firstOrNull()
+        value: String,
+    ): Long? = wishJpaRepository.findIdsByUserIdAndCanonicalInput(userId, value).firstOrNull()
 }

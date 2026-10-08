@@ -19,6 +19,4 @@ interface ItemParseOutboxRepository {
     ): List<ItemParseOutbox>
 
     fun findLatestByRequester(requester: ParseRequester): ItemParseOutbox?
-
-    fun findRegisteredImageKeys(keys: Collection<String>): Set<String>
 }

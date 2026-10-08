@@ -30,14 +30,11 @@ class ItemParseOutbox(
     @Column(nullable = false, length = ProductLink.MAX_LENGTH)
     val inputValue: String,
 
+    // 같은 요청자의 중복 요청 판정 키. 링크는 추적 파라미터를 뗀 URL, 이미지는 키 그대로
     @Column(length = ProductLink.MAX_LENGTH)
-    val urlWithoutTracking: String?,
+    val canonicalInput: String?,
 
 ) : LongBaseEntity() {
-    // DB 가 input_type = IMAGE 일 때만 input_value 를 복사해 두는 생성 컬럼
-    @Column(unique = true, insertable = false, updatable = false)
-    val imageKey: String? = null
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     var status: ItemParseOutboxStatus = ItemParseOutboxStatus.PENDING
@@ -72,9 +69,6 @@ class ItemParseOutbox(
     }
 
     companion object {
-        // 같은 이미지의 중복 확정을 막는 유니크. 이미지 입력일 때만 값이 생기는 DB 생성 컬럼(image_key)에 걸려 있다
-        const val IMAGE_KEY_UNIQUE = "uk_item_parse_outbox_image_key"
-
         fun of(
             requester: ParseRequester,
             purpose: ParsePurpose,
@@ -86,10 +80,13 @@ class ItemParseOutbox(
                 purpose = purpose,
                 inputType = input.type,
                 inputValue = input.value,
-                urlWithoutTracking = input.linkOrNull()?.let(::urlWithoutTrackingOf),
+                canonicalInput = canonicalInputOf(input),
             )
 
         // 저장 상한을 넘는 URL 은 중복 판정에서 빠진다
-        fun urlWithoutTrackingOf(link: ProductLink): String? = CanonicalLink.of(link).takeUnless { it.exceedsStorageLimit }?.url
+        fun canonicalInputOf(input: ParseInput): String? {
+            val link = input.linkOrNull() ?: return input.value
+            return CanonicalLink.of(link).takeUnless { it.exceedsStorageLimit }?.url
+        }
     }
 }

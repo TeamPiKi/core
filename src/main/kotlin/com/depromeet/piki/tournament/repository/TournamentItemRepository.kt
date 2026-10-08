@@ -19,10 +19,15 @@ interface TournamentItemRepository {
 
     fun findByIdIncludingDeleted(id: Long): TournamentItem?
 
-    fun findIdByTournamentIdAndUrlWithoutTracking(
+    fun findIdByTournamentIdAndCanonicalInput(
         tournamentId: Long,
-        url: String,
+        value: String,
     ): Long?
+
+    fun findRequestedInputs(
+        tournamentId: Long,
+        values: Collection<String>,
+    ): Set<String>
 
     // 이 상품을 대기실(PENDING) 토너먼트에 출전시킨 카드 — 해소 통지 수신자 후보(#1028·#1051).
     fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView>

@@ -58,15 +58,15 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("id") id: Long,
     ): Wish?
 
-    // 같은 URL 로 파싱을 요청한 적 있는 위시. 한 사용자의 위시로 먼저 좁혀져 URL 인덱스가 필요 없다
+    // 같은 입력으로 파싱을 요청한 적 있는 위시. 한 사용자의 위시로 먼저 좁혀져 입력 인덱스가 필요 없다
     @Query(
         "SELECT w.id FROM Wish w, ItemParseOutbox o " +
             "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.WISH AND o.requesterId = w.id " +
-            "AND w.userId = :userId AND w.deletedAt IS NULL AND o.urlWithoutTracking = :url",
+            "AND w.userId = :userId AND w.deletedAt IS NULL AND o.canonicalInput = :value",
     )
-    fun findIdsByUserIdAndUrlWithoutTracking(
+    fun findIdsByUserIdAndCanonicalInput(
         @Param("userId") userId: UUID,
-        @Param("url") url: String,
+        @Param("value") value: String,
     ): List<Long>
 
     // 출전·메모용 — 한 유저가 이 itemId 들을 담은 wish. 위시가 item 을 직접 참조하므로(#1051) 조인이 없다.

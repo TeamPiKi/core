@@ -23,18 +23,18 @@ class ItemParseOutboxTest {
         assertEquals(ParseRequester.wish(7L), outbox.requester)
         assertEquals(ParseInputType.LINK, outbox.inputType)
         assertEquals("https://shop.example.com/p/1?utm_source=x", outbox.inputValue)
-        assertEquals("https://shop.example.com/p/1", outbox.urlWithoutTracking)
+        assertEquals("https://shop.example.com/p/1", outbox.canonicalInput)
         assertEquals(link, outbox.input.toLink())
     }
 
     @Test
-    fun `이미지 입력은 이미지 키를 값으로 들고 추적 파라미터를 뺀 URL 이 없다`() {
+    fun `이미지 입력은 이미지 키가 값이자 중복 판정 키다`() {
         val outbox = ItemParseOutbox.of(ParseRequester.tournamentItem(3L), ParsePurpose.REGISTER, ParseInput.ofImage("images/a.png"))
 
         assertEquals(ParseRequesterType.TOURNAMENT_ITEM, outbox.requesterType)
         assertEquals(ParseInputType.IMAGE, outbox.inputType)
         assertEquals("images/a.png", outbox.inputValue)
-        assertNull(outbox.urlWithoutTracking)
+        assertEquals("images/a.png", outbox.canonicalInput)
         assertNull(outbox.input.linkOrNull())
         assertEquals(ParseInput.ofImage("images/a.png"), outbox.input)
     }
@@ -53,10 +53,10 @@ class ItemParseOutboxTest {
     }
 
     @Test
-    fun `저장 상한을 넘는 URL 은 추적 파라미터를 뺀 URL 을 남기지 않는다`() {
+    fun `저장 상한을 넘는 URL 은 중복 판정 키를 남기지 않는다`() {
         val link = ProductLink.parse("https://shop.example.com/p/1?q=" + "a".repeat(ProductLink.MAX_LENGTH))
 
-        assertNull(ItemParseOutbox.urlWithoutTrackingOf(link))
+        assertNull(ItemParseOutbox.canonicalInputOf(ParseInput.ofLink(link)))
     }
 
     @Test

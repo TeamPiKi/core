@@ -40,9 +40,4 @@ interface ItemParseOutboxJpaRepository : JpaRepository<ItemParseOutbox, Long> {
         @Param("type") type: ParseRequesterType,
         @Param("ids") ids: Collection<Long>,
     ): List<ItemParseOutbox>
-
-    @Query("select o.imageKey from ItemParseOutbox o where o.imageKey in :keys and o.deletedAt is null")
-    fun findRegisteredImageKeys(
-        @Param("keys") keys: Collection<String>,
-    ): List<String>
 }

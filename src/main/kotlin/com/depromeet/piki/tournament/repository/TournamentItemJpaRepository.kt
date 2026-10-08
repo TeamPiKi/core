@@ -51,16 +51,26 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     @Query("SELECT t FROM TournamentItem t WHERE t.id = :id")
     fun findByIdIncludingDeleted(@Param("id") id: Long): TournamentItem?
 
-    // 같은 URL 로 파싱을 요청한 적 있는 출전. 한 토너먼트의 출전으로 먼저 좁혀져 URL 인덱스가 필요 없다
+    // 같은 입력으로 파싱을 요청한 적 있는 출전. 한 토너먼트의 출전으로 먼저 좁혀져 입력 인덱스가 필요 없다
     @Query(
         "SELECT t.id FROM TournamentItem t, ItemParseOutbox o " +
             "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
-            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.urlWithoutTracking = :url",
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.canonicalInput = :value",
     )
-    fun findIdsByTournamentIdAndUrlWithoutTracking(
+    fun findIdsByTournamentIdAndCanonicalInput(
         @Param("tournamentId") tournamentId: Long,
-        @Param("url") url: String,
+        @Param("value") value: String,
     ): List<Long>
+
+    @Query(
+        "SELECT o.canonicalInput FROM TournamentItem t, ItemParseOutbox o " +
+            "WHERE o.requesterType = com.depromeet.piki.item.domain.ParseRequesterType.TOURNAMENT_ITEM AND o.requesterId = t.id " +
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND o.canonicalInput IN :values",
+    )
+    fun findRequestedInputsByTournamentId(
+        @Param("tournamentId") tournamentId: Long,
+        @Param("values") values: Collection<String>,
+    ): List<String>
 
     @Modifying
     @Query(

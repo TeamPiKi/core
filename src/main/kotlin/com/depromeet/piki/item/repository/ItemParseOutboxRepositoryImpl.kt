@@ -26,7 +26,4 @@ class ItemParseOutboxRepositoryImpl(
 
     override fun findLatestByRequester(requester: ParseRequester): ItemParseOutbox? =
         findLatestByRequesters(requester.type, listOf(requester.id)).firstOrNull()
-
-    override fun findRegisteredImageKeys(keys: Collection<String>): Set<String> =
-        if (keys.isEmpty()) emptySet() else itemParseOutboxJpaRepository.findRegisteredImageKeys(keys).toSet()
 }

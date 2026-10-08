@@ -26,10 +26,16 @@ class TournamentItemRepositoryImpl(
 
     override fun findByIdIncludingDeleted(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdIncludingDeleted(id)
 
-    override fun findIdByTournamentIdAndUrlWithoutTracking(
+    override fun findIdByTournamentIdAndCanonicalInput(
         tournamentId: Long,
-        url: String,
-    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndUrlWithoutTracking(tournamentId, url).firstOrNull()
+        value: String,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndCanonicalInput(tournamentId, value).firstOrNull()
+
+    override fun findRequestedInputs(
+        tournamentId: Long,
+        values: Collection<String>,
+    ): Set<String> =
+        if (values.isEmpty()) emptySet() else tournamentItemJpaRepository.findRequestedInputsByTournamentId(tournamentId, values).toSet()
 
     override fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView> =
         tournamentItemJpaRepository.findPendingCardsByItemId(itemId)
