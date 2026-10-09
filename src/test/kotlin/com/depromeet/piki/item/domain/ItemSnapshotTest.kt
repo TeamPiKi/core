@@ -1,5 +1,6 @@
 package com.depromeet.piki.item.domain
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.product.service.ProductSnapshot
 import java.util.UUID
 import kotlin.test.Test
@@ -100,8 +101,8 @@ class ItemSnapshotTest {
     fun `extracted 는 추출 경로를 출처로 번역하고 구버전 응답은 출처를 남기지 않는다`() {
         val cases =
             mapOf(
-                "STRUCTURED" to ItemSnapshotSource.SERVER,
-                "LLM" to ItemSnapshotSource.SERVER_LLM,
+                ExtractionMethod.STRUCTURED to ItemSnapshotSource.SERVER,
+                ExtractionMethod.LLM to ItemSnapshotSource.SERVER_LLM,
                 null to null,
             )
 
@@ -109,7 +110,7 @@ class ItemSnapshotTest {
             val snapshot =
                 ItemSnapshot.extracted(
                     itemId = 1L,
-                    extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = method),
+                    extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, method = method),
                     createdBy = UUID.randomUUID(),
                 )
             assertEquals(expected, snapshot.source)

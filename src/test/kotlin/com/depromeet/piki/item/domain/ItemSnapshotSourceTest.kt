@@ -1,28 +1,21 @@
 package com.depromeet.piki.item.domain
 
-import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.CsvSource
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class ItemSnapshotSourceTest {
-    @ParameterizedTest
-    @CsvSource(
-        "STRUCTURED, SERVER",
-        "LLM, SERVER_LLM",
-    )
-    fun `추출 경로 wire 문자열이 출처로 번역된다`(
-        wire: String,
-        expected: ItemSnapshotSource,
-    ) {
-        assertEquals(expected, ItemSnapshotSource.fromWireMethod(wire))
+    @Test
+    fun `추출 경로가 출처로 번역된다`() {
+        assertEquals(ItemSnapshotSource.SERVER, ItemSnapshotSource.of(ExtractionMethod.STRUCTURED))
+        assertEquals(ItemSnapshotSource.SERVER_LLM, ItemSnapshotSource.of(ExtractionMethod.LLM))
     }
 
     @Test
-    fun `모르는 값과 null 은 출처 미기록으로 둔다 - tolerant reader`() {
-        assertNull(ItemSnapshotSource.fromWireMethod(null))
-        assertNull(ItemSnapshotSource.fromWireMethod("SOME_NEW_METHOD"))
-        assertNull(ItemSnapshotSource.fromWireMethod("structured"))
+    fun `모르는 경로와 없음은 출처를 비운다`() {
+        assertNull(ItemSnapshotSource.of(null))
+        assertNull(ItemSnapshotSource.of(ExtractionMethod.EXTRACTION_METHOD_UNSPECIFIED))
+        assertNull(ItemSnapshotSource.of(ExtractionMethod.UNRECOGNIZED))
     }
 }

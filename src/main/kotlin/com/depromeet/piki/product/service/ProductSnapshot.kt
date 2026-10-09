@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.product.domain.CurrencyCode
 import com.depromeet.piki.product.domain.ProductLink
 
@@ -11,8 +12,7 @@ data class ProductSnapshot(
     val currency: String? = null,
     // 리다이렉트를 따라간 최종 페이지 URL. 아이템 정체 URL 의 재료이고 이미지 추출에는 없다
     val finalUrl: ProductLink? = null,
-    // 값을 만든 추출 경로의 wire 문자열(STRUCTURED|LLM). 모르는 값은 소비처가 출처 없음으로 둔다
-    val extractionMethod: String? = null,
+    val method: ExtractionMethod? = null,
 ) {
     companion object {
         // extractor 가 정상 값을 보장해도 신뢰 경계를 넘어온 값이라 다시 거른다
@@ -23,7 +23,7 @@ data class ProductSnapshot(
             price: Int?,
             currency: String?,
             finalUrl: String? = null,
-            extractionMethod: String? = null,
+            method: ExtractionMethod? = null,
         ): ProductSnapshot {
             if ((price ?: 0) < 0) throw ProductSnapshotException.untrustworthyValue()
             return ProductSnapshot(
@@ -33,7 +33,7 @@ data class ProductSnapshot(
                 currency = CurrencyCode.normalizeOrNull(currency),
                 // 귀결점이 상품 주소 규칙에 안 맞으면 등록 입력이 정체가 된다
                 finalUrl = finalUrl?.let(ProductLink::parseOrNull),
-                extractionMethod = extractionMethod,
+                method = method,
             )
         }
     }

@@ -33,7 +33,7 @@ class ItemSnapshot(
     createdBy: UUID,
 
 ) : LongBaseEntity() {
-    // TODO: 출처·만든 사람이 빈 옛 행을 백필한 뒤 non-null 로 바꾼다
+    // TODO: 옛 행은 source·created_by 가 NULL 이라 nullable. 그 행을 채우거나 지운 뒤 생성자로 올린다
     @Enumerated(EnumType.STRING)
     @Column(length = 16)
     val source: ItemSnapshotSource? = source
@@ -86,7 +86,7 @@ class ItemSnapshot(
                 imageUrl = extracted.imageUrl,
                 price = extracted.price,
                 currency = extracted.currency,
-                source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod),
+                source = ItemSnapshotSource.of(extracted.method),
                 createdBy = createdBy,
             )
 
