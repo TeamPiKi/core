@@ -71,14 +71,6 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `공유 값은 수기가 아닌 READY 버전이다`() {
-        assertTrue(version().isSharedValue())
-        assertTrue(version(method = null).isSharedValue())
-        assertFalse(version(userInput = true).isSharedValue())
-        assertFalse(version(price = null).isSharedValue())
-    }
-
-    @Test
     fun `extracted 는 추출값과 요청자로 버전을 만든다`() {
         val slot = UUID.randomUUID()
 
@@ -153,7 +145,7 @@ class ItemSnapshotTest {
         val base = version(name = "나이키", price = 99_000, currency = "KRW")
         val editor = UUID.randomUUID()
 
-        val manual = ItemSnapshot.manual(1L, ManualValues.merge(base, name = null, price = 79_000, imageUrl = null, currency = null), createdBy = editor)
+        val manual = ItemSnapshot.userInput(1L, ManualValues.merge(base, name = null, price = 79_000, imageUrl = null, currency = null), createdBy = editor)
 
         assertTrue(manual.isReady())
         assertEquals("나이키", manual.name)
@@ -171,7 +163,7 @@ class ItemSnapshotTest {
     fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 병합된 READY 버전이 된다`() {
         val base = version(name = "몬치치 인형", price = null)
 
-        val manual = ItemSnapshot.manual(1L, ManualValues.merge(base, name = null, price = 25_000, imageUrl = null, currency = "KRW"), createdBy = UUID.randomUUID())
+        val manual = ItemSnapshot.userInput(1L, ManualValues.merge(base, name = null, price = 25_000, imageUrl = null, currency = "KRW"), createdBy = UUID.randomUUID())
 
         assertTrue(manual.isReady())
         assertEquals("몬치치 인형", manual.name)
@@ -182,7 +174,7 @@ class ItemSnapshotTest {
     @Test
     fun `base 가 없으면 입력만으로 READY 버전을 만든다`() {
         val manual =
-            ItemSnapshot.manual(
+            ItemSnapshot.userInput(
                 1L,
                 ManualValues.merge(base = null, name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW"),
                 createdBy = UUID.randomUUID(),

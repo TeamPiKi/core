@@ -38,6 +38,7 @@ class Tournament(
     var inviteExpiresAt: LocalDateTime = inviteExpiresAt
         protected set
 
+    @Column
     var startedAt: LocalDateTime? = null
         protected set
 

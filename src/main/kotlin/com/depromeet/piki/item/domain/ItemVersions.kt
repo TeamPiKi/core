@@ -3,17 +3,17 @@ package com.depromeet.piki.item.domain
 import java.util.UUID
 
 // 한 상품의 버전들 중 카드에 보일 버전을 고른다(#1051)
-// 보이는 값은 공유 값(남의 것이어도 되는 기계 READY)과 내 값(내가 요청하거나 직접 고친 버전) 둘뿐이다
+// 보이는 값은 기계 READY(남이 요청한 것이어도 됨)와 내 값(내가 요청하거나 직접 넣은 버전) 둘뿐이다
 class ItemVersions private constructor(
     private val versions: List<ItemSnapshot>,
 ) {
     val itemId: Long get() = versions.first().itemId
 
-    // 내 값과 공유 값 중 더 새로운 것. 내 수기는 그보다 새 공유 READY 에만 진다.
+    // 내 값과 기계 READY 중 더 새로운 것. 내 수기는 그보다 새 기계 READY 에만 진다
     fun displayFor(viewer: UUID): ItemSnapshot {
         val mine = versions.lastOrNull { it.isOwnedBy(viewer) }
-        val shared = versions.lastOrNull { it.isSharedValue() }
-        listOfNotNull(mine, shared).maxByOrNull { it.getId() }?.let { return it }
+        val machineReady = versions.lastOrNull { !it.userInput && it.isReady() }
+        listOfNotNull(mine, machineReady).maxByOrNull { it.getId() }?.let { return it }
         return versions.lastOrNull { !it.userInput } ?: versions.last()
     }
 
