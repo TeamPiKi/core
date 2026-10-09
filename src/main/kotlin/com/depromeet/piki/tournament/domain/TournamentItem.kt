@@ -34,9 +34,11 @@ class TournamentItem(
 
     val slot: ItemSlot get() = ItemSlot.tournamentItem(getId())
 
-    // 시작한 토너먼트는 시작 시각까지의 버전으로 값을 계산한다
-    fun cardQuery(startedAt: LocalDateTime?): CardQuery =
-        CardQuery(slot = slot, itemId = itemId, owner = userId, asOf = startedAt)
+    // 토너먼트가 시작되면 토너먼트 아이템의 버전은 고정된다
+    fun cardQuery(tournament: Tournament): CardQuery {
+        require(tournament.getId() == tournamentId) { "토너먼트 아이템 ${getIdOrNull()} 은 토너먼트 ${tournament.getId()} 의 출전이 아니다" }
+        return CardQuery(slot = slot, itemId = itemId, owner = userId, asOf = tournament.startedAt)
+    }
 
     fun fill(itemId: Long) {
         this.itemId?.let {

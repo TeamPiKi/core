@@ -57,14 +57,31 @@ class TournamentItemTest {
     }
 
     @Test
-    fun `cardQuery 는 시작 시각을 기준 시각으로 담는다`() {
+    fun `cardQuery 는 시작한 토너먼트의 시작 시각을 기준 시각으로 담고 시작 전이면 기준 시각이 없다`() {
         val owner = UUID.randomUUID()
-        val startedAt = LocalDateTime.of(2026, 10, 1, 12, 0)
+        val tournament = tournament().withId(1L)
         val tournamentItem = TournamentItem(tournamentId = 1, userId = owner, itemId = 3L).withId(9L)
 
+        assertNull(tournamentItem.cardQuery(tournament).asOf)
+        tournament.start()
         assertEquals(
-            CardQuery(slot = ItemSlot.tournamentItem(9L), itemId = 3L, owner = owner, asOf = startedAt),
-            tournamentItem.cardQuery(startedAt),
+            CardQuery(slot = ItemSlot.tournamentItem(9L), itemId = 3L, owner = owner, asOf = tournament.startedAt),
+            tournamentItem.cardQuery(tournament),
         )
     }
+
+    @Test
+    fun `다른 토너먼트로 cardQuery 를 만들면 코드 버그로 본다`() {
+        val tournamentItem = TournamentItem(tournamentId = 1, userId = UUID.randomUUID(), itemId = 3L).withId(9L)
+
+        assertFailsWith<IllegalArgumentException> { tournamentItem.cardQuery(tournament().withId(2L)) }
+    }
+
+    private fun tournament(): Tournament =
+        Tournament(
+            ownerTournamentUserId = 0L,
+            name = "테스트",
+            inviteCode = "ABC123",
+            inviteExpiresAt = LocalDateTime.now().plusMinutes(30),
+        )
 }
