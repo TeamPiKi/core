@@ -1,6 +1,7 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import java.util.UUID
@@ -31,6 +32,12 @@ interface TournamentItemRepository {
         tournamentId: Long,
         keys: Collection<ImageKey>,
     ): Set<ImageKey>
+
+    // 이 토너먼트의 출전 중 정체 값이 같은 아이템을 담은 것
+    fun findIdByTournamentIdAndItemCanonical(
+        tournamentId: Long,
+        canonical: CanonicalInput,
+    ): Long?
 
     // 이 상품을 대기실(PENDING) 토너먼트에 출전시킨 카드 — 해소 통지 수신자 후보(#1028·#1051).
     fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView>

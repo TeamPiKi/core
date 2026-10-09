@@ -1,5 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import jakarta.persistence.LockModeType
@@ -69,6 +70,25 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("userId") userId: UUID,
         @Param("value") normalized: NormalizedInput,
     ): List<Long>
+
+    @Query(
+        "SELECT w.id FROM Wish w, Item i WHERE i.id = w.itemId AND i.canonicalUrl = :canonical " +
+            "AND w.userId = :userId AND w.deletedAt IS NULL AND i.deletedAt IS NULL",
+    )
+    fun findIdsByUserIdAndItemCanonical(
+        @Param("userId") userId: UUID,
+        @Param("canonical") canonical: CanonicalInput,
+    ): List<Long>
+
+    @Query(
+        "SELECT o.normalizedInput FROM Wish w, ItemParseOutbox o " +
+            "WHERE o.slotType = com.depromeet.piki.item.domain.ItemSlotType.WISH AND o.slotId = w.id " +
+            "AND w.userId = :userId AND w.deletedAt IS NULL AND o.normalizedInput IN :values",
+    )
+    fun findRequestedInputsByUserId(
+        @Param("userId") userId: UUID,
+        @Param("values") values: Collection<String>,
+    ): List<String>
 
     // 출전·메모용 — 한 유저가 이 itemId 들을 담은 wish. 위시가 item 을 직접 참조하므로(#1051) 조인이 없다.
     @Query(

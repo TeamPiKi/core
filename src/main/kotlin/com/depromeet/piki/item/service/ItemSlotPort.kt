@@ -9,8 +9,8 @@ import java.util.UUID
 interface ItemSlotPort {
     val type: ItemSlotType
 
-    // 지워진 슬롯도 돌려준다. 슬롯이 지워져도 파싱 결과는 아이템에 남는다
-    fun find(id: Long): ItemSlotState?
+    // soft delete 된 슬롯도 Present 다. 슬롯이 지워져도 파싱 결과는 아이템에 남는다
+    fun find(id: Long): ItemSlotState
 
     fun fill(
         id: Long,
@@ -18,10 +18,15 @@ interface ItemSlotPort {
     )
 }
 
-data class ItemSlotState(
-    val owner: UUID,
-    val itemId: Long?,
-)
+sealed interface ItemSlotState {
+    data class Present(
+        val owner: UUID,
+        val itemId: Long?,
+    ) : ItemSlotState
+
+    // 탈퇴로 행이 하드 삭제됨
+    data object Gone : ItemSlotState
+}
 
 @Component
 class ItemSlots(
@@ -29,7 +34,7 @@ class ItemSlots(
 ) {
     private val portByType = ports.associateBy { it.type }
 
-    fun find(slot: ItemSlot): ItemSlotState? = portOf(slot).find(slot.id)
+    fun find(slot: ItemSlot): ItemSlotState = portOf(slot).find(slot.id)
 
     fun fill(
         slot: ItemSlot,

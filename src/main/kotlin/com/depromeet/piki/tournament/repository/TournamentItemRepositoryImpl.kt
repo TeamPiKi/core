@@ -1,6 +1,7 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import org.springframework.stereotype.Repository
@@ -32,6 +33,11 @@ class TournamentItemRepositoryImpl(
         tournamentId: Long,
         normalized: NormalizedInput,
     ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, normalized).firstOrNull()
+
+    override fun findIdByTournamentIdAndItemCanonical(
+        tournamentId: Long,
+        canonical: CanonicalInput,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndItemCanonical(tournamentId, canonical).firstOrNull()
 
     override fun findRequestedImageKeys(
         tournamentId: Long,

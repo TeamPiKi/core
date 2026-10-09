@@ -1,5 +1,7 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
@@ -47,4 +49,16 @@ interface WishRepository {
         userId: UUID,
         normalized: NormalizedInput,
     ): Long?
+
+    // 이 사용자의 위시 중 정체 값이 같은 아이템을 담은 것
+    fun findIdByUserIdAndItemCanonical(
+        userId: UUID,
+        canonical: CanonicalInput,
+    ): Long?
+
+    // 이 사용자가 이미 요청한 이미지 키
+    fun findRequestedImageKeys(
+        userId: UUID,
+        keys: Collection<ImageKey>,
+    ): Set<ImageKey>
 }

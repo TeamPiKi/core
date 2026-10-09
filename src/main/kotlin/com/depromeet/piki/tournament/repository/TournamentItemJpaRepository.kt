@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentStatus
@@ -61,6 +62,15 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     fun findIdsByTournamentIdAndNormalizedInput(
         @Param("tournamentId") tournamentId: Long,
         @Param("value") normalized: NormalizedInput,
+    ): List<Long>
+
+    @Query(
+        "SELECT t.id FROM TournamentItem t, Item i WHERE i.id = t.itemId AND i.canonicalUrl = :canonical " +
+            "AND t.tournamentId = :tournamentId AND t.deletedAt IS NULL AND i.deletedAt IS NULL",
+    )
+    fun findIdsByTournamentIdAndItemCanonical(
+        @Param("tournamentId") tournamentId: Long,
+        @Param("canonical") canonical: CanonicalInput,
     ): List<Long>
 
     @Query(

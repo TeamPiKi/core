@@ -23,12 +23,6 @@ class ItemResolver(
         return itemRepository.findByCanonical(canonical) ?: itemRepository.save(Item.of(input.type, canonical))
     }
 
-    // 등록 링크의 정규화 값이 곧 정체인 아이템만 찾는다. 귀결점이 다른 단축링크는 여기서 못 잡는다
-    fun findByLink(link: ProductLink): Item? {
-        val normalized = normalizedOf(ParseInput.Link(link)) ?: return null
-        return itemRepository.findByCanonical(normalized.asCanonical())
-    }
-
     // 정체성은 바꾸지 않는다. 몰의 URL 구조 변경·단축링크 만료가 늘어나는지만 본다
     fun warnIfDrifted(
         item: Item,

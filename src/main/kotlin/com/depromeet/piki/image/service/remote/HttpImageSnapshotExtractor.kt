@@ -25,7 +25,7 @@ class HttpImageSnapshotExtractor(
                 .newBuilder()
                 .setBucket(s3Properties.bucket)
                 .setKey(key.value)
-        modelSettings.modelOf(ExtractionTarget.IMAGE)?.let(request::setModel)
+        modelSettings.modelOverrideOf(ExtractionTarget.IMAGE)?.let(request::setModel)
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
             path = ExtractionEndpoints.IMAGE_EXTRACTION,

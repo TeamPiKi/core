@@ -27,15 +27,18 @@ class ItemParser(
 
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
     fun parse(itemParseOutboxId: Long) {
-        val input = itemParsingService.inputOf(itemParseOutboxId) ?: return failWithoutSource(itemParseOutboxId)
+        val input = runCatchingException { itemParsingService.inputOf(itemParseOutboxId) }.getOrElse { return failWithoutSource(itemParseOutboxId, it) }
         when (input) {
             is ParseInput.Link -> parseLink(itemParseOutboxId, input.link)
             is ParseInput.Image -> parseImage(itemParseOutboxId, input.key)
         }
     }
 
-    private fun failWithoutSource(itemParseOutboxId: Long) {
-        log.error("item parse outbox {} 에 파싱할 입력이 없어 실패로 종결", itemParseOutboxId)
+    private fun failWithoutSource(
+        itemParseOutboxId: Long,
+        cause: Throwable,
+    ) {
+        log.error("item parse outbox {} 의 입력을 읽지 못해 실패로 종결", itemParseOutboxId, cause)
         if (markFailedQuietly(itemParseOutboxId)) {
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ParseFailureReason.INTERNAL_ERROR.metricLabel)
         }
@@ -78,7 +81,7 @@ class ItemParser(
         started: Long,
     ) {
         runCatchingException { itemParsingService.markExtracted(itemParseOutboxId, extracted) }.fold(
-            onSuccess = { status -> status?.let { recordSettled(itemParseOutboxId, logSubject, extracted, it, started) } },
+            onSuccess = { settlement -> if (settlement is ExtractionSettlement.Applied) recordSettled(itemParseOutboxId, logSubject, extracted, settlement.status, started) },
             onFailure = { e ->
                 markError(e)
                 if (e.isInvariantViolation()) rejectReady(itemParseOutboxId, logSubject, e, started) else leaveForRecovery(itemParseOutboxId, e)

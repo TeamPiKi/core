@@ -61,7 +61,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(status().is3xxRedirection)
                 .andExpect(redirectedUrl("/admin/extraction-models?updated"))
 
-            assertEquals("gemini-probe-ok", settings.modelOf(ExtractionTarget.LINK))
+            assertEquals("gemini-probe-ok", settings.modelOverrideOf(ExtractionTarget.LINK))
             assertEquals("gemini-probe-ok", repository.findById("LINK").get().model)
             // 저장 전에 프로브를 거쳤다는 사실 자체가 게이트의 본질이다.
             assertEquals(listOf(ExtractionTarget.LINK to "gemini-probe-ok"), probe.calls)
@@ -81,7 +81,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(status().isOk)
 
             assertTrue(repository.findById("IMAGE").isEmpty, "거절된 모델이 저장되면 게이트가 뚫린 것이다")
-            assertNull(settings.modelOf(ExtractionTarget.IMAGE))
+            assertNull(settings.modelOverrideOf(ExtractionTarget.IMAGE))
         } finally {
             cleanUp(ExtractionTarget.IMAGE)
         }
@@ -113,7 +113,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
             mockMvc
                 .perform(post("/admin/extraction-models/IMAGE").with(csrf()).param("model", "gemini-to-be-cleared"))
                 .andExpect(status().is3xxRedirection)
-            assertEquals("gemini-to-be-cleared", settings.modelOf(ExtractionTarget.IMAGE))
+            assertEquals("gemini-to-be-cleared", settings.modelOverrideOf(ExtractionTarget.IMAGE))
 
             mockMvc
                 .perform(post("/admin/extraction-models/IMAGE/clear").with(csrf()))
@@ -121,7 +121,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(redirectedUrl("/admin/extraction-models?cleared"))
 
             assertTrue(repository.findById("IMAGE").isEmpty)
-            assertNull(settings.modelOf(ExtractionTarget.IMAGE), "해제 후엔 요청에 모델이 실리지 않아야 한다")
+            assertNull(settings.modelOverrideOf(ExtractionTarget.IMAGE), "해제 후엔 요청에 모델이 실리지 않아야 한다")
         } finally {
             cleanUp(ExtractionTarget.IMAGE)
         }

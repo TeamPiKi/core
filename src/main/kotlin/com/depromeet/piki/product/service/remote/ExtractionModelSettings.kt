@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component
 // 추출 경로별 LLM 모델 지정의 단일 조회 지점. 인터페이스/구현 분리는 DomainAccessPolicy 와 같은 구조 —
 // 소비자(원격 클라이언트)의 단위 테스트가 DB 없이 지정값을 대체할 수 있게 한다.
 interface ExtractionModelSettings {
-    // 지정된 모델. 행이 없으면 null 이고, 그 경우 호출자는 요청에 모델을 싣지 않아 extractor 기본값으로 동작한다.
-    fun modelOf(target: ExtractionTarget): String?
+    // 지정이 없으면 null. 호출자는 요청에 모델을 싣지 않아 extractor 기본값으로 동작한다
+    fun modelOverrideOf(target: ExtractionTarget): String?
 }
 
 // DB(extraction_models) 기반 구현. 백오피스가 배포 없이 모델을 바꾼다 — 판정은 잦으므로(파싱마다) 매번 DB 를
@@ -40,7 +40,7 @@ class DbExtractionModelSettings(
     @Scheduled(fixedDelay = RELOAD_INTERVAL_MS)
     fun reload() = load()
 
-    override fun modelOf(target: ExtractionTarget): String? = models[target]
+    override fun modelOverrideOf(target: ExtractionTarget): String? = models[target]
 
     // 캐시 적재와 백오피스 화면이 함께 쓰는 단일 조회 지점. 화면이 캐시가 아니라 저장소를 직접 읽는 이유는
     // 캐시가 afterCommit 갱신이라 방금 저장한 값이 아직 안 보일 수 있어서다.

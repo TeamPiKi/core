@@ -54,7 +54,7 @@ class AdminExtractionModelService(
     // 기본 모델로 fallback 해 파싱은 계속 되지만, 화면에 적힌 모델과 실제로 도는 모델이 갈린 채 아무도 모르게 된다.
     // 이 버튼이 그 유령 상태를 운영자가 직접 확인하는 자리다.
     fun check(target: ExtractionTarget) {
-        val model = settings.modelOf(target) ?: throw IllegalArgumentException("지정된 모델이 없습니다 (extractor 기본 모델로 동작 중).")
+        val model = settings.modelOverrideOf(target) ?: throw IllegalArgumentException("지정된 모델이 없습니다 (extractor 기본 모델로 동작 중).")
         probe.verify(target, model)
     }
 
