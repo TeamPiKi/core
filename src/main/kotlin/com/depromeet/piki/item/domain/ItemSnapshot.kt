@@ -24,6 +24,7 @@ class ItemSnapshot(
     @Column(length = IMAGE_URL_MAX_LENGTH)
     val imageUrl: String?,
 
+    @Column
     val price: Int?,
 
     @Column(length = CURRENCY_MAX_LENGTH)
@@ -36,13 +37,10 @@ class ItemSnapshot(
     @Column(nullable = false)
     val userInput: Boolean,
 
-    createdBy: UUID,
+    @Column(nullable = false, columnDefinition = "BINARY(16)")
+    val createdBy: UUID,
 
 ) : LongBaseEntity() {
-    // TODO: 옛 행은 created_by 가 NULL 이라 nullable. 그 행을 채우거나 지운 뒤 생성자로 올린다
-    @Column(columnDefinition = "BINARY(16)")
-    val createdBy: UUID? = createdBy
-
     init {
         require(filledFieldCount() > 0) { "값이 하나도 없는 버전은 만들 수 없다" }
         require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }

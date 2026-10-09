@@ -122,8 +122,9 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
     // 알림·역조회 무관한 fixture 라 PROCESSING 상태로 최소 행만 만든다. status·item_id·timestamp 가 NOT NULL.
     private fun insertItemSnapshot(itemId: Long): Long {
         jdbcTemplate.update(
-            "INSERT INTO item_snapshots (item_id, status, created_at, updated_at) VALUES (?, 'PROCESSING', NOW(6), NOW(6))",
+            "INSERT INTO item_snapshots (item_id, status, created_by, created_at, updated_at) VALUES (?, 'PROCESSING', ?, NOW(6), NOW(6))",
             itemId,
+            uuidToBytes(UUID.randomUUID()),
         )
         return jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long::class.java)!!
     }
