@@ -14,7 +14,7 @@ class ItemVersions private constructor(
         val mine = versions.lastOrNull { it.isOwnedBy(viewer) }
         val shared = versions.lastOrNull { it.isSharedValue() }
         listOfNotNull(mine, shared).maxByOrNull { it.getId() }?.let { return it }
-        return versions.lastOrNull { !it.isManual() } ?: versions.last()
+        return versions.lastOrNull { !it.userInput } ?: versions.last()
     }
 
     // 직전까지 미완이던 카드가 이 버전으로 채워지는가(#1028). 이 버전을 요청한 카드는 호출부가 뺀다

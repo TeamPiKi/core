@@ -1,7 +1,7 @@
 package com.depromeet.piki.support
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
 import java.util.UUID
 
 // 값은 기본이 READY. 필드를 null 로 넘기면 INCOMPLETE 버전이 된다
@@ -11,7 +11,8 @@ fun itemVersion(
     price: Int? = 1_000,
     imageUrl: String? = "https://img.example.com/p.png",
     currency: String? = "KRW",
-    source: ItemSnapshotSource? = ItemSnapshotSource.SERVER,
+    userInput: Boolean = false,
+    method: ExtractionMethod? = ExtractionMethod.STRUCTURED.takeUnless { userInput },
     createdBy: UUID = UUID.randomUUID(),
 ): ItemSnapshot =
     ItemSnapshot(
@@ -20,6 +21,7 @@ fun itemVersion(
         imageUrl = imageUrl,
         price = price,
         currency = currency,
-        source = source,
+        method = method,
+        userInput = userInput,
         createdBy = createdBy,
     )

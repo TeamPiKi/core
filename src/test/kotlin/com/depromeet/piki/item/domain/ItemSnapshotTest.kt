@@ -72,10 +72,10 @@ class ItemSnapshotTest {
 
     @Test
     fun `공유 값은 수기가 아닌 READY 버전이다`() {
-        assertTrue(version(source = ItemSnapshotSource.SERVER).isSharedValue())
-        assertTrue(version(source = null).isSharedValue())
-        assertFalse(version(source = ItemSnapshotSource.MANUAL).isSharedValue())
-        assertFalse(version(source = ItemSnapshotSource.SERVER, price = null).isSharedValue())
+        assertTrue(version().isSharedValue())
+        assertTrue(version(method = null).isSharedValue())
+        assertFalse(version(userInput = true).isSharedValue())
+        assertFalse(version(price = null).isSharedValue())
     }
 
     @Test
@@ -98,22 +98,16 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `extracted 는 추출 경로를 출처로 번역하고 구버전 응답은 출처를 남기지 않는다`() {
-        val cases =
-            mapOf(
-                ExtractionMethod.STRUCTURED to ItemSnapshotSource.SERVER,
-                ExtractionMethod.LLM to ItemSnapshotSource.SERVER_LLM,
-                null to null,
-            )
-
-        cases.forEach { (method, expected) ->
+    fun `extracted 는 추출 경로를 그대로 들고 수기가 아니다`() {
+        listOf(ExtractionMethod.STRUCTURED, ExtractionMethod.LLM, null).forEach { method ->
             val snapshot =
                 ItemSnapshot.extracted(
                     itemId = 1L,
                     extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, method = method),
                     createdBy = UUID.randomUUID(),
                 )
-            assertEquals(expected, snapshot.source)
+            assertEquals(method, snapshot.method)
+            assertFalse(snapshot.userInput)
         }
     }
 
@@ -166,7 +160,8 @@ class ItemSnapshotTest {
         assertEquals(79_000, manual.price)
         assertEquals(base.imageUrl, manual.imageUrl)
         assertEquals("KRW", manual.currency)
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertTrue(manual.userInput)
+        assertNull(manual.method)
         assertEquals(editor, manual.createdBy)
         assertEquals(99_000, base.price)
     }
@@ -194,7 +189,7 @@ class ItemSnapshotTest {
             )
 
         assertTrue(manual.isReady())
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        assertTrue(manual.userInput)
     }
 
     @Test
@@ -218,7 +213,8 @@ class ItemSnapshotTest {
         price: Int? = 99_000,
         imageUrl: String? = "https://img.example.com/a.png",
         currency: String? = "KRW",
-        source: ItemSnapshotSource? = ItemSnapshotSource.SERVER,
+        userInput: Boolean = false,
+        method: ExtractionMethod? = ExtractionMethod.STRUCTURED.takeUnless { userInput },
     ): ItemSnapshot =
         ItemSnapshot(
             itemId = 1L,
@@ -226,7 +222,8 @@ class ItemSnapshotTest {
             imageUrl = imageUrl,
             price = price,
             currency = currency,
-            source = source,
+            method = method,
+            userInput = userInput,
             createdBy = UUID.randomUUID(),
         )
 }

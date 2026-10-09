@@ -81,7 +81,7 @@ class ItemVersionsTest {
     @Test
     fun `출처를 모르는 도입 전 READY 는 남이 만들었어도 공유 값이다`() {
         val myIncomplete = incomplete(1, by = me)
-        val legacy = version(2, ready = true, source = null, by = other)
+        val legacy = version(2, ready = true, userInput = false, by = other)
 
         assertEquals(legacy, display(myIncomplete, legacy))
     }
@@ -160,7 +160,7 @@ class ItemVersionsTest {
     @Test
     fun `다른 상품의 버전은 한데 묶을 수 없다`() {
         val a = machineReady(1, by = me)
-        val b = version(2, ready = true, source = ItemSnapshotSource.SERVER, by = me, itemId = 2L)
+        val b = version(2, ready = true, userInput = false, by = me, itemId = 2L)
 
         assertFailsWith<IllegalArgumentException> { ItemVersions.of(listOf(a, b)) }
     }
@@ -173,24 +173,24 @@ class ItemVersionsTest {
         id: Long,
         by: UUID,
         createdAt: LocalDateTime = LocalDateTime.now(),
-    ): ItemSnapshot = version(id, ready = true, source = ItemSnapshotSource.SERVER, by = by, createdAt = createdAt)
+    ): ItemSnapshot = version(id, ready = true, userInput = false, by = by, createdAt = createdAt)
 
     private fun manual(
         id: Long,
         by: UUID,
         createdAt: LocalDateTime = LocalDateTime.now(),
-    ): ItemSnapshot = version(id, ready = true, source = ItemSnapshotSource.MANUAL, by = by, createdAt = createdAt)
+    ): ItemSnapshot = version(id, ready = true, userInput = true, by = by, createdAt = createdAt)
 
     private fun incomplete(
         id: Long,
         by: UUID,
-    ): ItemSnapshot = version(id, ready = false, source = ItemSnapshotSource.SERVER, by = by)
+    ): ItemSnapshot = version(id, ready = false, userInput = false, by = by)
 
     // "최신" 판정이 id 순서라 영속화 없이 id 와 생성 시각을 reflection 으로 박는다
     private fun version(
         id: Long,
         ready: Boolean,
-        source: ItemSnapshotSource?,
+        userInput: Boolean,
         by: UUID,
         createdAt: LocalDateTime = LocalDateTime.now(),
         itemId: Long = 1L,
@@ -202,7 +202,8 @@ class ItemVersionsTest {
                 imageUrl = "https://cdn.example.com/$id.jpg",
                 price = if (ready) 10_000 else null,
                 currency = "KRW",
-                source = source,
+                method = null,
+                userInput = userInput,
                 createdBy = by,
             )
         ReflectionTestUtils.setField(snapshot, "createdAt", createdAt)

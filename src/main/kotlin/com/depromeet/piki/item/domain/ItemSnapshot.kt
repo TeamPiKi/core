@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.common.domain.LongBaseEntity
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.product.service.ProductSnapshot
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
@@ -28,16 +29,17 @@ class ItemSnapshot(
     @Column(length = CURRENCY_MAX_LENGTH)
     val currency: String?,
 
-    source: ItemSnapshotSource?,
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    val method: ExtractionMethod?,
+
+    @Column(nullable = false)
+    val userInput: Boolean,
 
     createdBy: UUID,
 
 ) : LongBaseEntity() {
-    // TODO: 옛 행은 source·created_by 가 NULL 이라 nullable. 그 행을 채우거나 지운 뒤 생성자로 올린다
-    @Enumerated(EnumType.STRING)
-    @Column(length = 16)
-    val source: ItemSnapshotSource? = source
-
+    // TODO: 옛 행은 created_by 가 NULL 이라 nullable. 그 행을 채우거나 지운 뒤 생성자로 올린다
     @Column(columnDefinition = "BINARY(16)")
     val createdBy: UUID? = createdBy
 
@@ -53,12 +55,10 @@ class ItemSnapshot(
 
     fun isIncomplete(): Boolean = !isReady()
 
-    fun isManual(): Boolean = source == ItemSnapshotSource.MANUAL
-
     fun isOwnedBy(user: UUID): Boolean = createdBy == user
 
-    // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다
-    fun isSharedValue(): Boolean = isReady() && !isManual()
+    // 추출 경로를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다
+    fun isSharedValue(): Boolean = isReady() && !userInput
 
     // 통화는 단독으로 카드 값이 되지 못해 세지 않는다
     private fun filledFieldCount(): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size
@@ -86,7 +86,8 @@ class ItemSnapshot(
                 imageUrl = extracted.imageUrl,
                 price = extracted.price,
                 currency = extracted.currency,
-                source = ItemSnapshotSource.of(extracted.method),
+                method = extracted.method,
+                userInput = false,
                 createdBy = createdBy,
             )
 
@@ -101,7 +102,8 @@ class ItemSnapshot(
                 imageUrl = values.imageUrl,
                 price = values.price,
                 currency = values.currency,
-                source = ItemSnapshotSource.MANUAL,
+                method = null,
+                userInput = true,
                 createdBy = createdBy,
             )
     }

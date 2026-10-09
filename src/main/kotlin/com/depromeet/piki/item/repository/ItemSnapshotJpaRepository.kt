@@ -12,7 +12,7 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
         "select s from ItemSnapshot s where s.itemId = :itemId " +
             "and s.name is not null and s.price is not null and s.imageUrl is not null " +
             "and s.deletedAt is null " +
-            "and s.source is not null " +
+            "and (s.method is not null or s.userInput = true) " +
             "order by s.id desc",
     )
     fun findPriceHistoryByItemId(
