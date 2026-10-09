@@ -1,7 +1,6 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.product.service.ProductSnapshot
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -86,7 +85,7 @@ class ItemSnapshotTest {
             ItemSnapshot.extracted(
                 itemId = 1L,
                 extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, currency = "KRW"),
-                requestedBy = slot,
+                createdBy = slot,
             )
 
         assertEquals(1L, snapshot.itemId)
@@ -111,7 +110,7 @@ class ItemSnapshotTest {
                 ItemSnapshot.extracted(
                     itemId = 1L,
                     extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = method),
-                    requestedBy = UUID.randomUUID(),
+                    createdBy = UUID.randomUUID(),
                 )
             assertEquals(expected, snapshot.source)
         }
@@ -123,7 +122,7 @@ class ItemSnapshotTest {
             ItemSnapshot.extracted(
                 itemId = 1L,
                 extracted = ProductSnapshot(price = 1_000, imageUrl = "https://img.example.com/a.png"),
-                requestedBy = UUID.randomUUID(),
+                createdBy = UUID.randomUUID(),
             )
 
         assertTrue(snapshot.isIncomplete())
@@ -139,7 +138,7 @@ class ItemSnapshotTest {
         ).forEach { extracted ->
             assertFalse(ItemSnapshot.accepts(extracted))
             assertFailsWith<IllegalArgumentException> {
-                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, requestedBy = UUID.randomUUID())
+                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, createdBy = UUID.randomUUID())
             }
         }
     }
@@ -149,7 +148,7 @@ class ItemSnapshotTest {
         listOf(ProductSnapshot(currency = "KRW"), ProductSnapshot(name = "   ")).forEach { extracted ->
             assertFalse(ItemSnapshot.accepts(extracted))
             assertFailsWith<IllegalArgumentException> {
-                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, requestedBy = UUID.randomUUID())
+                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, createdBy = UUID.randomUUID())
             }
         }
     }
@@ -226,7 +225,6 @@ class ItemSnapshotTest {
             imageUrl = imageUrl,
             price = price,
             currency = currency,
-            extractedAt = LocalDateTime.of(2026, 6, 3, 12, 0),
             source = source,
             createdBy = UUID.randomUUID(),
         )

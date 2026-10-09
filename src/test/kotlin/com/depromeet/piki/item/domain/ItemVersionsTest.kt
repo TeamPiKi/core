@@ -202,7 +202,6 @@ class ItemVersionsTest {
                 imageUrl = "https://cdn.example.com/$id.jpg",
                 price = if (ready) 10_000 else null,
                 currency = "KRW",
-                extractedAt = createdAt,
                 source = source,
                 createdBy = by,
             )

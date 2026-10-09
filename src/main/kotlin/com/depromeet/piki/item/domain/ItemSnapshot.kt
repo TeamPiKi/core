@@ -7,44 +7,42 @@ import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
-import java.time.LocalDateTime
 import java.util.UUID
 
-// 파싱 성공·수동 보정 때만 생기고 바뀌지 않는다. 값이 하나도 없는 버전은 만들지 않는다.
+// 파싱 성공·수동 보정 때만 생기고 바뀌지 않는다
 @Entity
 @Table(name = "item_snapshots")
 class ItemSnapshot(
+
     @Column(nullable = false, updatable = false)
     val itemId: Long,
-    name: String?,
-    imageUrl: String?,
-    price: Int?,
-    currency: String?,
-    extractedAt: LocalDateTime,
-    source: ItemSnapshotSource?,
-    createdBy: UUID,
-) : LongBaseEntity() {
-    @Column(columnDefinition = "BINARY(16)")
-    val createdBy: UUID? = createdBy
 
+    @Column(length = NAME_MAX_LENGTH)
+    val name: String?,
+
+    @Column(length = IMAGE_URL_MAX_LENGTH)
+    val imageUrl: String?,
+
+    val price: Int?,
+
+    @Column(length = CURRENCY_MAX_LENGTH)
+    val currency: String?,
+
+    source: ItemSnapshotSource?,
+
+    createdBy: UUID,
+
+) : LongBaseEntity() {
+    // TODO: 출처·만든 사람이 빈 옛 행을 백필한 뒤 non-null 로 바꾼다
     @Enumerated(EnumType.STRING)
     @Column(length = 16)
     val source: ItemSnapshotSource? = source
 
-    @Column(length = NAME_MAX_LENGTH)
-    val name: String? = name
-
-    @Column(length = IMAGE_URL_MAX_LENGTH)
-    val imageUrl: String? = imageUrl
-
-    val price: Int? = price
-
-    @Column(length = CURRENCY_MAX_LENGTH)
-    val currency: String? = currency
-
-    val extractedAt: LocalDateTime? = extractedAt
+    @Column(columnDefinition = "BINARY(16)")
+    val createdBy: UUID? = createdBy
 
     init {
+        require(filledFieldCount() > 0) { "값이 하나도 없는 버전은 만들 수 없다" }
         require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
         require((name?.length ?: 0) <= NAME_MAX_LENGTH) { "name 길이가 ${NAME_MAX_LENGTH}자를 초과했다" }
         require((imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH) { "imageUrl 길이가 ${IMAGE_URL_MAX_LENGTH}자를 초과했다" }
@@ -59,11 +57,10 @@ class ItemSnapshot(
 
     fun isOwnedBy(user: UUID): Boolean = createdBy == user
 
-    // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다.
+    // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다
     fun isSharedValue(): Boolean = isReady() && !isManual()
 
-
-    // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
+    // 통화는 단독으로 카드 값이 되지 못해 세지 않는다
     private fun filledFieldCount(): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size
 
     companion object {
@@ -73,31 +70,25 @@ class ItemSnapshot(
         private const val READY_FIELD_COUNT = 3
 
         // 값이 하나도 없거나 칸 길이를 넘는 추출 결과는 버전이 되지 못한다. 호출부가 파싱 실패로 닫는다
-        fun accepts(extracted: ProductSnapshot): Boolean = hasAnyValue(extracted) && fitsColumns(extracted)
-
-        private fun hasAnyValue(extracted: ProductSnapshot): Boolean =
-            listOfNotNull(extracted.name?.takeIf { it.isNotBlank() }, extracted.price, extracted.imageUrl).isNotEmpty()
-
-        private fun fitsColumns(extracted: ProductSnapshot): Boolean =
-            (extracted.name?.length ?: 0) <= NAME_MAX_LENGTH && (extracted.imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH
+        fun accepts(extracted: ProductSnapshot): Boolean =
+            listOfNotNull(extracted.name?.takeIf { it.isNotBlank() }, extracted.price, extracted.imageUrl).isNotEmpty() &&
+                (extracted.name?.length ?: 0) <= NAME_MAX_LENGTH &&
+                (extracted.imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH
 
         fun extracted(
             itemId: Long,
             extracted: ProductSnapshot,
-            requestedBy: UUID,
-        ): ItemSnapshot {
-            require(accepts(extracted)) { "버전이 될 수 없는 추출 결과다" }
-            return ItemSnapshot(
+            createdBy: UUID,
+        ): ItemSnapshot =
+            ItemSnapshot(
                 itemId = itemId,
                 name = extracted.name,
                 imageUrl = extracted.imageUrl,
                 price = extracted.price,
                 currency = extracted.currency,
-                extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod),
-                createdBy = requestedBy,
+                createdBy = createdBy,
             )
-        }
 
         fun manual(
             itemId: Long,
@@ -110,7 +101,6 @@ class ItemSnapshot(
                 imageUrl = values.imageUrl,
                 price = values.price,
                 currency = values.currency,
-                extractedAt = LocalDateTime.now(),
                 source = ItemSnapshotSource.MANUAL,
                 createdBy = createdBy,
             )

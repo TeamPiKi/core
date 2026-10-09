@@ -2,7 +2,6 @@ package com.depromeet.piki.support
 
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSnapshotSource
-import java.time.LocalDateTime
 import java.util.UUID
 
 // 값은 기본이 READY. 필드를 null 로 넘기면 INCOMPLETE 버전이 된다
@@ -14,7 +13,6 @@ fun itemVersion(
     currency: String? = "KRW",
     source: ItemSnapshotSource? = ItemSnapshotSource.SERVER,
     createdBy: UUID = UUID.randomUUID(),
-    extractedAt: LocalDateTime = LocalDateTime.now(),
 ): ItemSnapshot =
     ItemSnapshot(
         itemId = itemId,
@@ -22,7 +20,6 @@ fun itemVersion(
         imageUrl = imageUrl,
         price = price,
         currency = currency,
-        extractedAt = extractedAt,
         source = source,
         createdBy = createdBy,
     )
