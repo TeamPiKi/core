@@ -2,9 +2,9 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.CardQuery
 import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemVersions
-import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import org.springframework.stereotype.Component

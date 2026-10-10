@@ -1,7 +1,7 @@
 package com.depromeet.piki.item.repository
 
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.CanonicalInput
+import com.depromeet.piki.item.domain.Item
 
 interface ItemRepository {
     fun save(item: Item): Item

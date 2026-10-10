@@ -1,7 +1,7 @@
 package com.depromeet.piki.wishlist.domain
 
-import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.CardQuery
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.support.withId
 import java.util.UUID
 import kotlin.test.Test

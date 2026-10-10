@@ -1,7 +1,7 @@
 package com.depromeet.piki.tournament.domain
 
-import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.CardQuery
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.support.withId
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest

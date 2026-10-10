@@ -123,7 +123,6 @@ class NormalizedInputTest {
         )
     }
 
-
     @Test
     fun `cafe24 계열은 쿼리가 곧 상품 번호라 보존된다 - 전부 제거하면 그 몰의 모든 상품이 하나로 합쳐지는 사고`() {
         val a = normalized("https://m.reetkeem.com/product/detail.html?product_no=9275&cate_no=65")

@@ -1,9 +1,9 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
-import java.time.LocalDateTime
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 
 @Repository
 class ItemSnapshotRepositoryImpl(

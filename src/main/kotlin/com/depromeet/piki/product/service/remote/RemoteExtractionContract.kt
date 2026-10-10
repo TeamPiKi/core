@@ -2,7 +2,6 @@ package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
-import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.contracts.extraction.v1.ExtractionResult
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException

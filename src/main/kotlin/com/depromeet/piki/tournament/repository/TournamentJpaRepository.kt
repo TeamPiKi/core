@@ -1,17 +1,16 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.tournament.domain.Tournament
-import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
-import java.time.LocalDateTime
-import java.util.UUID
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.LocalDateTime
+import java.util.UUID
 
 interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     fun findByIdAndDeletedAtIsNull(id: Long): Tournament?
@@ -71,7 +70,6 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
         @Param("includeSocial") includeSocial: Boolean,
         pageable: Pageable,
     ): List<Tournament>
-
 
     // 활성 초대코드 조회는 base 컬럼 invite_code 가 아니라 generated 컬럼 active_invite_code 로 한다.
     // uk_tournaments_active_invite_code 유니크 인덱스가 이 컬럼에만 걸려 있어, invite_code 로 조회하면
