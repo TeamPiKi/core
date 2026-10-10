@@ -28,9 +28,8 @@ class ItemResolver(
         item: Item,
         finalUrl: ProductLink?,
     ) {
-        val claimed = item.canonicalUrl ?: return
         val normalized = normalizedFinalOf(finalUrl) ?: return
-        if (claimed == normalized.asCanonical()) return
+        if (item.canonicalUrl == normalized.asCanonical()) return
         log.warn("canonical 드리프트 관측 item={} 확정값 유지 url=\"{}\"", item.getId(), normalized)
     }
 
