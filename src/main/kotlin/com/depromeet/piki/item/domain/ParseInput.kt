@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 
 // 파싱 요청의 입력. 저장은 type 과 value 두 칸이고 코드 안에서는 링크·이미지 키 타입으로 다룬다

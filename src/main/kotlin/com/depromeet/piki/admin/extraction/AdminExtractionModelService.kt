@@ -3,11 +3,11 @@ package com.depromeet.piki.admin.extraction
 import com.depromeet.piki.admin.audit.AdminAuditAction
 import com.depromeet.piki.admin.audit.AdminAuditService
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.service.remote.DbExtractionModelSettings
 import com.depromeet.piki.product.service.remote.ExtractionModelEntity
 import com.depromeet.piki.product.service.remote.ExtractionModelJpaRepository
 import com.depromeet.piki.product.service.remote.ExtractionModelProbe
-import com.depromeet.piki.product.service.remote.ExtractionTarget
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -31,7 +31,7 @@ class AdminExtractionModelService(
     @Transactional(readOnly = true)
     fun board(): List<ExtractionModelView> {
         val rows = settings.findAll()
-        return ExtractionTarget.entries.map { target ->
+        return ParseInputType.entries.map { target ->
             val entity = rows[target]
             ExtractionModelView(target = target, model = entity?.model, updatedAt = entity?.updatedAt)
         }
@@ -40,7 +40,7 @@ class AdminExtractionModelService(
     // 저장 게이트 — 프로브가 성공한 모델만 등록된다. 아는 모델 목록을 코드에 박지 않으므로(그러면 새 모델마다
     // 배포가 필요해진다) 유효성은 런타임 실측이 판정한다. 프로브가 던지는 예외 메시지가 그대로 화면 사유가 된다.
     fun save(
-        target: ExtractionTarget,
+        target: ParseInputType,
         rawModel: String,
         actor: String,
         clientIp: String?,
@@ -53,13 +53,13 @@ class AdminExtractionModelService(
     // 온디맨드 확인 — 등록 당시엔 유효했어도 모델은 사라진다(preview 는 2주 공지 후 deprecate). 그 경우 extractor 가
     // 기본 모델로 fallback 해 파싱은 계속 되지만, 화면에 적힌 모델과 실제로 도는 모델이 갈린 채 아무도 모르게 된다.
     // 이 버튼이 그 유령 상태를 운영자가 직접 확인하는 자리다.
-    fun check(target: ExtractionTarget) {
+    fun check(target: ParseInputType) {
         val model = settings.modelOverrideOf(target) ?: throw IllegalArgumentException("지정된 모델이 없습니다 (extractor 기본 모델로 동작 중).")
         probe.verify(target, model)
     }
 
     fun clear(
-        target: ExtractionTarget,
+        target: ParseInputType,
         actor: String,
         clientIp: String?,
     ) = writer.clear(target, actor, clientIp)
@@ -92,7 +92,7 @@ class ExtractionModelWriter(
     // 공백 창이 생긴다 (AdminExtractionPolicyService.save 와 같은 이유).
     @Transactional
     fun write(
-        target: ExtractionTarget,
+        target: ParseInputType,
         model: String,
         actor: String,
         clientIp: String?,
@@ -110,7 +110,7 @@ class ExtractionModelWriter(
 
     @Transactional
     fun clear(
-        target: ExtractionTarget,
+        target: ParseInputType,
         actor: String,
         clientIp: String?,
     ) {
@@ -137,7 +137,7 @@ class ExtractionModelWriter(
 
 // model 이 null 이면 미지정 — 그 경로는 요청에 모델을 싣지 않아 extractor 기본 모델로 동작한다.
 data class ExtractionModelView(
-    val target: ExtractionTarget,
+    val target: ParseInputType,
     val model: String?,
     val updatedAt: LocalDateTime?,
 )

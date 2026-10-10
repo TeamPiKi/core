@@ -1,5 +1,6 @@
 package com.depromeet.piki.item.domain
 
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 
 // 아이템의 정체 값. 귀결점(없으면 등록 입력)을 정규화한 값이라 등록 입력의 정규화 값과 다를 수 있다

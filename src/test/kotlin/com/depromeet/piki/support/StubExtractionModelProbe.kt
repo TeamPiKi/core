@@ -1,15 +1,15 @@
 package com.depromeet.piki.support
 
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.service.remote.ExtractionModelProbe
-import com.depromeet.piki.product.service.remote.ExtractionTarget
 
 class StubExtractionModelProbe : ExtractionModelProbe {
-    var behavior: (ExtractionTarget, String) -> Unit = { _, _ -> notStubbed("behavior") }
+    var behavior: (ParseInputType, String) -> Unit = { _, _ -> notStubbed("behavior") }
 
-    val calls: MutableList<Pair<ExtractionTarget, String>> = mutableListOf()
+    val calls: MutableList<Pair<ParseInputType, String>> = mutableListOf()
 
     override fun verify(
-        target: ExtractionTarget,
+        target: ParseInputType,
         model: String,
     ) {
         calls += target to model

@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import kotlin.test.Test
 import kotlin.test.assertEquals

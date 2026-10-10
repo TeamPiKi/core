@@ -1,4 +1,4 @@
-package com.depromeet.piki.item.domain
+package com.depromeet.piki.product.domain
 
 enum class ParseInputType(
     val description: String,

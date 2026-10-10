@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.common.domain.LongBaseEntity
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import jakarta.persistence.Column
 import jakarta.persistence.Entity

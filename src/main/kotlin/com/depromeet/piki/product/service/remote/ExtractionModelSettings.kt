@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.product.domain.ParseInputType
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Component
 // 소비자(원격 클라이언트)의 단위 테스트가 DB 없이 지정값을 대체할 수 있게 한다.
 interface ExtractionModelSettings {
     // 지정이 없으면 null. 호출자는 요청에 모델을 싣지 않아 extractor 기본값으로 동작한다
-    fun modelOverrideOf(target: ExtractionTarget): String?
+    fun modelOverrideOf(target: ParseInputType): String?
 }
 
 // DB(extraction_models) 기반 구현. 백오피스가 배포 없이 모델을 바꾼다 — 판정은 잦으므로(파싱마다) 매번 DB 를
@@ -23,7 +24,7 @@ class DbExtractionModelSettings(
 
     // 불변 Map 을 통째로 교체(@Volatile)한다 — reader(파싱 스레드)는 항상 옛/새 전체 중 하나만 본다.
     @Volatile
-    private var models: Map<ExtractionTarget, String> = emptyMap()
+    private var models: Map<ParseInputType, String> = emptyMap()
 
     // @Synchronized 인 이유: 조회와 교체가 갈라져 있으면 늦게 시작한 재적재가 먼저 끝나는 역전이 생긴다.
     // 주기 재적재가 DB 를 읽는 사이 백오피스 저장의 afterCommit 재적재가 통째로 끝나 버리면, 뒤늦게 완료된
@@ -40,7 +41,7 @@ class DbExtractionModelSettings(
     @Scheduled(fixedDelay = RELOAD_INTERVAL_MS)
     fun reload() = load()
 
-    override fun modelOverrideOf(target: ExtractionTarget): String? = models[target]
+    override fun modelOverrideOf(target: ParseInputType): String? = models[target]
 
     // 캐시 적재와 백오피스 화면이 함께 쓰는 단일 조회 지점. 화면이 캐시가 아니라 저장소를 직접 읽는 이유는
     // 캐시가 afterCommit 갱신이라 방금 저장한 값이 아직 안 보일 수 있어서다.
@@ -51,11 +52,11 @@ class DbExtractionModelSettings(
     //
     // 인터페이스에 두지 않는 이유는 reload 와 같다 — 파싱 경로가 쓰지 않는 관리 기능이라 admin 이 구현을
     // 직접 주입받는다 (AdminExtractionPolicyService 가 DbDomainAccessPolicy 를 직접 받는 것과 같다).
-    fun findAll(): Map<ExtractionTarget, ExtractionModelEntity> =
+    fun findAll(): Map<ParseInputType, ExtractionModelEntity> =
         repository
             .findAll()
             .mapNotNull { entity ->
-                val target = ExtractionTarget.entries.find { it.name == entity.target }
+                val target = ParseInputType.entries.find { it.name == entity.target }
                 target ?: run {
                     log.warn("모르는 추출 target 을 스킵(해당 경로는 기본 모델): target={}", entity.target)
                     return@mapNotNull null

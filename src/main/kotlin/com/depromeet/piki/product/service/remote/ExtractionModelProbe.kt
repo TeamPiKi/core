@@ -2,6 +2,7 @@ package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
 import com.depromeet.piki.contracts.extraction.v1.ModelProbeRequest
+import com.depromeet.piki.product.domain.ParseInputType
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
@@ -27,7 +28,7 @@ interface ExtractionModelProbe {
     // 유효하면 그냥 반환하고, 아니면 화면에 그대로 띄울 사유를 담아 던진다. 백오피스 컨트롤러가
     // IllegalArgumentException 을 화면 에러로 흡수하는 기존 관례(AdminExtractionPolicyController)를 따른다.
     fun verify(
-        target: ExtractionTarget,
+        target: ParseInputType,
         model: String,
     )
 }
@@ -42,7 +43,7 @@ class HttpExtractionModelProbe(
     private val log = LoggerFactory.getLogger(javaClass)
 
     override fun verify(
-        target: ExtractionTarget,
+        target: ParseInputType,
         model: String,
     ) {
         try {
@@ -72,7 +73,7 @@ class HttpExtractionModelProbe(
     // 모양이되 그쪽은 ProductSnapshot 을 돌려주므로 코드를 공유하지 않는다.
     private fun translate(
         e: RestClientResponseException,
-        target: ExtractionTarget,
+        target: ParseInputType,
         model: String,
     ): IllegalArgumentException {
         if (!e.statusCode.isSameCodeAs(HttpStatus.UNPROCESSABLE_ENTITY)) {
@@ -94,10 +95,10 @@ class HttpExtractionModelProbe(
         )
     }
 
-    private fun ExtractionTarget.toContract(): ModelProbeRequest.Target =
+    private fun ParseInputType.toContract(): ModelProbeRequest.Target =
         when (this) {
-            ExtractionTarget.LINK -> ModelProbeRequest.Target.LINK
-            ExtractionTarget.IMAGE -> ModelProbeRequest.Target.IMAGE
+            ParseInputType.LINK -> ModelProbeRequest.Target.LINK
+            ParseInputType.IMAGE -> ModelProbeRequest.Target.IMAGE
         }
 
     // internal 인 이유: 이 사유 문구가 곧 백오피스 화면에 뜨는 계약이라 테스트가 같은 상수로 단언한다.
