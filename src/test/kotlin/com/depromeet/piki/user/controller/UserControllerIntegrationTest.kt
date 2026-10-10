@@ -94,8 +94,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     private fun jpegBytes(): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 0, 0, 0)
 
     // 클라가 presigned 로 이미 올렸다고 가정하는 raw key. 확정 단계의 형식 검증(RAW_KEY_REGEX)을 통과해야 하므로
-    // 실제 발급 형식(items/raw/{UUID}.{ext})과 같은 모양으로 만든다.
-    private fun rawImageKey(extension: String): String = "items/raw/${UUID.randomUUID()}.$extension"
+    private fun rawImageKey(extension: String): String = "profiles/raw/${UUID.randomUUID()}.$extension"
 
     // PATCH /users/me 는 JSON 계약이다(이미지 바이트는 presigned 로 S3 에 직접 올라가고 여기엔 key 만 실린다).
     private fun patchMe(
@@ -220,8 +219,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .content("""{"contentType":"image/png","contentLength":1024}""")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
             ).andExpect(status().isOk)
-            // key 는 확정 때 되돌려받아 형식 검증을 통과해야 하므로 발급 형식(items/raw/{UUID}.{ext})을 고정한다.
-            .andExpect(jsonPath("$.data.imageKey").value(startsWith("items/raw/")))
+            .andExpect(jsonPath("$.data.imageKey").value(startsWith("profiles/raw/")))
             .andExpect(jsonPath("$.data.imageKey").value(endsWith(".png")))
             .andExpect(jsonPath("$.data.uploadUrl").value(startsWith(StubImageStorage.BASE_URL)))
             // 서명에 박힌 값이라 클라가 PUT 할 때 그대로 써야 한다.

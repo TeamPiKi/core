@@ -1,6 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
@@ -63,12 +63,12 @@ class WishRepositoryImpl(
 
     override fun findRequestedImageKeys(
         userId: UUID,
-        keys: Collection<ImageKey>,
-    ): Set<ImageKey> {
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey> {
         if (keys.isEmpty()) return emptySet()
         return wishJpaRepository
             .findRequestedInputsByUserId(userId, keys.map { it.value })
-            .map(ImageKey::parse)
+            .map(ProductImageKey::parse)
             .toSet()
     }
 }

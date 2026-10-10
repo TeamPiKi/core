@@ -1,6 +1,6 @@
 package com.depromeet.piki.item.domain
 
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 
@@ -17,7 +17,7 @@ sealed interface ParseInput {
     }
 
     data class Image(
-        val key: ImageKey,
+        val key: ProductImageKey,
     ) : ParseInput {
         override val type: ParseInputType get() = ParseInputType.IMAGE
         override val value: String get() = key.value
@@ -31,7 +31,7 @@ sealed interface ParseInput {
         ): ParseInput =
             when (type) {
                 ParseInputType.LINK -> Link(ProductLink.parse(value))
-                ParseInputType.IMAGE -> Image(ImageKey.parse(value))
+                ParseInputType.IMAGE -> Image(ProductImageKey.parse(value))
             }
     }
 }

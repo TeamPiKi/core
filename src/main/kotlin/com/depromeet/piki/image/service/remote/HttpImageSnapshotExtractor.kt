@@ -2,7 +2,7 @@ package com.depromeet.piki.image.service.remote
 
 import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.contracts.extraction.v1.ImageExtractionRequest
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -19,7 +19,7 @@ class HttpImageSnapshotExtractor(
     private val s3Properties: S3Properties,
     private val modelSettings: ExtractionModelSettings,
 ) : ImageSnapshotExtractor {
-    override fun extract(key: ImageKey): ProductSnapshot {
+    override fun extract(key: ProductImageKey): ProductSnapshot {
         val request =
             ImageExtractionRequest
                 .newBuilder()

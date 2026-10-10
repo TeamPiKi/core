@@ -1,6 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -30,8 +30,8 @@ interface TournamentItemRepository {
     // 이 토너먼트에 이미 요청된 이미지 키
     fun findRequestedImageKeys(
         tournamentId: Long,
-        keys: Collection<ImageKey>,
-    ): Set<ImageKey>
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey>
 
     // 이 토너먼트의 출전 중 정체 값이 같은 아이템을 담은 것
     fun findIdByTournamentIdAndItemCanonical(

@@ -1,7 +1,7 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseInput
@@ -53,7 +53,7 @@ class ItemParser(
 
     private fun parseImage(
         itemParseOutboxId: Long,
-        key: ImageKey,
+        key: ProductImageKey,
     ) {
         extractAndSettle(itemParseOutboxId, "type=image key=$key") { imageSnapshotExtractor.extract(key) }
     }

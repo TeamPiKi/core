@@ -1,6 +1,6 @@
 package com.depromeet.piki.wishlist.repository
 
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
@@ -59,6 +59,6 @@ interface WishRepository {
     // 이 사용자가 이미 요청한 이미지 키
     fun findRequestedImageKeys(
         userId: UUID,
-        keys: Collection<ImageKey>,
-    ): Set<ImageKey>
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey>
 }

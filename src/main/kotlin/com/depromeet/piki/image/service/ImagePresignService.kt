@@ -2,7 +2,9 @@ package com.depromeet.piki.image.service
 
 import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.common.storage.S3Properties
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
+import com.depromeet.piki.image.domain.ProfileImageKey
+import com.depromeet.piki.image.domain.RawImageKey
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.domain.UploadSize
@@ -18,20 +20,25 @@ class ImagePresignService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun presignRawUploads(formats: List<UploadFormat>): List<PresignedRawUpload> =
-        formats.map { presignRawUpload(it.extension, it.contentType, it.size) }
+    fun presignProductUploads(formats: List<UploadFormat>): List<PresignedRawUpload> =
+        formats.map { presign(ProductImageKey.newRaw(it.extension), it.contentType, it.size) }
 
-    fun presignRawUpload(
+    fun presignProfileUpload(
         extension: String,
         contentType: String,
         size: UploadSize,
+    ): PresignedRawUpload = presign(ProfileImageKey.newRaw(extension), contentType, size)
+
+    private fun presign(
+        key: RawImageKey,
+        contentType: String,
+        size: UploadSize,
     ): PresignedRawUpload {
-        val key = ImageKey.newRaw(extension)
         val url = imageStorage.presignUpload(key.value, contentType, size.bytes, s3Properties.presignedUploadExpiry)
         return PresignedRawUpload(imageKey = key, uploadUrl = url, contentType = contentType)
     }
 
-    fun verifyUploaded(keys: List<ImageKey>) {
+    fun verifyUploaded(keys: List<RawImageKey>) {
         keys.forEach { key ->
             if (!imageStorage.exists(key.value)) throw ImageUploadException.notUploaded()
         }

@@ -1,6 +1,6 @@
 package com.depromeet.piki.tournament.repository
 
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.CanonicalInput
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -41,12 +41,12 @@ class TournamentItemRepositoryImpl(
 
     override fun findRequestedImageKeys(
         tournamentId: Long,
-        keys: Collection<ImageKey>,
-    ): Set<ImageKey> {
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey> {
         if (keys.isEmpty()) return emptySet()
         return tournamentItemJpaRepository
             .findRequestedInputsByTournamentId(tournamentId, keys.map { it.value })
-            .map(ImageKey::parse)
+            .map(ProductImageKey::parse)
             .toSet()
     }
 

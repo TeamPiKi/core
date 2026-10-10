@@ -104,7 +104,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "dev_images" {
 # cross-origin 이미지의 픽셀을 읽도록 S3 가 Access-Control-Allow-Origin 헤더를 내려줘야 한다.
 # CORS 는 접근 제어가 아니다(버킷은 이미 public-read) — 브라우저 JS 의 read 허용 헤더일 뿐이라
 # 노출 표면이 늘지 않는다. origin 은 piki.day + 로컬 개발로 한정한다.
-# PUT 은 브라우저가 presigned URL 로 raw 원본(items/raw/)을 직접 올리는 경로(이미지 등록 v2)다.
+# PUT 은 브라우저가 presigned URL 로 raw 원본(items/raw/·profiles/raw/)을 직접 올리는 경로다.
 # 쓰기 권한은 여전히 서명이 결정하고, CORS 는 브라우저가 그 요청을 보내게 허용할 뿐이다.
 # 외부 쇼핑몰 CDN 이미지(msscdn·pstatic·kakaocdn 등)는 우리 버킷이 아니라 여기서 못 푼다 —
 # 그건 별도 이미지 프록시 API 로 처리한다.

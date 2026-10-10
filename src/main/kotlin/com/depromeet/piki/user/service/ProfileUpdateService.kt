@@ -1,7 +1,7 @@
 package com.depromeet.piki.user.service
 
 import com.depromeet.piki.common.storage.ImageStorage
-import com.depromeet.piki.image.domain.ImageKey
+import com.depromeet.piki.image.domain.ProfileImageKey
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
@@ -41,7 +41,7 @@ class ProfileUpdateService(
         contentLength: Long?,
     ): PresignedRawUpload {
         requireMemberForProfileImage(userId)
-        return imagePresignService.presignRawUpload(
+        return imagePresignService.presignProfileUpload(
             extension = ProfileImageFile.extensionForMimeType(contentType),
             contentType = contentType,
             size = UploadSize.of(contentLength),
@@ -59,7 +59,7 @@ class ProfileUpdateService(
         // (authorization before payload processing). 발급 단계에서 이미 막지만, 확정도 스스로 방어한다.
         requireMemberForProfileImage(userId)
         // 우리가 발급한 key 형식인지 + 실제로 올라왔는지. 아니면 400/502 로 여기서 끝난다.
-        val raw = ImageKey.parse(imageKey)
+        val raw = ProfileImageKey.parse(imageKey)
         imagePresignService.verifyUploaded(listOf(raw))
         // 발급 때 우리가 붙인 확장자로 "클라가 선언했던" MIME 을 되찾아, 실제 바이트와 일치하는지 교차검증한다.
         val declaredMimeType = ProfileImageFile.mimeTypeForExtension(raw.extension)

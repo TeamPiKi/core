@@ -176,9 +176,7 @@ class UserApiExamples(
             operation
         }
 
-    // 발급 example 의 raw key — 실제 발급 형식(items/raw/{UUID}.{ext})과 같은 모양으로 둔다.
-
-    private val SAMPLE_IMAGE_KEY = "items/raw/550e8400-e29b-41d4-a716-446655440000.png"
+    private val SAMPLE_IMAGE_KEY = "profiles/raw/550e8400-e29b-41d4-a716-446655440000.png"
 
 
     private fun sampleUser(): UserResponse =
