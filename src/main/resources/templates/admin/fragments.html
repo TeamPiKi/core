@@ -22,7 +22,6 @@
     .pkbar .pksp{flex:1;}
     .pkbar .pkmeta{font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
     .pkbar .pkmeta b{color:#334155;font-weight:700;font-variant-numeric:tabular-nums;}
-    .pkbar .pkmeta .pksep{color:#cbd5e1;}
     .pkbar .pkenv{font-size:11px;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:6px;}
     .pkbar .pkenv.env-PROD{background:#fee2e2;color:#b91c1c;}
     .pkbar .pkenv.env-DEV{background:#dbeafe;color:#1d4ed8;}
@@ -46,18 +45,16 @@
         style="width:19px;height:19px;border-radius:5px;vertical-align:-4px;margin-right:6px">PiKi<span class="pkdot">.</span> 백오피스</span>
     <span class="pksp"></span>
     <a class="pkdocs" th:if="${adminDocsEnabled}" href="/docs/index.html" target="_blank" rel="noopener noreferrer"
-       title="전 엔드포인트·요청/응답 스키마 (Stoplight)">API 문서 ↗</a>
+       title="전 엔드포인트, 요청/응답 스키마 (Stoplight)">API 문서 ↗</a>
     <th:block th:unless="${adminLocalBypass == true}">
       <span class="pksession" id="pk-session">
         <span>세션 <b id="pk-session-remaining">-</b></span>
         <button type="button" class="pkextend" id="pk-session-extend">연장</button>
       </span>
-      <span class="pksep">·</span>
     </th:block>
     <span class="pkmeta">
       <span th:if="${adminEnv}">현재 접속하신 환경은
         <span class="pkenv" th:classappend="'env-'+${adminEnv}" th:text="${adminEnv}">DEV</span> 입니다</span>
-      <span class="pksep" th:if="${adminEnv != null and adminClientIp != null and adminLocalBypass != true}">·</span>
       <span th:if="${adminClientIp != null and adminLocalBypass != true}">접속 IP <b th:text="${adminClientIp}">-</b></span>
     </span>
     <a class="pkhome" th:if="${backHref}" th:href="@{${backHref}}" th:text="${backLabel}">←</a>
