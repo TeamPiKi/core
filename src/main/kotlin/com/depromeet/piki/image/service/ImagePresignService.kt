@@ -4,13 +4,14 @@ import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.common.storage.S3Properties
 import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.domain.ProfileImageKey
-import com.depromeet.piki.image.domain.RawImageKey
+import com.depromeet.piki.image.domain.UploadedImageKey
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.util.UUID
 
 // 등록에 매이지 못한 raw 는 지우지 않는다. 등록된 raw 가 이미지 아이템의 정체 값이 되므로(#1180) lifecycle 만료도 걸지 않는다
 @Service
@@ -24,13 +25,14 @@ class ImagePresignService(
         formats.map { presign(ProductImageKey.newRaw(it.extension), it.contentType, it.size) }
 
     fun presignProfileUpload(
+        owner: UUID,
         extension: String,
         contentType: String,
         size: UploadSize,
-    ): PresignedRawUpload = presign(ProfileImageKey.newRaw(extension), contentType, size)
+    ): PresignedRawUpload = presign(ProfileImageKey.newFor(owner, extension), contentType, size)
 
     private fun presign(
-        key: RawImageKey,
+        key: UploadedImageKey,
         contentType: String,
         size: UploadSize,
     ): PresignedRawUpload {
@@ -38,7 +40,7 @@ class ImagePresignService(
         return PresignedRawUpload(imageKey = key, uploadUrl = url, contentType = contentType)
     }
 
-    fun verifyUploaded(keys: List<RawImageKey>) {
+    fun verifyUploaded(keys: List<UploadedImageKey>) {
         keys.forEach { key ->
             if (!imageStorage.exists(key.value)) throw ImageUploadException.notUploaded()
         }

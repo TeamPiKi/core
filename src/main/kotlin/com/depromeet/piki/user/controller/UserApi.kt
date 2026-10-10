@@ -82,10 +82,10 @@ interface UserApi {
                 "1. 이 API 로 `contentType` · `contentLength`(바이트 수) 를 보내 `uploadUrl` · `imageKey` 를 받는다.\n" +
                 "2. `uploadUrl` 에 이미지를 PUT 한다 (`Content-Type` 헤더는 응답의 `contentType` 과, `Content-Length` 는 " +
                 "요청의 `contentLength` 와 같아야 한다 — 둘 다 서명에 박혀 있어 다르면 S3 가 거부).\n" +
-                "3. `PATCH /users/me` 에 `imageKey` 를 실어 확정한다. 서버가 그 원본을 읽어 검증하고 최종 경로에 저장한다.\n\n" +
+                "3. `PATCH /users/me` 에 `imageKey` 를 실어 확정한다. 서버가 그 객체를 읽어 형식을 검증하고 그 URL 을 프로필로 삼는다.\n\n" +
                 "- **MEMBER 전용** — 게스트는 발급 단계에서 403 으로 막는다 (올릴 기회 자체를 주지 않는다).\n" +
                 "- 허용 형식: `image/png` · `image/jpeg` · `image/webp` · `image/heic` · `image/heif`. 한 장의 상한은 5MB 다.\n" +
-                "- 발급된 URL 은 5분 뒤 만료된다. 확정되지 않은 원본은 하루 뒤 자동 삭제된다.",
+                "- 발급된 URL 은 5분 뒤 만료된다. `imageKey` 는 내 계정 전용이라 다른 회원의 key 로는 확정할 수 없다.",
     )
     @ApiResponses(
         value = [
@@ -177,12 +177,12 @@ interface UserApi {
             "내 정보(`nickname` · 프로필 이미지)를 한 요청(JSON)으로 **부분 수정**한다. " +
                 "들어온 필드만 갱신하며, 둘 다 보내면 한 트랜잭션에 묶여 함께 반영되고, 아무 필드도 안 보내면 변화 없이 200 으로 통과한다.\n\n" +
                 "**이미지는 이 요청에 바이트로 싣지 않는다.** `POST /users/me/profile-image` 로 발급받은 URL 에 클라가 " +
-                "S3 로 직접 올린 뒤, 그 `imageKey` 만 여기에 보낸다. 서버는 그 key 로 원본을 읽어 형식을 검증하고 최종 경로에 저장한다.\n\n" +
+                "S3 로 직접 올린 뒤, 그 `imageKey` 만 여기에 보낸다. 서버는 그 객체를 읽어 형식을 검증하고 그 URL 로 `profileImage` 를 바꾼다.\n\n" +
                 "**필드별 권한·동작**\n\n" +
                 "| 필드 | 권한 | 동작 |\n" +
                 "|---|---|---|\n" +
                 "| `nickname` | GUEST·MEMBER | 닉네임 변경 |\n" +
-                "| `imageKey` | **MEMBER 전용** | 업로드된 원본 검증 → S3 저장 → 그 URL 로 `profileImage` 갱신 |\n\n" +
+                "| `imageKey` | **MEMBER 전용** | 올린 객체의 형식 검증 뒤 그 URL 로 `profileImage` 갱신 |\n\n" +
                 "- GUEST 가 `imageKey` 를 담아 호출하면 **403** 으로 거부한다 (닉네임 동반 여부와 무관하게 요청 전체 거부).\n" +
                 "- 이미지 허용 형식: `png` / `jpeg` / `webp` / `heic` / `heif` (그 외는 발급 단계에서 400).",
     )
@@ -258,7 +258,7 @@ interface UserApi {
                 responseCode = "502",
                 description =
                     "외부 의존성 실패 (이미지 저장소(S3) — 재시도 가능)\n\n" +
-                        "- 업로드 상태 확인 실패 (STORAGE-003) · 원본 읽기 실패 (STORAGE-005) · 저장 실패 (STORAGE-001)",
+                        "- 업로드 상태 확인 실패 (STORAGE-003) · 올린 이미지 읽기 실패 (STORAGE-005)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

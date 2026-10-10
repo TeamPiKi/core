@@ -1,7 +1,7 @@
 package com.depromeet.piki.image.domain
 
-// presign 이 발급한 raw 업로드 키. 용도마다 접두가 달라 서로 섞이지 않는다
-sealed interface RawImageKey {
+// presign 으로 클라이언트가 직접 올린 객체의 키. 용도마다 접두가 달라 서로 섞이지 않는다
+sealed interface UploadedImageKey {
     val value: String
 
     val extension: String get() = value.substringAfterLast('.')

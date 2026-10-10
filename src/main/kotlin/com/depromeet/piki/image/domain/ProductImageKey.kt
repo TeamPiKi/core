@@ -6,12 +6,12 @@ import java.util.UUID
 @JvmInline
 value class ProductImageKey private constructor(
     override val value: String,
-) : RawImageKey {
+) : UploadedImageKey {
     override fun toString(): String = value
 
     companion object {
         private const val PREFIX = "items/raw/"
-        private val FORMAT = RawImageKey.formatOf(PREFIX)
+        private val FORMAT = UploadedImageKey.formatOf(PREFIX)
 
         fun newRaw(extension: String): ProductImageKey = ProductImageKey("$PREFIX${UUID.randomUUID()}.$extension")
 
