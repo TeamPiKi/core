@@ -1,16 +1,20 @@
 package com.depromeet.piki.wishlist.service
 
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.NormalizedInput
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.DisplayCard
-import com.depromeet.piki.item.service.ItemDisplayService
-import com.depromeet.piki.item.service.ItemIdentityRecorder
-import com.depromeet.piki.item.service.ItemSharingService
+import com.depromeet.piki.item.service.ItemCardService
+import com.depromeet.piki.item.service.ItemResolver
 import com.depromeet.piki.item.service.ParsingEnqueuer
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
@@ -26,89 +30,84 @@ class WishPersistenceService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val itemIdentityRecorder: ItemIdentityRecorder,
-    private val itemSharingService: ItemSharingService,
-    private val itemDisplayService: ItemDisplayService,
+    private val itemParseOutboxRepository: ItemParseOutboxRepository,
+    private val itemCardService: ItemCardService,
+    private val itemResolver: ItemResolver,
     private val parsingEnqueuer: ParsingEnqueuer,
+    private val userService: UserService,
 ) {
-    // 등록 전 사전 확인 — 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973).
-    //
-    // 락 밖 조회라 근사치다: 병합 경합 창에서는 여기서 본 item 과 persist 가 실제로 붙는 item(승자)이 다를 수 있다.
-    // 정확한 판정은 persist 가 행 락 안에서 다시 하므로, 여기서 놓친 중복도 거기서 걸린다. 그 창에서만 차감이 낭비된다.
+    // 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973)
     @Transactional(readOnly = true)
     fun rejectIfAlreadyRegistered(
         userId: UUID,
         link: ProductLink,
     ) {
-        val shared = itemSharingService.resolveExistingItem(link) ?: return
-        existingWishId(shared.getId(), userId)?.let {
-            throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it)
-        }
+        rejectIfRegistered(userId, link)
     }
 
-    // 삭제된 위시는 조회에서 빠지므로 지웠다 다시 담는 것은 막히지 않는다.
-    private fun existingWishId(
-        itemId: Long,
-        userId: UUID,
-    ): Long? = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).firstOrNull()?.getId()
-
-    // 아는 링크 모양이면 그 정체성에 붙고, 처음 보는 모양이면 새로 세운다.
+    // 이미 아는 링크여도 아이템 없이 담고 새로 파싱한다. 성공하면 정체 URL 이 같은 아이템에 붙는다
     @Transactional
     fun persist(
         userId: UUID,
         link: ProductLink,
-    ): WishWithItem = attachToShared(userId, link) ?: createFresh(userId, Item(link))
+    ): WishWithItem {
+        lockRegistrant(userId)
+        rejectIfRegistered(userId, link)
+        return createPending(userId, ParseInput.Link(link))
+    }
 
-    // 이미 아는 링크 모양에 붙는 길(#825). 모르는 모양이면 null 을 돌려 새로 만드는 길로 넘긴다.
-    private fun attachToShared(
+    // 같은 업로드를 두 번 확정하면 두 번째는 건너뛴다. 여러 장을 한 번에 확정하므로 링크처럼 거부하지 않는다
+    @Transactional
+    fun registerImages(
+        imageKeys: List<ProductImageKey>,
+        userId: UUID,
+    ): List<WishWithItem> {
+        lockRegistrant(userId)
+        val newKeys = imageKeys.distinct() - wishRepository.findRequestedImageKeys(userId, imageKeys)
+        return newKeys.map { createPending(userId, ParseInput.Image(it)) }
+    }
+
+    // 트랜잭션의 첫 문장이어야 한다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이 잠금 전에 고정돼 앞선 등록을 못 본다
+    private fun lockRegistrant(userId: UUID) {
+        userService.findActiveByIdForUpdate(userId)
+    }
+
+    private fun createPending(
+        userId: UUID,
+        input: ParseInput,
+    ): WishWithItem {
+        val wish = wishRepository.save(Wish(userId = userId, itemId = null))
+        parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REGISTER, input)
+        return WishWithItem(wish = wish, item = null, card = itemCardService.cardOf(wish.cardQuery()))
+    }
+
+    private fun rejectIfRegistered(
         userId: UUID,
         link: ProductLink,
-    ): WishWithItem? {
-        val shared = itemSharingService.resolveExistingItem(link) ?: return null
-        val attachment = itemSharingService.resolveAttachment(shared.getId(), link, requestedBy = userId)
-        // 중복 판정의 기준은 별칭으로 찾은 shared 가 아니라 실제로 붙은 attachment.item 이다 - 병합 재시도
-        // 경합에선 둘이 다르다(shared=loser, attachment.item=winner). 행 락 뒤라 이 검사도 직렬화된다.
-        existingWishId(attachment.item.getId(), userId)?.let {
-            throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it)
-        }
-        val wish =
-            wishRepository.save(
-                Wish(userId = userId, waitingSnapshotId = attachment.snapshot.getId(), itemId = attachment.item.getId()),
-            )
-        return WishWithItem(
-            wish = wish,
-            item = attachment.item,
-            snapshot = attachment.snapshot,
-            reused = attachment.reused,
-            refreshNeeded = attachment.refreshNeeded,
-        )
+    ) {
+        val existing = wishOfSameItem(userId, link) ?: wishRequestedWith(userId, ParseInput.Link(link))
+        existing?.let { throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it) }
     }
 
-    // 처음 보는 링크를 새 정체성으로 세우는 길. snapshot 을 PENDING 으로 커밋하는 것이 곧 작업 큐 적재다.
-    private fun createFresh(
+    private fun wishOfSameItem(
         userId: UUID,
-        item: Item,
-    ): WishWithItem {
-        val saved = itemRepository.save(item)
-        itemIdentityRecorder.recordRegistrationAlias(saved)
-        val snapshot = parsingEnqueuer.enqueue(saved.getId(), requestedBy = userId)
-        val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = saved.getId()))
-        return WishWithItem(wish = wish, item = saved, snapshot = snapshot)
+        link: ProductLink,
+    ): Long? {
+        val canonical = NormalizedInput.of(ParseInput.Link(link))?.asCanonical() ?: return null
+        return wishRepository.findIdByUserIdAndItemCanonical(userId, canonical)
+    }
+
+    // 단축링크처럼 정체 URL 과 다른 URL 로 다시 담는 경우는 요청 이력으로 본다
+    private fun wishRequestedWith(
+        userId: UUID,
+        input: ParseInput,
+    ): Long? {
+        val normalized = NormalizedInput.of(input) ?: return null
+        return wishRepository.findIdByUserIdAndNormalizedInput(userId, normalized)
     }
 
     @Transactional
-    fun registerImage(
-        imageKey: String,
-        userId: UUID,
-    ): WishWithItem = createFresh(userId, Item(sourceImageKey = imageKey))
-
-    // 수기 수정 영속화(#825 결정 4) — 기존 행을 고치지 않고 MANUAL 새 버전을 쌓아 활성 포인터를 스왑한다.
-    // S3 업로드(외부 호출)는 호출부가 트랜잭션 바깥에서 끝낸다. 상태 제한이 없다: 기계 버전은 불변이라 어떤 상태든
-    // 덮어써질 위험 자체가 없고, 진행 중이던 파싱은 자기 행에서 계속돼 완료 시 이력으로 남는다.
-    // wish 행 락으로 refresh 와 직렬화한다 — 둘 다 활성 포인터를 스왑하는 경로라, 락 없이는 서로의 스왑을 덮는다
-    // (옛 FAILED-상태 분리 방어를 대체하는 장치). base 는 락 안에서 읽은 현재 활성 버전이다.
-    @Transactional
-    fun manualEdit(
+    fun applyUserInput(
         userId: UUID,
         wishId: Long,
         name: String?,
@@ -119,29 +118,16 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        val base = editBasisOf(wish)
-        val item = itemRepository.findById(base.itemId) ?: error("item ${base.itemId} 가 없다")
-        val manual =
-            itemSnapshotRepository.save(
-                ItemSnapshot.manual(
-                    base = base,
-                    name = name,
-                    price = price,
-                    imageUrl = imageUrl,
-                    currency = currency,
-                    createdBy = userId,
-                ),
-            )
-        wish.waitFor(manual.getId())
+        val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(name, price, imageUrl, currency)
+        val item = lockedItemOf(wish)
+        itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = userId))
         memo?.let { wish.updateMemo(it) }
-        return WishWithItem(wish = wish, item = item, snapshot = manual)
+        return WishWithItem(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
-    // 업로드 전 사전 검증(던지기 전용) — S3 orphan 방지가 유일한 존재 이유라 호출부가 이미지 있을 때만 부른다.
-    // 병합 base 를 manualEdit 과 같은 코드(editBasisOf)로 고르므로 dry-run 과 실제 저장이 갈라질 수 없다.
-    // 락 밖 조회라 최종 판정은 manualEdit(락 안)이 다시 한다.
+    // 이미지를 올리기 전에 거절해 S3 에 고아 객체가 남지 않게 한다. 최종 판정은 applyUserInput 이 락 안에서 다시 한다
     @Transactional(readOnly = true)
-    fun validateManualEdit(
+    fun validateUserInput(
         userId: UUID,
         wishId: Long,
         name: String?,
@@ -150,24 +136,10 @@ class WishPersistenceService(
     ) {
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        ItemSnapshot.manual(
-            base = editBasisOf(wish),
-            name = name,
-            price = price,
-            imageUrl = PRE_UPLOAD_VALIDATION_IMAGE_URL,
-            currency = currency,
-            createdBy = userId,
-        )
+        itemCardService.cardOf(wish.cardQuery()).userInputValues(name, price, PRE_UPLOAD_VALIDATION_IMAGE_URL, currency)
     }
 
-    // base 는 포인터가 아니라 카드가 보여준 표시값(#858) — 포인터가 미완성이어도 카드엔 최신 기계 READY 가
-    // 떠 있고, 사용자는 그 값을 보며 일부 필드만 고친다. 포인터를 base 로 쓰면 안 고친 필드가 빈 값에서
-    // 병합돼, 화면에 가격이 떠 있는데 "가격이 필요하다"로 튕긴다(담기 게이트와 같은 어긋남, #1006).
-    private fun editBasisOf(wish: Wish): ItemSnapshot = itemDisplayService.resolveDisplay(wish.displayCard())
-
-    // memo 만 온 수정 — 버전(snapshot)을 쌓지 않고 wish 행만 갱신한다. 포인터를 안 바꿔도 행 락은 필요하다:
-    // UPDATE 가 전 컬럼을 쓰므로(dynamic update 아님), 락 없이 읽은 뒤 flush 하면 그 사이 스왑 경로(manualEdit·refresh)가
-    // 커밋한 snapshotId 를 읽던 옛 값으로 되덮는다(lost update). 같은 행 락으로 스왑 경로와 직렬화한다.
+    // 메모만 바꿔도 행 락이 필요하다. 전 컬럼 UPDATE 라 락 없이 읽으면 그 사이 확정된 아이템을 옛 값으로 되덮는다
     @Transactional
     fun updateMemo(
         userId: UUID,
@@ -177,14 +149,10 @@ class WishPersistenceService(
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
         wish.updateMemo(memo)
-        val item = itemRepository.findById(wish.itemId) ?: error("item ${wish.itemId} 가 없다")
-        return WishWithItem(wish = wish, item = item, snapshot = itemDisplayService.resolveDisplay(wish.displayCard()))
+        return WishWithItem(wish = wish, item = wish.itemId?.let(itemRepository::findById), card = itemCardService.cardOf(wish.cardQuery()))
     }
 
-    // 위시 item 을 원본 링크로 재추출해 최신화한다(수동 새로고침). 새 PENDING snapshot 을 작업 큐에 적재하고
-    // wish 활성 포인터를 즉시 그 버전으로 스왑한다 — 디스패처가 PENDING 을 집어 추출해 READY/FAILED 로 전이한다(등록과 동일 흐름).
-    // 옛 snapshot 행은 유지돼 토너먼트 출전 격리를 지킨다. 외부 호출(추출)은 디스패처가 트랜잭션 밖에서 하므로 여기선 적재만 한다.
-    // 동시 새로고침은 wish 행 락(findByIdForUpdate)으로 직렬화하고, 이미 진행 중이면 멱등(no-op)으로 새 추출을 만들지 않는다.
+    // 아이템이 없는 위시는 같은 입력으로 다시 돌려도 실패하므로 사용자 입력으로 보내려고 409 로 막는다
     @Transactional
     fun refresh(
         userId: UUID,
@@ -192,37 +160,23 @@ class WishPersistenceService(
     ): WishWithItem {
         val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // 기다리는 행·item 은 영속화 경로상 반드시 존재한다(없으면 코드 버그).
-        val activeSnapshot =
-            itemSnapshotRepository.findById(wish.waitingSnapshotId)
-                ?: error("wish ${wish.getId()} 의 snapshot ${wish.waitingSnapshotId} 가 없다")
-        val item = itemRepository.findById(wish.itemId) ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
-        // link 없는 item(이미지 등록분)은 재추출 입력이 없어 새로고침 대상이 아니다(400).
-        item.link ?: throw WishException.notRefreshable()
-        // 이미 진행 중(PENDING·PROCESSING)이면 새 추출을 만들지 않고 현재 진행 상태를 그대로 반환(멱등).
-        if (activeSnapshot.isInProgress()) return WishWithItem(wish = wish, item = item, snapshot = activeSnapshot)
-        // 공유(#825) — 같은 item 의 다른 참조(다른 위시·출전)가 이미 파싱을 돌리고 있으면 새 작업 대신 그 진행에
-        // 합류한다(#826). 활성 포인터를 그 버전으로 스왑해 완료 시 함께 갱신된다.
-        itemSnapshotRepository.findLatestInProgressByItemId(item.getId())?.let { inProgress ->
-            wish.waitFor(inProgress.getId())
-            return WishWithItem(wish = wish, item = item, snapshot = inProgress)
-        }
-        // 판정은 표시값(#858) — 포인터가 FAILED 여도 같은 item 을 남이 담아 추출이 성공했으면 카드엔 그 값이
-        // 떠 있고, item 이 추출 가능하다는 증거이므로 새로고침을 막을 이유가 없다. 표시값까지 FAILED(기계 READY
-        // 부재)면 재추출도 결정론적으로 재실패할 것이라 보정(recover, 수기 수정)으로 유도한다(409).
-        // 포인터부터 보는 단락 평가 — FAILED 가 아니면 표시값도 FAILED 일 수 없어(파생 후보가 READY 뿐) 쿼리가 무의미하다.
-        if (activeSnapshot.isFailed() && itemDisplayService.resolveDisplay(wish.displayCard()).isFailed()) {
-            throw WishException.failedNotRefreshable()
-        }
-        // 새 PENDING 버전을 작업 큐에 적재하고 활성 포인터를 즉시 스왑한다. 요청자는 새로고침한 본인(#1051).
-        val newSnapshot = parsingEnqueuer.enqueue(item.getId(), requestedBy = userId)
-        wish.waitFor(newSnapshot.getId())
-        return WishWithItem(wish = wish, item = item, snapshot = newSnapshot)
+        val item = wish.itemId?.let(itemRepository::findById)
+        val card = itemCardService.cardOf(wish.cardQuery())
+        if (card.isParsing()) return WishWithItem(wish = wish, item = item, card = card)
+        item ?: throw WishException.failedNotRefreshable()
+        parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REFRESH, item.refreshInput())
+        return WishWithItem(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+    }
+
+    // 버전 생성과 같은 행 잠금을 잡아 토너먼트 시작과 직렬화한다
+    private fun lockedItemOf(wish: Wish): Item {
+        val itemId =
+            wish.itemId ?: run {
+                val latest = itemParseOutboxRepository.findLatestBySlot(wish.slot) ?: error("위시 ${wish.getId()} 의 요청이 없다")
+                itemResolver.resolve(latest.input, finalUrl = null).getId().also(wish::fill)
+            }
+        return itemRepository.findByIdForUpdate(itemId) ?: error("item $itemId 가 없다")
     }
 }
 
-// 수기 수정 사전 검증(dry-run)에서 업로드 예정 이미지 자리를 메우는 자리표시 값 — 저장되지 않는다.
 private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"
-
-// 위시 한 장을 표시값 질의 카드로 — 상품·주인·기다리는 행(#1051). 목록·단건·수기 base·새로고침 가드가 같은 모양으로 묻는다.
-internal fun Wish.displayCard(): DisplayCard = DisplayCard(itemId = itemId, owner = userId, waitingOn = waitingSnapshotId)

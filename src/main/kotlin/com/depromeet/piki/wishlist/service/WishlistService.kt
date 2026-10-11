@@ -1,18 +1,16 @@
 package com.depromeet.piki.wishlist.service
 
-import com.depromeet.piki.common.exception.skippingDuplicateKey
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemDisplayService
+import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.source.SourcePlatformResolver
@@ -20,7 +18,6 @@ import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
-import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.repository.WishRepository
@@ -41,13 +38,12 @@ class WishlistService(
     private val wishRepository: WishRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val itemDisplayService: ItemDisplayService,
+    private val itemCardService: ItemCardService,
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
     private val sourcePlatformResolver: SourcePlatformResolver,
 ) {
-
-    private fun WishWithItem.withSourcePlatform(): WishWithItem = copy(sourcePlatform = sourcePlatformResolver.resolve(item.link))
+    private fun WishWithItem.withSourcePlatform(): WishWithItem = copy(sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink))
 
     // TODO AOP
     private fun requireMember(userId: UUID) {
@@ -73,20 +69,17 @@ class WishlistService(
         requireMember(userId)
         if (formats.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(formats)
+        return imagePresignService.presignProductUploads(formats)
     }
 
     fun confirmImageRegistration(
-        imageKeys: List<String>,
+        imageKeys: List<ProductImageKey>,
         userId: UUID,
     ): List<WishWithItem> {
         requireMember(userId)
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
         imagePresignService.verifyUploaded(imageKeys)
-        return imageKeys
-            .mapNotNull { key ->
-                skippingDuplicateKey(Item.SOURCE_IMAGE_KEY_UNIQUE) { wishPersistenceService.registerImage(key, userId) }
-            }.map { it.withSourcePlatform() }
+        return wishPersistenceService.registerImages(imageKeys, userId).map { it.withSourcePlatform() }
     }
 
     @Transactional(readOnly = true)
@@ -98,23 +91,18 @@ class WishlistService(
         requireMember(userId)
         val cursor = WishCursor.parse(rawCursor)
         val size = WishlistSize.of(rawSize).value
-        // hasNext 판단을 위해 한 건 더 조회하고, 초과분은 응답에서 잘라낸다.
         val fetched = wishRepository.findPage(userId, cursor, size + 1)
         val hasNext = fetched.size > size
         val pageWishes = fetched.take(size)
 
-        // 표시값은 파생한다(#857·#1051) — 규칙은 ItemVersions 가 진다(내 맥락의 값 vs 공유 READY, 기다리는 행의 진행 중).
-        // 위시는 상품(itemId)을 직접 참조하므로 상품과 표시값을 그 키로 끌어온다.
-        val displayByCard = itemDisplayService.resolveDisplay(pageWishes.map { it.displayCard() })
-        val itemsById = itemRepository.findByIds(pageWishes.map { it.itemId }).associateBy { it.getId() }
+        val cardByQuery = itemCardService.cardsOf(pageWishes.map { it.cardQuery() })
+        val itemsById = itemRepository.findByIds(pageWishes.mapNotNull { it.itemId }).associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
-                // item 은 wish 와 함께 영속화되며 병합 시 함께 옮겨진다(WishItemMergeListener). 없으면 영속화 경로가 깨진 코드 버그다.
-                val item = itemsById[wish.itemId] ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
                 WishWithItem(
                     wish = wish,
-                    item = item,
-                    snapshot = displayByCard.getValue(wish.displayCard()),
+                    item = wish.itemId?.let { itemsById[it] ?: error("wish ${wish.getId()} 의 item $it 가 없다") },
+                    card = cardByQuery.getValue(wish.cardQuery()),
                 ).withSourcePlatform()
             }
 
@@ -127,12 +115,6 @@ class WishlistService(
         return WishlistPage(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
     }
 
-    // wishId 로 상세 조회 — 표시값과 그 상품의 가격 이력을 함께 내려준다. 본인 위시만 볼 수 있고,
-    // 권한 검증은 도메인(verifyOwnedBy)에 맡긴다. findById 가 deletedAt IS NULL 만 보므로 삭제된 위시는 notFound(404).
-    //
-    // 이력을 별도 API 로 두지 않는 이유: 옛 히스토리 API 는 wish.snapshotId(포인터)를 그대로 "활성" 이라 불러
-    // 표시값 파생(#857)을 타지 않았다. item 을 여러 사용자가 공유하므로 남이 새로고침하면 포인터는 옛 버전에 남고,
-    // 그러면 같은 위시에 대해 두 API 의 답이 어긋난다. 한 응답에서 표시값을 단일 출처로 두어 그 어긋남을 없앤다.
     @Transactional(readOnly = true)
     fun getWish(
         userId: UUID,
@@ -141,23 +123,18 @@ class WishlistService(
         requireMember(userId)
         val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(userId)
-        // wish 가 참조하는 item 은 반드시 존재한다(병합 시 함께 옮겨진다). 없으면 영속화 경로가 깨진 코드 버그다.
-        val item = itemRepository.findById(wish.itemId) ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
-        // 표시값 파생(#857·#1051) — 목록(getWishlist)과 같은 규칙.
-        val history = itemSnapshotRepository.findPriceHistoryByItemId(wish.itemId, PRICE_HISTORY_LIMIT)
+        val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
+        val card = itemCardService.cardOf(wish.cardQuery())
         return WishDetail(
             wish = wish,
             item = item,
-            snapshot = itemDisplayService.resolveDisplay(wish.displayCard()),
-            history = history,
-            sourcePlatform = sourcePlatformResolver.resolve(item.link),
+            card = card,
+            history = item?.let { itemSnapshotRepository.findPriceHistoryByItemId(it.getId(), PRICE_HISTORY_LIMIT) }.orEmpty(),
+            sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink),
         )
     }
 
-    // 위시 item 의 수기 수정(#825 결정 4) — 상태 무관 언제든 허용하며, 기존 버전을 고치지 않고 MANUAL 새 버전을
-    // 쌓아 활성 포인터를 스왑한다(편집자 기록·이력 보존). 이미지를 함께 주면 그대로 S3 에 올려 imageUrl 로 쓴다
-    // (사용자가 고른 이미지를 가공 없이 대표 이미지로). 외부 호출(S3)을 트랜잭션에 넣지 않기 위해
-    // 검증·소유권 사전확인·업로드를 트랜잭션 밖에서 끝내고, 영속화만 manualEdit(@Transactional, wish 행 락)에 위임한다.
+    // S3 업로드가 트랜잭션 안에 들어가지 않게 영속화만 applyUserInput 에 맡긴다
     fun recoverWishItem(
         userId: UUID,
         wishId: Long,
@@ -168,27 +145,20 @@ class WishlistService(
         memo: String?,
     ): WishWithItem {
         requireMember(userId)
-        // memo 만 온 요청은 버전을 쌓지 않는다 — memo 는 wish 행의 개인 필드라 snapshot 이력과 무관하다.
-        // item 필드가 함께 오면 아래 수기 수정 경로가 같은 트랜잭션(manualEdit)에서 memo 도 반영한다.
         if (listOfNotNull(name, price, currency, image).isEmpty()) {
             memo?.let {
-                // 응답의 item 은 updateMemo 가 행 락 안에서 표시값(#857)으로 맞춰 돌려준다.
                 return wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = it).withSourcePlatform()
             }
         }
-        // 이미지 형식 검증(빈 바이트·미지원 MIME) — 외부 호출 전에 동기로 거른다(400).
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
-        // 업로드 전 사전 검증(orphan 방지)은 이미지가 있을 때만 — 그게 dry-run 의 유일한 존재 이유라, 업로드가
-        // 없는 수정은 manualEdit(락 안)의 최종 판정 하나로 충분하다(예외·응답 동일, 쿼리만 줄어든다).
         productImage?.let {
-            wishPersistenceService.validateManualEdit(userId, wishId, name, price, currency)
+            wishPersistenceService.validateUserInput(userId, wishId, name, price, currency)
         }
-        // 이미지가 있으면 S3 업로드(트랜잭션 밖). 실패 시 ImageStorageException(502).
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        return wishPersistenceService.manualEdit(
+        return wishPersistenceService.applyUserInput(
             userId = userId,
             wishId = wishId,
             name = name,
@@ -199,23 +169,15 @@ class WishlistService(
         ).withSourcePlatform()
     }
 
-    // 위시 item 의 상품 정보를 원본 링크로 재추출해 최신화한다(수동 새로고침). 추출(Gemini)은 디스패처가 비동기로
-    // 하므로 여기엔 외부 호출이 없고, 영속화(새 PENDING 적재 + 활성 포인터 즉시 스왑)만 wishPersistenceService.refresh
-    // (@Transactional, wish 행 락)에 위임한다. 등록과 같은 폴링 흐름(PENDING→PROCESSING→READY/FAILED)으로 전이한다.
     fun refreshWishItem(
         userId: UUID,
         wishId: Long,
     ): WishWithItem {
         requireMember(userId)
-        // 재추출도 파싱을 한 번 더 돌리므로 신규 등록과 같은 비용이다 — 1 로 차감한다.
-        // refresh 계약 검증(링크 없음·FAILED 항목 등)은 persistence 안쪽이라 여기선 앞서 깎이는데, 그 두 사유는
-        // 클라가 refresh 버튼을 띄우지 않는 상태라 정상 흐름에서 반복 호출되지 않는다.
         itemQuotaGuard.consume(userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
         return wishPersistenceService.refresh(userId = userId, wishId = wishId).withSourcePlatform()
     }
 
-    // 멱등 삭제: 없거나 이미 삭제됐으면 "이미 목표 상태(없음)"이므로 성공으로 본다(no-op).
-    // 단 존재하는 위시가 남의 것이면 소유권은 보안 경계라 403 으로 막는다.
     @Transactional
     fun deleteWish(
         userId: UUID,
@@ -227,15 +189,12 @@ class WishlistService(
         wish.delete()
     }
 
-    // 여러 위시를 한 번에 멱등 삭제한다. 없거나 이미 삭제된 id 는 조회에서 빠져 자연히 무시된다(목표 상태 달성).
-    // 존재하는 것 중 남의 위시가 하나라도 있으면 소유권 경계로 403, @Transactional 이라 본인 것도 함께 롤백된다.
     @Transactional
     fun deleteWishes(
         userId: UUID,
         wishIds: WishDeleteIds,
     ) {
         requireMember(userId)
-        // WishDeleteIds 가 distinct·개수(1~100) 검증을 끝낸 값이라 여기선 조회·소유검증·삭제만 한다.
         val wishes = wishRepository.findAllByIds(wishIds.values)
         wishes.forEach { it.verifyOwnedBy(userId) }
         wishes.forEach { it.delete() }
@@ -245,10 +204,7 @@ class WishlistService(
         private const val MIN_IMAGE_COUNT = 1
         private const val MAX_IMAGE_COUNT = 5
 
-        // 상세 응답에 싣는 가격 이력의 상한. item 을 여러 사용자가 공유해 새로고침이 누적되는데 상세는 진입마다
-        // 호출되므로, 상한이 없으면 응답이 시간에 비례해 계속 자란다. 가격 추이 용도에는 이 정도면 충분하고,
-        // 전체 이력이 실제로 필요해지면 그때 페이징을 갖춘 API 를 따로 만든다 (상세 응답 안에 페이징을 중첩하면
-        // 방금 없앤 별도 히스토리 API 를 다시 만드는 꼴이다).
+        // 아이템을 여럿이 공유해 새로고침마다 이력이 쌓이므로 상한이 없으면 상세 응답이 계속 자란다
         private const val PRICE_HISTORY_LIMIT = 50
     }
 }
