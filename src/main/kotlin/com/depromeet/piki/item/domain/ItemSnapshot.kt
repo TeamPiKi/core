@@ -100,7 +100,7 @@ class ItemSnapshot(
 
         fun userInput(
             itemId: Long,
-            values: ManualValues,
+            values: UserInputValues,
             createdBy: UUID,
         ): ItemSnapshot =
             ItemSnapshot(

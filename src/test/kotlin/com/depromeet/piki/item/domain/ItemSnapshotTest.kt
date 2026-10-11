@@ -141,20 +141,20 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `manual 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
+    fun `userInput 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
         val base = version(name = "나이키", price = 99_000, currency = "KRW")
         val editor = UUID.randomUUID()
 
-        val manual = ItemSnapshot.userInput(1L, ManualValues.merge(base, name = null, price = 79_000, imageUrl = null, currency = null), createdBy = editor)
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.merge(base, name = null, price = 79_000, imageUrl = null, currency = null), createdBy = editor)
 
-        assertTrue(manual.isReady())
-        assertEquals("나이키", manual.name)
-        assertEquals(79_000, manual.price)
-        assertEquals(base.imageUrl, manual.imageUrl)
-        assertEquals("KRW", manual.currency)
-        assertTrue(manual.userInput)
-        assertNull(manual.method)
-        assertEquals(editor, manual.createdBy)
+        assertTrue(userVersion.isReady())
+        assertEquals("나이키", userVersion.name)
+        assertEquals(79_000, userVersion.price)
+        assertEquals(base.imageUrl, userVersion.imageUrl)
+        assertEquals("KRW", userVersion.currency)
+        assertTrue(userVersion.userInput)
+        assertNull(userVersion.method)
+        assertEquals(editor, userVersion.createdBy)
         assertEquals(99_000, base.price)
     }
 
@@ -163,29 +163,29 @@ class ItemSnapshotTest {
     fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 병합된 READY 버전이 된다`() {
         val base = version(name = "몬치치 인형", price = null)
 
-        val manual = ItemSnapshot.userInput(1L, ManualValues.merge(base, name = null, price = 25_000, imageUrl = null, currency = "KRW"), createdBy = UUID.randomUUID())
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.merge(base, name = null, price = 25_000, imageUrl = null, currency = "KRW"), createdBy = UUID.randomUUID())
 
-        assertTrue(manual.isReady())
-        assertEquals("몬치치 인형", manual.name)
-        assertEquals(25_000, manual.price)
+        assertTrue(userVersion.isReady())
+        assertEquals("몬치치 인형", userVersion.name)
+        assertEquals(25_000, userVersion.price)
         assertTrue(base.isIncomplete())
     }
 
     @Test
     fun `base 가 없으면 입력만으로 READY 버전을 만든다`() {
-        val manual =
+        val userVersion =
             ItemSnapshot.userInput(
                 1L,
-                ManualValues.merge(base = null, name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW"),
+                UserInputValues.merge(base = null, name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW"),
                 createdBy = UUID.randomUUID(),
             )
 
-        assertTrue(manual.isReady())
-        assertTrue(manual.userInput)
+        assertTrue(userVersion.isReady())
+        assertTrue(userVersion.userInput)
     }
 
     @Test
-    fun `수기 값 병합 후에도 이름 가격 이미지 중 하나가 비면 ItemException 이다`() {
+    fun `사용자 입력 병합 후에도 이름 가격 이미지 중 하나가 비면 ItemException 이다`() {
         val inputs =
             listOf(
                 Triple(null, 1_000, "https://img.example.com/a.png"),
@@ -195,7 +195,7 @@ class ItemSnapshotTest {
 
         inputs.forEach { (name, price, imageUrl) ->
             assertFailsWith<ItemException> {
-                ManualValues.merge(base = null, name = name, price = price, imageUrl = imageUrl, currency = "KRW")
+                UserInputValues.merge(base = null, name = name, price = price, imageUrl = imageUrl, currency = "KRW")
             }
         }
     }
