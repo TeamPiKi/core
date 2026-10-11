@@ -25,5 +25,7 @@ class ItemException private constructor(
         fun imageRequiredForReady(): ItemException = ItemException(ItemErrorCode.IMAGE_REQUIRED_FOR_READY)
 
         fun notRefreshable(): ItemException = ItemException(ItemErrorCode.NOT_REFRESHABLE)
+
+        fun parsingInProgress(): ItemException = ItemException(ItemErrorCode.PARSING_IN_PROGRESS)
     }
 }

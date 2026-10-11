@@ -1,9 +1,11 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.UserInputValues
 import com.depromeet.piki.product.domain.ProductLink
 
 sealed interface ItemCard {
@@ -17,6 +19,18 @@ sealed interface ItemCard {
     fun isReady(): Boolean = status == ItemStatus.READY
 
     fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
+
+    fun isParsing(): Boolean = status == ItemStatus.PARSING || refreshing
+
+    fun userInputValues(
+        name: String?,
+        price: Int?,
+        imageUrl: String?,
+        currency: String?,
+    ): UserInputValues {
+        if (isParsing()) throw ItemException.parsingInProgress()
+        return UserInputValues.merge(display, name, price, imageUrl, currency)
+    }
 
     data class Unresolved(
         private val latestRequest: ItemParseOutbox,
