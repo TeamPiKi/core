@@ -106,7 +106,7 @@ class WishPersistenceService(
     fun applyUserInput(command: ApplyWishUserInputCommand): WishResult {
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
-        val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.name, command.price, command.imageUrl, command.currency)
+        val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput)
         val item = lockedItemOf(wish)
         itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = command.userId))
         command.memo?.let { wish.updateMemo(it) }
@@ -118,7 +118,7 @@ class WishPersistenceService(
     fun validateUserInput(command: RecoverWishItemCommand) {
         val wish = wishRepository.findById(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
-        itemCardService.cardOf(wish.cardQuery()).userInputValues(command.name, command.price, PRE_UPLOAD_VALIDATION_IMAGE_URL, command.currency)
+        itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput(PRE_UPLOAD_VALIDATION_IMAGE_URL))
     }
 
     // 메모만 바꿔도 행 락이 필요하다. 전 컬럼 UPDATE 라 락 없이 읽으면 그 사이 확정된 아이템을 옛 값으로 되덮는다

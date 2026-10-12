@@ -122,7 +122,7 @@ class WishlistService(
             command.image?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        return wishPersistenceService.applyUserInput(command.toUserInput(imageUrl)).withSourcePlatform()
+        return wishPersistenceService.applyUserInput(command.toApplyUserInput(imageUrl)).withSourcePlatform()
     }
 
     fun refreshWishItem(command: RefreshWishItemCommand): WishResult {

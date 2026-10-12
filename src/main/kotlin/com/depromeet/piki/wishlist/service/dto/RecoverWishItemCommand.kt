@@ -1,6 +1,7 @@
 package com.depromeet.piki.wishlist.service.dto
 
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.item.domain.UserInput
 import java.util.UUID
 
 data class RecoverWishItemCommand(
@@ -17,14 +18,13 @@ data class RecoverWishItemCommand(
         return memo?.let { UpdateWishMemoCommand(userId = userId, wishId = wishId, memo = it) }
     }
 
-    fun toUserInput(imageUrl: String?): ApplyWishUserInputCommand =
+    fun userInput(imageUrl: String?): UserInput = UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency)
+
+    fun toApplyUserInput(imageUrl: String?): ApplyWishUserInputCommand =
         ApplyWishUserInputCommand(
             userId = userId,
             wishId = wishId,
-            name = name,
-            price = price,
-            imageUrl = imageUrl,
-            currency = currency,
+            userInput = userInput(imageUrl),
             memo = memo,
         )
 }

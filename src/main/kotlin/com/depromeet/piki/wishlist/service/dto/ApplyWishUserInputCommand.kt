@@ -1,13 +1,11 @@
 package com.depromeet.piki.wishlist.service.dto
 
+import com.depromeet.piki.item.domain.UserInput
 import java.util.UUID
 
 data class ApplyWishUserInputCommand(
     val userId: UUID,
     val wishId: Long,
-    val name: String?,
-    val price: Int?,
-    val imageUrl: String?,
-    val currency: String?,
+    val userInput: UserInput,
     val memo: String?,
 )
