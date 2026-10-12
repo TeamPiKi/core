@@ -15,7 +15,6 @@ interface TournamentItemRepository {
 
     fun findIdsByTournamentId(tournamentId: Long): List<Long>
 
-    // 수기 수정 직렬화용 행 락 조회
     fun findByIdForUpdate(id: Long): TournamentItem?
 
     fun findByIdIncludingDeletedForUpdate(id: Long): TournamentItem?

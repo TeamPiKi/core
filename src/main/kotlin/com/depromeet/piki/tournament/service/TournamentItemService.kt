@@ -2,6 +2,7 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
@@ -52,9 +53,7 @@ class TournamentItemService(
         val link = ProductLink.parse(url)
         tournamentItemPersistenceService.rejectIfAlreadyAdded(tournamentId, link)
         itemRegistrar.accept(link, ownerIdOf(tournamentId))
-        // 파싱·상태 전이는 item PK 를, 클라이언트 응답은 tournament_item PK 를 쓴다 (PersistedTournamentItem).
-        val persisted = tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, link)
-        return persisted.tournamentItemId
+        return tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, link)
     }
 
     // 발급 단계에선 tournament_item 을 만들지 않아 정원 최종 판정은 confirm 으로 미룬다.
@@ -66,25 +65,21 @@ class TournamentItemService(
         if (formats.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         itemQuotaGuard.consume(ownerIdOf(tournamentId), formats.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignRawUploads(formats)
+        return imagePresignService.presignProductUploads(formats)
     }
 
     fun confirmImageRegistration(
         userId: UUID,
         tournamentId: Long,
-        imageKeys: List<String>,
+        imageKeys: List<ProductImageKey>,
     ): List<Long> {
         if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw TournamentException.invalidImageCount()
         tournamentItemPersistenceService.verifyCanAddItems(userId, tournamentId)
         imagePresignService.verifyUploaded(imageKeys)
-        return tournamentItemPersistenceService
-            .registerImages(imageKeys, userId, tournamentId)
-            .map { it.tournamentItemId }
+        return tournamentItemPersistenceService.registerImages(imageKeys, userId, tournamentId)
     }
 
-    // recoverWishItem 과 동일한 패턴(#825 결정 4) — 수기 수정은 상태 무관 허용이며 MANUAL 새 버전 + pin 이동으로
-    // 영속화한다(manualEdit). 이미지 형식 검증 후 S3 업로드는 트랜잭션 밖에서, 권한 검증·적재는 manualEdit 에 위임한다.
-    // S3 업로드 전 병합 결과 필수 필드를 사전 확인해 orphan 업로드를 방지한다(최종 판정은 manualEdit).
+    // S3 업로드가 트랜잭션 안에 들어가지 않게 영속화만 applyUserInput 에 맡긴다
     fun updateItem(
         userId: UUID,
         tournamentId: Long,
@@ -95,17 +90,15 @@ class TournamentItemService(
         image: MultipartFile?,
     ) {
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
-        // 업로드 전 사전 검증(orphan 방지)은 이미지가 있을 때만 — 그게 dry-run 의 유일한 존재 이유라, 업로드가
-        // 없는 수정은 manualEdit(락 안)의 최종 판정 하나로 충분하다(예외·응답 동일, 쿼리만 줄어든다).
         productImage?.let {
             tournamentItemPersistenceService
-                .validateManualEdit(userId, tournamentId, tournamentItemId, name, price, currency)
+                .validateUserInput(userId, tournamentId, tournamentItemId, name, price, currency)
         }
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        tournamentItemPersistenceService.manualEdit(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
+        tournamentItemPersistenceService.applyUserInput(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
     }
 
     companion object {

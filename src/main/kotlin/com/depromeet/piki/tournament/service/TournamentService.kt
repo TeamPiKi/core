@@ -1,11 +1,9 @@
 package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemRepository
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.DisplayCard
-import com.depromeet.piki.item.service.ItemDisplayService
+import com.depromeet.piki.item.service.ItemCard
+import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.tournament.domain.RoundBracket
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
@@ -33,10 +31,10 @@ import com.depromeet.piki.tournament.service.dto.PlayLinkInfo
 import com.depromeet.piki.tournament.service.dto.RankedItem
 import com.depromeet.piki.tournament.service.dto.RecordMatch
 import com.depromeet.piki.tournament.service.dto.RecordMatchResult
+import com.depromeet.piki.tournament.service.dto.StartResult
 import com.depromeet.piki.tournament.service.dto.TournamentDetail
 import com.depromeet.piki.tournament.service.dto.TournamentInvitePreview
 import com.depromeet.piki.tournament.service.dto.TournamentItemDetail
-import com.depromeet.piki.tournament.service.dto.StartResult
 import com.depromeet.piki.tournament.service.dto.TournamentStartResult
 import com.depromeet.piki.tournament.service.dto.TournamentSummary
 import com.depromeet.piki.user.domain.IdentityType
@@ -57,8 +55,7 @@ class TournamentService(
     private val tournamentItemRepository: TournamentItemRepository,
     private val userRepository: UserRepository,
     private val itemRepository: ItemRepository,
-    private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val itemDisplayService: ItemDisplayService,
+    private val itemCardService: ItemCardService,
     private val wishRepository: WishRepository,
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
@@ -200,10 +197,8 @@ class TournamentService(
         if (!tournament.isRoot()) throw TournamentException.clonedTournamentCannotAddItems()
         tournamentUserRepository.findByTournamentIdAndUserId(command.tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
-        // 토너먼트에 이미 출전한 item 들 — tournament_item 의 고정 snapshot 에서 itemId 를 모은다(snapshot 단일 출처).
         val existingTournamentItems = tournamentItemRepository.findAllByTournamentId(command.tournamentId)
-        val existingItemIds =
-            itemSnapshotRepository.findByIds(existingTournamentItems.map { it.snapshotId }).map { it.itemId }.toSet()
+        val existingItemIds = existingTournamentItems.mapNotNull { it.itemId }.toSet()
         // 요청 내 중복 확인 — wishCount 는 unique itemId 기준이라 먼저 걸러야 정확하다
         val requestedItemIds = command.itemIds.toSet()
         if (requestedItemIds.size != command.itemIds.size) throw TournamentException.duplicateTournamentItem()
@@ -219,36 +214,17 @@ class TournamentService(
                 .map { it.getId() }
                 .toSet()
         if (command.itemIds.any { it !in foundItemIds }) throw TournamentException.notFoundItems()
-        // 출전 시점에 위시가 기다리는 행을 tournament_item 에 고정한다 — 이후 위시 갱신과 무관하게 그 버전을 본다.
-        // 키는 위시의 상품이다(행의 상품이 아니라) — 두 참조가 어긋난 드문 행이 있어도 키 공간이 하나라 아래 커버리지 검사가 계약(409)으로 거른다.
+        // 판정은 카드에 뜨는 값으로 한다(#858). 파싱 중인 위시는 아이템이 없어 여기서 걸러진다
         val wishes = wishRepository.findByItemIdsAndUserId(command.itemIds, userId)
-        val snapshotById = itemSnapshotRepository.findByIds(wishes.map { it.waitingSnapshotId }).associateBy { it.getId() }
-        val activeSnapshotByItemId =
-            wishes.mapNotNull { wish -> snapshotById[wish.waitingSnapshotId]?.let { wish.itemId to it } }.toMap()
-        if (!activeSnapshotByItemId.keys.containsAll(command.itemIds)) throw TournamentException.itemNotReady()
-        // 판정은 포인터가 아니라 카드에 뜨는 값으로 한다 — 남이 같은 링크를 담아 추출이 성공하면 내 포인터가
-        // 미완성·실패로 남아 있어도 카드엔 그 성공값이 뜬다(displayOf). 포인터로 판정하면 화면엔 값이 다 있는데
-        // "채운 뒤 담아 주세요" 가 나가고, 같은 아이템으로 시작은 되는 어긋남이 생긴다.
-        // 박제는 포인터 그대로다 — 겨루는 값 확정은 start 의 몫이고(#858), 대기실 표시도 파생으로 움직인다.
         requireEntryEligible(
-            itemDisplayService.resolveDisplay(activeSnapshotByItemId.values.map { DisplayCard.waitingOn(it, owner = userId) }).values,
+            itemCardService.cardsOf(wishes.map { it.cardQuery() }).values,
             TournamentException::itemIncomplete,
             TournamentException::itemNotReady,
         )
         val savedItemIds =
             tournamentItemRepository
-                .saveAll(
-                    command.itemIds.map { itemId ->
-                        val snapshot =
-                            activeSnapshotByItemId[itemId]
-                                ?: error("wish 의 활성 snapshot 없음 — itemId=$itemId, userId=$userId")
-                        TournamentItem(
-                            tournamentId = command.tournamentId,
-                            userId = userId,
-                            snapshotId = snapshot.getId(),
-                        )
-                    },
-                ).map { it.getId() }
+                .saveAll(command.itemIds.map { TournamentItem(tournamentId = command.tournamentId, userId = userId, itemId = it) })
+                .map { it.getId() }
         // 여러 개를 한 번에 추가해도 "아이템이 추가됐다"는 사실은 1건이라 이벤트도 1회만 발행한다.
         eventPublisher.publishEvent(TournamentItemAdded(tournamentId = command.tournamentId, actorId = userId))
         return savedItemIds
@@ -287,32 +263,17 @@ class TournamentService(
         if (tournamentItems.size !in TOURNAMENT_MIN_ITEM_COUNT..TOURNAMENT_MAX_ITEM_COUNT) {
             throw TournamentException.invalidItemCount()
         }
-        val snapshotById = snapshotsOf(tournamentItems)
-        // start = "겨루는 값 확정" 순간(#857). 대기실까지는 표시값이 파생(최신 기계 READY 우선)으로 움직이므로,
-        // 그 파생 결과를 여기서 포인터에 박제(repin)해 "겨룬 값 = 진행·완료 화면 값 = 히스토리 값" 을 고정한다.
-        // 시작 후 화면·히스토리는 파생 없이 포인터를 그대로 읽는다(당시를 보는 것이 확정).
-        val cardOf = { tournamentItem: TournamentItem -> DisplayCard.waitingOn(tournamentItem.requireSnapshot(snapshotById), owner = tournamentItem.userId) }
-        val displayByCard = itemDisplayService.resolveDisplay(tournamentItems.map(cardOf))
-        val pinnedByTournamentItemId =
-            tournamentItems.associate { tournamentItem ->
-                val display = displayByCard.getValue(cardOf(tournamentItem))
-                if (display.getId() != tournamentItem.snapshotId) tournamentItem.repinSnapshot(display.getId())
-                tournamentItem.getId() to display
-            }
-        // item 정체성은 snapshot.itemId 단일 출처다 — 고정 snapshot 에서 itemId 를 모아 item 존재를 검증한다.
-        val itemById =
-            itemRepository
-                .findByIds(pinnedByTournamentItemId.values.map { it.itemId })
-                .associate { it.getId() to it }
-        if (pinnedByTournamentItemId.values.any { it.itemId !in itemById }) throw TournamentException.notFoundItems()
+        // 아이템 행을 잠가 버전 생성과 직렬화한다. 이 뒤로 생기는 버전은 시작 시각보다 늦다
+        val itemIds = tournamentItems.mapNotNull { it.itemId }
+        if (itemRepository.findByIdsForUpdate(itemIds).size != itemIds.distinct().size) throw TournamentException.notFoundItems()
+        val cardById = cardsOf(tournament, tournamentItems)
         requireEntryEligible(
-            pinnedByTournamentItemId.values,
+            cardById.values,
             TournamentException::itemIncompleteToStart,
             TournamentException::itemNotReadyToStart,
         )
         for (tournamentItem in tournamentItems) {
-            pinnedByTournamentItemId.getValue(tournamentItem.getId()).price
-                ?: throw TournamentException.itemPriceRequired()
+            tournamentItem.requireValue(cardById).price ?: throw TournamentException.itemPriceRequired()
         }
         tournament.start()
         // #1027: 정의 상태(tournament.start)와 함께 주최자 참여 행도 플레이 시작으로 전이한다 — 주최자는 시작 즉시
@@ -325,7 +286,7 @@ class TournamentService(
             items =
                 tournamentItems
                     .map { item ->
-                        val snapshot = pinnedByTournamentItemId.getValue(item.getId())
+                        val snapshot = item.requireValue(cardById)
                         TournamentStartResult(
                             tournamentItemId = item.getId(),
                             name = snapshot.name,
@@ -356,13 +317,13 @@ class TournamentService(
             tournamentUserRepository.save(callerTU)
         }
 
-        val snapshotById = snapshotsOf(effectiveItems)
+        val cardById = cardsOf(root, effectiveItems)
         return StartResult(
             tournamentId = root.getId(),
             items =
                 effectiveItems
                     .map { item ->
-                        val snapshot = item.requireSnapshot(snapshotById)
+                        val snapshot = item.requireValue(cardById)
                         TournamentStartResult(
                             tournamentItemId = item.getId(),
                             name = snapshot.name,
@@ -416,7 +377,6 @@ class TournamentService(
 
     // 대기실/시작대기 응답(#1027). ownerStarted=false 면 일반 대기실(구성중), true 면 주최자가 이미 시작해
     // 이 참여자만 아직 자기 플레이를 시작하지 않은 상태 — 클라가 "지금 시작하세요" UI 를 분기한다.
-    // 대기실은 표시값 파생(#857) — 최신 기계 READY 우선, 수기는 자기 맥락에서만. 시작되면 start 가 파생 결과를 박제한다.
     private fun buildPending(
         tournament: Tournament,
         isOwner: Boolean,
@@ -424,7 +384,7 @@ class TournamentService(
         viewerId: UUID,
     ): TournamentDetail.Pending {
         val tournamentItems = getEffectiveTournamentItems(tournament)
-        val snapshotById = displayedSnapshotsOf(tournamentItems)
+        val cardById = cardsOf(tournament, tournamentItems)
         val tournamentUsers = tournamentUserRepository.findByTournamentId(tournament.getId())
         val itemCountByUserId = tournamentItems.groupingBy { it.userId }.eachCount()
         return TournamentDetail.Pending(
@@ -432,7 +392,7 @@ class TournamentService(
             name = tournament.name,
             inviteCode = tournament.inviteCode,
             inviteExpiresAt = tournament.inviteExpiresAt,
-            items = tournamentItems.map { toItemDetail(it, snapshotById) },
+            items = tournamentItems.map { toItemDetail(it, cardById) },
             participants = toParticipantDetails(
                 tournamentUsers,
                 tournament.ownerTournamentUserId,
@@ -504,8 +464,8 @@ class TournamentService(
                 ?.let { TournamentDetail.HistoryEntry.from(it) }
         val allTournamentItems = getEffectiveTournamentItems(tournament)
         val currentRound = computeExpectedRound(allTournamentItems.size, histories)
-        // 브래킷 파생이 라운드 시작 시점 집합(= remainingItems 의 상위집합)을 쓰므로 전체 아이템의 snapshot 을 잡는다.
-        val snapshotById = snapshotsOf(allTournamentItems)
+        // 브래킷 파생이 라운드 시작 시점 집합(= remainingItems 의 상위집합)을 쓰므로 전체 아이템의 값을 잡는다.
+        val cardById = cardsOf(tournament, allTournamentItems)
         // 단일 패스: 탈락 아이템 + 현재 라운드 대결 완료 아이템 동시 수집
         val eliminatedItemIds = mutableSetOf<Long>()
         val foughtInCurrentRoundIds = mutableSetOf<Long>()
@@ -520,9 +480,9 @@ class TournamentService(
         val remainingItems =
             allTournamentItems
                 .filter { item -> item.getId() !in eliminatedItemIds && item.getId() !in foughtInCurrentRoundIds }
-                .map { toItemDetail(it, snapshotById) }
+                .map { toItemDetail(it, cardById) }
                 .sortedWith(compareBy({ it.price }, { it.tournamentItemId }))
-        val bracket = deriveBracket(allTournamentItems, snapshotById, histories, currentRound, currentUser.getId())
+        val bracket = deriveBracket(allTournamentItems, cardById, histories, currentRound, currentUser.getId())
         return TournamentDetail.InProgress(
             tournamentId = tournament.getId(),
             name = tournament.name,
@@ -532,7 +492,7 @@ class TournamentService(
             currentMatch =
                 bracket
                     .firstUnplayed(playedPairsIn(histories, currentRound))
-                    ?.let { toMatchDetail(it, allTournamentItems, snapshotById) },
+                    ?.let { toMatchDetail(it, allTournamentItems, cardById) },
             isOwner = isOwner,
             isRoot = true,
             sourceTournamentId = null,
@@ -556,29 +516,21 @@ class TournamentService(
             tournamentItemRepository.findById(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournament.getId()) throw TournamentException.notFoundTournamentItem()
-        // 표시값: 대기실(PENDING)은 파생(#857), 시작 후는 start 가 박제한 포인터 그대로(겨룬 값 고정).
-        // sourceUrl(상품 링크)은 그 snapshot 의 item(정체성)에서 읽는다.
-        val pointer = tournamentItem.requireSnapshot(snapshotsOf(listOf(tournamentItem)))
-        val snapshot =
-            if (tournament.isPending()) {
-                itemDisplayService.resolveDisplay(DisplayCard.waitingOn(pointer, owner = tournamentItem.userId))
-            } else {
-                pointer
-            }
-        val item = itemRepository.findById(snapshot.itemId)
-            ?: throw TournamentException.notFoundTournamentItem()
+        val card = itemCardService.cardOf(tournamentItem.cardQuery(tournament))
+        val item = tournamentItem.itemId?.let { itemRepository.findById(it) }
+        val pendingLink = card.pendingLink
         // 이 상품이 요청자 본인의 위시에 담겨 있으면 그 위시의 개인 메모를 함께 내린다(#906). 조회를 요청자
         // 소유 wish 로 한정하므로 남의 메모는 구조적으로 내려갈 수 없다. 게스트·미담음·삭제된 위시는 조회에 안 잡힌다.
-        val memo = wishRepository.findByItemIdsAndUserId(listOf(item.getId()), userId).firstOrNull()?.memo
+        val memo = item?.let { wishRepository.findByItemIdsAndUserId(listOf(it.getId()), userId).firstOrNull()?.memo }
         return TournamentItemDetail(
             tournamentItemId = tournamentItem.getId(),
-            itemId = item.getId(),
-            sourceUrl = item.link?.toString(),
-            name = snapshot.name,
-            imageUrl = snapshot.imageUrl,
-            price = snapshot.price,
-            currency = snapshot.currency,
-            status = snapshot.status,
+            itemId = item?.getId(),
+            sourceUrl = (item?.sourceLink() ?: pendingLink)?.toString(),
+            name = card.display?.name,
+            imageUrl = card.display?.imageUrl,
+            price = card.display?.price,
+            currency = card.display?.currency,
+            status = card.status,
             memo = memo,
         )
     }
@@ -617,7 +569,7 @@ class TournamentService(
 
         // 썸네일도 남은 토너먼트에 대해서만 조회한다 (잘릴 것의 아이템은 안 읽음). #1027: 클론이 사라져 모든 가시
         // 토너먼트가 자기 tournament_item 을 가진 ROOT 이므로 자기 id 로 바로 조회한다.
-        val thumbnailsByTournamentId = thumbnailUrlsByTournamentId(limited.map { it.getId() })
+        val thumbnailsByTournamentId = thumbnailUrlsByTournamentId(limited)
 
         // "함께 담은 N"(#1062) — 그 토너먼트의 참여자 수. 참여자 프로필을 겹쳐 보여주던 자리를 숫자로 바꾼 것이라
         // 모집단도 그대로 참여자다. 클론이 사라져(#1027) 카드가 곧 그 토너먼트라, ROOT 로 되짚을 필요 없이 자기 행만 센다.
@@ -652,28 +604,23 @@ class TournamentService(
         }
     }
 
-    // 토너먼트별 대표 썸네일(최근 등록 아이템 중 이미지 있는 것 최대 2장) 배치 조립.
-    // 기존 배치 조회 2회(tournament_items → item_snapshots)만 쓰고 N+1 을 만들지 않는다.
-    private fun thumbnailUrlsByTournamentId(tournamentIds: List<Long>): Map<Long, List<String>> {
-        if (tournamentIds.isEmpty()) return emptyMap()
-        val items = tournamentItemRepository.findAllByTournamentIds(tournamentIds)
+    // 토너먼트별 대표 썸네일(최근 등록 아이템 중 이미지 있는 것 최대 2장). 카드가 READY 인 값의 이미지만 쓴다
+    private fun thumbnailUrlsByTournamentId(tournaments: List<Tournament>): Map<Long, List<String>> {
+        if (tournaments.isEmpty()) return emptyMap()
+        val items = tournamentItemRepository.findAllByTournamentIds(tournaments.map { it.getId() })
         if (items.isEmpty()) return emptyMap()
-        // READY 스냅샷의 이미지만 후보로 삼는다 — FAILED/PROCESSING 의 stale 이미지가 카드에 노출되지 않게 상태로 거른다.
-        val readyImageUrlBySnapshotId =
-            itemSnapshotRepository
-                .findByIds(items.map { it.snapshotId })
-                .associate { snapshot ->
-                    snapshot.getId() to
-                        snapshot.imageUrl?.takeIf { snapshot.status == ItemStatus.READY }
-                }
+        val tournamentById = tournaments.associateBy { it.getId() }
+        val queryById = items.associate { it.getId() to it.cardQuery(tournamentById.getValue(it.tournamentId)) }
+        val cards = itemCardService.cardsOf(queryById.values)
         return items
             .groupBy { it.tournamentId }
             .mapValues { (_, tournamentItems) ->
                 TournamentThumbnails.select(
                     tournamentItems.map {
+                        val card = cards.getValue(queryById.getValue(it.getId()))
                         TournamentThumbnails.Candidate(
                             recency = it.getId(),
-                            imageUrl = readyImageUrlBySnapshotId[it.snapshotId],
+                            imageUrl = card.display?.imageUrl?.takeIf { card.isReady() },
                         )
                     },
                 )
@@ -718,7 +665,7 @@ class TournamentService(
                 rootId,
                 tournamentUser.getId(),
             )
-        val snapshotById = snapshotsOf(allTournamentItems)
+        val cardById = cardsOf(tournament, allTournamentItems)
 
         // 멱등(#683): 같은 조합이 이미 기록됐으면 재전송·뒤로가기로 인한 재시도다.
         // 이미 기록된 매치의 패자는 아래 탈락 집합에 들어 있으므로, 탈락 검사보다 먼저 판정해야
@@ -755,7 +702,7 @@ class TournamentService(
                     nextMatch =
                         nextMatchOf(
                             allTournamentItems,
-                            snapshotById,
+                            cardById,
                             histories,
                             recorded.currentRound,
                             tournamentUser.getId(),
@@ -778,7 +725,7 @@ class TournamentService(
         // 브래킷 무결성(#683): 소속·미탈락·라운드만 보던 기존 검증은 클라가 임의 조합([0]vs[3])을 보내도 통과했다.
         // 서버가 파생한 페어 집합에 없는 조합은 거부한다. 단 진행 순서는 검증하지 않는다 —
         // 라운드 내 매치는 서로 독립이라 순서가 최종 결과를 바꾸지 않고, 강제하면 열린 탭·재전송에서 오탐 400 만 는다.
-        val bracket = deriveBracket(allTournamentItems, snapshotById, histories, expectedRound, tournamentUser.getId())
+        val bracket = deriveBracket(allTournamentItems, cardById, histories, expectedRound, tournamentUser.getId())
         if (!bracket.contains(command.firstTournamentItemId, command.secondTournamentItemId)) {
             throw TournamentException.invalidMatchPair()
         }
@@ -799,7 +746,7 @@ class TournamentService(
                 nextMatch =
                     bracket
                         .firstUnplayed(playedPairsIn(histories + newHistory, command.currentRound))
-                        ?.let { toMatchDetail(it, allTournamentItems, snapshotById) },
+                        ?.let { toMatchDetail(it, allTournamentItems, cardById) },
                 completed = null,
             )
         }
@@ -874,14 +821,14 @@ class TournamentService(
             tournamentItemRepository
                 .findByIds(rankedPairs.map { it.first })
                 .associateBy { it.getId() }
-        val snapshotById = snapshotsOf(tournamentItemById.values)
+        val cardById = cardsOf(tournament, tournamentItemById.values)
         return TournamentDetail.Completed(
             tournamentId = tournament.getId(),
             name = tournament.name,
             result =
                 rankedPairs.map { (tournamentItemId, rank) ->
                     val tournamentItem = tournamentItemById.getValue(tournamentItemId)
-                    val snapshot = tournamentItem.requireSnapshot(snapshotById)
+                    val snapshot = tournamentItem.requireValue(cardById)
                     RankedItem(
                         rank = rank,
                         tournamentItemId = tournamentItemId,
@@ -1126,7 +1073,7 @@ class TournamentService(
             allHistories.map { it.firstTournamentItemId } +
                 allHistories.map { it.secondTournamentItemId }
         val tItemById = tournamentItemRepository.findByIds(allTournamentItemIds).associateBy { it.getId() }
-        val snapshotById = snapshotsOf(tItemById.values)
+        val cardById = cardsOf(tournament, tItemById.values)
         // 각 참여자의 히스토리는 tournamentUserId 로 분리한다(모두 rootId 소속) — O(1) 조회.
         val historiesByTuId = allHistories.groupBy { it.tournamentUserId }
 
@@ -1145,10 +1092,10 @@ class TournamentService(
 
             for ((tournamentItemId, rank) in ranked) {
                 // tItem 누락은 삭제된 출전 아이템이 history 에 남은 정상 경우라 건너뛴다. 그러나 tItem 이 살아있으면
-                // snapshot 은 불변식상 반드시 있어야 한다 — 없으면 continue 로 삼키지 않고 fail-fast 로 터뜨려, 부분 집계된
+                // 값은 불변식상 반드시 있어야 한다 — 없으면 continue 로 삼키지 않고 fail-fast 로 터뜨려, 부분 집계된
                 // 랭킹이 200 으로 새어 나가는 것을 막는다.
                 val tItem = tItemById[tournamentItemId] ?: continue
-                val snapshot = tItem.requireSnapshot(snapshotById)
+                val snapshot = tItem.requireValue(cardById)
                 // 우승 아이템(rank==1)을 고른 참여자만 집계 — 참여자마다 같은 아이템의 rank 가 다를 수 있으므로
                 // RankKey 로 묶으면 누락이 생긴다. itemId 기준으로 1위 선택자만 모은다.
                 if (rank == 1) {
@@ -1225,13 +1172,12 @@ class TournamentService(
         if (deleted == 0) throw TournamentException.notPendingTournament()
 
         // 삭제로 출전 목록이 바뀌었음을 다른 참가자에게 알린다(폴링 대체) — 추가(TournamentItemAdded)와 대칭.
-        // tournamentItemId·snapshotId 를 함께 실어 알림 도메인이 어느 아이템인지·상품명을 끌어내게 한다
-        // (tournament_item 은 방금 soft delete 돼 핸들러가 역조회로 못 닿지만, snapshot 은 살아 있다).
+        // tournament_item 은 방금 soft delete 돼 핸들러가 역조회로 못 닿아 보이던 버전을 실어 상품명을 읽게 한다
         eventPublisher.publishEvent(
             TournamentItemDeleted(
                 tournamentId = tournamentId,
                 tournamentItemId = tournamentItemId,
-                snapshotId = tournamentItem.snapshotId,
+                snapshotId = itemCardService.cardOf(tournamentItem.cardQuery(tournament)).display?.getId(),
                 actorId = userId,
             ),
         )
@@ -1239,18 +1185,18 @@ class TournamentService(
 
     private fun toItemDetail(
         tournamentItem: TournamentItem,
-        snapshotById: Map<Long, ItemSnapshot>,
+        cardById: Map<Long, ItemCard>,
     ): TournamentDetail.ItemDetail {
-        val snapshot = tournamentItem.requireSnapshot(snapshotById)
+        val card = cardById[tournamentItem.getId()] ?: error("카드 없음 — tournamentItemId=${tournamentItem.getId()}")
         return TournamentDetail.ItemDetail(
             tournamentItemId = tournamentItem.getId(),
-            itemId = snapshot.itemId,
+            itemId = card.itemId,
             userId = tournamentItem.userId,
-            name = snapshot.name,
-            price = snapshot.price,
-            currency = snapshot.currency,
-            imageUrl = snapshot.imageUrl,
-            status = snapshot.status,
+            name = card.display?.name,
+            price = card.display?.price,
+            currency = card.display?.currency,
+            imageUrl = card.display?.imageUrl,
+            status = card.status,
         )
     }
 
@@ -1261,7 +1207,7 @@ class TournamentService(
     // 현재 라운드에서 진 아이템은(라운드 시작 시점엔 살아 있었으므로) 그대로 남긴다.
     private fun deriveBracket(
         allTournamentItems: List<TournamentItem>,
-        snapshotById: Map<Long, ItemSnapshot>,
+        cardById: Map<Long, ItemCard>,
         histories: List<TournamentHistory>,
         currentRound: Int,
         tournamentUserId: Long,
@@ -1277,21 +1223,21 @@ class TournamentService(
         val entries =
             allTournamentItems
                 .filterNot { it.getId() in eliminatedBeforeRound }
-                .map { RoundBracket.Entry(it.getId(), it.requireSnapshot(snapshotById).price) }
+                .map { RoundBracket.Entry(it.getId(), it.requireValue(cardById).price) }
         return RoundBracket.of(entries, tournamentUserId, currentRound)
     }
 
     // 그 라운드에서 아직 안 치른 첫 매치. 라운드가 다 끝났으면 null.
     private fun nextMatchOf(
         allTournamentItems: List<TournamentItem>,
-        snapshotById: Map<Long, ItemSnapshot>,
+        cardById: Map<Long, ItemCard>,
         histories: List<TournamentHistory>,
         round: Int,
         tournamentUserId: Long,
     ): TournamentDetail.MatchDetail? =
-        deriveBracket(allTournamentItems, snapshotById, histories, round, tournamentUserId)
+        deriveBracket(allTournamentItems, cardById, histories, round, tournamentUserId)
             .firstUnplayed(playedPairsIn(histories, round))
-            ?.let { toMatchDetail(it, allTournamentItems, snapshotById) }
+            ?.let { toMatchDetail(it, allTournamentItems, cardById) }
 
     // 그 라운드에서 이미 치른 매치들. 진행 순서는 검증하지 않으므로 "치렀는지" 만 본다.
     private fun playedPairsIn(
@@ -1305,7 +1251,7 @@ class TournamentService(
     private fun toMatchDetail(
         pair: RoundBracket.MatchPair,
         tournamentItems: List<TournamentItem>,
-        snapshotById: Map<Long, ItemSnapshot>,
+        cardById: Map<Long, ItemCard>,
     ): TournamentDetail.MatchDetail {
         val itemById = tournamentItems.associateBy { it.getId() }
 
@@ -1313,7 +1259,7 @@ class TournamentService(
         fun detailOf(tournamentItemId: Long) =
             toItemDetail(
                 itemById[tournamentItemId] ?: error("브래킷 페어 아이템 없음 — tournamentItemId=$tournamentItemId"),
-                snapshotById,
+                cardById,
             )
         return TournamentDetail.MatchDetail(first = detailOf(pair.first), second = detailOf(pair.second))
     }
@@ -1323,44 +1269,33 @@ class TournamentService(
         tournamentItemRepository.findAllByTournamentId(tournament.sourceTournamentId ?: tournament.getId())
 
     /**
-     * 출전 가능 판정의 단일 출처. 담기와 시작이 같은 질문("이 아이템들로 겨룰 수 있나")에 답하므로 한 벌만 둔다 —
-     * 두 벌이던 동안 담기만 포인터를, 시작은 표시값을 봐서 같은 아이템이 담기는 거부되고 시작은 되는 어긋남이
-     * 있었다. 갈라질 수 있는 구조 자체를 없앤다.
+     * 출전 가능 판정의 단일 출처. 담기와 시작이 같은 질문("이 아이템들로 겨룰 수 있나")에 답하므로 한 벌만 둔다.
      *
      * 미완성을 먼저 보는 이유: 파싱 중은 기다리면 풀리지만 미완성은 사용자가 빈 값을 채워야 풀린다. 둘이 섞였을
      * 땐 행동이 필요한 쪽을 알려야 하고, 아이템별 루프에 맡기면 앞선 파싱 중이 뒤쪽 미완성을 가린다.
-     *
-     * @param snapshots 판정 대상. 두 경로 모두 **표시값**을 넘긴다(포인터가 아니다).
      */
     private fun requireEntryEligible(
-        snapshots: Collection<ItemSnapshot>,
+        cards: Collection<ItemCard>,
         incomplete: () -> TournamentException,
         notReady: () -> TournamentException,
     ) {
-        if (snapshots.any { it.isIncomplete() }) throw incomplete()
-        if (snapshots.any { !it.isReady() }) throw notReady()
+        if (cards.any { it.isIncomplete() }) throw incomplete()
+        if (cards.any { !it.isReady() }) throw notReady()
     }
 
-    // tournament_item 들이 고정한 snapshot 을 한 번에 조회해 id→snapshot 맵으로. 표시값 조회의 메모리 조인 재료다.
-    private fun snapshotsOf(tournamentItems: Collection<TournamentItem>): Map<Long, ItemSnapshot> =
-        itemSnapshotRepository
-            .findByIds(tournamentItems.map { it.snapshotId })
-            .associateBy { it.getId() }
-
-    // 대기실(PENDING) 표시용(#857) — 키는 포인터 snapshot id 를 유지하되 값을 파생 표시 버전으로 치환한다.
-    // requireSnapshot(포인터 id 조회)을 쓰는 기존 조립 코드가 무수정으로 표시 버전을 읽게 된다.
-    private fun displayedSnapshotsOf(tournamentItems: Collection<TournamentItem>): Map<Long, ItemSnapshot> {
-        val pointers = snapshotsOf(tournamentItems)
-        // 카드 주인은 출전시킨 사람 — 그 사람의 맥락(수기)과 카드가 기다리는 행(pin)의 진행 중만 그 카드에 보인다.
-        val cardOf = { tournamentItem: TournamentItem -> DisplayCard.waitingOn(tournamentItem.requireSnapshot(pointers), owner = tournamentItem.userId) }
-        val displayByCard = itemDisplayService.resolveDisplay(tournamentItems.map(cardOf))
-        return tournamentItems.associate { it.snapshotId to displayByCard.getValue(cardOf(it)) }
+    // 키는 tournament_item id. 시작 전엔 지금 보이는 값, 시작 후엔 시작 시각 기준 값이다
+    private fun cardsOf(
+        tournament: Tournament,
+        tournamentItems: Collection<TournamentItem>,
+    ): Map<Long, ItemCard> {
+        val queryById = tournamentItems.associate { it.getId() to it.cardQuery(tournament) }
+        val cards = itemCardService.cardsOf(queryById.values)
+        return queryById.mapValues { (_, query) -> cards.getValue(query) }
     }
 
-    // 고정 snapshot 은 출전 시점에 반드시 박힌다. 없으면 영속화 경로가 깨진 코드 버그다(전환 후 신규 출전부터 보장).
-    private fun TournamentItem.requireSnapshot(snapshotById: Map<Long, ItemSnapshot>): ItemSnapshot =
-        snapshotById[snapshotId]
-            ?: error("snapshot 없음 — tournamentItemId=${getId()}, snapshotId=$snapshotId")
+    // 시작한 토너먼트의 출전은 모두 READY 라 값이 있다. 없으면 시작 게이트가 깨진 코드 버그다
+    private fun TournamentItem.requireValue(cardById: Map<Long, ItemCard>): ItemSnapshot =
+        cardById[getId()]?.display ?: error("출전 값 없음 — tournamentItemId=${getId()}")
 
     private fun computeRanking(histories: List<TournamentHistory>): List<Pair<Long, Int>> {
         val finalMatch =

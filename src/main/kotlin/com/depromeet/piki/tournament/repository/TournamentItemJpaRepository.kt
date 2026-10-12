@@ -27,7 +27,7 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
     @Query("SELECT t.id FROM TournamentItem t WHERE t.tournamentId = :tournamentId AND t.deletedAt IS NULL ORDER BY t.id ASC")
     fun findIdsByTournamentId(@Param("tournamentId") tournamentId: Long): List<Long>
 
-    // 아이템이 비어 있는 카드를 수기 수정과 파싱 성공이 동시에 확정하면 아이템이 둘 생기므로 행 락으로 직렬화한다
+    // 아이템이 비어 있는 카드를 사용자 입력과 파싱 성공이 동시에 확정하면 아이템이 둘 생기므로 행 락으로 직렬화한다
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM TournamentItem t WHERE t.id = :id AND t.deletedAt IS NULL")
     fun findByIdForUpdate(@Param("id") id: Long): TournamentItem?
