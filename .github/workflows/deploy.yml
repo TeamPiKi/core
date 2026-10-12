@@ -324,6 +324,7 @@ jobs:
             shared-infra/blocks/slot_decide.sh,
             shared-infra/blocks/slot_switch.sh,
             shared-infra/blocks/deploy_slot.sh,
+            shared-infra/blocks/prune_images.sh,
             shared-infra/blocks/ssm_env.sh
           target: "/tmp/piki-deploy"
           strip_components: 2
@@ -590,13 +591,8 @@ jobs:
             docker run --rm --network host "$AWSCLI_IMAGE" ecr get-login-password --region ap-northeast-2 \
               | docker login --username AWS --password-stdin "$REGISTRY"
 
-            # 옛 배포 이미지가 쌓여 EC2 디스크가 차면 containerd 가 새 이미지를 못 받아 배포가 실패한다(#336).
-            # pull 전에 컨테이너 미참조 이미지를 정리해 누적을 막고, 이미 디스크가 찬 상태의 deadlock 도 깬다.
-            # 실행중 컨테이너(blue/green·alloy·redis)의 이미지와 볼륨은 보존된다.
-            # -af 로 전부 정리한다(시간 필터 X): 롤백은 "실행중 active 컨테이너 유지"라 옛 이미지를 재사용하지 않고,
-            # dev 는 배포가 잦아 --filter "until=72h" 류로 두면 디스크가 다시 찬다. 다중 버전 보존이 필요해지면 그때 제한한다.
-            docker image prune -af || true
-            df -h / | tail -1
+            # pull 앞 정리와 여유 가드는 공용 블록이 맡는다(#336 과 같은 실패를 renderer 가 다시 내 공용화, TeamPiKi/infra#92).
+            bash /tmp/piki-deploy/prune_images.sh
 
             docker pull "$IMAGE"
 
