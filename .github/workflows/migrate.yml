@@ -78,7 +78,7 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  OLD_ACCOUNT_ID: "996918499382" # 현재(구) 계정 — ssm 치환·이미지 URL 재작성의 원본. 이관 완료 후 갱신.
+  OLD_ACCOUNT_ID: "731770491043" # 현재(구) 계정 — ssm 치환·이미지 URL 재작성의 원본. 이관 완료 후 갱신.
   # 신 계정에서 이 워크플로가 맡는 역할. 사람이 CloudShell 에 infra/scripts/bootstrap-oidc.sh 를 한 번
   # 붙여넣으면 생긴다. 이름을 바꾸면 그 스크립트의 ROLE_NAME 도 함께 바꿔야 한다.
   BOOTSTRAP_ROLE: piki-migrate-bootstrap
@@ -1682,6 +1682,8 @@ jobs:
           {
             echo "ecr_role=$(terraform output -raw github_ecr_push_role_arn)"
             echo "db_role=$(terraform output -raw github_db_provision_role_arn)"
+            # extractor 의 ECR push 역할은 extractor 레포 terraform(infra/extractor) 소관이고 outputs.tf 가 없어 이름으로 묻는다.
+            echo "extractor_ecr_role=$(aws iam get-role --role-name piki-extractor-gha-ecr-push --query Role.Arn --output text 2>/dev/null || true)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Environment 배선 갱신
@@ -1693,6 +1695,9 @@ jobs:
           EXTRACTOR_ADDR: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
+          EXTRACTOR_IP: ${{ needs.side_hosts.outputs.extractor_ip }}
+          RENDERER_IP: ${{ needs.side_hosts.outputs.renderer_ip }}
+          EXTRACTOR_ECR_ROLE: ${{ steps.tf.outputs.extractor_ecr_role }}
         run: |
           set -uo pipefail
           [ -n "${GH_TOKEN:-}" ] || {
@@ -1735,6 +1740,25 @@ jobs:
               || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }
           fi
 
+          # extractor·renderer 의 평소 배포는 자기 레포의 repo 수준 값을 본다. 박스가 전 환경 공용이라 prod 에서만 바꾼다.
+          # 놓치면 이관 뒤 첫 배포가 켜져 있는 구 계정 박스로 조용히 성공한다(#1174).
+          set_side() { # $1=secret|variable $2=repo $3=name $4=value
+            if gh "$1" set "$3" --body "$4" --repo "$2" 2>/dev/null; then
+              echo "  $1 $3 ($2)"
+            else
+              echo "::warning::$2 의 $1 $3 갱신 실패 — CROSS_REPO_TOKEN 에 그 레포 Secrets·Variables 쓰기 권한 확인"; fail=1
+            fi
+          }
+          if [ "$ENV" = prod ]; then
+            [ -n "$EXTRACTOR_IP" ] && set_side secret TeamPiKi/extractor EC2_HOST "$EXTRACTOR_IP" \
+              || { echo "::warning::extractor 공인 IP 를 못 얻어 extractor 의 EC2_HOST 를 건드리지 않았다"; fail=1; }
+            [ -n "$RENDERER_IP" ] && set_side secret TeamPiKi/renderer EC2_HOST "$RENDERER_IP" \
+              || { echo "::warning::renderer 공인 IP 를 못 얻어 renderer 의 EC2_HOST 를 건드리지 않았다"; fail=1; }
+            [ -n "$EXTRACTOR_ECR_ROLE" ] && [ "$EXTRACTOR_ECR_ROLE" != None ] \
+              && set_side variable TeamPiKi/extractor AWS_ECR_PUSH_ROLE_ARN "$EXTRACTOR_ECR_ROLE" \
+              || { echo "::warning::extractor ECR push 역할을 못 찾았다(piki-extractor-gha-ecr-push)"; fail=1; }
+          fi
+
           if [ "$fail" -eq 0 ]; then
             echo "done=true" >> "$GITHUB_OUTPUT"
             echo "::notice::배선 갱신 완료 — $ENV 의 배포가 신 계정을 향한다"
@@ -1751,7 +1775,7 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "배포 배선 갱신 ${{ job.status }} (env=${{ inputs.env }})"
-          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
+          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에, prod 면 extractor·renderer 레포의 EC2_HOST 와 extractor 의 AWS_ECR_PUSH_ROLE_ARN 까지 신 계정 값으로 교체한다. 실패했다면 그 배포가 아직 구 계정을 향한다."
 
   # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
   #
@@ -1928,6 +1952,8 @@ jobs:
               echo "| \`EXTRACTOR_PROD_ADDRESS\` | Environment \`$ENV\` secret | 신 계정 extractor **사설** IP:8090 (rewire 실패) |"
               echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
               [ "$ENV" = prod ] && echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
+              [ "$ENV" = prod ] && echo "| \`EC2_HOST\` | extractor·renderer 레포 repo secret | 각 신 계정 박스 EIP (rewire 실패) |"
+              [ "$ENV" = prod ] && echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | extractor 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-extractor-gha-ecr-push\` (rewire 실패) |"
             fi
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
