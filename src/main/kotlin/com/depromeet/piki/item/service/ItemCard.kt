@@ -5,6 +5,7 @@ import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.UserInput
 import com.depromeet.piki.item.domain.UserInputValues
 import com.depromeet.piki.product.domain.ProductLink
 
@@ -22,14 +23,9 @@ sealed interface ItemCard {
 
     fun isParsing(): Boolean = status == ItemStatus.PARSING || refreshing
 
-    fun userInputValues(
-        name: String?,
-        price: Int?,
-        imageUrl: String?,
-        currency: String?,
-    ): UserInputValues {
+    fun userInputValues(input: UserInput): UserInputValues {
         if (isParsing()) throw ItemException.parsingInProgress()
-        return UserInputValues.merge(display, name, price, imageUrl, currency)
+        return UserInputValues.merge(display, input)
     }
 
     data class Unresolved(

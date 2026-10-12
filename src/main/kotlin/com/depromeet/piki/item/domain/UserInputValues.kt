@@ -10,18 +10,15 @@ data class UserInputValues(
     companion object {
         fun merge(
             base: ItemSnapshot?,
-            name: String?,
-            price: Int?,
-            imageUrl: String?,
-            currency: String?,
+            input: UserInput,
         ): UserInputValues {
-            val mergedName = name ?: base?.name
+            val mergedName = input.name ?: base?.name
             if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
             return UserInputValues(
                 name = mergedName,
-                price = price ?: base?.price ?: throw ItemException.priceRequiredForReady(),
-                imageUrl = imageUrl ?: base?.imageUrl ?: throw ItemException.imageRequiredForReady(),
-                currency = currency ?: base?.currency,
+                price = input.price ?: base?.price ?: throw ItemException.priceRequiredForReady(),
+                imageUrl = input.imageUrl ?: base?.imageUrl ?: throw ItemException.imageRequiredForReady(),
+                currency = input.currency ?: base?.currency,
             )
         }
     }
