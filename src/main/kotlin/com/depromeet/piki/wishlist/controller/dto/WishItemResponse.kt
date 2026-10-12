@@ -1,11 +1,9 @@
 package com.depromeet.piki.wishlist.controller.dto
 
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
-import com.depromeet.piki.wishlist.service.dto.WishWithItem
+import com.depromeet.piki.wishlist.service.dto.WishResult
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
 
@@ -15,39 +13,14 @@ data class WishItemResponse(
     val wish: WishView,
     @field:Schema(description = "상품 스냅샷")
     val item: ItemView,
-    @field:Schema(
-        description = "URL 등록 응답 전용 — 파싱 없이 다른 등록이 만든 완성 값(캐시)에 붙었는지. " +
-            "true 면 item 의 값은 이 등록이 새로 가져온 것이 아니다. 등록 외 응답(목록·수정 등)에서는 null.",
-        example = "true",
-        nullable = true,
-    )
-    val reused: Boolean? = null,
-    @field:Schema(
-        description = "URL 등록 응답 전용 — 붙은 캐시 값이 갱신 권고 임계(서버 기준 24시간)보다 낡았는지(서버 판정). " +
-            "true 면 \"새로운 정보로 가져올까요?\" 를 물어 사용자가 원할 때 새로고침 API 를 호출한다. " +
-            "reused=true 일 때만 의미가 있으며, 등록 외 응답에서는 null.",
-        example = "false",
-        nullable = true,
-    )
-    val refreshNeeded: Boolean? = null,
 ) {
     companion object {
         fun from(
-            result: WishWithItem,
+            result: WishResult,
         ): WishItemResponse =
             WishItemResponse(
                 wish = WishView.from(result.wish),
                 item = ItemView.from(result),
-            )
-
-        // URL 등록 응답 전용 — 공유 attach 메타(#853)까지 싣는다. 등록만 이 오버로드를 쓰고,
-        // 목록·수정 등 다른 경로는 위 기본 from(플래그 null)을 유지한다.
-        fun fromRegistration(result: WishWithItem): WishItemResponse =
-            WishItemResponse(
-                wish = WishView.from(result.wish),
-                item = ItemView.from(result),
-                reused = result.reused,
-                refreshNeeded = result.refreshNeeded,
             )
     }
 
@@ -69,33 +42,40 @@ data class WishItemResponse(
 
     @Schema(description = "상품 스냅샷")
     data class ItemView(
-        @field:Schema(description = "상품 ID", example = "512")
-        val id: Long,
+        @field:Schema(description = "상품 ID. 파싱이 성공해 상품이 확정되기 전에는 null", example = "512", nullable = true)
+        val id: Long?,
         @field:Schema(
-            description = "파싱 상태 — PENDING(URL 등록 접수, 파싱 대기)/PROCESSING(파싱 중)/READY(완료)/" +
-                "INCOMPLETE(일부만 채움, 사용자 입력 필요)/FAILED(파싱 실패). " +
-                "URL 등록은 PENDING 으로 시작해 디스패처가 집어 PROCESSING→READY/INCOMPLETE/FAILED 로 전이하고, 이미지 등록은 PROCESSING 으로 시작한다. " +
-                "PENDING·PROCESSING 동안은 name·price·imageUrl 이 비어 있다. " +
-                "INCOMPLETE 는 셋 중 채운 것만 있고 나머지가 비어 있다 — 수기 수정으로 빈 필드를 채우면 READY 가 된다.",
+            description = "상태 — PARSING(상품 확정 전 파싱 중)/FAILED(상품을 확정하지 못하고 파싱 실패)/" +
+                "READY(이름·가격·이미지가 모두 있음)/INCOMPLETE(일부만 있음, 사용자 입력으로 채우면 READY). " +
+                "PARSING·FAILED 동안은 id·name·price·imageUrl 이 비어 있다.",
             example = "READY",
         )
         val status: ItemStatus,
         @field:Schema(
-            description = "지금 보이는 값의 출처 — SERVER(구조화 파서)·SERVER_LLM(LLM 추출)·MANUAL(사용자 수기 입력). " +
-                "MANUAL 이면 본인이 직접 입력한 값이다(타인의 수기는 내 카드의 표시값이 되지 않는다) — " +
-                "\"직접 입력한 값\" 배지의 근거로 쓴다. 출처 기록 도입 전에 쌓인 버전은 null(모름).",
-            example = "SERVER",
+            description = "이미 값이 있는 상품을 새로고침하는 중인지. 값과 status 는 새로고침 전 것을 그대로 보인다.",
+            example = "false",
+        )
+        val refreshing: Boolean,
+        @field:Schema(
+            description = "지금 보이는 값을 서버가 뽑은 경로. STRUCTURED(구조화 파서)·LLM. 사용자 입력과 경로 기록 전 버전은 null.",
+            example = "STRUCTURED",
             nullable = true,
         )
-        val source: ItemSnapshotSource?,
-        @field:Schema(description = "상품명 (PENDING·PROCESSING·실패 시 null)", example = "에어 조던 1 미드", nullable = true)
+        val method: ExtractionMethod?,
+        @field:Schema(
+            description = "지금 보이는 값이 본인이 직접 입력한 값인지(타인의 입력은 내 카드의 표시값이 되지 않는다). PARSING·FAILED 시 null.",
+            example = "false",
+            nullable = true,
+        )
+        val userInput: Boolean?,
+        @field:Schema(description = "상품명 (PARSING·FAILED 시 null)", example = "에어 조던 1 미드", nullable = true)
         val name: String?,
-        @field:Schema(description = "스냅샷 시점의 현재 판매가 (PENDING·PROCESSING·실패 시 null)", example = "119000", nullable = true)
+        @field:Schema(description = "스냅샷 시점의 현재 판매가 (PARSING·FAILED 시 null)", example = "119000", nullable = true)
         val price: Int?,
         @field:Schema(description = "통화 코드 (ISO 4217)", example = "KRW", nullable = true)
         val currency: String?,
         @field:Schema(
-            description = "상품 대표 이미지 URL (PENDING·PROCESSING·실패 시 null)",
+            description = "상품 대표 이미지 URL (PARSING·FAILED 시 null)",
             example = "https://cdn.example.com/p/512.jpg",
             nullable = true,
         )
@@ -115,25 +95,19 @@ data class WishItemResponse(
         val sourcePlatform: String?,
     ) {
         companion object {
-            // 표시값(status·name·price·currency·imageUrl)은 활성 snapshot 에서,
-            // 정체성(id·sourceUrl=상품 링크)은 item 에서 읽는다. snapshot 은 5단계 갱신에서 새 버전으로 스왑된다.
-            fun from(result: WishWithItem): ItemView = from(result.item, result.snapshot, result.sourcePlatform)
-
-            fun from(
-                item: Item,
-                snapshot: ItemSnapshot,
-                sourcePlatform: String?,
-            ): ItemView =
+            fun from(result: WishResult): ItemView =
                 ItemView(
-                    id = item.getId(),
-                    status = snapshot.status,
-                    source = snapshot.source,
-                    name = snapshot.name,
-                    price = snapshot.price,
-                    currency = snapshot.currency,
-                    imageUrl = snapshot.imageUrl,
-                    sourceUrl = item.link?.toString(),
-                    sourcePlatform = sourcePlatform,
+                    id = result.item?.getId(),
+                    status = result.card.status,
+                    refreshing = result.card.refreshing,
+                    method = result.card.display?.method,
+                    userInput = result.card.display?.userInput,
+                    name = result.card.display?.name,
+                    price = result.card.display?.price,
+                    currency = result.card.display?.currency,
+                    imageUrl = result.card.display?.imageUrl,
+                    sourceUrl = (result.item?.sourceLink() ?: result.card.pendingLink)?.toString(),
+                    sourcePlatform = result.sourcePlatform,
                 )
         }
     }

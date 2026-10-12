@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonInclude
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class TournamentItemDetailResponse(
     val tournamentItemId: Long,
-    val itemId: Long,
+    val itemId: Long?,
     val sourceUrl: String?,
     val name: String?,
     val imageUrl: String?,

@@ -1,10 +1,14 @@
 package com.depromeet.piki.wishlist.controller.dto
 
+import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.wishlist.service.dto.RecoverWishItemCommand
 import io.swagger.v3.oas.annotations.media.Schema
 import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.Size
+import org.springframework.web.multipart.MultipartFile
+import java.util.UUID
 
-@Schema(description = "위시 항목 수정 요청 — 들어온 필드만 갱신한다")
+@Schema(description = "위시 항목 사용자 입력 요청 — 보내지 않은 필드는 지금 보이는 값을 이어 쓴다")
 data class WishlistUpdateRequest(
     @field:Schema(description = "수정할 상품명", example = "에어 조던 1 미드", nullable = true)
     @field:Size(max = 512, message = NAME_MAX_MESSAGE)
@@ -23,6 +27,21 @@ data class WishlistUpdateRequest(
     @field:Size(max = 100, message = MEMO_MAX_MESSAGE)
     val memo: String? = null,
 ) {
+    fun toCommand(
+        userId: UUID,
+        wishId: Long,
+        image: MultipartFile?,
+    ): RecoverWishItemCommand =
+        RecoverWishItemCommand(
+            userId = userId,
+            wishId = wishId,
+            name = name,
+            price = price,
+            currency = currency,
+            image = image?.let { ProductImage.of(it.bytes, it.contentType) },
+            memo = memo,
+        )
+
     // Bean Validation 위반 메시지의 single source. OpenAPI example(WishlistApiExamples)이 같은 상수를 참조해
     // "필드 검증 문구가 @field 와 example 두 곳에서 따로 노는" 어긋남을 컴파일 타임에 막는다.
     companion object {

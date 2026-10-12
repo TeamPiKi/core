@@ -1,6 +1,5 @@
 package com.depromeet.piki.tournament.controller
 
-import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
@@ -13,6 +12,7 @@ import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
@@ -70,7 +70,7 @@ class TournamentItemApiExamples(
                         add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         // 다건 경로라 가리킬 아이템 하나를 고를 수 없다 — 사유만 내려간다(TournamentException 주석 참고).
                         add(TournamentException.duplicateTournamentItem(), name = "이미 등록된/중복 아이템")
-                        add(TournamentException.itemNotReady(), name = "PENDING/PROCESSING/FAILED 등 미완료 상품 포함")
+                        add(TournamentException.itemNotReady(), name = "PARSING/FAILED 등 미완료 상품 포함")
                         add(TournamentException.itemIncomplete(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                     }
 
@@ -154,12 +154,13 @@ class TournamentItemApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "수기 수정 성공 (MANUAL 새 버전으로 교체)",
+                            name = "사용자 입력 성공 (새 버전이 표시값이 됨)",
                             payload = ApiResponseBody.ok<Unit>(),
                         )
-                        add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
-                        add(ItemException.priceRequiredForReady(), name = "병합 후에도 가격 없음")
-                        add(ItemException.imageRequiredForReady(), name = "병합 후에도 이미지 없음")
+                        add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
+                        add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
+                        add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
+                        add(ItemException.parsingInProgress(), name = "파싱 중인 항목")
                         // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
                         add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
                         add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
@@ -227,35 +228,18 @@ class TournamentItemApiExamples(
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "PENDING - 파싱 대기 (URL 등록 직후)",
+                            name = "PARSING - 파싱 중 (URL 등록 직후)",
                             payload =
                                 ApiResponseBody.ok(
                                     TournamentItemDetailResponse(
                                         tournamentItemId = 10,
-                                        itemId = 100,
+                                        itemId = null,
                                         sourceUrl = "https://www.nike.com/kr/t/air-max/example",
                                         name = null,
                                         imageUrl = null,
                                         price = null,
                                         currency = null,
-                                        status = ItemStatus.PENDING,
-                                    ),
-                                ),
-                        )
-                        add(
-                            status = HttpStatus.OK,
-                            name = "PROCESSING - 파싱 진행 중",
-                            payload =
-                                ApiResponseBody.ok(
-                                    TournamentItemDetailResponse(
-                                        tournamentItemId = 10,
-                                        itemId = 100,
-                                        sourceUrl = "https://www.nike.com/kr/t/air-max/example",
-                                        name = null,
-                                        imageUrl = null,
-                                        price = null,
-                                        currency = null,
-                                        status = ItemStatus.PROCESSING,
+                                        status = ItemStatus.PARSING,
                                     ),
                                 ),
                         )
@@ -266,7 +250,7 @@ class TournamentItemApiExamples(
                                 ApiResponseBody.ok(
                                     TournamentItemDetailResponse(
                                         tournamentItemId = 10,
-                                        itemId = 100,
+                                        itemId = null,
                                         sourceUrl = "https://www.nike.com/kr/t/air-max/example",
                                         name = null,
                                         imageUrl = null,

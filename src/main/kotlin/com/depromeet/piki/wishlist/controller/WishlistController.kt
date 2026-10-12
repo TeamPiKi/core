@@ -11,9 +11,18 @@ import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
+import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
+import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.service.WishlistService
-import com.depromeet.piki.wishlist.service.dto.WishWithItem
+import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
+import com.depromeet.piki.wishlist.service.dto.DeleteWishCommand
+import com.depromeet.piki.wishlist.service.dto.DeleteWishesCommand
+import com.depromeet.piki.wishlist.service.dto.GetWishQuery
+import com.depromeet.piki.wishlist.service.dto.GetWishlistQuery
+import com.depromeet.piki.wishlist.service.dto.PresignWishImageUploadsCommand
+import com.depromeet.piki.wishlist.service.dto.RefreshWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.WishResult
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -40,7 +49,7 @@ class WishlistController(
     private val wishlistService: WishlistService,
     private val wishExternalEntryRecorder: WishExternalEntryRecorder,
 ) : WishlistApi {
-    private fun toResponse(result: WishWithItem): WishItemResponse = WishItemResponse.from(result)
+    private fun toResponse(result: WishResult): WishItemResponse = WishItemResponse.from(result)
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -49,11 +58,9 @@ class WishlistController(
         @Valid @RequestBody request: WishlistRegisterRequest,
         @RequestHeader(name = ExternalEntry.HEADER, required = false) rawEntryPoint: String?,
     ): ApiResponseBody<WishItemResponse> {
-        val result = wishlistService.registerFromUrl(rawUrl = request.url, userId = userId)
+        val result = wishlistService.registerFromUrl(request.toCommand(userId))
         wishExternalEntryRecorder.record(wishId = result.wish.getId(), rawEntryPoint = rawEntryPoint)
-        return ApiResponseBody.created(
-            WishItemResponse.fromRegistration(result),
-        )
+        return ApiResponseBody.created(WishItemResponse.from(result))
     }
 
     @PostMapping("/images/presigned")
@@ -61,7 +68,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @RequestBody request: PresignedImageUploadRequest,
     ): ApiResponseBody<PresignedImageUploadResponse> {
-        val uploads = wishlistService.presignImageUploads(formats = request.toUploadFormats(), userId = userId)
+        val uploads = wishlistService.presignImageUploads(PresignWishImageUploadsCommand(userId = userId, uploadFormats = request.toUploadFormats()))
         return ApiResponseBody.ok(PresignedImageUploadResponse.from(uploads))
     }
 
@@ -71,7 +78,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @RequestBody request: ConfirmImageUploadRequest,
     ): ApiResponseBody<List<WishItemResponse>> {
-        val results = wishlistService.confirmImageRegistration(imageKeys = request.imageKeys, userId = userId)
+        val results = wishlistService.confirmImageRegistration(ConfirmWishImageRegistrationCommand(userId = userId, imageKeys = request.toImageKeys()))
         return ApiResponseBody.created(results.map { toResponse(it) })
     }
 
@@ -81,7 +88,7 @@ class WishlistController(
         @RequestParam(required = false) cursor: String?,
         @RequestParam(required = false) size: Int?,
     ): ApiResponseBody<List<WishItemResponse>> {
-        val page = wishlistService.getWishlist(userId = userId, rawCursor = cursor, rawSize = size)
+        val page = wishlistService.getWishlist(GetWishlistQuery(userId = userId, cursor = WishCursor.parse(cursor), size = WishlistSize.of(size)))
         val data = page.entries.map { toResponse(it) }
         return ApiResponseBody.ok(
             data = data,
@@ -94,7 +101,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishDetailResponse> {
-        val result = wishlistService.getWish(userId = userId, wishId = wishId)
+        val result = wishlistService.getWish(GetWishQuery(userId = userId, wishId = wishId))
         return ApiResponseBody.ok(
             WishDetailResponse.from(result, requesterId = userId),
         )
@@ -107,16 +114,7 @@ class WishlistController(
         @Valid @ModelAttribute request: WishlistUpdateRequest,
         @RequestPart("image", required = false) image: MultipartFile?,
     ): ApiResponseBody<WishItemResponse> {
-        val result =
-            wishlistService.recoverWishItem(
-                userId = userId,
-                wishId = wishId,
-                name = request.name,
-                price = request.price,
-                currency = request.currency,
-                image = image,
-                memo = request.memo,
-            )
+        val result = wishlistService.recoverWishItem(request.toCommand(userId, wishId, image))
         return ApiResponseBody.ok(toResponse(result))
     }
 
@@ -125,7 +123,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishItemResponse> {
-        val result = wishlistService.refreshWishItem(userId = userId, wishId = wishId)
+        val result = wishlistService.refreshWishItem(RefreshWishItemCommand(userId = userId, wishId = wishId))
         return ApiResponseBody.ok(toResponse(result))
     }
 
@@ -134,7 +132,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable wishId: Long,
     ): ApiResponseBody<Unit> {
-        wishlistService.deleteWish(userId = userId, wishId = wishId)
+        wishlistService.deleteWish(DeleteWishCommand(userId = userId, wishId = wishId))
         return ApiResponseBody.ok()
     }
 
@@ -147,7 +145,7 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(name = "ids", required = false) ids: List<Long>?,
     ): ApiResponseBody<Unit> {
-        wishlistService.deleteWishes(userId = userId, wishIds = WishDeleteIds.of(ids.orEmpty()))
+        wishlistService.deleteWishes(DeleteWishesCommand(userId = userId, wishDeleteIds = WishDeleteIds.of(ids.orEmpty())))
         return ApiResponseBody.ok()
     }
 }

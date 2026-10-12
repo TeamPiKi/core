@@ -4,6 +4,7 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.controller.dto.AddTournamentItemFromLinkRequest
 import com.depromeet.piki.tournament.controller.dto.AddTournamentItemFromLinkResponse
 import com.depromeet.piki.tournament.controller.dto.AddTournamentItemsFromImagesResponse
@@ -47,11 +48,11 @@ interface TournamentItemApi {
         description = """
             토너먼트 아이템의 상세 정보와 파싱 상태를 조회한다.
             링크·이미지로 아이템을 추가하면 비동기 파싱이 진행되므로,
-            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 PENDING → PROCESSING → READY/FAILED 전환(완료·실패 알림)을 통보받고, 이 조회로 최신 status 와 값을 확인한다.
-            - PENDING: URL·이미지 등록 접수 후 파싱 대기 (디스패처가 집기 전, name·price·imageUrl 은 null).
-            - PROCESSING: 파싱 진행 중 (name·price·imageUrl 은 null)
-            - READY: 파싱 완료 (모든 필드 채워짐)
-            - FAILED: 파싱 실패 (상품 페이지 아님 또는 추출 불가)
+            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 완료·실패를 통보받고, 이 조회로 최신 status 와 값을 확인한다.
+            - PARSING: 상품 확정 전 파싱 중 (itemId·name·price·imageUrl 은 null)
+            - READY: 이름·가격·이미지가 모두 있음
+            - INCOMPLETE: 일부만 있음 (사용자 입력으로 채우면 READY)
+            - FAILED: 상품을 확정하지 못하고 파싱 실패 (상품 페이지 아님 또는 추출 불가)
             sourceUrl: 등록 시 입력한 원본 링크. 이미지로 등록한 경우 null.
             memo: 이 상품이 **요청자 본인의 위시리스트에 있으면** 그 위시의 개인 메모(최대 100자). 누가 토너먼트에
             추가했는지와 무관하게 본인 위시 기준으로 판정하며, 본인 메모만 내려간다(타인 메모는 어떤 경우에도 없음).
@@ -174,7 +175,7 @@ interface TournamentItemApi {
                 responseCode = "409",
                 description =
                     "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록된 아이템 · 요청 내 중복 아이템 · " +
-                        "PENDING/PROCESSING/FAILED 등 미완료 상품 포함 · 값이 비어 있는 미완성 상품 포함)",
+                        "PARSING/FAILED 등 미완료 상품 포함 · 값이 비어 있는 미완성 상품 포함)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -195,8 +196,8 @@ interface TournamentItemApi {
         description = """
             PENDING 상태의 토너먼트에 URL 링크를 통해 아이템을 추가한다.
             플레이 링크로 생성된 복제 토너먼트에는 추가 불가. 토너먼트 참여자만 추가할 수 있다.
-            아이템이 PENDING 상태로 즉시 생성되어 tournamentItemId 가 반환된다.
-            파싱은 비동기로 진행되며, PENDING 에서 READY·INCOMPLETE·FAILED 상태로 전환된다.
+            아이템이 PARSING 상태로 즉시 생성되어 tournamentItemId 가 반환된다.
+            파싱은 비동기로 진행되며, PARSING 에서 READY·INCOMPLETE·FAILED 상태로 전환된다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )
@@ -204,7 +205,7 @@ interface TournamentItemApi {
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "아이템 추가 성공 (item.status=PENDING, 파싱은 백그라운드)",
+                description = "아이템 추가 성공 (item.status=PARSING, 파싱은 백그라운드)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -215,7 +216,7 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (URL 미입력 · URL 2048자 초과 — code: COMMON-INVALID-INPUT · " +
+                    "잘못된 요청 (URL 미입력 · URL ${ProductLink.MAX_LENGTH}자 초과 — code: COMMON-INVALID-INPUT · " +
                         "URL 형식 오류 — code: LINK-001(유효하지 않음)/LINK-002(https 외 스킴) · " +
                         "지원하지 않는 쇼핑몰 — code: LINK-003 · 아이템 최대 32개 초과)",
                 content = [
@@ -439,7 +440,7 @@ interface TournamentItemApi {
     @Operation(
         summary = "이미지로 토너먼트 아이템 추가 v2 - 업로드 확정",
         description = """
-            이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PENDING 아이템으로 즉시 추가하고 tournamentItemIds 를 반환한다.
+            이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PARSING 아이템으로 즉시 추가하고 tournamentItemIds 를 반환한다.
             key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 링크 추가와 같은 작업 큐에 적재하며, 이후 파싱(Gemini Vision)·전이(READY/FAILED) 흐름도 같다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
@@ -448,7 +449,7 @@ interface TournamentItemApi {
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "아이템 추가 성공 (item.status=PENDING, 파싱은 백그라운드)",
+                description = "아이템 추가 성공 (item.status=PARSING, 파싱은 백그라운드)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -527,21 +528,26 @@ interface TournamentItemApi {
     ): ApiResponseBody<AddTournamentItemsFromImagesResponse>
 
     @Operation(
-        summary = "토너먼트 아이템 수정",
+        summary = "토너먼트 아이템 사용자 입력",
         description = """
-            파싱 실패(FAILED) 상태인 토너먼트 아이템을 유저가 직접 보정한다.
-            수정 성공 시 아이템 상태가 FAILED → READY 로 전환된다.
-            수정 가능 필드: 이름, 가격, 가격 단위, 이미지(multipart/form-data 의 image 파트) — null 이면 기존 값 유지.
-            이미지는 파일로 업로드하며 서버가 S3 에 저장한 URL 로 item.imageUrl 을 갱신한다.
-            READY·PENDING·PROCESSING 아이템은 수정 불가(409). 아이템을 등록한 본인만 수정 가능.
-            이름은 수정 후에도 반드시 존재해야 한다 — 기존 이름이 없고 name 도 미입력이면 400.
+            토너먼트 아이템의 상품 정보를 등록한 본인이 직접 입력한다(multipart/form-data).
+            입력 필드: 이름, 가격, 가격 단위, 이미지(image 파트). 이미지는 파일로 업로드하며 서버가 S3 에 저장한 URL 이 대표 이미지가 된다.
+            입력은 기존 버전을 고치지 않고 사용자 입력 새 버전으로 쌓이며, 이 아이템의 표시값이 그 버전으로 바뀐다.
+
+            **보내지 않은 필드는 지금 보이는 값을 이어 쓴다.** 합친 결과에 이름·가격·이미지가 모두 있어야 하고,
+            하나라도 빠지면 400 이다. 그래서 아이템 상태에 따라 보내야 하는 필드가 다르다.
+            - READY: 바꿀 필드만
+            - INCOMPLETE: 바꿀 필드와 비어 있는 필드
+            - FAILED: 이름·가격·이미지 전부 (이어 쓸 값이 없다)
+            - PARSING: 받지 않는다 (409, code: ITEM-008). 결과가 오기 전에 입력하면 뒤늦게 끝난 파싱과 엇갈린다.
+              클라이언트는 이 동안 입력 화면을 막는다고 전제하고, 409 는 그 사이 상태가 바뀐 경합을 막는다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "수정 성공 (FAILED → READY 전환)",
+                description = "입력 성공 (사용자 입력 새 버전이 이 아이템의 표시값이 됨)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -552,8 +558,8 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (이름 없이 수정 시도 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
-                        "이미지 없이 READY 전환 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
+                    "잘못된 요청 (합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
+                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
@@ -596,7 +602,7 @@ interface TournamentItemApi {
             ApiResponse(
                 responseCode = "409",
                 description =
-                    "상태 충돌 (PENDING이 아닌 토너먼트)",
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · 파싱 중인 아이템에 상품 정보 입력 — code: ITEM-008)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
