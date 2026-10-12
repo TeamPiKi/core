@@ -9,7 +9,7 @@ import java.text.BreakIterator
 //   - 아이템 삭제: "OO님이 '{이름}'을(를) 삭제했어요" 처럼 이름 뒤에 문장이 붙어, 이름이 길면 정작 무슨 일인지가
 //     OS 절단에 먹힌다. 그래서 이쪽은 캡이 필요하다.
 object ItemDisplayName {
-    // 이름이 없거나 공백뿐일 때. 파싱 전(PENDING·PROCESSING)이나 추출 실패로 name 이 비는 경우가 실재한다.
+    // 이름이 없거나 공백뿐일 때. 이름 없이 가격·이미지만 추출된 버전이 실재한다
     const val FALLBACK = "상품"
 
     // 표시 글자 수와 무관하게 거는 UTF-16 char 상한. grapheme cluster 1개가 조합 부호로 수십~수백 char 일 수 있어

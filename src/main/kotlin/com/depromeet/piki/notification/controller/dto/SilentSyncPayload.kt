@@ -20,7 +20,7 @@ enum class SilentSyncType {
 
 // 토너먼트 출전 아이템의 파싱이 끝났음을 그 토너먼트 참여자 화면에 반영하는 갱신 신호.
 // 클라는 (tournamentId, tournamentItemId)로 그 출전 카드를 찾아 status 로 갱신한다:
-// PENDING/PROCESSING 로딩 → READY(상품 정보 표시) / FAILED(에러·재시도). status 는 항상 READY·FAILED 중 하나다.
+// 로딩 중이던 카드를 READY(상품 정보 표시)·INCOMPLETE(나머지 입력 요청)·FAILED(에러) 로 바꾼다. status 는 이 셋 중 하나다
 data class TournamentItemParsed(
     val tournamentId: Long,
     val tournamentItemId: Long,
