@@ -15,27 +15,27 @@ class ItemVersionsTest {
     private val other = UUID.randomUUID()
 
     @Test
-    fun `내 수기값은 최신 서버 READY 보다 새로우면 이긴다`() {
+    fun `내 입력값은 최신 서버 READY 보다 새로우면 이긴다`() {
         val ready = machineReady(1, by = other)
-        val myManual = manual(2, by = me)
+        val myInput = userVersion(2, by = me)
 
-        assertEquals(myManual, display(ready, myManual))
+        assertEquals(myInput, display(ready, myInput))
     }
 
     @Test
-    fun `내 수기값보다 새로운 서버 READY 가 생기면 누가 새로고침했든 서버값으로 돌아간다`() {
-        val myManual = manual(1, by = me)
+    fun `내 입력값보다 새로운 서버 READY 가 생기면 누가 새로고침했든 서버값으로 돌아간다`() {
+        val myInput = userVersion(1, by = me)
         val newerReady = machineReady(2, by = other)
 
-        assertEquals(newerReady, display(myManual, newerReady))
+        assertEquals(newerReady, display(myInput, newerReady))
     }
 
     @Test
-    fun `남의 수기값은 내 카드에 보이지 않는다`() {
+    fun `남의 입력값은 내 카드에 보이지 않는다`() {
         val ready = machineReady(1, by = other)
-        val othersManual = manual(2, by = other)
+        val othersInput = userVersion(2, by = other)
 
-        assertEquals(ready, display(ready, othersManual))
+        assertEquals(ready, display(ready, othersInput))
     }
 
     @Test
@@ -63,18 +63,18 @@ class ItemVersionsTest {
     }
 
     @Test
-    fun `내 값도 공유 값도 없으면 남의 수기가 아닌 최신 버전을 본다`() {
+    fun `내 값도 공유 값도 없으면 남의 입력이 아닌 최신 버전을 본다`() {
         val othersIncomplete = incomplete(1, by = other)
-        val othersManual = manual(2, by = other)
+        val othersInput = userVersion(2, by = other)
 
-        assertEquals(othersIncomplete, display(othersIncomplete, othersManual))
+        assertEquals(othersIncomplete, display(othersIncomplete, othersInput))
     }
 
     @Test
-    fun `수기 버전뿐인 상품은 남의 수기라도 보여 빈 카드가 되지 않는다`() {
-        val othersManual = manual(1, by = other)
+    fun `사용자 입력 버전뿐인 상품은 남의 입력이라도 보여 빈 카드가 되지 않는다`() {
+        val othersInput = userVersion(1, by = other)
 
-        assertEquals(othersManual, display(othersManual))
+        assertEquals(othersInput, display(othersInput))
     }
 
     // 추정 백필이 옛 행에 만든 사람을 채우므로 공유 여부는 출처로만 가른다
@@ -118,11 +118,11 @@ class ItemVersionsTest {
     }
 
     @Test
-    fun `내 수기값이 떠 있던 카드는 서버 READY 가 생겨도 채워진 것이 아니다`() {
-        val myManual = manual(1, by = me)
+    fun `내 입력값이 떠 있던 카드는 서버 READY 가 생겨도 채워진 것이 아니다`() {
+        val myInput = userVersion(1, by = me)
         val othersReady = machineReady(2, by = other)
 
-        assertFalse(versions(myManual, othersReady).recovers(me, snapshotId = 2))
+        assertFalse(versions(myInput, othersReady).recovers(me, snapshotId = 2))
     }
 
     @Test
@@ -175,7 +175,7 @@ class ItemVersionsTest {
         createdAt: LocalDateTime = LocalDateTime.now(),
     ): ItemSnapshot = version(id, ready = true, userInput = false, by = by, createdAt = createdAt)
 
-    private fun manual(
+    private fun userVersion(
         id: Long,
         by: UUID,
         createdAt: LocalDateTime = LocalDateTime.now(),

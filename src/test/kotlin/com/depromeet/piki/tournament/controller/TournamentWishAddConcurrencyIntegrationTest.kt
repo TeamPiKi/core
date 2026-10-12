@@ -1,13 +1,12 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -25,7 +24,6 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -66,31 +64,10 @@ class TournamentWishAddConcurrencyIntegrationTest : IntegrationTestSupport() {
 
         val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
 
-        // 아이템 40개 + READY 스냅샷 생성 — A 요청(1-20), B 요청(21-40) 에서 나눠 씀.
-        // 합산 40개는 TOURNAMENT_MAX_ITEM_COUNT(32)를 초과해 두 요청이 직렬화되면 하나는 반드시 차단된다.
-        val items = itemJpaRepository.saveAll((1..40).map { Item() })
-        val snapshots = itemSnapshotJpaRepository.saveAll(
-            items.mapIndexed { i, item ->
-                ItemSnapshot(
-                    itemId = item.getId(),
-                    name = "race-wish-item-${i + 1}",
-                    price = 10_000,
-                    currency = "KRW",
-                    status = ItemStatus.READY,
-                    extractedAt = LocalDateTime.now(),
-                )
-            },
-        )
-        val snapshotIdByItemId = snapshots.associateBy({ it.itemId }, { it.getId() })
-        wishJpaRepository.saveAll(
-            items.map { item ->
-                Wish(
-                    userId = ownerId,
-                    waitingSnapshotId = snapshotIdByItemId.getValue(item.getId()),
-                    itemId = item.getId(),
-                )
-            },
-        )
+        // A 요청(1-20), B 요청(21-40) 합산 40개는 TOURNAMENT_MAX_ITEM_COUNT(32)를 초과해 두 요청이 직렬화되면 하나는 반드시 차단된다.
+        val items = itemJpaRepository.saveAll((1..40).map { imageItem() })
+        itemSnapshotJpaRepository.saveAll(items.mapIndexed { i, item -> itemVersion(itemId = item.getId(), name = "race-wish-item-${i + 1}") })
+        wishJpaRepository.saveAll(items.map { Wish(userId = ownerId, itemId = it.getId()) })
 
         val itemIds = items.map { it.getId() }
 

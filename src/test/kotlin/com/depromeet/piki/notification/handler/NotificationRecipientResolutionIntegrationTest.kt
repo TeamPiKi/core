@@ -1,18 +1,21 @@
 package com.depromeet.piki.notification.handler
 
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.notification.service.NotificationDispatcher
+import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.completeLatest
+import com.depromeet.piki.support.failLatest
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.tournament.domain.Tournament
-import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.event.TournamentCompleted
 import com.depromeet.piki.tournament.event.TournamentItemAdded
@@ -21,16 +24,21 @@ import com.depromeet.piki.tournament.event.TournamentJoined
 import com.depromeet.piki.tournament.event.TournamentPlayedFromLink
 import com.depromeet.piki.tournament.event.TournamentResultReady
 import com.depromeet.piki.tournament.event.TournamentStarted
-import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
+import com.depromeet.piki.tournament.service.TournamentItemPersistenceService
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.wishlist.domain.Wish
-import com.depromeet.piki.wishlist.repository.WishRepository
+import com.depromeet.piki.wishlist.service.WishPersistenceService
+import com.depromeet.piki.wishlist.service.dto.RefreshWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
+import jakarta.persistence.EntityManager
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.test.context.event.ApplicationEvents
+import org.springframework.test.context.event.RecordApplicationEvents
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.util.UUID
@@ -40,7 +48,9 @@ import kotlin.test.assertTrue
 
 // 핸들러의 수신자(resolveRecipients)·actor 컨텍스트(resolveActorContext) 도출은 DB 역조회에 의존하므로 통합으로 검증한다.
 // 영속 fixture(참가자·위시·토너먼트 아이템·유저)를 깔고 실제 빈으로 도출 결과를 단언한다. @Transactional 자동 롤백.
+// 파싱 이벤트는 AFTER_COMMIT 리스너가 롤백 트랜잭션에선 안 돌아, 발행된 이벤트를 기록해 핸들러에 직접 넘긴다
 @Transactional
+@RecordApplicationEvents
 class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemAddedHandler: TournamentItemAddedHandler
 
@@ -70,9 +80,15 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Autowired private lateinit var tournamentUserRepository: TournamentUserRepository
 
-    @Autowired private lateinit var tournamentItemRepository: TournamentItemRepository
+    @Autowired private lateinit var tournamentItemPersistenceService: TournamentItemPersistenceService
 
-    @Autowired private lateinit var wishRepository: WishRepository
+    @Autowired private lateinit var wishPersistenceService: WishPersistenceService
+
+    @Autowired private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired private lateinit var entityManager: EntityManager
+
+    @Autowired private lateinit var applicationEvents: ApplicationEvents
 
     @Autowired private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
@@ -124,7 +140,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val tournamentId = 1202L
         val actor = UUID.randomUUID()
         userRepository.save(User(id = actor, nickname = "홍길동", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7202L, name = "나이키 에어맥스")).getId()
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = 7202L, name = "나이키 에어맥스")).getId()
 
         val variables =
             itemDeletedHandler.resolveActorContext(
@@ -145,7 +161,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val actor = UUID.randomUUID()
         userRepository.save(User(id = actor, nickname = "홍길동", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
         val longName = "가".repeat(30)
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7205L, name = longName)).getId()
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = 7205L, name = longName)).getId()
 
         val variables =
             itemDeletedHandler.resolveActorContext(
@@ -167,7 +183,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         userRepository.save(User(id = actor, nickname = "홍길동", profileImage = "https://x/p.jpg", identityType = IdentityType.GUEST))
         // 앞에 1 char 를 둬 절단 경계를 홀수로 민다 — 이모지(2 char)만 있으면 코드 유닛으로 잘라도 짝이 맞아떨어져
         // 회귀가 드러나지 않는다. 이 한 글자가 경계를 surrogate pair 한가운데로 옮긴다.
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7206L, name = "가" + "😀".repeat(20))).getId()
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = 7206L, name = "가" + "😀".repeat(20))).getId()
 
         val variables =
             itemDeletedHandler.resolveActorContext(
@@ -189,12 +205,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Test
     fun `토너먼트 아이템 삭제 변수 itemName 은 상품명이 아직 없으면 fallback 이다`() {
-        // 파싱 전(PENDING) 아이템을 지운 경우 — snapshot.name 이 null 이라 fallback 문구로 채운다.
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(7203L, requestedBy = UUID.randomUUID())).getId()
-
+        // 파싱 전 출전을 지우면 버전이 없어 이벤트에 snapshotId 가 없다
         val variables =
             itemDeletedHandler.resolveActorContext(
-                TournamentItemDeleted(tournamentId = 1203L, tournamentItemId = 1L, snapshotId = snapshotId, actorId = UUID.randomUUID()),
+                TournamentItemDeleted(tournamentId = 1203L, tournamentItemId = 1L, snapshotId = null, actorId = UUID.randomUUID()),
             ).variables
 
         assertEquals("상품", variables["itemName"])
@@ -276,9 +290,10 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
 
     @Test
     fun `시스템 알림(파싱)은 actor 가 없어 actorImageUrl 이 null 이다 - negative control`() {
-        // 파싱 핸들러는 resolveActorContext 를 override 하지 않는다 → 기본 빈 컨텍스트라 imageUrl 이 null 이다.
-        assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(2099L, 20990L)).imageUrl)
-        assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(2099L, 20990L)).imageUrl)
+        val slot = ItemSlot.wish(2099L)
+        val owner = UUID.randomUUID()
+        assertEquals(null, parsingCompletedHandler.resolveActorContext(ItemParsingCompleted(slot, owner, 2099L, 20990L, refresh = false)).imageUrl)
+        assertEquals(null, parsingFailedHandler.resolveActorContext(ItemParsingFailed(slot, owner, refresh = false)).imageUrl)
     }
 
     @Test
@@ -307,7 +322,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val recipient = UUID.randomUUID()
         listOf(actor, recipient).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
         userRepository.save(User(id = actor, nickname = "행위자", profileImage = "https://x/snap.png", identityType = IdentityType.GUEST))
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = 7205L, name = "나이키 에어맥스")).getId()
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = 7205L, name = "나이키 에어맥스")).getId()
 
         // 이벤트 발행 → dispatch → 삭제 핸들러(snapshot 으로 상품명 해석) → 삭제 템플릿 렌더 + 라우팅까지 실제 체인을 탄다.
         notificationDispatcher.dispatch(
@@ -325,462 +340,141 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), saved.first().routing())
     }
 
-    @Test
-    fun `파싱 완료 수신자 - 그 버전을 활성으로 가리키는 위시 주인들이다 (다른 버전을 보는 위시는 제외)`() {
-        // 라우팅 키는 버전(#576) — 공유(#825)로 한 버전을 여러 위시가 가리키면 전원이 받고,
-        // 같은 item 이라도 다른 버전(갱신 전 등)을 보는 위시는 이 파싱을 기다린 적이 없어 받지 않는다.
-        val itemId = 2001L
-        val sharedVersion = snapshotIdFor(itemId)
-        val otherVersion = snapshotIdFor(itemId)
-        val owner1 = UUID.randomUUID()
-        val owner2 = UUID.randomUUID()
-        val otherVersionOwner = UUID.randomUUID()
-        wishRepository.save(Wish(owner1, sharedVersion, itemId))
-        wishRepository.save(Wish(owner2, sharedVersion, itemId))
-        wishRepository.save(Wish(otherVersionOwner, otherVersion, itemId))
-
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, sharedVersion))
-
-        assertEquals(setOf(owner1, owner2), recipients)
-    }
+    // ── 파싱 알림: 요청한 카드의 주인 한 명에게 그 카드 좌표로 ──────────────────────────
 
     @Test
-    fun `파싱 완료 수신자 - 토너먼트로 담긴 아이템은 올린 본인(adder)에게만 가고 다른 참가자는 제외된다`() {
-        val itemId = 2002L
-        val tournamentId = 1005L
-        val adder = UUID.randomUUID()
-        val otherParticipant = UUID.randomUUID()
-        // otherParticipant 는 추가 시점에 TOURNAMENT_ITEM_ADDED 로 갱신하므로 파싱완료는 안 받는다 — 참가자로 깔아두고 제외를 확인.
-        listOf(adder, otherParticipant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
-        val snapshotId = snapshotIdFor(itemId)
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId)))
-
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, snapshotId))
-
-        assertEquals(setOf(adder), recipients)
-    }
-
-    @Test
-    fun `파싱 완료 수신자 - 위시 주인과 토너먼트 adder 의 합집합이다 (그냥 참가자는 제외)`() {
-        val itemId = 2003L
-        val tournamentId = 1006L
-        val wishOwner = UUID.randomUUID()
-        val adder = UUID.randomUUID()
-        val otherParticipant = UUID.randomUUID()
-        // 공유(#825)의 세계 — 위시와 토너먼트 출전이 같은 버전을 가리킨다.
-        val snapshotId = snapshotIdFor(itemId)
-        wishRepository.save(Wish(wishOwner, snapshotId, itemId))
-        listOf(adder, otherParticipant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId)))
-
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(itemId, snapshotId))
-
-        assertEquals(setOf(wishOwner, adder), recipients)
-    }
-
-    @Test
-    fun `파싱 완료 수신자 - 어디에도 안 담긴 아이템은 빈 집합이다`() {
-        val recipients = parsingCompletedHandler.resolveRecipients(ItemParsingCompleted(999_999L, 999_999L))
-
-        assertTrue(recipients.isEmpty())
-    }
-
-    @Test
-    fun `파싱 실패 핸들러도 완료와 동일한 역조회 규칙을 쓴다`() {
-        val itemId = 2004L
+    fun `위시 등록 파싱 완료는 그 위시 주인 한 명에게 위시 좌표와 위시 완료 문구로 간다`() {
         val owner = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        wishRepository.save(Wish(owner, snapshotId, itemId))
+        val wish = registerWish(owner, newUrl())
 
-        val recipients = parsingFailedHandler.resolveRecipients(ItemParsingFailed(itemId, snapshotId))
+        itemParsingService.completeLatest(entityManager, wish.slot, product("나이키"))
+        val event = lastEvent<ItemParsingCompleted>()
 
+        assertFalse(event.refresh)
+        val recipients = parsingCompletedHandler.resolveRecipients(event)
         assertEquals(setOf(owner), recipients)
-    }
-
-    @Test
-    fun `파싱 완료 라우팅 - 위시 주인은 자기 wishId 를 실은 WISH 와 위시 완료 문구를 받는다`() {
-        val itemId = 3001L
-        val owner = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        val wishId = wishRepository.save(Wish(owner, snapshotId, itemId)).getId()
-
-        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(owner))
-
-        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(owner).routing)
-        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, contexts.getValue(owner).variables["completionMessage"])
-    }
-
-    @Test
-    fun `파싱 완료 라우팅 - 토너먼트 등록자는 자기 출전 좌표 TOURNAMENT 와 토너먼트 완료 문구를 받는다`() {
-        val itemId = 3002L
-        val tournamentId = 1100L
-        val adder = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        val tournamentItemId =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
-
-        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(adder))
-
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
-        assertEquals(
-            ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE,
-            contexts.getValue(adder).variables["completionMessage"],
-        )
-    }
-
-    @Test
-    fun `파싱 완료 - 위시 주인과 토너먼트 등록자가 한 버전을 공유하면 각자 자기 라우팅·문구를 받는다 (수신자별 negative control)`() {
-        // 이벤트 단위로 라우팅·문구를 한 번만 해석하던 이전 구조에선 둘 중 하나가 남의 딥링크·문구를 받아 이 단언이 반드시 깨진다.
-        val itemId = 3005L
-        val tournamentId = 1102L
-        val wishOwner = UUID.randomUUID()
-        val adder = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        val wishId = wishRepository.save(Wish(wishOwner, snapshotId, itemId)).getId()
-        val tournamentItemId =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
-
-        val contexts =
-            parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(wishOwner, adder))
-
-        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
-        assertEquals(
-            ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE,
-            contexts.getValue(wishOwner).variables["completionMessage"],
-        )
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
-        assertEquals(
-            ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE,
-            contexts.getValue(adder).variables["completionMessage"],
-        )
-    }
-
-    @Test
-    fun `파싱 완료 - 한 사람이 위시 주인이면서 그 버전을 토너먼트에도 올렸으면 WISH 가 우선이다`() {
-        val itemId = 3006L
-        val tournamentId = 1103L
-        val user = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        val wishId = wishRepository.save(Wish(user, snapshotId, itemId)).getId()
-        tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, user, snapshotId)))
-
-        val contexts = parsingCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, snapshotId), setOf(user))
-
-        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(user).routing)
-    }
-
-    @Test
-    fun `파싱 실패 라우팅 - 위시 주인은 WISH(wishId), 토너먼트 등록자는 TOURNAMENT 좌표를 수신자별로 받는다 (문구는 단일)`() {
-        val itemId = 3003L
-        val tournamentId = 1101L
-        val wishOwner = UUID.randomUUID()
-        val adder = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        val wishId = wishRepository.save(Wish(wishOwner, snapshotId, itemId)).getId()
-        val tournamentItemId =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
-
-        val contexts =
-            parsingFailedHandler.resolveRecipientContexts(ItemParsingFailed(itemId, snapshotId), setOf(wishOwner, adder))
-
-        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
-        // 실패 알림은 출처별 문구가 없다 — completionMessage 변수를 싣지 않는다(단일 문구는 템플릿이 소유).
-        assertTrue(contexts.getValue(wishOwner).variables.isEmpty())
-    }
-
-    @Test
-    fun `dispatch 가 한 파싱 완료 이벤트를 위시 주인·토너먼트 등록자에게 각자의 딥링크·문구·wishId 로 저장한다 - end-to-end`() {
-        // 이슈가 지정한 dispatch 레벨 negative control — 이벤트 단위 1회 해석이던 이전 구조에선 둘 중 하나가
-        // 남의 딥링크·문구를 저장받아 이 단언이 반드시 깨진다.
-        val itemId = 3100L
-        val tournamentId = 1200L
-        val wishOwner = UUID.randomUUID()
-        val adder = UUID.randomUUID()
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
-        val wishId = wishRepository.save(Wish(wishOwner, snapshotId, itemId)).getId()
-        val tournamentItemId =
-            tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
-
-        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
-
-        val ownerNoti = notificationRepository.findPage(wishOwner, cursor = null, limit = 10).first()
-        assertEquals(NotificationRouting.Wish(wishId), ownerNoti.routing())
-        assertEquals(wishId, ownerNoti.wishId)
-        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, ownerNoti.body)
-
-        val adderNoti = notificationRepository.findPage(adder, cursor = null, limit = 10).first()
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), adderNoti.routing())
-        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE, adderNoti.body)
-    }
-
-    // ── 해소 통지(#1028): 남의 성공이 내 실패·미완을 풀었을 때 ──────────────────────────
-
-    @Test
-    fun `해소 통지 수신자 - 카드 표시값이 FAILED·INCOMPLETE 였다가 이 버전으로 채워지는 사람들이고, 이 파싱을 기다린 사람과 배타적이다`() {
-        // 같은 링크는 한 item 을 공유하므로(#825) 남이 성공시키면 멈춰 있던 카드가 표시값 파생으로 채워진다.
-        // 판정은 카드 표시값 규칙(ItemVersions.recovers) 그대로다 — 이 버전을 기다리면 완료 알림, 화면이 미완성이었다가
-        // 이 버전으로 채워지면 해소 통지.
-        val itemId = 4001L
-        val failedOwner = UUID.randomUUID()
-        val incompleteOwner = UUID.randomUUID()
-        val waitingOwner = UUID.randomUUID()
-        // 멈춰 있던 버전들이 먼저, 성공 버전이 나중이다(id 순서가 곧 시간). 성공 버전이 채우던 순간의 상태로 판정한다.
-        wishRepository.save(Wish(failedOwner, snapshotWithStatus(itemId, ItemStatus.FAILED), itemId))
-        wishRepository.save(Wish(incompleteOwner, snapshotWithStatus(itemId, ItemStatus.INCOMPLETE, name = "나이키"), itemId))
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        wishRepository.save(Wish(waitingOwner, succeeded, itemId))
-
-        val event = ItemParsingCompleted(itemId, succeeded)
-
-        assertEquals(setOf(failedOwner, incompleteOwner), parsingRecoveredHandler.resolveRecipients(event))
-        assertEquals(setOf(waitingOwner), parsingCompletedHandler.resolveRecipients(event))
-    }
-
-    @Test
-    fun `해소 통지 수신자 - 진행 중이거나 옛 READY 를 가리키는 사람은 제외된다 (negative control)`() {
-        // 옛 READY 는 흔한 실제 케이스다 — 남이 새로고침해 새 성공본을 만들면 나는 옛 성공본을 기다린 채 남는다.
-        // 이미 값을 보고 있으니 "해소" 라 부를 것이 없다. 표시값이 미완성이었는지를 안 보면 여기서 깨진다.
-        //
-        // 진행 중은 순차 흐름에선 도달 불가능하다(등록·새로고침 둘 다 진행 중이 있으면 합류하므로 item 당 하나로
-        // 수렴하고, 그 하나가 성공한 것이 이 이벤트다). 새로고침이 item 행 락을 안 잡아 생기는 경합 창만 남아,
-        // 여기선 그 창에서도 상태 화이트리스트가 버티는지를 함께 못 박는다.
-        val itemId = 4002L
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotIdFor(itemId), itemId))
-        wishRepository.save(Wish(UUID.randomUUID(), snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키"), itemId))
-
-        assertTrue(parsingRecoveredHandler.resolveRecipients(ItemParsingCompleted(itemId, succeeded)).isEmpty())
-    }
-
-    @Test
-    fun `해소 통지 수신자 - 기다리는 행이 FAILED 라도 내 수기값이 카드에 떠 있던 사람은 제외된다 (표시값 규칙)`() {
-        // 기다리는 행의 상태만 보던 옛 규칙과 갈리는 케이스 — 수기로 고쳐 둔 카드는 비어 있던 적이 없으니 "해소" 가 아니다.
-        val itemId = 4004L
-        val fixedOwner = UUID.randomUUID()
-        val stuckOwner = UUID.randomUUID()
-        // 수기·FAILED 가 succeeded 보다 먼저 있어야 "채워지던 순간" 에 존재한다(id 순서가 곧 시간).
-        val fixedWaiting = snapshotWithStatus(itemId, ItemStatus.FAILED)
-        itemSnapshotRepository.save(
-            ItemSnapshot(
-                itemId = itemId,
-                name = "수기",
-                price = 1_000,
-                imageUrl = "https://img.example.com/x.png",
-                status = ItemStatus.READY,
-                extractedAt = LocalDateTime.now(),
-                source = ItemSnapshotSource.MANUAL,
-                createdBy = fixedOwner,
-            ),
-        )
-        val stuckWaiting = snapshotWithStatus(itemId, ItemStatus.FAILED)
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        wishRepository.save(Wish(fixedOwner, fixedWaiting, itemId))
-        wishRepository.save(Wish(stuckOwner, stuckWaiting, itemId))
-
-        assertEquals(setOf(stuckOwner), parsingRecoveredHandler.resolveRecipients(ItemParsingCompleted(itemId, succeeded)))
-    }
-
-    @Test
-    fun `해소 통지 수신자 - 시작된 토너먼트의 출전 카드는 pin 을 박제해 읽으므로 제외되고, 대기실 카드는 내 INCOMPLETE 로 미완성이었으면 포함된다`() {
-        // 대기실 카드는 pin 이 READY 라도 주인의 더 새 INCOMPLETE(위시 새로고침 결과)가 규칙 2 로 카드를 미완성으로 만든다 —
-        // 기다리는 행의 상태만 보는 선필터로는 못 잡는 케이스라, 후보를 상태로 좁히지 않는다.
-        val itemId = 4005L
-        val pendingAdder = UUID.randomUUID()
-        val startedAdder = UUID.randomUUID()
-        val pendingTournamentId = createRootWithOwner(pendingAdder)
-        val startedTournamentId = createRootWithOwner(startedAdder)
-        val readyPin = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        tournamentItemRepository.saveAll(listOf(TournamentItem(pendingTournamentId, pendingAdder, readyPin)))
-        tournamentItemRepository.saveAll(listOf(TournamentItem(startedTournamentId, startedAdder, snapshotWithStatus(itemId, ItemStatus.FAILED))))
-        tournamentRepository.findTournamentById(startedTournamentId)!!.let { it.start(); tournamentRepository.saveTournament(it) }
-        // pendingAdder 의 위시 새로고침이 INCOMPLETE 로 끝난 상황 — pin 보다 새로운 내 INCOMPLETE 라 대기실 카드가 미완성이 된다.
-        itemSnapshotRepository.save(
-            ItemSnapshot(
-                itemId = itemId,
-                name = "일부만",
-                status = ItemStatus.INCOMPLETE,
-                extractedAt = LocalDateTime.now(),
-                source = ItemSnapshotSource.SERVER,
-                createdBy = pendingAdder,
-            ),
-        )
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-
-        assertEquals(setOf(pendingAdder), parsingRecoveredHandler.resolveRecipients(ItemParsingCompleted(itemId, succeeded)))
-    }
-
-    @Test
-    fun `해소 통지 라우팅 - 위시 주인은 자기 wishId 를 실은 WISH, 토너먼트 등록자는 자기 출전 좌표를 받는다`() {
-        val itemId = 4003L
-        val wishOwner = UUID.randomUUID()
-        val adder = UUID.randomUUID()
-        val tournamentId = createRootWithOwner(adder)
-        val wishId = wishRepository.save(Wish(wishOwner, snapshotWithStatus(itemId, ItemStatus.FAILED), itemId)).getId()
-        val tournamentItemId =
-            tournamentItemRepository
-                .saveAll(listOf(TournamentItem(tournamentId, adder, snapshotWithStatus(itemId, ItemStatus.FAILED))))
-                .first()
-                .getId()
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-
-        val contexts =
-            parsingRecoveredHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, succeeded), setOf(wishOwner, adder))
-
-        assertEquals(NotificationRouting.Wish(wishId), contexts.getValue(wishOwner).routing)
-        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), contexts.getValue(adder).routing)
-    }
-
-    @Test
-    fun `dispatch 가 한 파싱 완료 이벤트를 완료 알림과 해소 통지로 갈라 저장한다 - end-to-end`() {
-        // 핸들러를 이벤트당 하나만 두던 이전 dispatcher(associateBy)에선 둘 중 한 핸들러가 통째로 사라져
-        // 한쪽 수신자가 알림을 아예 못 받는다 — 이 단언이 반드시 깨진다.
-        val itemId = 4100L
-        val waitingOwner = UUID.randomUUID()
-        val stuckOwner = UUID.randomUUID()
-        wishRepository.save(Wish(stuckOwner, snapshotWithStatus(itemId, ItemStatus.FAILED), itemId))
-        val succeeded = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        wishRepository.save(Wish(waitingOwner, succeeded, itemId))
-
-        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, succeeded))
-
-        val waiting = notificationRepository.findPage(waitingOwner, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_PARSING_COMPLETED), waiting.map { it.type })
-        val stuck = notificationRepository.findPage(stuckOwner, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_PARSING_RECOVERED), stuck.map { it.type })
-        // 제목은 방금 성공한 버전의 이름 — 수신자가 지금 카드에서 보게 되는 그 값이다.
-        assertEquals("나이키", stuck.first().title)
-    }
-
-    // ── 새로고침 알림(#1036): 등록과 갱신을 타입으로 가른다 ──────────────────────────
-
-    @Test
-    fun `새로고침 수신자 - 버전보다 먼저 있던 위시 주인이고, 그 버전으로 등록한 사람과 배타적이다`() {
-        // 등록/새로고침을 적는 컬럼은 없다. 위시는 늘 이미 있는 버전을 가리키며 태어나므로 위시가 버전보다 먼저라는
-        // 사실 자체가 "생성 후 포인터를 이 버전으로 스왑했다" 를 뜻하고, 그 스왑은 새로고침뿐이다.
-        val itemId = 5001L
-        val refresher = UUID.randomUUID()
-        val registrant = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId), itemId))
-        val newVersion = snapshotIdFor(itemId)
-        refresherWish.waitFor(newVersion)
-        wishRepository.save(Wish(registrant, newVersion, itemId))
-
-        val event = ItemParsingCompleted(itemId, newVersion)
-
-        assertEquals(setOf(refresher), refreshCompletedHandler.resolveRecipients(event))
-        assertEquals(setOf(registrant), parsingCompletedHandler.resolveRecipients(event))
-    }
-
-    @Test
-    fun `새로고침 실패 수신자도 같은 규칙이고 등록 실패 알림과 배타적이다`() {
-        val itemId = 5002L
-        val refresher = UUID.randomUUID()
-        val registrant = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId), itemId))
-        val newVersion = snapshotIdFor(itemId)
-        refresherWish.waitFor(newVersion)
-        wishRepository.save(Wish(registrant, newVersion, itemId))
-
-        val event = ItemParsingFailed(itemId, newVersion)
-
-        assertEquals(setOf(refresher), refreshFailedHandler.resolveRecipients(event))
-        assertEquals(setOf(registrant), parsingFailedHandler.resolveRecipients(event))
-    }
-
-    @Test
-    fun `새로고침 수신자 - 남의 진행 중 버전에 합류한 새로고침도 새로고침이고, 합류한 등록은 등록이다 (#826 negative control)`() {
-        // 진행 중 합류는 두 방향이 있다. 새로고침이 남의 진행 중 버전으로 스왑하면 위시가 그 버전보다 먼저라 새로고침,
-        // 등록이 남의 진행 중 버전에 붙으면 위시가 그 버전보다 뒤라 등록이다. 버전을 누가 만들었는지는 판정에 안 끼어든다.
-        val itemId = 5003L
-        val refresher = UUID.randomUUID()
-        val joiner = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId), itemId))
-        val othersInProgress = snapshotIdFor(itemId)
-        refresherWish.waitFor(othersInProgress)
-        wishRepository.save(Wish(joiner, othersInProgress, itemId))
-
-        val event = ItemParsingCompleted(itemId, othersInProgress)
-
-        assertEquals(setOf(refresher), refreshCompletedHandler.resolveRecipients(event))
-        assertEquals(setOf(joiner), parsingCompletedHandler.resolveRecipients(event))
-    }
-
-    @Test
-    fun `새로고침 수신자 - 토너먼트 등록자는 새로고침이 없어 등록 완료 쪽에 남는다`() {
-        val itemId = 5004L
-        val adder = UUID.randomUUID()
-        val snapshotId = snapshotIdFor(itemId)
-        tournamentItemRepository.saveAll(listOf(TournamentItem(1500L, adder, snapshotId)))
-
-        val event = ItemParsingCompleted(itemId, snapshotId)
-
         assertTrue(refreshCompletedHandler.resolveRecipients(event).isEmpty())
-        assertEquals(setOf(adder), parsingCompletedHandler.resolveRecipients(event))
+        val context = parsingCompletedHandler.resolveRecipientContexts(event, recipients).getValue(owner)
+        assertEquals(NotificationRouting.Wish(wish.getId()), context.routing)
+        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, context.variables["completionMessage"])
     }
 
     @Test
-    fun `새로고침 라우팅 - 자기 wishId 를 실은 WISH 다`() {
-        val itemId = 5005L
-        val refresher = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId), itemId))
-        val newVersion = snapshotIdFor(itemId)
-        refresherWish.waitFor(newVersion)
+    fun `토너먼트 출전 파싱 완료는 올린 본인에게만 출전 좌표와 토너먼트 완료 문구로 가고 다른 참가자는 받지 않는다`() {
+        val host = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val tournamentId = createRootWithOwner(host)
+        tournamentUserRepository.save(TournamentUser(tournamentId, adder))
+        val tournamentItemId = addTournamentItem(adder, tournamentId, newUrl())
 
-        val completed =
-            refreshCompletedHandler.resolveRecipientContexts(ItemParsingCompleted(itemId, newVersion), setOf(refresher))
-        val failed =
-            refreshFailedHandler.resolveRecipientContexts(ItemParsingFailed(itemId, newVersion), setOf(refresher))
+        itemParsingService.completeLatest(entityManager, ItemSlot.tournamentItem(tournamentItemId), product("나이키"))
+        val event = lastEvent<ItemParsingCompleted>()
 
-        assertEquals(NotificationRouting.Wish(refresherWish.getId()), completed.getValue(refresher).routing)
-        assertEquals(NotificationRouting.Wish(refresherWish.getId()), failed.getValue(refresher).routing)
-        // 새로고침 알림은 출처별 문구가 없다 — 수신자별 변수를 싣지 않는다(문구는 템플릿이 소유).
-        assertTrue(completed.getValue(refresher).variables.isEmpty())
-        assertTrue(failed.getValue(refresher).variables.isEmpty())
+        val recipients = parsingCompletedHandler.resolveRecipients(event)
+        assertEquals(setOf(adder), recipients)
+        val context = parsingCompletedHandler.resolveRecipientContexts(event, recipients).getValue(adder)
+        assertEquals(NotificationRouting.Tournament(tournamentId, tournamentItemId), context.routing)
+        assertEquals(ItemParsingCompletedHandler.TOURNAMENT_COMPLETION_MESSAGE, context.variables["completionMessage"])
     }
 
     @Test
-    fun `dispatch 가 한 파싱 완료 이벤트를 새로고침 완료와 등록 완료로 갈라 저장한다 - end-to-end`() {
-        // 새로고침을 등록 완료 핸들러가 그대로 삼키던 이전 구조에선 새로고침한 사람이 ITEM_PARSING_COMPLETED 를 받아
-        // 이 단언이 반드시 깨진다.
-        val itemId = 5100L
-        val refresher = UUID.randomUUID()
-        val registrant = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId, name = "옛 이름"), itemId))
-        val newVersion = snapshotWithStatus(itemId, ItemStatus.READY, name = "나이키")
-        refresherWish.waitFor(newVersion)
-        val registrantWishId = wishRepository.save(Wish(registrant, newVersion, itemId)).getId()
+    fun `아이템이 있는 위시의 새로고침 완료는 새로고침 완료로만 가고 등록 완료와 배타적이다`() {
+        val owner = UUID.randomUUID()
+        val wish = registerWish(owner, newUrl())
+        itemParsingService.completeLatest(entityManager, wish.slot, product("옛 이름"))
+        wishPersistenceService.refresh(RefreshWishItemCommand(owner, wish.getId()))
 
-        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, newVersion))
+        itemParsingService.completeLatest(entityManager, wish.slot, product("나이키"))
+        val event = lastEvent<ItemParsingCompleted>()
 
-        val refreshed = notificationRepository.findPage(refresher, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_REFRESH_COMPLETED), refreshed.map { it.type })
-        assertEquals(NotificationRouting.Wish(refresherWish.getId()), refreshed.first().routing())
-        // 제목은 새로고침으로 방금 성공한 버전의 이름 — 새로고침된 카드에서 보게 되는 그 값이다.
-        assertEquals("나이키", refreshed.first().title)
-
-        val registered = notificationRepository.findPage(registrant, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_PARSING_COMPLETED), registered.map { it.type })
-        assertEquals(NotificationRouting.Wish(registrantWishId), registered.first().routing())
+        assertTrue(event.refresh)
+        assertEquals(setOf(owner), refreshCompletedHandler.resolveRecipients(event))
+        assertTrue(parsingCompletedHandler.resolveRecipients(event).isEmpty())
+        assertEquals(NotificationRouting.Wish(wish.getId()), refreshCompletedHandler.resolveRouting(event))
     }
 
     @Test
-    fun `dispatch 가 한 파싱 실패 이벤트를 새로고침 실패와 등록 실패로 갈라 저장한다 - end-to-end`() {
-        val itemId = 5101L
-        val refresher = UUID.randomUUID()
-        val registrant = UUID.randomUUID()
-        val refresherWish = wishRepository.save(Wish(refresher, readyVersion(itemId), itemId))
-        val newVersion = snapshotWithStatus(itemId, ItemStatus.FAILED)
-        refresherWish.waitFor(newVersion)
-        wishRepository.save(Wish(registrant, newVersion, itemId))
+    fun `위시 등록 파싱 실패는 등록 실패로만 가고 위시 좌표를 싣는다`() {
+        val owner = UUID.randomUUID()
+        val wish = registerWish(owner, newUrl())
 
-        notificationDispatcher.dispatch(ItemParsingFailed(itemId, newVersion))
+        itemParsingService.failLatest(entityManager, wish.slot)
+        val event = lastEvent<ItemParsingFailed>()
 
-        val refreshed = notificationRepository.findPage(refresher, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_REFRESH_FAILED), refreshed.map { it.type })
-        assertEquals(NotificationRouting.Wish(refresherWish.getId()), refreshed.first().routing())
-        val registered = notificationRepository.findPage(registrant, cursor = null, limit = 10)
-        assertEquals(listOf(NotificationType.ITEM_PARSING_FAILED), registered.map { it.type })
+        assertFalse(event.refresh)
+        assertEquals(setOf(owner), parsingFailedHandler.resolveRecipients(event))
+        assertTrue(refreshFailedHandler.resolveRecipients(event).isEmpty())
+        assertEquals(NotificationRouting.Wish(wish.getId()), parsingFailedHandler.resolveRouting(event))
+        assertEquals(wish.getId(), parsingFailedHandler.resolveRefId(event))
+    }
+
+    @Test
+    fun `새로고침 파싱 실패는 새로고침 실패로만 가고 등록 실패와 배타적이다`() {
+        val owner = UUID.randomUUID()
+        val wish = registerWish(owner, newUrl())
+        itemParsingService.completeLatest(entityManager, wish.slot, product("나이키"))
+        wishPersistenceService.refresh(RefreshWishItemCommand(owner, wish.getId()))
+
+        itemParsingService.failLatest(entityManager, wish.slot)
+        val event = lastEvent<ItemParsingFailed>()
+
+        assertTrue(event.refresh)
+        assertEquals(setOf(owner), refreshFailedHandler.resolveRecipients(event))
+        assertTrue(parsingFailedHandler.resolveRecipients(event).isEmpty())
+        assertEquals(NotificationRouting.Wish(wish.getId()), refreshFailedHandler.resolveRouting(event))
+    }
+
+    @Test
+    fun `해소 통지는 미완이던 같은 아이템의 다른 카드 주인에게 각자 카드 좌표로 가고 요청한 카드는 빠진다`() {
+        val url = newUrl()
+        val stuckOwner = UUID.randomUUID()
+        val requesterOwner = UUID.randomUUID()
+        val host = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val stuckWish = registerWish(stuckOwner, url)
+        val requesterWish = registerWish(requesterOwner, url)
+        itemParsingService.completeLatest(entityManager, stuckWish.slot, product(name = "나이키", price = null))
+        val tournamentId = createRootWithOwner(host)
+        tournamentUserRepository.save(TournamentUser(tournamentId, adder))
+        val tournamentItemId = addTournamentItem(adder, tournamentId, url)
+        itemParsingService.completeLatest(entityManager, ItemSlot.tournamentItem(tournamentItemId), product(name = "나이키", price = null))
+
+        itemParsingService.completeLatest(entityManager, requesterWish.slot, product("나이키"))
+        val event = lastEvent<ItemParsingCompleted>()
+
+        // 요청한 카드도 직전 표시값이 남의 미완이라 recovers 는 참이다. 완료 알림과 겹치지 않게 빠져야 한다
+        val recipients = parsingRecoveredHandler.resolveRecipients(event)
+        assertEquals(setOf(stuckOwner, adder), recipients)
+        val routings = parsingRecoveredHandler.resolveRecipientContexts(event, recipients).mapValues { it.value.routing }
+        assertEquals(
+            mapOf(
+                stuckOwner to NotificationRouting.Wish(stuckWish.getId()),
+                adder to NotificationRouting.Tournament(tournamentId, tournamentItemId),
+            ),
+            routings,
+        )
+    }
+
+    @Test
+    fun `dispatch 가 한 파싱 완료 이벤트를 요청자 완료 알림과 다른 카드 해소 통지로 갈라 저장한다 - end-to-end`() {
+        val url = newUrl()
+        val stuckOwner = UUID.randomUUID()
+        val requesterOwner = UUID.randomUUID()
+        val stuckWish = registerWish(stuckOwner, url)
+        val requesterWish = registerWish(requesterOwner, url)
+        itemParsingService.completeLatest(entityManager, stuckWish.slot, product(name = "나이키", price = null))
+        itemParsingService.completeLatest(entityManager, requesterWish.slot, product("나이키"))
+
+        notificationDispatcher.dispatch(lastEvent<ItemParsingCompleted>())
+
+        val completed = notificationRepository.findPage(requesterOwner, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_COMPLETED), completed.map { it.type })
+        assertEquals(NotificationRouting.Wish(requesterWish.getId()), completed.first().routing())
+        assertEquals(ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE, completed.first().body)
+        val recovered = notificationRepository.findPage(stuckOwner, cursor = null, limit = 10)
+        assertEquals(listOf(NotificationType.ITEM_PARSING_RECOVERED), recovered.map { it.type })
+        assertEquals(NotificationRouting.Wish(stuckWish.getId()), recovered.first().routing())
+        assertEquals("나이키", recovered.first().title)
     }
 
     // ── 신규 토너먼트 알림(#473): 플레이링크 플레이 · 완료 · 결과 ──────────────────────────
@@ -853,26 +547,29 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         tournamentRepository.saveTournament(root)
         return root.getId()
     }
+    private fun registerWish(
+        userId: UUID,
+        url: String,
+    ): Wish {
+        userRepository.findById(userId) ?: userRepository.save(User(id = userId, nickname = "담은이${userId.toString().take(5)}", profileImage = "https://x/p.png", identityType = IdentityType.MEMBER))
+        return wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse(url))).wish
+    }
 
-    // 알림 역조회는 wish/tournament_item→item_snapshots 를 snapshot_id 로 조인해 s.item_id 로 매칭한다.
-    // 따라서 그 itemId 로 시딩한 snapshot 의 id 를 wish/tournament_item 의 snapshotId 로 넘겨야 역조회가 맞아떨어진다.
-    private fun snapshotIdFor(itemId: Long): Long =
-        itemSnapshotRepository
-            .save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
-            .getId()
+    private fun addTournamentItem(
+        userId: UUID,
+        tournamentId: Long,
+        url: String,
+    ): Long = tournamentItemPersistenceService.persistLinkItem(userId, tournamentId, ProductLink.parse(url))
 
-    // 해소 통지(#1028)는 카드 표시값이 미완성이었는지로 수신자를 가르므로, 상태를 지정해 버전을 깐다.
-    private fun snapshotWithStatus(
-        itemId: Long,
-        status: ItemStatus,
-        name: String? = null,
-    ): Long = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = name, status = status)).getId()
+    // 다른 테스트의 아이템과 겹치지 않게 매번 새 URL
+    private fun newUrl(): String = "https://shop.example.com/products/${UUID.randomUUID()}"
 
-    // 새로고침 알림(#1036) fixture — 새로고침은 성공(READY) 항목에서만 시작되므로, 새로고침 전 위시가 가리키던 버전이다.
-    private fun readyVersion(
-        itemId: Long,
-        name: String = "나이키",
-    ): Long = snapshotWithStatus(itemId, ItemStatus.READY, name = name)
+    private fun product(
+        name: String,
+        price: Int? = 99_000,
+    ): ProductSnapshot = ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+
+    private inline fun <reified E : Any> lastEvent(): E = applicationEvents.stream(E::class.java).toList().last()
 
     private var inviteSeq = 0
 

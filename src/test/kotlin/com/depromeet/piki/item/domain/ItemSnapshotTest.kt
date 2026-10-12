@@ -90,7 +90,7 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `extracted 는 추출 경로를 그대로 들고 수기가 아니다`() {
+    fun `extracted 는 추출 경로를 그대로 들고 사용자 입력이 아니다`() {
         listOf(ExtractionMethod.STRUCTURED, ExtractionMethod.LLM, null).forEach { method ->
             val snapshot =
                 ItemSnapshot.extracted(
@@ -145,7 +145,7 @@ class ItemSnapshotTest {
         val base = version(name = "나이키", price = 99_000, currency = "KRW")
         val editor = UUID.randomUUID()
 
-        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.merge(base, name = null, price = 79_000, imageUrl = null, currency = null), createdBy = editor)
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 79_000, imageUrl = null, currency = null).filledFrom(base)), createdBy = editor)
 
         assertTrue(userVersion.isReady())
         assertEquals("나이키", userVersion.name)
@@ -163,7 +163,7 @@ class ItemSnapshotTest {
     fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 병합된 READY 버전이 된다`() {
         val base = version(name = "몬치치 인형", price = null)
 
-        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.merge(base, name = null, price = 25_000, imageUrl = null, currency = "KRW"), createdBy = UUID.randomUUID())
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 25_000, imageUrl = null, currency = "KRW").filledFrom(base)), createdBy = UUID.randomUUID())
 
         assertTrue(userVersion.isReady())
         assertEquals("몬치치 인형", userVersion.name)
@@ -176,7 +176,7 @@ class ItemSnapshotTest {
         val userVersion =
             ItemSnapshot.userInput(
                 1L,
-                UserInputValues.merge(base = null, name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW"),
+                UserInputValues.of(UserInput(name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW")),
                 createdBy = UUID.randomUUID(),
             )
 
@@ -195,7 +195,7 @@ class ItemSnapshotTest {
 
         inputs.forEach { (name, price, imageUrl) ->
             assertFailsWith<ItemException> {
-                UserInputValues.merge(base = null, name = name, price = price, imageUrl = imageUrl, currency = "KRW")
+                UserInputValues.of(UserInput(name = name, price = price, imageUrl = imageUrl, currency = "KRW"))
             }
         }
     }

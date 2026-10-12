@@ -1,19 +1,22 @@
 package com.depromeet.piki.wishlist.controller
 
-import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
-import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.claimParseOutbox
+import com.depromeet.piki.support.completeLatest
+import com.depromeet.piki.support.failLatest
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.service.WishPersistenceService
+import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
+import jakarta.persistence.EntityManager
 import org.hamcrest.Matchers.nullValue
 import org.hamcrest.Matchers.startsWith
 import org.junit.jupiter.api.Test
@@ -38,9 +41,7 @@ import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 import kotlin.test.assertEquals
 
-// 조회·수정·삭제 contract 검증. 이 시나리오들의 본질은 "완성된 위시가 있을 때의 동작"이라
-// 등록(비동기) 경로를 거치지 않고 seedReadyWish 로 READY 상태를 시딩한다.
-// 등록 PENDING 응답·파싱 전이는 WishlistRegisterAsyncIntegrationTest 가 검증한다.
+// 등록 직후 응답과 dispatch 전이는 WishlistRegisterAsyncIntegrationTest 가 맡고, 여기는 파싱 결과를 직접 반영해 시딩한다
 @Transactional
 class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var entityManager: EntityManager
@@ -56,6 +57,9 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired
+    private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
     private lateinit var stubImageStorage: StubImageStorage
@@ -104,19 +108,16 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         price: Int? = 10_000,
         currency: String? = "KRW",
         imageUrl: String? = "https://img.example.com/a.png",
-        // 기본 null(출처 미기록) — 표시값 파생 후보(기계 READY)로 만들려면 "STRUCTURED" 를 명시한다.
-        extractionMethod: String? = null,
     ): Long {
-        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
-        itemParsingService.markExtracted(
-            entityManager.claimParseOutbox(result.snapshot),
+        val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse(url)))
+        itemParsingService.completeLatest(
+            entityManager,
+            result.wish.slot,
             ProductSnapshot(
-                link = ProductLink.parse(url),
                 name = name,
                 price = price,
                 currency = currency,
                 imageUrl = imageUrl,
-                extractionMethod = extractionMethod,
             ),
         )
         return result.wish.getId()
@@ -126,15 +127,15 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         userId: UUID,
         url: String,
     ): Long {
-        val result = wishPersistenceService.persist(userId, ProductLink.parse(url))
-        itemParsingService.markFailed(entityManager.claimParseOutbox(result.snapshot))
+        val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse(url)))
+        itemParsingService.failLatest(entityManager, result.wish.slot)
         return result.wish.getId()
     }
 
     private fun seedPendingWish(
         userId: UUID,
         url: String,
-    ): Long = wishPersistenceService.persist(userId, ProductLink.parse(url)).wish.getId()
+    ): Long = wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse(url))).wish.getId()
 
     @Test
     fun `게스트가 URL 로 위시 등록을 시도하면 403 과 회원 전용 안내가 반환된다`() {
@@ -437,8 +438,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미 등록 완료(READY)된 위시 item 도 수기 수정하면 200 과 수정된 값으로 표시된다`() {
-        // 수기 수정 상시 허용(#825 결정 4) — 기계 버전은 불변이고 수정은 MANUAL 새 버전으로 쌓여 표시가 바뀐다.
+    fun `이미 등록 완료(READY)된 위시 item 도 사용자 입력하면 200 과 입력한 값으로 표시된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -459,9 +459,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `남이 같은 링크를 담아 채운 READY 가 있으면 가격 없는 미완성 위시도 이름만 수정이 성공한다`() {
-        // 회귀(#1006 과 같은 축): 카드는 표시값(최신 기계 READY)을 그리는데 병합 base 만 포인터면, 화면엔 가격이
-        // 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 으로 튕긴다. 카드에 보인 가격이 병합되는 것까지 본다.
+    fun `남이 같은 상품에 채운 READY 가 있으면 가격 없는 미완성 위시도 이름만 수정이 성공한다`() {
+        // 회귀(#1006): 병합 base 가 카드에 보인 값이 아니면 화면엔 가격이 있는데 400 으로 튕긴다
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         val otherUserId = UUID.randomUUID()
@@ -470,10 +469,8 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
         val authHeader = "Bearer ${memberToken(userId)}"
         val url = "https://shop.example.com/products/shared-incomplete"
 
-        // 내 등록은 부분 추출(가격 없음)로 미완성 종결. 남의 등록은 같은 링크라 같은 item 에 붙고
-        // (미완성은 재사용 대상이 아니라 새 PENDING), 기계 추출(STRUCTURED)이 성공해 표시값 후보가 된다.
         val myWishId = seedReadyWish(userId, url, name = "미완성 이름", price = null, currency = null)
-        seedReadyWish(otherUserId, url, name = "남이 채운 이름", price = 89_000, extractionMethod = "STRUCTURED")
+        itemSnapshotRepository.save(itemVersion(itemIdOf(myWishId), name = "남이 채운 이름", price = 89_000, createdBy = otherUserId))
 
         mockMvc
             .perform(
@@ -494,7 +491,6 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `남이 채운 READY 가 없으면 가격 없는 미완성 위시의 이름만 수정은 400 으로 거부된다`() {
-        // 위 테스트의 대조군 — 표시값이 곧 포인터면 병합해도 가격이 비어 거부돼야 한다(입력 계약 400).
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -515,51 +511,57 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `파싱 중(PENDING)인 위시 item 도 필수값을 채워 수기 수정하면 200 이다 - 병합할 base 가 비면 400`() {
-        // 상태 제한이 없다(#825 결정 4). 단 PENDING base 는 값이 비어 있어, 일부 필드만 보내면
-        // 병합 결과에 필수값이 없어 400(ITEM-003 등)이다 — 상태 충돌(409)이 아니라 입력 계약의 문제다.
+    fun `파싱 중인 위시는 상품 정보 입력이 업로드 전에 409 로 거부되고 메모만 바꾸는 것은 된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
         val wishId = seedPendingWish(userId, "https://shop.example.com/products/1")
+        val uploadsBefore = stubImageStorage.uploadedKeys.size
 
-        // 일부 필드만 — 병합해도 가격·이미지가 없어 400.
-        mockMvc
-            .perform(
-                multipart("/api/v1/wishlists/$wishId")
-                    .param("name", "이름만 수정")
-                    .with {
-                        it.method = "PATCH"
-                        it
-                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
-            ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("ITEM-004"))
-
-        // 필수값을 다 채우면 진행 중이어도 수정된다.
         val image = MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3))
         mockMvc
             .perform(
                 multipart("/api/v1/wishlists/$wishId")
                     .file(image)
-                    .param("name", "수기 입력")
+                    .param("name", "직접 입력한 이름")
                     .param("price", "5000")
                     .with {
                         it.method = "PATCH"
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("ITEM-008"))
+        assertEquals(uploadsBefore, stubImageStorage.uploadedKeys.size)
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("memo", "결과 기다리는 중")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.item.name").value("수기 입력"))
-            .andExpect(jsonPath("$.data.item.status").value("READY"))
+            .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+            .andExpect(jsonPath("$.data.item.status").value("PARSING"))
     }
 
     @Test
-    fun `FAILED 상태인 위시 item 을 직접 수정하면 200 과 함께 status 가 READY 로 복구된다`() {
+    fun `실패 위시를 직접 보정하면 아이템이 확정되고 READY 로 복구된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
-        val wishId = seedFailedWish(userId, "https://shop.example.com/products/1")
+        val url = "https://shop.example.com/products/1"
+        val wishId = seedFailedWish(userId, url)
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+            .andExpect(jsonPath("$.data.item.status").value("FAILED"))
+            .andExpect(jsonPath("$.data.item.sourceUrl").value(url))
 
         val image = MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3))
         mockMvc
@@ -575,13 +577,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("직접 입력한 이름"))
             .andExpect(jsonPath("$.data.item.price").value(50_000))
-            // 추출 실패(FAILED) 항목을 직접 보정하면 정상 항목이 된 것이므로 READY 로 복구된다.
+            .andExpect(jsonPath("$.data.item.id").value(itemIdOf(wishId)))
+            .andExpect(jsonPath("$.data.item.sourceUrl").value(url))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
+            .andExpect(jsonPath("$.data.item.userInput").value(true))
     }
 
     @Test
     fun `이름 없이 FAILED 위시 item 을 복구하려 하면 400 BAD_REQUEST 가 반환된다`() {
-        // 이름 없는 보정은 쓸 수 없는 상품을 READY 로 승격시키므로 막는다 (READY ⟹ name 불변식).
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -659,12 +662,15 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail").value(WishlistUpdateRequest.PRICE_MIN_MESSAGE))
     }
 
-    private fun itemIdOf(wishId: Long): Long =
-        jdbcTemplate.queryForObject(
-            "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.id = ?",
+    // 파싱 결과가 위시에 단 아이템은 아직 flush 전이라 JDBC 로 읽기 전에 내린다
+    private fun itemIdOf(wishId: Long): Long {
+        entityManager.flush()
+        return jdbcTemplate.queryForObject(
+            "SELECT item_id FROM wishes WHERE id = ?",
             Long::class.java,
             wishId,
         ) ?: error("wish $wishId 의 item 이 없다")
+    }
 
     private fun countSnapshots(itemId: Long): Long =
         jdbcTemplate.queryForObject(
@@ -692,7 +698,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isOk)
-            // memo 만 온 요청은 MANUAL 버전을 만들지 않는다 — 표시값(서버 추출)이 그대로다.
+            // memo 만 온 요청은 사용자 입력 버전을 만들지 않는다 — 표시값(서버 추출)이 그대로다.
             .andExpect(jsonPath("$.data.item.name").value("상품"))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
             // 노출 계약: memo 는 상세 응답 전용 — PATCH 응답에는 없다.
@@ -749,7 +755,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이름과 memo 를 함께 수정하면 MANUAL 새 버전이 쌓이고 메모도 반영된다`() {
+    fun `이름과 memo 를 함께 보내면 사용자 입력 새 버전이 쌓이고 메모도 반영된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -769,7 +775,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.name").value("바꾼 이름"))
-            .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.item.userInput").value(true))
         assertEquals(snapshotCountBefore + 1, countSnapshots(itemId))
 
         mockMvc

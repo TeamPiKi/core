@@ -81,13 +81,12 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
             uuidToBytes(member2), "b@t.com", "GOOGLE", UUID.randomUUID().toString(), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow),
         )
 
-        // 위시 — URL 아이템 1 · 이미지(source_url NULL) 아이템 1, 구간 내. snapshot_id 로 참조(정규화).
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (1001, 'https://shop.example/a', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO items (id, created_at, updated_at) VALUES (1002, ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (2001, 1001, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (2002, 1002, 'FAILED', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 2001, 1001, ?, ?)", uuidToBytes(member1), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 2002, 1002, ?, ?)", uuidToBytes(member1), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        // 위시 — URL 등록이 성공해 아이템이 확정된 1건, 이미지 등록이 실패해 아이템이 없는 1건, 구간 내
+        jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (1001, 'LINK', 'https://shop.example/a', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        insertWish(6001, member1, itemId = 1001, at = withinWindow)
+        insertWish(6002, member1, itemId = null, at = withinWindow)
+        insertOutbox("WISH", 6001, imageKey = null, status = "SUCCEEDED", at = withinWindow)
+        insertOutbox("WISH", 6002, imageKey = "items/raw/metrics-1.png", status = "FAILED", at = withinWindow)
 
         // 리텐션 — 구간(6/20)에 가입한 3명 중 2명이 다음날(6/21 KST) 활동
         jdbcTemplate.update("INSERT INTO user_daily_activity (user_id, active_date, created_at) VALUES (?, ?, NOW(6))", uuidToBytes(member1), Date.valueOf(LocalDate.of(2026, 6, 21)))
@@ -150,22 +149,19 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         val member = UUID.randomUUID()
         insertUser(member, "MEMBER", withinWindow)
 
-        // 위시 아이템 — 활성 2건(URL·이미지) + 삭제 1건(URL). 셋 다 위시로 참조돼 파싱은 '위시 파싱'.
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3001, 'https://shop.example/a', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO items (id, created_at, updated_at) VALUES (3002, ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow)) // 이미지(source_url NULL)
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3003, 'https://shop.example/c', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3101, 3001, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3102, 3002, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3103, 3003, 'FAILED', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 3101, 3001, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 3102, 3002, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        // 삭제된 위시 — 활성(stock)에선 빠지지만 유입(flow)엔 잡히고, 파싱은 '위시 파싱'으로 남는다(아이템이 위시로 참조됨).
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at, deleted_at) VALUES (?, 3103, 3003, ?, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        // 위시 — 활성 2건(URL·이미지 성공) + 삭제 1건(URL 실패). 셋 다 위시 요청이라 '위시 파싱'
+        jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (3001, 'LINK', 'https://shop.example/a', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (3002, 'IMAGE', 'items/raw/550e8400-e29b-41d4-a716-446655443002.png', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        insertWish(7001, member, itemId = 3001, at = withinWindow)
+        insertWish(7002, member, itemId = 3002, at = withinWindow)
+        insertWish(7003, member, itemId = null, at = withinWindow, deleted = true)
+        insertOutbox("WISH", 7001, imageKey = null, status = "SUCCEEDED", at = withinWindow)
+        insertOutbox("WISH", 7002, imageKey = "items/raw/metrics-2.png", status = "SUCCEEDED", at = withinWindow)
+        insertOutbox("WISH", 7003, imageKey = null, status = "FAILED", at = withinWindow)
 
-        // 토너먼트 전용 아이템 — 위시가 없어 '토너먼트 파싱'으로 잡힌다.
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (3004, 'https://shop.example/d', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (3104, 3004, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO tournament_items (tournament_id, user_id, snapshot_id, created_at, updated_at) VALUES (8500, ?, 3104, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        // 토너먼트 아이템 요청 — '토너먼트 파싱'
+        jdbcTemplate.update("INSERT INTO tournament_items (id, tournament_id, user_id, created_at, updated_at) VALUES (8601, 8500, ?, ?, ?)", uuidToBytes(member), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        insertOutbox("TOURNAMENT_ITEM", 8601, imageKey = null, status = "SUCCEEDED", at = withinWindow)
 
         val snapshot =
             mockMvc()
@@ -242,10 +238,10 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         jdbcTemplate.update("INSERT INTO developers (user_id) VALUES (?)", uuidToBytes(dev))
 
         // 위시 — 각 유저 1건(snapshot_id 로 참조).
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (7001, 'https://shop.example/n', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO items (id, source_url, created_at, updated_at) VALUES (7002, 'https://shop.example/d', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (7101, 7001, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_at, updated_at) VALUES (7102, 7002, 'READY', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (7001, 'LINK', 'https://shop.example/n', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (7002, 'LINK', 'https://shop.example/d', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_by, created_at, updated_at) VALUES (7101, 7001, 'READY', ?, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_by, created_at, updated_at) VALUES (7102, 7002, 'READY', ?, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
         jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 7101, 7001, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
         jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 7102, 7002, ?, ?)", uuidToBytes(dev), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
 
@@ -338,4 +334,44 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         assertEquals(2, included.tournament.participants)
         assertEquals(3, included.tournament.plays)
     }
+
+    private fun insertWish(
+        id: Long,
+        userId: UUID,
+        itemId: Long?,
+        at: String,
+        deleted: Boolean = false,
+    ) {
+        jdbcTemplate.update(
+            "INSERT INTO wishes (id, user_id, item_id, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?)",
+            id,
+            uuidToBytes(userId),
+            itemId,
+            Timestamp.valueOf(at),
+            Timestamp.valueOf(at),
+            Timestamp.valueOf(at).takeIf { deleted },
+        )
+    }
+
+    // 이미지 키가 없으면 URL 요청이다
+    private fun insertOutbox(
+        slotType: String,
+        slotId: Long,
+        imageKey: String?,
+        status: String,
+        at: String,
+    ) {
+        jdbcTemplate.update(
+            "INSERT INTO item_parse_outbox (slot_type, slot_id, purpose, input_type, input_value, status, created_at, updated_at) " +
+                "VALUES (?, ?, 'REGISTER', ?, ?, ?, ?, ?)",
+            slotType,
+            slotId,
+            imageKey?.let { "IMAGE" } ?: "LINK",
+            imageKey ?: "https://shop.example/$slotId",
+            status,
+            Timestamp.valueOf(at),
+            Timestamp.valueOf(at),
+        )
+    }
+
 }

@@ -2,17 +2,20 @@ package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.image.domain.UploadSize
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ItemParseOutboxStatus
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.service.ProductSnapshot
-import com.depromeet.piki.support.awaitTicking
-import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
+import com.depromeet.piki.support.awaitTicking
+import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
+import com.depromeet.piki.support.wishItemIdOf
 import com.depromeet.piki.user.domain.IdentityType
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
@@ -33,9 +36,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-// 이미지 등록 v2(presigned) 흐름 — 발급(POST /images/presigned) → 클라 직접 업로드(stub) → 확정(POST /images/confirm).
-// confirm 은 PENDING 을 실제 커밋하므로 WishlistRegisterAsyncIntegrationTest 와 같은 @Transactional 없는 비동기
-// 패턴을 따른다. 격리 userId + cleanup 으로 공유 컨텍스트를 정리한다.
+// confirm 이 아웃박스를 커밋해야 dispatch 가 집으므로 @Transactional 없이 격리 userId 와 cleanup 으로 정리한다
 class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -249,7 +250,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
 
 
     @Test
-    fun `발급받은 key 로 confirm 하면 PENDING 위시가 201 로 생성된다`() {
+    fun `발급받은 key 로 confirm 하면 파싱 중 위시가 201 로 생성된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -265,8 +266,8 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                         .content(body),
                 ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
-                // 이미지 등록은 원본 URL 이 없어 sourceUrl 도, 거기서 유도하는 sourcePlatform 도 null 이다.
+                .andExpect(jsonPath("$.data[0].item.status").value("PARSING"))
+                .andExpect(jsonPath("$.data[0].item.id").value(nullValue()))
                 .andExpect(jsonPath("$.data[0].item.sourceUrl").value(nullValue()))
                 .andExpect(jsonPath("$.data[0].item.sourcePlatform").value(nullValue()))
 
@@ -290,7 +291,6 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png", "image/jpeg"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
 
-            // 1차 confirm — pending 을 claim(삭제)하며 2개 등록.
             mockMvc
                 .perform(
                     post("/api/v1/wishlists/images/confirm")
@@ -300,8 +300,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.length()").value(2))
 
-            // 2차 confirm(같은 key) — raw 는 S3 에 남아 형식·존재 검증은 통과하지만 pending 이 이미 claim 돼 등록할 게 없다.
-            // 멱등 no-op 으로 빈 목록 201 이고, 위시는 중복 생기지 않는다.
+            // raw 는 S3 에 남아 검증은 통과한다. 아웃박스의 이미지 키 유일 제약이 중복 등록을 거른다
             mockMvc
                 .perform(
                     post("/api/v1/wishlists/images/confirm")
@@ -370,13 +369,13 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `confirm 후 dispatch 로 파싱이 성공하면 item 이 READY 로 전이한다`() {
+    fun `confirm 후 dispatch 로 파싱이 성공하면 위시에 아이템이 확정되고 READY 가 된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
+                ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
             val keys = presignAndGetKeys(mockMvc, userId, listOf("image/png"))
             val body = objectMapper.writeValueAsString(mapOf("imageKeys" to keys))
@@ -391,25 +390,26 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                     .andReturn()
                     .response
                     .getContentAsString(Charsets.UTF_8)
-            val itemId =
+            val wishId =
                 objectMapper
                     .readTree(response)
                     .path("data")
                     .path(0)
-                    .path("item")
+                    .path("wish")
                     .path("id")
                     .asLong()
 
             itemParsingScheduler.awaitTicking {
-                itemSnapshotRepository.findLatestByItemId(itemId)?.status == ItemStatus.READY
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
             }
-            val snapshot = itemSnapshotRepository.findLatestByItemId(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("나이키 에어포스", snapshot.name)
+            val itemId = jdbcTemplate.wishItemIdOf(wishId) ?: error("wish $wishId 에 아이템이 확정되지 않았다")
+            val version = itemSnapshotRepository.findAllByItemIds(listOf(itemId)).single()
+            assertEquals("나이키 에어포스", version.name)
+            assertTrue(version.isReady())
         } finally {
             cleanup(userId)
         }
     }
-
 
     private fun presignAndGetKeys(
         mockMvc: MockMvc,
@@ -459,14 +459,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     private fun guestToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.GUEST)
 
     private fun cleanup(userId: UUID) {
-        val itemIds =
-            jdbcTemplate.queryForList(
-                "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.user_id = ?",
-                Long::class.java,
-                uuidToBytes(userId),
-            )
-        jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        jdbcTemplate.deleteItems(itemIds.filterNotNull())
+        jdbcTemplate.deleteWishDataOf(userId)
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

@@ -1,12 +1,12 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
@@ -26,7 +26,6 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -67,7 +66,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
         val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
         val clonerAuth = "Bearer ${jwtProvider.generateAccessToken(clonerId, IdentityType.GUEST)}"
 
-        // 소스 토너먼트 준비 (단일 스레드, 직렬)
+        val itemIds = mutableListOf<Long>()
         val sourceTournamentId = run {
             val createResult = mockMvc.perform(
                 post("/api/v1/tournaments")
@@ -77,38 +76,13 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
             ).andReturn()
             val tId = objectMapper.readTree(createResult.response.contentAsString)["data"]["tournamentId"].asLong()
 
-            // 3단계: tournament_item 은 고정 snapshot 을 참조한다. 조회·start 표시값이 snapshot 에서 오므로 함께 만들어 연결한다.
-            // item 은 정체성(link)만 들고, 표시값·상태는 READY snapshot 이 보유한다(4a).
-            val item1 = itemJpaRepository.save(Item())
-            val item2 = itemJpaRepository.save(Item())
-            val snapshot1 =
-                itemSnapshotJpaRepository.save(
-                    ItemSnapshot(
-                        itemId = item1.getId(),
-                        name = "race-item1",
-                        price = 10_000,
-                        currency = "KRW",
-                        status = ItemStatus.READY,
-                        extractedAt = LocalDateTime.now(),
-                    ),
-                )
-            val snapshot2 =
-                itemSnapshotJpaRepository.save(
-                    ItemSnapshot(
-                        itemId = item2.getId(),
-                        name = "race-item2",
-                        price = 20_000,
-                        currency = "KRW",
-                        status = ItemStatus.READY,
-                        extractedAt = LocalDateTime.now(),
-                    ),
-                )
-            tournamentItemJpaRepository.save(
-                TournamentItem(tournamentId = tId, userId = ownerId, snapshotId = snapshot1.getId()),
-            )
-            tournamentItemJpaRepository.save(
-                TournamentItem(tournamentId = tId, userId = ownerId, snapshotId = snapshot2.getId()),
-            )
+            val item1 = itemJpaRepository.save(imageItem())
+            val item2 = itemJpaRepository.save(imageItem())
+            itemIds += listOf(item1.getId(), item2.getId())
+            itemSnapshotJpaRepository.save(itemVersion(itemId = item1.getId(), name = "race-item1", price = 10_000))
+            itemSnapshotJpaRepository.save(itemVersion(itemId = item2.getId(), name = "race-item2", price = 20_000))
+            tournamentItemJpaRepository.save(TournamentItem(tournamentId = tId, userId = ownerId, itemId = item1.getId()))
+            tournamentItemJpaRepository.save(TournamentItem(tournamentId = tId, userId = ownerId, itemId = item2.getId()))
 
             mockMvc.perform(
                 post("/api/v1/tournaments/$tId/start")
@@ -198,6 +172,7 @@ class TournamentFromPlayLinkConcurrencyIntegrationTest : IntegrationTestSupport(
         jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", sourceTournamentId)
         jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", sourceTournamentId)
         jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", sourceTournamentId)
+        jdbcTemplate.deleteItems(itemIds)
         jdbcTemplate.update("DELETE FROM users WHERE id = ? OR id = ?", uuidToBytes(ownerId), uuidToBytes(clonerId))
     }
 }

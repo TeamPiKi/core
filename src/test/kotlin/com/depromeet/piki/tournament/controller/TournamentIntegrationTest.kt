@@ -1,21 +1,26 @@
 package com.depromeet.piki.tournament.controller
 
-import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.repository.ItemJpaRepository
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.notification.handler.TournamentNotificationVariables
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubRefreshTokenStore
-import com.depromeet.piki.support.claimParseOutbox
+import com.depromeet.piki.support.normalizedOf
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
+import com.depromeet.piki.support.linkItem
+import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.Tournament
@@ -41,12 +46,14 @@ import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.WishPersistenceService
+import com.depromeet.piki.wishlist.service.dto.UpdateWishMemoCommand
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.context.event.ApplicationEvents
@@ -69,14 +76,12 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @RecordApplicationEvents
 @Transactional
 class TournamentIntegrationTest : IntegrationTestSupport() {
-    @Autowired private lateinit var entityManager: EntityManager
-
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired private lateinit var objectMapper: ObjectMapper
@@ -105,8 +110,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var wishPersistenceService: WishPersistenceService
 
-    @Autowired private lateinit var itemParsingService: ItemParsingService
+    @Autowired private lateinit var itemParseOutboxRepository: ItemParseOutboxRepository
 
+    @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
@@ -428,10 +434,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     fun `POST tournaments-id-items 에서 존재하지 않는 아이템 ID 이면 404 를 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        // 위시에는 등록되어 있지만 item 테이블에는 없는 ID — wish 확인 통과 후 item 존재 확인에서 404.
-        // itemId 단일 출처는 snapshot 이므로, item 행 없이 itemId=999999 를 가리키는 snapshot 만 시딩해 wish 가 가리키게 한다(FK 없음).
-        val danglingSnapshotId = itemSnapshotJpaRepository.save(ItemSnapshot.pending(999999L, requestedBy = userId)).getId()
-        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = danglingSnapshotId, itemId = 999999L))
+        // 위시에는 있지만 item 행이 없는 ID. wish 확인을 통과한 뒤 item 존재 확인에서 404(FK 없음)
+        wishJpaRepository.save(Wish(userId = userId, itemId = 999999L))
 
         mockMvc
             .perform(
@@ -440,26 +444,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"itemIds":[999999]}"""),
             ).andExpect(status().isNotFound)
-    }
-
-    @Test
-    fun `POST tournaments-id-items 에서 아직 파싱 중(PENDING)인 아이템이면 409 를 반환한다`() {
-        val mockMvc = buildMockMvc()
-        val tournamentId = createTournament(mockMvc)
-        val processingItemId = itemJpaRepository.save(Item()).getId()
-        // 활성 snapshot 이 PENDING — 표시값·상태는 snapshot 소관이라 PENDING snapshot 을 만들어 wish 가 가리키게 한다.
-        val processingSnapshotId =
-            itemSnapshotJpaRepository.save(ItemSnapshot.pending(processingItemId, requestedBy = userId)).getId()
-        // 위시에도 등록 — wish 확인 통과 후 READY 상태 확인에서 409
-        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = processingSnapshotId, itemId = processingItemId))
-
-        mockMvc
-            .perform(
-                post("/api/v1/tournaments/$tournamentId/items/wish")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("""{"itemIds":[$processingItemId]}"""),
-            ).andExpect(status().isConflict)
     }
 
     @Test
@@ -522,19 +506,16 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `대기실은 최신 기계 버전을 보여주고 start 가 그 표시 버전을 박제해 이후 새 버전이 생겨도 겨룬 값이 유지된다`() {
+    fun `대기실은 최신 기계 버전을 보여주고 시작 시각 이후에 생긴 버전은 시작한 토너먼트의 출전 값에 안 들어간다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        // 포인터는 옛 기계 버전(v1)에 박힌 출전 아이템 둘.
-        val itemA = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-a")))
-        val itemB = itemJpaRepository.save(Item(link = ProductLink.parse("https://shop.example.com/products/pin-b")))
+        val itemA = itemJpaRepository.save(linkItem("https://shop.example.com/products/pin-a"))
+        val itemB = itemJpaRepository.save(linkItem("https://shop.example.com/products/pin-b"))
         saveTournamentItemFor(tournamentId, itemA, name = "A 옛값", price = 100_000, currency = "KRW", imageUrl = "https://i.example/a1.png")
         saveTournamentItemFor(tournamentId, itemB, name = "B 옛값", price = 200_000, currency = "KRW", imageUrl = "https://i.example/b1.png")
-        // 다른 참조의 갱신이 만든 새 기계 버전(v2) — 출전 포인터는 여전히 v1 이다.
-        val v2a = saveMachineVersion(itemA.getId(), "A 새값", 110_000)
+        saveMachineVersion(itemA.getId(), "A 새값", 110_000)
         saveMachineVersion(itemB.getId(), "B 새값", 210_000)
 
-        // 대기실(PENDING)은 파생 — 포인터가 v1 이어도 최신 기계 버전(v2) 값을 보여준다(#857).
         mockMvc
             .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
@@ -542,20 +523,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.pending.items[?(@.name == 'B 새값')]").exists())
             .andExpect(jsonPath("$.data.pending.items[?(@.name == 'A 옛값')]").doesNotExist())
 
-        // start = 겨루는 값 확정 — 파생 표시 버전(v2)으로 겨루고, 포인터도 v2 로 박제(repin)된다.
         mockMvc
             .perform(post("/api/v1/tournaments/$tournamentId/start").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.items[0].name").value("A 새값"))
             .andExpect(jsonPath("$.data.items[0].price").value(110_000))
             .andExpect(jsonPath("$.data.items[1].name").value("B 새값"))
-        val pinnedSnapshots = tournamentItemJpaRepository
-            .findAllByTournamentIdAndNotDeleted(tournamentId)
-            .map { itemSnapshotJpaRepository.findById(it.snapshotId).get() }
-        assertEquals(setOf("A 새값", "B 새값"), pinnedSnapshots.map { it.name }.toSet())
-        assertTrue(pinnedSnapshots.any { it.getId() == v2a.getId() }, "itemA 포인터가 표시 버전(v2)으로 repin 되어야 한다")
 
-        // 시작 후 또 새 기계 버전(v3)이 생겨도 진행 화면은 박제된 값(v2) 그대로 — 겨룬 값 = 화면 값.
         saveMachineVersion(itemA.getId(), "A 더새값", 120_000)
         mockMvc
             .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
@@ -607,10 +581,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-wish 는 남이 같은 링크를 담아 성공한 값이 있으면 내 포인터가 미완성이어도 담긴다`() {
-        // 회귀(담기·시작 판정 어긋남): 같은 링크는 한 item 을 공유하고, 카드는 포인터가 아니라 최신 기계 READY 를
-        // 보여준다(displayOf). 판정만 포인터를 보면 화면엔 가격이 떠 있는데 "채운 뒤 담아 주세요" 가 나가고,
-        // 같은 아이템으로 시작은 되는 어긋남이 생긴다. 담기·시작이 같은 값을 보는지 이 테스트가 고정한다.
+    fun `POST tournaments-id-items-wish 는 남이 같은 링크를 담아 성공한 값이 있으면 내 값이 미완성이어도 담긴다`() {
+        // 회귀(담기·시작 판정 어긋남): 판정이 카드 표시값과 다른 값을 보면 화면엔 가격이 떠 있는데 담기가 거부된다
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val itemId = saveIncompleteWishItem()
@@ -626,9 +598,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-wish 는 남이 담아 성공한 값이 없으면 미완성 포인터를 그대로 거부한다`() {
-        // 위 테스트의 대조군 — 최신 기계 READY 가 없으면 표시값이 곧 포인터라 판정이 그대로 미완성이어야 한다.
-        // 이게 없으면 위 테스트만으로는 "게이트를 통째로 지웠을 때"도 초록불이 된다.
+    fun `POST tournaments-id-items-wish 는 남이 담아 성공한 값이 없으면 미완성인 내 값을 그대로 거부한다`() {
+        // 대조군. 이게 없으면 위 테스트만으로는 게이트를 통째로 지워도 초록불이 된다
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val itemId = saveIncompleteWishItem()
@@ -650,11 +621,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         addItemsToTournament(mockMvc, tournamentId, userId, saveWishItem(name = "완성 아이템"))
-        val incompleteItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(incompleteItem.getId(), status = ItemStatus.INCOMPLETE, price = 10_000)
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
-        )
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(imageItem()), name = null, imageUrl = null, price = 10_000)
 
         mockMvc
             .perform(
@@ -1035,9 +1002,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc, "썸네일 토너먼트")
         // 오래된 → 최신 순으로 3개 등록 (tournament_item id 가 증가 = 최근). 최근 2장만 최근순으로 담겨야 한다.
-        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/1.jpg")
-        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/2.jpg")
-        saveTournamentItemFor(tournamentId, itemJpaRepository.save(Item()), imageUrl = "https://img.example.com/3.jpg")
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(imageItem()), imageUrl = "https://img.example.com/1.jpg")
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(imageItem()), imageUrl = "https://img.example.com/2.jpg")
+        saveTournamentItemFor(tournamentId, itemJpaRepository.save(imageItem()), imageUrl = "https://img.example.com/3.jpg")
 
         mockMvc
             .perform(
@@ -1054,13 +1021,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     fun `GET tournaments 에서 이미지 준비된 아이템이 없으면 thumbnailUrls 는 빈 배열이다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc, "미준비 토너먼트")
-        // 아직 파싱 중(PROCESSING)이라 이미지가 없는 아이템만 있는 경우
-        saveTournamentItemFor(
-            tournamentId,
-            itemJpaRepository.save(Item()),
-            status = ItemStatus.PROCESSING,
-            imageUrl = null,
-        )
+        saveParsingTournamentItem(tournamentId)
 
         mockMvc
             .perform(
@@ -1101,15 +1062,14 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments 에서 FAILED 스냅샷의 이미지는 thumbnailUrls 에서 제외된다`() {
+    fun `GET tournaments 에서 미완성 아이템의 이미지는 thumbnailUrls 에서 제외된다`() {
         val mockMvc = buildMockMvc()
-        val tournamentId = createTournament(mockMvc, "FAILED 이미지 토너먼트")
-        // 추출 실패(FAILED)했지만 imageUrl 이 남아있는 stale 스냅샷 — 카드에 노출되면 안 된다.
+        val tournamentId = createTournament(mockMvc, "미완성 이미지 토너먼트")
         saveTournamentItemFor(
             tournamentId,
-            itemJpaRepository.save(Item()),
-            status = ItemStatus.FAILED,
-            imageUrl = "https://img.example.com/stale.jpg",
+            itemJpaRepository.save(imageItem()),
+            price = null,
+            imageUrl = "https://img.example.com/incomplete.jpg",
         )
 
         mockMvc
@@ -1716,11 +1676,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments-id 는 PENDING 상태에서 PROCESSING 아이템이 status=PROCESSING 으로 목록에 포함되고 name·price·imageUrl 은 없다`() {
+    fun `GET tournaments-id 는 PENDING 상태에서 파싱 중인 아이템이 status=PARSING 으로 목록에 포함되고 itemId·name·price·imageUrl 은 없다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val processingItem = itemJpaRepository.save(Item())
-        saveTournamentItemFor(tournamentId, processingItem, status = ItemStatus.PROCESSING)
+        saveParsingTournamentItem(tournamentId)
 
         mockMvc
             .perform(
@@ -1729,8 +1688,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.status").value("PENDING"))
             .andExpect(jsonPath("$.data.pending.items.length()").value(1))
-            .andExpect(jsonPath("$.data.pending.items[0].status").value("PROCESSING"))
-            .andExpect(jsonPath("$.data.pending.items[0].itemId").value(processingItem.getId()))
+            .andExpect(jsonPath("$.data.pending.items[0].status").value("PARSING"))
+            .andExpect(jsonPath("$.data.pending.items[0].itemId").doesNotExist())
             .andExpect(jsonPath("$.data.pending.items[0].name").doesNotExist())
             .andExpect(jsonPath("$.data.pending.items[0].price").doesNotExist())
             .andExpect(jsonPath("$.data.pending.items[0].imageUrl").doesNotExist())
@@ -2025,10 +1984,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val (rootId, cloneId, rootTi) = cloneFromCompletedRoot(mockMvc)
         // 원본 소유자(userId)의 wish 에 memo 를 심는다.
-        val snapshotId = tournamentItemJpaRepository.findById(rootTi).get().snapshotId
-        val itemId = itemSnapshotJpaRepository.findById(snapshotId).get().itemId
+        val itemId = requireNotNull(tournamentItemJpaRepository.findById(rootTi).get().itemId)
         val wishId = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first().getId()
-        wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = "원본 메모")
+        wishPersistenceService.updateMemo(UpdateWishMemoCommand(userId = userId, wishId = wishId, memo = "원본 메모"))
 
         // 원본 조회(소유자)에는 memo 가 보인다.
         mockMvc
@@ -2334,9 +2292,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createTournament(mockMvc)
         val otherItem = saveWishItem(otherUserId)
         tournamentUserJpaRepository.save(TournamentUser(tournamentId = tournamentId, userId = otherUserId))
-        // 위시 추가는 소유자 전용이므로 DB에 직접 삽입해 다른 유저가 추가한 상황을 구성. 출전 시점 고정 snapshot 을 함께 시딩한다(NOT NULL).
-        val otherSnapshot = saveSnapshot(otherItem, status = ItemStatus.READY)
-        tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = otherUserId, snapshotId = otherSnapshot.getId()))
+        // 위시 추가는 소유자 전용이라 다른 유저가 추가한 상황은 DB 에 직접 심는다
+        tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = otherUserId, itemId = otherItem))
         val itemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
 
         mockMvc
@@ -2367,13 +2324,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId1 = createTournament(mockMvc, "토너먼트1")
         val tournamentId2 = createTournament(mockMvc, "토너먼트2")
-        // 토너먼트 소속만 검증하는 시나리오라 표시값은 무관하다. 출전 시점 고정 snapshot 만 시딩해 연결한다(NOT NULL).
-        val snapshotOfTournament2 = saveSnapshot(999L, status = ItemStatus.READY)
-        val itemOfTournament2 =
-            tournamentItemJpaRepository
-                .save(
-                    TournamentItem(tournamentId = tournamentId2, userId = userId, snapshotId = snapshotOfTournament2.getId()),
-                ).getId()
+        val itemOfTournament2 = saveParsingTournamentItem(tournamentId2).getId()
 
         mockMvc
             .perform(
@@ -2383,52 +2334,52 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 는 FAILED 아이템을 수정하고 READY 로 전환한다`() {
+    fun `PATCH tournaments-id-items-itemId 는 파싱 실패한 아이템에 값을 채우면 요청 링크로 아이템을 확정하고 READY 가 된다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val failedItem = itemJpaRepository.save(Item())
-        // imageUrl 있는 FAILED — 보정 시 imageUrl 파라미터를 보내지 않아도 apply 가 기존 값을 유지해 READY 불변식 통과
-        val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED, imageUrl = "https://img.example.com/a.png")
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
-        )
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val link = "https://shop.example.com/products/${UUID.randomUUID()}"
+        val tournamentItemId = saveParsingTournamentItem(tournamentId, link = link, failed = true).getId()
 
         mockMvc
             .perform(
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .file(MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3)))
                     .param("name", "수정된 이름")
                     .param("price", "50000")
                     .param("currency", "KRW")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        // 수기 수정(#825 결정 4)은 기존 행을 고치지 않고 MANUAL 새 버전으로 쌓여 pin 이 옮겨진다.
-        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
-        assertNotEquals(snapshot.getId(), repinned.snapshotId)
-        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
-        assertEquals("수정된 이름", manual.name)
-        assertEquals(50000, manual.price)
-        assertEquals("KRW", manual.currency)
-        assertEquals(ItemStatus.READY, manual.status)
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
-        assertEquals(userId, manual.createdBy)
-        // 기존 FAILED 행은 이력으로 불변.
-        assertEquals(ItemStatus.FAILED, itemSnapshotJpaRepository.findById(snapshot.getId()).get().status)
+        val itemId = requireNotNull(tournamentItemJpaRepository.findById(tournamentItemId).get().itemId)
+        assertEquals(normalizedOf(link).asCanonical(), itemJpaRepository.findById(itemId).get().canonicalUrl)
+        val userVersion = latestVersionOf(itemId)
+        assertEquals("수정된 이름", userVersion.name)
+        assertEquals(50000, userVersion.price)
+        assertEquals("KRW", userVersion.currency)
+        assertTrue(userVersion.isReady())
+        assertTrue(userVersion.userInput)
+        assertEquals(userId, userVersion.createdBy)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.itemId").value(itemId))
+            .andExpect(jsonPath("$.data.status").value("READY"))
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 있으면 가격 없는 미완성 pin 에도 이름만 수정이 성공한다`() {
-        // 회귀(#1006 과 같은 축): PENDING 카드는 pin 이 아니라 표시값을 그린다. base 가 pin 이면 화면엔 가격이
-        // 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 으로 튕긴다. 표시값 base 로 카드에 보인 가격이 병합되는지 본다.
+    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 있으면 가격 없는 내 미완성 값에도 이름만 수정이 성공한다`() {
+        // 회귀(#1006 과 같은 축): base 가 카드 표시값이 아니면 화면엔 가격이 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 이 된다
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val incompleteItem = itemJpaRepository.save(Item())
+        val incompleteItem = itemJpaRepository.save(imageItem())
         val tournamentItemId = saveTournamentItemFor(
             tournamentId,
             incompleteItem,
-            status = ItemStatus.INCOMPLETE,
             name = "미완성 이름",
+            price = null,
             imageUrl = "https://img.example.com/i.png",
         ).getId()
         saveMachineReadySnapshot(incompleteItem.getId())
@@ -2440,23 +2391,21 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
-        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
-        assertEquals("내가 고친 이름", manual.name)
-        assertEquals(89_000, manual.price, "안 보낸 가격은 카드가 보여주던 표시값에서 병합돼야 한다")
+        val userVersion = latestVersionOf(incompleteItem.getId())
+        assertEquals("내가 고친 이름", userVersion.name)
+        assertEquals(89_000, userVersion.price, "안 보낸 가격은 카드가 보여주던 표시값에서 병합돼야 한다")
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 없으면 가격 없는 미완성 pin 의 이름만 수정을 400 으로 거부한다`() {
-        // 위 테스트의 대조군 — 표시값이 곧 pin 이면 병합해도 가격이 비어 거부돼야 한다(입력 계약 400).
+    fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 없으면 가격 없는 내 미완성 값의 이름만 수정을 400 으로 거부한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val incompleteItem = itemJpaRepository.save(Item())
+        val incompleteItem = itemJpaRepository.save(imageItem())
         val tournamentItemId = saveTournamentItemFor(
             tournamentId,
             incompleteItem,
-            status = ItemStatus.INCOMPLETE,
             name = "미완성 이름",
+            price = null,
             imageUrl = "https://img.example.com/i.png",
         ).getId()
 
@@ -2469,8 +2418,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 수기 수정하면 200 과 MANUAL 새 버전으로 교체된다`() {
-        // 수기 수정 상시 허용(#825 결정 4) — READY 는 더 이상 409 가 아니다.
+    fun `PATCH tournaments-id-items-itemId 에서 READY 아이템도 사용자 입력하면 200 과 사용자 입력 새 버전이 쌓인다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val readyItemId = saveWishItem()
@@ -2484,42 +2432,35 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
-        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
-        assertEquals("수정 시도", manual.name)
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+        val userVersion = latestVersionOf(readyItemId)
+        assertEquals("수정 시도", userVersion.name)
+        assertTrue(userVersion.userInput)
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 PROCESSING 아이템은 일부 필드만 보내면 병합 필수값 부재로 400 이다`() {
-        // 상태 충돌(409)이 아니다(#825 결정 4) — PROCESSING base 는 값이 비어 있어 병합 결과 필수값 부재(400)로 떨어질 뿐,
-        // 필수값을 다 채우면 진행 중이어도 수정된다(위 READY 케이스와 동일 규칙).
+    fun `PATCH tournaments-id-items-itemId 에서 파싱 중인 아이템은 값을 다 채워도 409 이고 아이템이 확정되지 않는다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val processingItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(processingItem.getId(), status = ItemStatus.PROCESSING)
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
-        )
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val tournamentItemId = saveParsingTournamentItem(tournamentId).getId()
 
         mockMvc
             .perform(
                 multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
-                    .param("name", "수정 시도")
+                    .file(MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3)))
+                    .param("name", "직접 입력한 이름")
+                    .param("price", "50000")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
-            ).andExpect(status().isBadRequest)
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("ITEM-008"))
+
+        assertNull(tournamentItemJpaRepository.findById(tournamentItemId).get().itemId)
     }
 
     @Test
     fun `PATCH tournaments-id-items-itemId 에서 IN_PROGRESS 토너먼트이면 409 를 반환한다`() {
         val mockMvc = buildMockMvc()
         val (tournamentId, item1Id) = startTournamentWith2Items(mockMvc)
-        // 토너먼트가 IN_PROGRESS 라 snapshot 검증 전 notPending(409)에서 막힌다 — 고정 snapshot 만 시딩해 연결하면 된다(NOT NULL).
-        val failedItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED)
-        tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()))
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).last().getId()
+        val tournamentItemId = saveParsingTournamentItem(tournamentId, failed = true).getId()
 
         mockMvc
             .perform(
@@ -2536,11 +2477,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         tournamentUserJpaRepository.save(TournamentUser(tournamentId = tournamentId, userId = otherUserId))
-        // 등록자(otherUserId)가 아닌 userId 의 PATCH 라 snapshot 검증 전 forbidden(403)에서 막힌다 — 고정 snapshot 만 시딩해 연결하면 된다(NOT NULL).
-        val failedItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED)
-        tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = otherUserId, snapshotId = snapshot.getId()))
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val tournamentItemId = saveParsingTournamentItem(tournamentId, owner = otherUserId, failed = true).getId()
 
         mockMvc
             .perform(
@@ -2551,16 +2488,12 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 는 이름이 있는 FAILED 아이템에 가격만 보내면 이름을 유지하며 200 을 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 는 이름이 있는 미완성 아이템에 가격만 보내면 이름을 유지하며 200 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        // 이름과 imageUrl 이 이미 있는 FAILED snapshot — 가격만 보정해도 이름과 이미지가 유지되는지 검증한다(apply 가 기존 값 보존).
-        val failedItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED, name = "기존 이름", imageUrl = "https://img.example.com/a.png")
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
-        )
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val incompleteItem = itemJpaRepository.save(imageItem())
+        val tournamentItemId =
+            saveTournamentItemFor(tournamentId, incompleteItem, name = "기존 이름", price = null, imageUrl = "https://img.example.com/a.png").getId()
 
         mockMvc
             .perform(
@@ -2570,24 +2503,17 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
 
-        // 병합은 MANUAL 새 버전에서 일어난다 — base 의 이름·이미지가 유지된 채 가격만 바뀐 새 버전이 pin 된다.
-        val repinned = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first()
-        val manual = itemSnapshotJpaRepository.findById(repinned.snapshotId).get()
-        assertEquals("기존 이름", manual.name)
-        assertEquals(50000, manual.price)
-        assertEquals(ItemStatus.READY, manual.status)
+        val userVersion = latestVersionOf(incompleteItem.getId())
+        assertEquals("기존 이름", userVersion.name)
+        assertEquals(50000, userVersion.price)
+        assertTrue(userVersion.isReady())
     }
 
     @Test
-    fun `PATCH tournaments-id-items-itemId 에서 이름 없이 수정하면 400 을 반환한다`() {
+    fun `PATCH tournaments-id-items-itemId 에서 파싱 실패한 아이템을 이름 없이 수정하면 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val failedItem = itemJpaRepository.save(Item())
-        val snapshot = saveSnapshot(failedItem.getId(), status = ItemStatus.FAILED)
-        tournamentItemJpaRepository.save(
-            TournamentItem(tournamentId = tournamentId, userId = userId, snapshotId = snapshot.getId()),
-        )
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val tournamentItemId = saveParsingTournamentItem(tournamentId, failed = true).getId()
 
         mockMvc
             .perform(
@@ -2598,7 +2524,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-link 는 참여자이면 PENDING 아이템을 생성하고 tournamentItemId 를 반환한다`() {
+    fun `POST tournaments-id-items-link 는 처음 보는 링크면 아이템 없이 출전을 올리고 파싱을 요청한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
 
@@ -2618,10 +2544,17 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             assertEquals(1, it.size)
         }.first()
         assertEquals(tournamentItemId, tournamentItem.getId())
-        // item 정체성은 snapshot 단일 출처이므로 tournament_item 의 고정 snapshot 으로 itemId 에 도달해 최신 snapshot 을 조회한다.
-        val fixedSnapshot = itemSnapshotJpaRepository.findById(tournamentItem.snapshotId).get()
-        val snapshot = itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(fixedSnapshot.itemId)
-        assertEquals(ItemStatus.PENDING, snapshot?.status)
+        assertNull(tournamentItem.itemId)
+        assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(tournamentItem.slot))
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.status").value("PARSING"))
+            .andExpect(jsonPath("$.data.itemId").doesNotExist())
+            .andExpect(jsonPath("$.data.sourceUrl").value("https://example.com/product"))
     }
 
     @Test
@@ -2637,8 +2570,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .content("""{"url":"https://www.musinsa.com/products/4400001"}"""),
             ).andExpect(status().isOk)
 
-        // override 몰이라 추적 쿼리가 달라도 같은 정체성으로 정규화된다 — raw link 문자열 비교였다면 통과했을
-        // 재등록이 정체성(itemId) 기준 중복 검사(#825 공유 활성화)로 막힌다.
+        // 파싱 중인 출전도 정규화한 요청 URL 로 겹침을 본다. raw 문자열 비교였다면 추적 쿼리만 다른 재등록이 통과한다
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/items/link")
@@ -2940,130 +2872,83 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     )
 
     // 위시 없이 item 정체성만 저장 — wish 소유 확인 실패(403) 시나리오용. 표시값·상태는 snapshot 소관이라 여기선 빈 item 만.
-    private fun saveItem(): Long = itemJpaRepository.save(Item()).getId()
+    private fun saveItem(): Long = itemJpaRepository.save(imageItem()).getId()
 
-    // 파생(#857) 검증용 — 다른 참조의 갱신이 만든 새 기계(SERVER) READY 버전을 시딩한다. 포인터는 안 움직인다.
+    // 같은 상품을 다른 카드의 요청이 새로 파싱해 성공한 공유 값
     private fun saveMachineVersion(
         itemId: Long,
         name: String,
         price: Int,
     ): ItemSnapshot =
         itemSnapshotJpaRepository.save(
-            ItemSnapshot(
-                itemId = itemId,
-                name = name,
-                price = price,
-                currency = "KRW",
-                imageUrl = "https://i.example/$price.png",
-                status = ItemStatus.READY,
-                extractedAt = LocalDateTime.now(),
-                source = ItemSnapshotSource.SERVER,
-            ),
+            itemVersion(itemId = itemId, name = name, price = price, imageUrl = "https://i.example/$price.png"),
         )
 
-    // 조회 경로(getTournamentById·getTournamentItem)가 고정 snapshot 을 읽어 표시값·상태를 snapshot 에 담아 연결함
+    // 값은 기본이 READY. 필드를 null 로 넘기면 INCOMPLETE
     private fun saveTournamentItemFor(
         tournamentId: Long,
         item: Item,
-        status: ItemStatus = ItemStatus.READY,
-        name: String? = null,
-        price: Int? = null,
-        currency: String? = null,
-        imageUrl: String? = null,
+        name: String? = "상품",
+        price: Int? = 1_000,
+        currency: String? = "KRW",
+        imageUrl: String? = "https://img.example.com/p.png",
         owner: UUID = userId,
     ): TournamentItem {
-        val snapshot =
-            itemSnapshotJpaRepository.save(
-                ItemSnapshot(
-                    itemId = item.getId(),
-                    name = name,
-                    price = price,
-                    currency = currency,
-                    imageUrl = imageUrl,
-                    status = status,
-                    // READY·INCOMPLETE 는 추출이 값을 남긴 상태라 추출시각이 있다(saveSnapshot 과 같은 규칙).
-                    extractedAt = if (status == ItemStatus.READY || status == ItemStatus.INCOMPLETE) LocalDateTime.now() else null,
-                ),
-            )
-        return tournamentItemJpaRepository.save(
-            TournamentItem(
-                tournamentId = tournamentId,
-                userId = owner,
-                snapshotId = snapshot.getId(),
-            ),
+        itemSnapshotJpaRepository.save(
+            itemVersion(itemId = item.getId(), name = name, price = price, currency = currency, imageUrl = imageUrl, createdBy = owner),
         )
+        return tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = owner, itemId = item.getId()))
     }
 
-    // tournament_item 의 snapshotId 가 가리킬 고정 버전용
-    private fun saveSnapshot(
-        itemId: Long,
-        status: ItemStatus,
-        name: String? = null,
-        price: Int? = null,
-        currency: String? = null,
-        imageUrl: String? = null,
-    ): ItemSnapshot =
-        itemSnapshotJpaRepository.save(
-            ItemSnapshot(
-                itemId = itemId,
-                name = name,
-                price = price,
-                currency = currency,
-                imageUrl = imageUrl,
-                status = status,
-                // READY·INCOMPLETE 는 추출이 값을 남긴 상태라 추출시각이 있다(ItemSnapshot 의 두 불변식).
-                extractedAt = if (status == ItemStatus.READY || status == ItemStatus.INCOMPLETE) LocalDateTime.now() else null,
-            ),
-        )
+    // 아이템이 확정되기 전의 출전. 상태는 최근 아웃박스가 정한다(진행 중이면 PARSING, 실패면 FAILED)
+    private fun saveParsingTournamentItem(
+        tournamentId: Long,
+        owner: UUID = userId,
+        link: String = "https://shop.example.com/products/${UUID.randomUUID()}",
+        failed: Boolean = false,
+    ): TournamentItem {
+        val tournamentItem = tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = owner, itemId = null))
+        val outbox = ItemParseOutbox.of(tournamentItem.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(link)))
+        if (failed) {
+            outbox.claim()
+            outbox.fail()
+        }
+        itemParseOutboxRepository.save(outbox)
+        return tournamentItem
+    }
 
-    // 위시리스트에도 등록된 READY 아이템 생성 — /items/wish 엔드포인트용. 이미지 등록류(link 없이 sourceImageKey)라 sourceUrl 이 없다.
-    // 등록 API 를 타지 않고 행을 직접 심는다 — 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이고,
+    private fun latestVersionOf(itemId: Long): ItemSnapshot =
+        itemSnapshotJpaRepository.findByItemIdInAndDeletedAtIsNullOrderByIdAsc(listOf(itemId)).last()
+
+    // 필요한 것은 "이미지로 만들어진 READY 위시" 라는 상태뿐이라 등록 API 를 타지 않고 행을 직접 심는다.
     // 등록 경로 자체(발급·확정)는 TournamentItemImagePresignedIntegrationTest 가 따로 덮는다.
-    // 적재 후 markExtracted 로 전이시켜 추출값을 채운다. 표시값·상태는 활성 snapshot 이 보유한다.
     private fun saveWishItem(owner: UUID = userId, name: String = "테스트 아이템", price: Int = 10_000): Long {
-        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
-        wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        itemParsingService.markExtracted(
-            entityManager.claimParseOutbox(snapshot),
-            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(
+            itemVersion(itemId = item.getId(), name = name, price = price, imageUrl = "https://img.example.com/a.png", createdBy = owner),
         )
+        wishJpaRepository.save(Wish(userId = owner, itemId = item.getId()))
         return item.getId()
     }
 
-    // 같은 item 에 기계 READY 버전을 하나 더 쌓는다 — 다른 사용자가 같은 링크를 담아 새 추출이 성공한 상황이다
-    // (attachOrNull 이 미완성·실패를 재사용 대상으로 안 봐서 새 PENDING 을 만들고, 그게 성공하면 이 모양이 된다).
-    // source 를 markExtracted 가 채우게 두는 이유: 표시값 파생은 기계 READY(SERVER·SERVER_LLM)만 후보로 본다.
+    // 다른 사용자가 같은 상품을 담아 파싱이 성공한 공유 READY. 표시값은 기계 출처 READY 만 공유 후보로 본다
     private fun saveMachineReadySnapshot(
         itemId: Long,
         name: String = "남이 채운 이름",
         price: Int = 89_000,
     ) {
-        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(itemId, requestedBy = UUID.randomUUID()))
-        itemParsingService.markExtracted(
-            entityManager.claimParseOutbox(snapshot),
-            // extractionMethod 를 실어야 source 가 SERVER 로 남는다 - 표시값 파생은 출처가 기계인 READY 만 후보로
-            // 보므로, 이걸 빼면 status 만 READY 인 "출처 불명" 버전이 되어 파생에 안 걸린다(실제 추출은 항상 싣는다).
-            ProductSnapshot(
-                name = name,
-                price = price,
-                currency = "KRW",
-                imageUrl = "https://img.example.com/b.png",
-                extractionMethod = "STRUCTURED",
-            ),
+        itemSnapshotJpaRepository.save(
+            itemVersion(itemId = itemId, name = name, price = price, imageUrl = "https://img.example.com/b.png"),
         )
     }
 
-    // 위시의 활성 snapshot 이 미완성(INCOMPLETE)인 아이템 — 가격만 빠진 부분 추출이라 markExtracted 가 그렇게 판정한다(#944).
-    // 적재는 saveWishItem 과 같은 이유로 행을 직접 심는다(등록 경로는 presigned 통합 테스트가 덮는다).
+    // 가격만 빠진 부분 추출(#944)이라 INCOMPLETE
     private fun saveIncompleteWishItem(owner: UUID = userId, name: String = "가격 없는 아이템"): Long {
-        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = owner))
-        wishJpaRepository.save(Wish(userId = owner, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        itemParsingService.markExtracted(
-            entityManager.claimParseOutbox(snapshot),
-            ProductSnapshot(name = name, imageUrl = "https://img.example.com/a.png"),
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(
+            itemVersion(itemId = item.getId(), name = name, price = null, imageUrl = "https://img.example.com/a.png", createdBy = owner),
         )
+        wishJpaRepository.save(Wish(userId = owner, itemId = item.getId()))
         return item.getId()
     }
 
@@ -3096,7 +2981,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val tournamentId = createTournament(mockMvc)
         val sourceUrl = "https://www.nike.com/kr/t/air-max/example"
         // link(원본 URL)는 정체성이라 item 에, 표시값은 READY snapshot 에 둔다.
-        val linkItem = itemJpaRepository.save(Item(link = ProductLink.parse(sourceUrl)))
+        val linkItem = itemJpaRepository.save(linkItem(sourceUrl))
         saveTournamentItemFor(tournamentId, linkItem, name = "나이키", price = 100_000, currency = "KRW")
         val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
 
@@ -3110,19 +2995,17 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET tournaments-id-items-tournamentItemId 는 PROCESSING 아이템이면 name·price·imageUrl 이 응답에 없고 status 가 PROCESSING 이다`() {
+    fun `GET tournaments-id-items-tournamentItemId 는 파싱이 실패한 아이템이면 name·price·imageUrl 이 응답에 없고 status 가 FAILED 이다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
-        val processingItem = itemJpaRepository.save(Item())
-        saveTournamentItemFor(tournamentId, processingItem, status = ItemStatus.PROCESSING)
-        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val tournamentItemId = saveParsingTournamentItem(tournamentId, failed = true).getId()
 
         mockMvc
             .perform(
                 get("/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.status").value("PROCESSING"))
+            .andExpect(jsonPath("$.data.status").value("FAILED"))
             .andExpect(jsonPath("$.data.name").doesNotExist())
             .andExpect(jsonPath("$.data.price").doesNotExist())
             .andExpect(jsonPath("$.data.imageUrl").doesNotExist())
@@ -3145,7 +3028,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.memo").doesNotExist())
 
         val wish = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first()
-        wishPersistenceService.updateMemo(userId = userId, wishId = wish.getId(), memo = "생일 선물 후보")
+        wishPersistenceService.updateMemo(UpdateWishMemoCommand(userId = userId, wishId = wish.getId(), memo = "생일 선물 후보"))
 
         mockMvc
             .perform(
@@ -3164,7 +3047,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val itemId = saveWishItem(name = "나이키 에어맥스", price = 129_000)
         addItemsToTournament(mockMvc, tournamentId, userId, itemId)
         val wish = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).first()
-        wishPersistenceService.updateMemo(userId = userId, wishId = wish.getId(), memo = "방장의 메모")
+        wishPersistenceService.updateMemo(UpdateWishMemoCommand(userId = userId, wishId = wish.getId(), memo = "방장의 메모"))
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
         mockMvc
             .perform(
