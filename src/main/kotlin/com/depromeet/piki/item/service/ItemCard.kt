@@ -25,7 +25,10 @@ sealed interface ItemCard {
 
     fun userInputValues(input: UserInput): UserInputValues {
         if (isParsing()) throw ItemException.parsingInProgress()
-        return UserInputValues.merge(display, input)
+        return when (this) {
+            is Unresolved -> UserInputValues.of(input)
+            is Resolved -> UserInputValues.of(input.filledFrom(display))
+        }
     }
 
     data class Unresolved(
