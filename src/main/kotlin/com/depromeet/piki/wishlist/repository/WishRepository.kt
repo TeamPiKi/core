@@ -28,7 +28,7 @@ interface WishRepository {
     // 삭제되지 않은 단건 조회. 없으면 null.
     fun findById(id: Long): Wish?
 
-    // 새로고침·수기 수정·메모를 직렬화한다. 삭제된 행은 제외(없으면 null).
+    // 새로고침·사용자 입력·메모를 직렬화한다. 삭제된 행은 제외(없으면 null).
     fun findByIdForUpdate(id: Long): Wish?
 
     // 삭제되지 않은 위시들을 id 목록으로 조회. 존재하는 것만 반환하므로(없는 id 는 빠진다)

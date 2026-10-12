@@ -14,7 +14,7 @@ interface ItemSnapshotRepository {
         at: LocalDateTime,
     ): List<ItemSnapshot>
 
-    // 출처 미상 행은 서버 추출인지 수기인지 알 수 없어 가격 이력에서 뺀다.
+    // 출처 미상 행은 서버 추출인지 사용자 입력인지 알 수 없어 가격 이력에서 뺀다.
     fun findPriceHistoryByItemId(
         itemId: Long,
         limit: Int,

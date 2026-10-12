@@ -9,7 +9,7 @@ class ItemVersions private constructor(
 ) {
     val itemId: Long get() = versions.first().itemId
 
-    // 내 값과 기계 READY 중 더 새로운 것. 내 수기는 그보다 새 기계 READY 에만 진다
+    // 내 값과 기계 READY 중 더 새로운 것. 내 입력은 그보다 새 기계 READY 에만 진다
     fun displayFor(viewer: UUID): ItemSnapshot {
         val mine = versions.lastOrNull { it.isOwnedBy(viewer) }
         val machineReady = versions.lastOrNull { !it.userInput && it.isReady() }
