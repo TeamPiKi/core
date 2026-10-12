@@ -2,9 +2,6 @@ package com.depromeet.piki.wishlist.service
 
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
-import com.depromeet.piki.image.domain.ProductImageKey
-import com.depromeet.piki.image.domain.ProductImage
-import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemErrorCode
@@ -12,21 +9,25 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemRegistrar
-import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
-import com.depromeet.piki.wishlist.domain.WishCursor
-import com.depromeet.piki.wishlist.domain.WishDeleteIds
 import com.depromeet.piki.wishlist.domain.WishException
-import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.repository.WishRepository
-import com.depromeet.piki.wishlist.service.dto.WishDetail
-import com.depromeet.piki.wishlist.service.dto.WishWithItem
-import com.depromeet.piki.wishlist.service.dto.WishlistPage
+import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
+import com.depromeet.piki.wishlist.service.dto.DeleteWishCommand
+import com.depromeet.piki.wishlist.service.dto.DeleteWishesCommand
+import com.depromeet.piki.wishlist.service.dto.GetWishQuery
+import com.depromeet.piki.wishlist.service.dto.GetWishlistQuery
+import com.depromeet.piki.wishlist.service.dto.PresignWishImageUploadsCommand
+import com.depromeet.piki.wishlist.service.dto.RecoverWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.RefreshWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
+import com.depromeet.piki.wishlist.service.dto.WishDetailResult
+import com.depromeet.piki.wishlist.service.dto.WishResult
+import com.depromeet.piki.wishlist.service.dto.WishlistResult
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 @Service
@@ -43,7 +44,7 @@ class WishlistService(
     private val userService: UserService,
     private val sourcePlatformResolver: SourcePlatformResolver,
 ) {
-    private fun WishWithItem.withSourcePlatform(): WishWithItem = copy(sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink))
+    private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink))
 
     // TODO AOP
     private fun requireMember(userId: UUID) {
@@ -51,47 +52,32 @@ class WishlistService(
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
-    fun registerFromUrl(
-        rawUrl: String,
-        userId: UUID,
-    ): WishWithItem {
-        requireMember(userId)
-        val link = ProductLink.parse(rawUrl)
-        wishPersistenceService.rejectIfAlreadyRegistered(userId, link)
-        itemRegistrar.accept(link, userId)
-        return wishPersistenceService.persist(userId, link).withSourcePlatform()
+    fun registerFromUrl(command: RegisterWishFromUrlCommand): WishResult {
+        requireMember(command.userId)
+        wishPersistenceService.rejectIfAlreadyRegistered(command)
+        itemRegistrar.accept(command.link, command.userId)
+        return wishPersistenceService.persist(command).withSourcePlatform()
     }
 
-    fun presignImageUploads(
-        formats: List<UploadFormat>,
-        userId: UUID,
-    ): List<PresignedRawUpload> {
-        requireMember(userId)
-        if (formats.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        itemQuotaGuard.consume(userId, formats.size, ItemErrorCode.QUOTA_EXCEEDED)
-        return imagePresignService.presignProductUploads(formats)
+    fun presignImageUploads(command: PresignWishImageUploadsCommand): List<PresignedRawUpload> {
+        requireMember(command.userId)
+        if (command.uploadFormats.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        itemQuotaGuard.consume(command.userId, command.uploadFormats.size, ItemErrorCode.QUOTA_EXCEEDED)
+        return imagePresignService.presignProductUploads(command.uploadFormats)
     }
 
-    fun confirmImageRegistration(
-        imageKeys: List<ProductImageKey>,
-        userId: UUID,
-    ): List<WishWithItem> {
-        requireMember(userId)
-        if (imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
-        imagePresignService.verifyUploaded(imageKeys)
-        return wishPersistenceService.registerImages(imageKeys, userId).map { it.withSourcePlatform() }
+    fun confirmImageRegistration(command: ConfirmWishImageRegistrationCommand): List<WishResult> {
+        requireMember(command.userId)
+        if (command.imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        imagePresignService.verifyUploaded(command.imageKeys)
+        return wishPersistenceService.registerImages(command).map { it.withSourcePlatform() }
     }
 
     @Transactional(readOnly = true)
-    fun getWishlist(
-        userId: UUID,
-        rawCursor: String?,
-        rawSize: Int?,
-    ): WishlistPage {
-        requireMember(userId)
-        val cursor = WishCursor.parse(rawCursor)
-        val size = WishlistSize.of(rawSize).value
-        val fetched = wishRepository.findPage(userId, cursor, size + 1)
+    fun getWishlist(query: GetWishlistQuery): WishlistResult {
+        requireMember(query.userId)
+        val size = query.size.value
+        val fetched = wishRepository.findPage(query.userId, query.cursor, size + 1)
         val hasNext = fetched.size > size
         val pageWishes = fetched.take(size)
 
@@ -99,7 +85,7 @@ class WishlistService(
         val itemsById = itemRepository.findByIds(pageWishes.mapNotNull { it.itemId }).associateBy { it.getId() }
         val entries =
             pageWishes.map { wish ->
-                WishWithItem(
+                WishResult(
                     wish = wish,
                     item = wish.itemId?.let { itemsById[it] ?: error("wish ${wish.getId()} 의 item $it 가 없다") },
                     card = cardByQuery.getValue(wish.cardQuery()),
@@ -112,20 +98,17 @@ class WishlistService(
                 ?.getId()
                 ?.toString()
                 .takeIf { hasNext }
-        return WishlistPage(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
+        return WishlistResult(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
     }
 
     @Transactional(readOnly = true)
-    fun getWish(
-        userId: UUID,
-        wishId: Long,
-    ): WishDetail {
-        requireMember(userId)
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
+    fun getWish(query: GetWishQuery): WishDetailResult {
+        requireMember(query.userId)
+        val wish = wishRepository.findById(query.wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(query.userId)
         val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
         val card = itemCardService.cardOf(wish.cardQuery())
-        return WishDetail(
+        return WishDetailResult(
             wish = wish,
             item = item,
             card = card,
@@ -135,68 +118,36 @@ class WishlistService(
     }
 
     // S3 업로드가 트랜잭션 안에 들어가지 않게 영속화만 applyUserInput 에 맡긴다
-    fun recoverWishItem(
-        userId: UUID,
-        wishId: Long,
-        name: String?,
-        price: Int?,
-        currency: String?,
-        image: MultipartFile?,
-        memo: String?,
-    ): WishWithItem {
-        requireMember(userId)
-        if (listOfNotNull(name, price, currency, image).isEmpty()) {
-            memo?.let {
-                return wishPersistenceService.updateMemo(userId = userId, wishId = wishId, memo = it).withSourcePlatform()
-            }
-        }
-        val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
-        productImage?.let {
-            wishPersistenceService.validateUserInput(userId, wishId, name, price, currency)
-        }
+    fun recoverWishItem(command: RecoverWishItemCommand): WishResult {
+        requireMember(command.userId)
+        command.memoOnly()?.let { return wishPersistenceService.updateMemo(it).withSourcePlatform() }
+        command.image?.let { wishPersistenceService.validateUserInput(command) }
         val imageUrl =
-            productImage?.let {
+            command.image?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        return wishPersistenceService.applyUserInput(
-            userId = userId,
-            wishId = wishId,
-            name = name,
-            price = price,
-            imageUrl = imageUrl,
-            currency = currency,
-            memo = memo,
-        ).withSourcePlatform()
+        return wishPersistenceService.applyUserInput(command.toUserInput(imageUrl)).withSourcePlatform()
     }
 
-    fun refreshWishItem(
-        userId: UUID,
-        wishId: Long,
-    ): WishWithItem {
-        requireMember(userId)
-        itemQuotaGuard.consume(userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
-        return wishPersistenceService.refresh(userId = userId, wishId = wishId).withSourcePlatform()
+    fun refreshWishItem(command: RefreshWishItemCommand): WishResult {
+        requireMember(command.userId)
+        itemQuotaGuard.consume(command.userId, 1, ItemErrorCode.QUOTA_EXCEEDED)
+        return wishPersistenceService.refresh(command).withSourcePlatform()
     }
 
     @Transactional
-    fun deleteWish(
-        userId: UUID,
-        wishId: Long,
-    ) {
-        requireMember(userId)
-        val wish = wishRepository.findById(wishId) ?: return
-        wish.verifyOwnedBy(userId)
+    fun deleteWish(command: DeleteWishCommand) {
+        requireMember(command.userId)
+        val wish = wishRepository.findById(command.wishId) ?: return
+        wish.verifyOwnedBy(command.userId)
         wish.delete()
     }
 
     @Transactional
-    fun deleteWishes(
-        userId: UUID,
-        wishIds: WishDeleteIds,
-    ) {
-        requireMember(userId)
-        val wishes = wishRepository.findAllByIds(wishIds.values)
-        wishes.forEach { it.verifyOwnedBy(userId) }
+    fun deleteWishes(command: DeleteWishesCommand) {
+        requireMember(command.userId)
+        val wishes = wishRepository.findAllByIds(command.wishDeleteIds.values)
+        wishes.forEach { it.verifyOwnedBy(command.userId) }
         wishes.forEach { it.delete() }
     }
 

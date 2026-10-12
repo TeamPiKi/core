@@ -1,7 +1,6 @@
 package com.depromeet.piki.wishlist.service
 
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
-import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.NormalizedInput
@@ -19,7 +18,13 @@ import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
 import com.depromeet.piki.wishlist.repository.WishRepository
-import com.depromeet.piki.wishlist.service.dto.WishWithItem
+import com.depromeet.piki.wishlist.service.dto.ApplyWishUserInputCommand
+import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
+import com.depromeet.piki.wishlist.service.dto.RecoverWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.RefreshWishItemCommand
+import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
+import com.depromeet.piki.wishlist.service.dto.UpdateWishMemoCommand
+import com.depromeet.piki.wishlist.service.dto.WishResult
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -38,33 +43,24 @@ class WishPersistenceService(
 ) {
     // 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973)
     @Transactional(readOnly = true)
-    fun rejectIfAlreadyRegistered(
-        userId: UUID,
-        link: ProductLink,
-    ) {
-        rejectIfRegistered(userId, link)
+    fun rejectIfAlreadyRegistered(command: RegisterWishFromUrlCommand) {
+        rejectIfRegistered(command.userId, command.link)
     }
 
     // 이미 아는 링크여도 아이템 없이 담고 새로 파싱한다. 성공하면 정체 URL 이 같은 아이템에 붙는다
     @Transactional
-    fun persist(
-        userId: UUID,
-        link: ProductLink,
-    ): WishWithItem {
-        lockRegistrant(userId)
-        rejectIfRegistered(userId, link)
-        return createPending(userId, ParseInput.Link(link))
+    fun persist(command: RegisterWishFromUrlCommand): WishResult {
+        lockRegistrant(command.userId)
+        rejectIfRegistered(command.userId, command.link)
+        return createPending(command.userId, ParseInput.Link(command.link))
     }
 
     // 같은 업로드를 두 번 확정하면 두 번째는 건너뛴다. 여러 장을 한 번에 확정하므로 링크처럼 거부하지 않는다
     @Transactional
-    fun registerImages(
-        imageKeys: List<ProductImageKey>,
-        userId: UUID,
-    ): List<WishWithItem> {
-        lockRegistrant(userId)
-        val newKeys = imageKeys.distinct() - wishRepository.findRequestedImageKeys(userId, imageKeys)
-        return newKeys.map { createPending(userId, ParseInput.Image(it)) }
+    fun registerImages(command: ConfirmWishImageRegistrationCommand): List<WishResult> {
+        lockRegistrant(command.userId)
+        val newKeys = command.imageKeys.distinct() - wishRepository.findRequestedImageKeys(command.userId, command.imageKeys)
+        return newKeys.map { createPending(command.userId, ParseInput.Image(it)) }
     }
 
     // 트랜잭션의 첫 문장이어야 한다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이 잠금 전에 고정돼 앞선 등록을 못 본다
@@ -75,10 +71,10 @@ class WishPersistenceService(
     private fun createPending(
         userId: UUID,
         input: ParseInput,
-    ): WishWithItem {
+    ): WishResult {
         val wish = wishRepository.save(Wish(userId = userId, itemId = null))
         parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REGISTER, input)
-        return WishWithItem(wish = wish, item = null, card = itemCardService.cardOf(wish.cardQuery()))
+        return WishResult(wish = wish, item = null, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     private fun rejectIfRegistered(
@@ -107,65 +103,44 @@ class WishPersistenceService(
     }
 
     @Transactional
-    fun applyUserInput(
-        userId: UUID,
-        wishId: Long,
-        name: String?,
-        price: Int?,
-        imageUrl: String?,
-        currency: String?,
-        memo: String?,
-    ): WishWithItem {
-        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(name, price, imageUrl, currency)
+    fun applyUserInput(command: ApplyWishUserInputCommand): WishResult {
+        val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(command.userId)
+        val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.name, command.price, command.imageUrl, command.currency)
         val item = lockedItemOf(wish)
-        itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = userId))
-        memo?.let { wish.updateMemo(it) }
-        return WishWithItem(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+        itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = command.userId))
+        command.memo?.let { wish.updateMemo(it) }
+        return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     // 이미지를 올리기 전에 거절해 S3 에 고아 객체가 남지 않게 한다. 최종 판정은 applyUserInput 이 락 안에서 다시 한다
     @Transactional(readOnly = true)
-    fun validateUserInput(
-        userId: UUID,
-        wishId: Long,
-        name: String?,
-        price: Int?,
-        currency: String?,
-    ) {
-        val wish = wishRepository.findById(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        itemCardService.cardOf(wish.cardQuery()).userInputValues(name, price, PRE_UPLOAD_VALIDATION_IMAGE_URL, currency)
+    fun validateUserInput(command: RecoverWishItemCommand) {
+        val wish = wishRepository.findById(command.wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(command.userId)
+        itemCardService.cardOf(wish.cardQuery()).userInputValues(command.name, command.price, PRE_UPLOAD_VALIDATION_IMAGE_URL, command.currency)
     }
 
     // 메모만 바꿔도 행 락이 필요하다. 전 컬럼 UPDATE 라 락 없이 읽으면 그 사이 확정된 아이템을 옛 값으로 되덮는다
     @Transactional
-    fun updateMemo(
-        userId: UUID,
-        wishId: Long,
-        memo: String,
-    ): WishWithItem {
-        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
-        wish.updateMemo(memo)
-        return WishWithItem(wish = wish, item = wish.itemId?.let(itemRepository::findById), card = itemCardService.cardOf(wish.cardQuery()))
+    fun updateMemo(command: UpdateWishMemoCommand): WishResult {
+        val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(command.userId)
+        wish.updateMemo(command.memo)
+        return WishResult(wish = wish, item = wish.itemId?.let(itemRepository::findById), card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     // 아이템이 없는 위시는 같은 입력으로 다시 돌려도 실패하므로 사용자 입력으로 보내려고 409 로 막는다
     @Transactional
-    fun refresh(
-        userId: UUID,
-        wishId: Long,
-    ): WishWithItem {
-        val wish = wishRepository.findByIdForUpdate(wishId) ?: throw WishException.notFound()
-        wish.verifyOwnedBy(userId)
+    fun refresh(command: RefreshWishItemCommand): WishResult {
+        val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
+        wish.verifyOwnedBy(command.userId)
         val item = wish.itemId?.let(itemRepository::findById)
         val card = itemCardService.cardOf(wish.cardQuery())
-        if (card.isParsing()) return WishWithItem(wish = wish, item = item, card = card)
+        if (card.isParsing()) return WishResult(wish = wish, item = item, card = card)
         item ?: throw WishException.failedNotRefreshable()
         parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REFRESH, item.refreshInput())
-        return WishWithItem(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+        return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     // 버전 생성과 같은 행 잠금을 잡아 토너먼트 시작과 직렬화한다
