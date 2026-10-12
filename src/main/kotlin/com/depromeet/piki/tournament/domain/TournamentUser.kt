@@ -9,8 +9,19 @@ import jakarta.persistence.Table
 import java.time.LocalDateTime
 import java.util.UUID
 
-// 어떤 유저가 어떤 토너먼트에 참여했는지를 명시 관리하는 매핑 테이블.
+// 어떤 유저가 어떤 토너먼트에 참여했는지를 명시 관리하는 매핑 테이블. 한 사람의 "이 방에서의 참여" 하나가 한 행이다.
 // userId 는 게스트·회원 모두 수용 (현재는 Guest 의 UUID).
+//
+// 토너먼트 도메인은 User 를 끌어오지 않고, 사람을 가리킬 때 userId 가 아니라 이 행의 id 를 쓴다
+// (tournaments.owner_tournament_user_id · tournament_histories.tournament_user_id). User 와의 접점은 이 행의 userId 하나다.
+// userId 로 바꾸지 않는 이유(#1188):
+//   - userId 는 바뀐다. 게스트가 기존 회원 계정으로 로그인하면 userId 가 회원 것으로 교체된다(#1081 GuestPlayTakeover).
+//     행 id 를 가리키면 이 행의 userId 하나만 고치면 되고, 방장·히스토리는 행 id 를 따라 그대로 넘어간다.
+//   - 승계 중 같은 방에 게스트·회원 행이 둘 다 있으면 게스트 행을 접는다. 히스토리가 행 id 에 묶여 있어 두 사람의
+//     선택 기록이 한 키로 섞이지 않는다.
+//   - 대진표 seed 가 seedOf(tournamentUserId, round)다(RoundBracket). 승계로 userId 가 바뀌어도 진행 중 대진표가 그대로다.
+//   - 표시명은 nickname 스냅샷(#1018)이 여기 있어, 화면을 그릴 때 User 를 다시 읽지 않아도 된다.
+// 예외로 tournament_items.user_id 는 "아이템을 담은 사람" 이라 userId 를 쓰고, 승계 때 따로 옮긴다.
 @Entity
 @Table(name = "tournament_users")
 class TournamentUser(
@@ -43,7 +54,7 @@ class TournamentUser(
         nickname = newNickname
     }
 
-    // 플레이 시작 — 명단(PENDING)에서 진행으로. 멤버·게스트가 자기 판을 시작하는 순간(과거의 CLONE 생성 지점).
+    // 플레이 시작 — 명단(PENDING)에서 진행으로. 멤버·게스트가 자기 판을 시작하는 순간.
     fun startPlaying() {
         check(status == TournamentStatus.PENDING) { "startPlaying 은 PENDING 에서만 호출 가능: $status" }
         status = TournamentStatus.IN_PROGRESS

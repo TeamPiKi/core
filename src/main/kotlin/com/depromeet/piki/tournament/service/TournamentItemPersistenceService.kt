@@ -19,6 +19,7 @@ import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import com.depromeet.piki.tournament.service.dto.PersistedTournamentItem
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -41,6 +42,7 @@ class TournamentItemPersistenceService(
     private val itemSharingService: ItemSharingService,
     private val itemDisplayService: ItemDisplayService,
     private val parsingEnqueuer: ParsingEnqueuer,
+    private val meterRegistry: MeterRegistry,
 ) {
     // 이 토너먼트에 이미 출전 중인 item → 그 tournament_item id. 중복 판정이 "무엇과 겹치는지"까지 답해야 해서(#973)
     // 존재 여부가 아니라 매핑으로 만든다. snapshot 을 못 찾는 행은 자연히 빠지는데, 그런 행은 정원·중복 어느 쪽에도 셀 수 없다.
@@ -192,7 +194,8 @@ class TournamentItemPersistenceService(
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
         // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — 수정 시 원본을 건드리므로 막는다(#977, 추가 금지 032 와 같은 결).
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
+        // 잔재 클론 id 로만 닿는 가드라 닿을 때마다 센다(#1188). 0 으로 머물면 4-2단계에서 가드째 지운다.
+        rejectCloneId(tournament) { TournamentException.clonedTournamentCannotModifyItems() }
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
@@ -232,7 +235,7 @@ class TournamentItemPersistenceService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
+        rejectCloneId(tournament) { TournamentException.clonedTournamentCannotModifyItems() }
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)
@@ -282,9 +285,20 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
     ) {
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
+        rejectCloneId(tournament) { TournamentException.clonedTournamentCannotAddItems() }
         tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
+    }
+
+    // 잔재 클론 id 로 온 아이템 쓰기를 막고, 닿은 횟수를 센다(#1188). 클론 행은 CLONE 제거(#1027) 뒤 옛 URL 을 잇는
+    // 껍데기로만 남아 있어, 이 가드는 옛 클론 id 를 들고 온 요청에만 닿는다.
+    private fun rejectCloneId(
+        tournament: Tournament,
+        exception: () -> TournamentException,
+    ) {
+        tournament.sourceTournamentId ?: return
+        CloneRedirectMetrics.record(meterRegistry, CloneRedirectMetrics.KIND_ITEM_GUARD)
+        throw exception()
     }
 
     private fun hasRoomFor(

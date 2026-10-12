@@ -31,6 +31,7 @@ import com.depromeet.piki.tournament.repository.TournamentHistoryJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
+import com.depromeet.piki.tournament.service.CloneRedirectMetrics
 import com.depromeet.piki.tournament.service.PLAY_LINK_DURATION_DAYS
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
@@ -41,6 +42,7 @@ import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.WishPersistenceService
+import io.micrometer.core.instrument.MeterRegistry
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -123,6 +125,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // 발행 검증용 — 같은 스레드(MockMvc 컨트롤러 실행)에서 publish 된 도메인 이벤트를 기록한다.
     // AFTER_COMMIT 리스너 발화(별도 스레드, 트랜잭션 롤백 무관) 여부와 독립적으로 "서비스가 이벤트를 쐈는가" 만 본다.
     @Autowired private lateinit var applicationEvents: ApplicationEvents
+    @Autowired private lateinit var meterRegistry: MeterRegistry
 
     private val userId: UUID = UUID.fromString("11111111-2222-3333-4444-555555555555")
     private val otherUserId: UUID = UUID.fromString("99999999-8888-7777-6666-555555555555")
@@ -493,7 +496,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     // 삭제(#1027 Phase 3): "플레이링크 복제 토너먼트에 아이템 추가 403(TOURNAMENT-032)" 은 클론 id 로만 닿던 가드다.
-    // 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 이 사유에 도달할 수 없다. 가드 코드·에러코드 제거는 Phase 4.
+    // 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 이 사유에 도달할 수 없다. 가드 코드·에러코드 제거는 4-2단계(#1188 후속).
 
     @Test
     fun `POST tournaments-id-start 는 아이템이 있는 PENDING 토너먼트를 시작하고 가격 오름차순 정렬된 아이템 목록을 반환한다`() {
@@ -2066,7 +2069,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     // 삭제(#1027 Phase 3): "CLONE 아이템 PATCH·DELETE 403(TOURNAMENT-038)" 3종(PENDING·시작된 클론 포함)은
     // 클론 id 로만 닿던 가드다. 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 이 사유에 도달할 수 없다.
-    // 가드 코드(clonedTournamentCannotModifyItems)·에러코드 제거는 Phase 4.
+    // 가드 코드(clonedTournamentCannotModifyItems)·에러코드 제거는 4-2단계(#1188 후속).
 
     // 완료된 ROOT + 그 플레이링크로 참여한 게스트(otherUserId)를 만들어 (rootId, joinedId(=rootId), 원본 tournamentItemId) 를 준다.
     private fun cloneFromCompletedRoot(mockMvc: MockMvc): Triple<Long, Long, Long> {
@@ -2736,7 +2739,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     // 삭제(#1027 Phase 3): "링크 아이템 추가 시 복제 토너먼트면 403(TOURNAMENT-032)" 은 클론 id 로만 닿던 가드다.
-    // 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 도달할 수 없다. 가드 코드·에러코드 제거는 Phase 4.
+    // 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 도달할 수 없다. 가드 코드·에러코드 제거는 4-2단계(#1188 후속).
 
     @Test
     fun `게스트 합류 시 TournamentJoined 이벤트가 발행된다`() {
@@ -2799,7 +2802,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     // 삭제(#1027 Phase 3): "이미지 아이템 추가 presigned 발급 시 복제 토너먼트면 403(TOURNAMENT-032)" 은 클론 id 로만
-    // 닿던 가드다. 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 도달할 수 없다. 가드 코드·에러코드 제거는 Phase 4.
+    // 닿던 가드다. 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 도달할 수 없다. 가드 코드·에러코드 제거는 4-2단계(#1188 후속).
 
     @Test
     fun `POST tournaments-id-items 에서 위시리스트에 없는 아이템이면 403 을 반환한다`() {
@@ -3734,7 +3737,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     // 삭제(#1027 Phase 3): "완료된 CLONE 의 공유 링크 생성 403(TOURNAMENT-024)" 은 클론 id 로만 닿던 가드다.
     // 클론이 사라져 from-play-link 가 ROOT id 를 돌려주고 play-link 는 ROOT 로 해소되므로 도달할 수 없다.
-    // 가드 코드(clonedTournamentCannotSharePlayLink)·에러코드 제거는 Phase 4.
+    // 가드 코드·에러코드(TOURNAMENT-024)는 #1188 에서 제거하고 결번 처리했다.
 
     @Test
     fun `POST play-link 는 소유자가 아닌 참여자면 403 을 반환한다`() {
@@ -4036,6 +4039,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val (rootId) = completeTournamentWith2Items(mockMvc)
         val cloneId = seedLingeringCloneShell(rootId)
+        val before = cloneRedirectCount(CloneRedirectMetrics.KIND_RESOLVED)
 
         // 요청자(owner)는 ROOT 참여 행이 COMPLETED. 클론 id 로 와도 404/403 이 아니라 ROOT 완료 화면을 준다.
         mockMvc
@@ -4047,7 +4051,50 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.sourceTournamentId").doesNotExist())
             .andExpect(jsonPath("$.data.status").value("COMPLETED"))
             .andExpect(jsonPath("$.data.completed.result.length()").value(2))
+
+        // 해소가 일어났으니 관측 카운터가 하나 오른다(#1188) — 4-2단계 shim 제거 판단 근거.
+        assertEquals(before + 1, cloneRedirectCount(CloneRedirectMetrics.KIND_RESOLVED))
     }
+
+    @Test
+    fun `GET tournaments-id 는 ROOT id 로 오면 클론 해소 카운터를 올리지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId) = completeTournamentWith2Items(mockMvc)
+        val before = cloneRedirectCount(CloneRedirectMetrics.KIND_RESOLVED)
+
+        mockMvc
+            .perform(
+                get("/api/v1/tournaments/$rootId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.tournamentId").value(rootId))
+
+        // 정상 요청까지 세면 카운터가 0 으로 내려오지 않아 4-2단계 판단에 쓸 수 없다.
+        assertEquals(before, cloneRedirectCount(CloneRedirectMetrics.KIND_RESOLVED))
+    }
+
+    @Test
+    fun `DELETE items 는 잔재 CLONE id 로 오면 403 TOURNAMENT-038 이고 클론 가드 카운터가 오른다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, rootTi) = completeTournamentWith2Items(mockMvc)
+        val cloneId = seedLingeringCloneShell(rootId)
+        val before = cloneRedirectCount(CloneRedirectMetrics.KIND_ITEM_GUARD)
+
+        // 클론 가드는 4-1단계에서 응답을 그대로 지킨다 — 옛 클론 id 요청의 계약이 바뀌지 않는다.
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$cloneId/items/$rootTi")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-038"))
+
+        assertEquals(before + 1, cloneRedirectCount(CloneRedirectMetrics.KIND_ITEM_GUARD))
+        // 원본 아이템은 그대로 남는다.
+        assertTrue(tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(rootId).any { it.getId() == rootTi })
+    }
+
+    private fun cloneRedirectCount(kind: String): Double =
+        meterRegistry.counter(CloneRedirectMetrics.METRIC, CloneRedirectMetrics.TAG_KIND, kind).count()
 
     @Test
     fun `POST matches 는 잔재 CLONE id 로 와도 ROOT 참여로 매치를 ROOT 에 기록한다`() {
@@ -4105,7 +4152,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     // 잔재 CLONE 껍데기를 DB 에 직접 심는다(#1027 Phase 3) — source_tournament_id=ROOT, 자기 참여 행 없음.
-    // 백필로 평탄화된 뒤 Phase 4 제거 전까지 남는 리다이렉트 전용 행을 모사한다.
+    // 백필로 평탄화된 뒤 4-2단계 제거 전까지 남는 리다이렉트 전용 행을 모사한다.
     private fun seedLingeringCloneShell(rootId: Long): Long =
         tournamentJpaRepository
             .save(
