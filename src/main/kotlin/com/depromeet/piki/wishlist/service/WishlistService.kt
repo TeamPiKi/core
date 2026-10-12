@@ -107,13 +107,9 @@ class WishlistService(
         val wish = wishRepository.findById(query.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(query.userId)
         val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
-        val card = itemCardService.cardOf(wish.cardQuery())
         return WishDetailResult(
-            wish = wish,
-            item = item,
-            card = card,
+            wishResult = WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery())).withSourcePlatform(),
             history = item?.let { itemSnapshotRepository.findPriceHistoryByItemId(it.getId(), PRICE_HISTORY_LIMIT) }.orEmpty(),
-            sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink),
         )
     }
 
