@@ -2728,6 +2728,23 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments-id-items-wish 에서 파싱 중인 출전까지 32개를 넘으면 400 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        repeat(31) { saveParsingTournamentItem(tournamentId) }
+        val wishItemIds = (1..2).map { saveWishItem() }
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":${wishItemIds.joinToString(",", "[", "]")}}"""),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-008"))
+    }
+
+    @Test
     fun `POST tournaments-id-items-link 에서 32개 초과 시 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
