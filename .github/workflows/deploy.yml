@@ -609,12 +609,9 @@ jobs:
             #   열어 둔 내부 검증 경로라 -k 와 Host 헤더가 필요하다.
             # --memory/--memory-swap/JAVA_TOOL_OPTIONS 는 resolve job 이 박스 크기별로 정한다(그쪽 주석이 산정 근거).
             # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md).
-            # --legacy-slot: 옛 슬롯(blue 8080·green 8081) 중 서빙 중인 쪽을 알아보게 한다(#1202). 이 인자가 없으면
-            #   옛 blue 가 서빙 중일 때 새 blue 기동 전에 지워진다. dev·prod 가 새 슬롯으로 한 번씩 배포된 뒤 제거.
             bash /tmp/piki-deploy/deploy_slot.sh \
               --state-file /etc/nginx/piki-upstream.conf \
               --service-port "$SERVICE_PORT" --name-prefix piki-core \
-              --legacy-slot blue:8080 --legacy-slot green:8081 \
               --log-dir /var/log/piki \
               --health-path /health --health-interval 5 --health-attempts 60 \
               --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN" \
