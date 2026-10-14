@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
-# (swap / redis / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
+# (swap / redis(dev) / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
 # swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
@@ -20,6 +20,11 @@ for arg in "$@"; do
     --skip-alloy) SKIP_ALLOY=true ;;
   esac
 done
+
+case "${ENVIRONMENT:-}" in
+  dev|prod) ;;
+  *) echo "ENVIRONMENT 는 dev 또는 prod 여야 한다 (받은 값: '${ENVIRONMENT:-}')" >&2; exit 2 ;;
+esac
 
 # 0) base 소프트웨어 — docker·nginx·certbot 이 없으면 깐다.
 #
@@ -95,10 +100,12 @@ else
 fi
 grep -q '^/swapfile2[[:space:]]' /etc/fstab || echo '/swapfile2 none swap sw 0 0' | sudo tee -a /etc/fstab
 
-# 2) redis — RefreshToken 저장소(RedisRefreshTokenStore). 없을 때만 named 볼륨(piki-redis-data)으로 기동.
+# 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 없을 때만 named 볼륨(piki-redis-data)으로 기동.
 #    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
 #    이후 컨테이너 재생성에도 refresh token 이 유지된다.
-if docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
+if [ "$ENVIRONMENT" = "prod" ]; then
+  echo "[redis] prod — DB 박스 Redis 사용, skip"
+elif docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
   echo "[redis] piki-redis 이미 존재 — skip"
 else
   echo "[redis] piki-redis named 볼륨으로 기동"

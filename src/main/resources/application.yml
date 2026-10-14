@@ -116,6 +116,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      # 인증 필터가 매 요청 Redis 를 부른다. 다른 박스의 Redis 가 멈추면 Lettuce 기본(60s) 동안 요청 스레드가 묶인다.
+      timeout: 2s
+      connect-timeout: 1s
 
 jwt:
   # secret 은 환경변수로만 주입한다 (default 없음). 운영에서 env 누락 시 부팅 실패가 의도.

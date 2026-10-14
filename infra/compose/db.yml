@@ -98,6 +98,34 @@ services:
       mysql:
         condition: service_healthy
 
+  # 앱 박스에 상태를 남기지 않으려고 Redis 를 데이터 박스에 둔다.
+  redis:
+    container_name: piki-prod-redis
+    image: redis:7.4-alpine
+    restart: unless-stopped
+
+    # 노출 범위는 보안그룹과 비밀번호가 맡는다. EC2 는 공인 IP 가 NIC 에 없어 바인딩 주소로는 좁혀지지 않는다.
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
+
+    # maxmemory 를 넘기면 noeviction(기본값)이라 쓰기가 실패한다. 탈퇴 마커 같은 키가 조용히 축출되면 보안 구멍이다.
+    # RDB 저장 실패에는 쓰기를 막지 않는다. 잃는 것은 재시작 뒤 재로그인뿐이라 로그인 불능보다 가볍다.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --stop-writes-on-bgsave-error no"]
+
+    mem_limit: 128m
+
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
 volumes:
   # external 이 핵심이다. 이 선언이 없으면 compose 가 프로젝트명을 앞에 붙인 새 볼륨
   # (<project>_mysql-data)을 만들어, 기존 데이터가 아니라 빈 DB 로 뜬다.
@@ -105,3 +133,6 @@ volumes:
   mysql-data:
     external: true
     name: piki-prod-mysql-data
+
+  redis-data:
+    name: piki-prod-redis-data
