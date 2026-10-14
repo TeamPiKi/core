@@ -40,26 +40,42 @@ db 는 백업.
 | state | 같은 버킷, `terraform.tfstate` | 같은 버킷, `grafana.tfstate` |
 | 격리 | 서로의 apply 가 상대 state 를 건드리지 않는다 (루트 모듈·state 분리) | |
 
-`backend.hcl` 은 `terraform/` 것을 그대로 재사용한다 (버킷명에 계정번호가 있어 gitignore).
+`backend.hcl` 은 `terraform/` 과 같은 값이다. 버킷명에 계정번호가 있어 gitignore 하고, 자격증명에서 파생해 만든다.
+
+## state 와 import 블록
+
+state 는 AWS 계정의 버킷에 있고 Grafana 자원은 계정 밖에 있다. 계정 이관으로 버킷이 바뀌면 자원은
+그대로인데 state 만 빈다. 2차 이관에서 실제로 state 가 구 계정 버킷과 함께 사라졌다 (#1200).
+
+- `imports.tf` 의 import 블록이 빈 state 에서 기존 자원을 state 로 들인다. 이미 state 에 있으면 아무 일도 하지 않는다.
+- **새 grafana 자원을 추가하면 `imports.tf` 에 블록도 추가한다.** 빠지면 이관 워크플로 정적 검증(migrate-lint)이 실패한다.
+- 이관 때는 `migrate.yml` 의 `infra_grafana` job 이 이 재구성을 돌린다. plan 에 생성 대상이 나오면 apply 전에 멈춘다.
+- 빈 state 에서 import 한 직후의 plan 은 변경 4건을 보인다. contact point 3개의 웹훅 URL(import 가 보안 필드를 비워 옴)과
+  폴더의 `prevent_destroy_if_not_empty`(Grafana 에 저장되지 않는 provider 속성)다. apply 하면 수렴한다.
 
 ## 일상 워크플로우
+
+AWS 자격 준비는 `terraform/README.md` 를 따른다. 웹훅 SSM 조회와 state 접근에 필요하다.
 
 ```bash
 cd terraform-grafana
 
-# 1) backend 설정 재사용 (terraform/ 에서 이미 만들었다면 복사만)
-cp ../terraform/backend.hcl .
+# 1) backend 설정. 버킷명이 계정번호 파생이라 자격증명에서 도출한다
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+echo "bucket = \"piki-tfstate-$ACCOUNT\"" > backend.hcl   # gitignore 됨, 커밋 금지
 
 # 2) Grafana 인증 토큰 주입 (서비스 계정 terraform, Editor)
-export GRAFANA_AUTH=$(aws-vault exec piki -- aws ssm get-parameter \
+export GRAFANA_AUTH=$(aws ssm get-parameter \
   --name /piki/observability/grafana-terraform-token \
   --with-decryption --query Parameter.Value --output text)
 
-# 3) init / plan / apply — AWS 자격은 웹훅 SSM 조회·state 접근에 필요하다
-aws-vault exec piki -- terraform init -backend-config=backend.hcl
-aws-vault exec piki -- terraform plan    # 드리프트 감지: 변경 없음이어야 정상
-aws-vault exec piki -- terraform apply
+# 3) init / plan / apply
+terraform init -backend-config=backend.hcl
+terraform plan    # 드리프트 감지: 변경 없음이어야 정상
+terraform apply
 ```
+
+plan 출력의 contact point 블록은 웹훅 URL 을 가린다. `terraform show -json` 결과에는 평문으로 들어 있어 공유하지 않는다.
 
 ## 시크릿
 
