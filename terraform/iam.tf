@@ -55,6 +55,12 @@ resource "aws_iam_instance_profile" "app" {
   role = aws_iam_role.app.name
 }
 
+# 서버 접속은 SSM 하나로 둔다(TeamPiKi/infra conventions/infra.md 5절). 이게 없으면 agent 가 등록하지 못한다.
+resource "aws_iam_role_policy_attachment" "app_ssm_core" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # -----------------------------------------------------------------------------
 # 앱 런타임 시크릿을 SSM Parameter Store(/piki-core/<env>/*, SecureString)에서 읽는 권한.
 #
