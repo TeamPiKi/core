@@ -127,6 +127,31 @@ services:
       timeout: 5s
       retries: 6
 
+  # 축출 알림(terraform-grafana/rule_groups.tf)이 이 지표를 읽는다. 구성은 mysqld-exporter 와 같다.
+  redis-exporter:
+    container_name: piki-redis-exporter
+    image: oliver006/redis_exporter:v1.93.0
+    restart: unless-stopped
+    network_mode: host
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
+
+    command:
+      - --redis.addr=redis://127.0.0.1:6379
+      - --web.listen-address=127.0.0.1:9121
+
+    labels:
+      piki.observe: "true"
+      piki.service: "piki-db"
+      piki.metrics.port: "9121"
+
+    mem_limit: 32m
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   # external 이 핵심이다. 이 선언이 없으면 compose 가 프로젝트명을 앞에 붙인 새 볼륨
   # (<project>_mysql-data)을 만들어, 기존 데이터가 아니라 빈 DB 로 뜬다.
