@@ -188,8 +188,10 @@ resource "aws_iam_policy" "backend_daily" {
 
 resource "aws_iam_group_policy_attachment" "backend" {
   for_each = {
-    view_only    = "arn:aws:iam::aws:policy/job-function/ViewOnlyAccess"
-    aws_login    = "arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess"
+    view_only = "arn:aws:iam::aws:policy/job-function/ViewOnlyAccess"
+    aws_login = "arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess"
+    # CloudShell 은 쓰는 사람의 권한으로 돈다. 백엔드가 콘솔에서 쓰던 셸을 유지하려고 둔다.
+    cloudshell   = "arn:aws:iam::aws:policy/AWSCloudShellFullAccess"
     self_service = aws_iam_policy.self_service.arn
     daily        = aws_iam_policy.backend_daily.arn
   }
