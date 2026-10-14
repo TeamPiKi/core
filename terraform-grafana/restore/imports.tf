@@ -1,5 +1,6 @@
-# state 가 비어도(계정 이관으로 버킷이 새로 생김) plan 이 기존 자원을 생성하지 않고 state 로 들인다 (#1200).
-# 이미 state 에 있으면 아무 일도 하지 않는다. 새 grafana 자원을 추가하면 여기에도 블록을 추가한다(migrate-lint 가 검사).
+# state 가 비었을 때(계정 이관으로 버킷이 새로 생김) 루트로 복사해 기존 자원을 state 로 들인다 (#1200).
+# 루트에 상시 두지 않는 이유: 아직 Grafana 에 없는 자원의 import 블록은 plan 을 실패시킨다.
+# 새 자원을 추가하면 여기에도 블록을 추가한다(migrate-lint 가 검사). 복사는 migrate.yml infra_grafana 와 README 복구 절차.
 
 import {
   to = grafana_folder.piki_alerts

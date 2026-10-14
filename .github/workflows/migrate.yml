@@ -48,7 +48,7 @@ on:
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, iam, infra, provision, rehearsal, deploy, cutover, verify, finalize]
+        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, verify, finalize]
       dry_run:
         description: "true 면 되돌리기 어려운 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
         required: false
@@ -692,11 +692,11 @@ jobs:
 
   # ── Grafana terraform. Grafana Cloud 자원은 계정 밖이라 그대로 남지만 state 는 계정 버킷에 있어 새 버킷에는 없다. ──
   #
-  # terraform-grafana/imports.tf 의 import 블록이 기존 자원을 새 state 로 들인다(#1200). 이 단계가 없던 2차 이관에서
-  # state 가 구 버킷과 함께 사라졌다. 생성 대상이 나오면 import 블록이 빠진 자원이라 apply 전에 멈춘다.
+  # terraform-grafana/restore/imports.tf 의 import 블록이 기존 자원을 새 state 로 들인다(#1200). 이 단계가 없던 2차
+  # 이관에서 state 가 구 버킷과 함께 사라졌다. 생성·교체 대상은 기존 자원과 부딪히므로 apply 전에 멈춘다.
   infra_grafana:
     needs: [guard, config, ssm]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.ssm.result == 'success' || needs.ssm.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'infra') }}
+    if: ${{ always() && needs.guard.result == 'success' && (needs.ssm.result == 'success' || needs.ssm.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'infra' || inputs.only == 'grafana') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
@@ -722,26 +722,33 @@ jobs:
           echo "::add-mask::$token"
           echo "GRAFANA_AUTH=$token" >> "$GITHUB_ENV"
 
-      - name: backend.hcl 생성 (계정 파생) + init
+      - name: backend.hcl 생성 (계정 파생) + import 블록 복사 + init
         working-directory: terraform-grafana
         env:
           TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
         run: |
           set -euo pipefail
           printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          # 이미 state 에 있는 자원의 블록은 terraform 이 건너뛰어 재실행(dev 뒤 prod)에도 그대로 쓴다.
+          cp restore/imports.tf restore_imports.tf
           terraform init -backend-config=backend.hcl -input=false
 
-      - name: plan (생성 대상이 있으면 중단)
+      - name: plan (생성·교체 대상이 있으면 중단)
         working-directory: terraform-grafana
         run: |
           set -euo pipefail
           terraform plan -input=false -out=tfplan
           # plan JSON 에는 웹훅 URL 이 평문으로 들어 있어 주소만 뽑는다.
-          creates=$(terraform show -json tfplan | jq -r '.resource_changes[] | select(.change.actions | index("create")) | .address' | paste -sd ' ' -)
+          plan_json=$(terraform show -json tfplan)
+          creates=$(jq -r '.resource_changes[] | select(.change.actions == ["create"]) | .address' <<<"$plan_json" | paste -sd ' ' -)
+          replaces=$(jq -r '.resource_changes[] | select(.change.actions != ["create"] and (.change.actions | index("create"))) | .address' <<<"$plan_json" | paste -sd ' ' -)
           if [ -n "$creates" ]; then
-            echo "::error::생성 대상 있음($creates). terraform-grafana/imports.tf 에 import 블록 추가 필요"
-            exit 1
+            echo "::error::생성 대상 있음($creates). terraform-grafana/restore/imports.tf 에 import 블록 추가 필요"
           fi
+          if [ -n "$replaces" ]; then
+            echo "::error::교체 대상 있음($replaces). tainted 면 로컬에서 terraform untaint 뒤 재실행 (terraform-grafana/README 의 대시보드 read 403 플레이크)"
+          fi
+          [ -z "$creates$replaces" ]
 
       - name: apply (dry_run 이면 건너뜀)
         if: ${{ inputs.dry_run == false }}
