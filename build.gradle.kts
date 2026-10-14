@@ -63,7 +63,7 @@ dependencies {
 
     // admin 백오피스 세션을 톰캣 메모리가 아니라 Redis 에 둔다(#885). 인메모리면 blue-green 배포로 컨테이너가
     // 교체될 때마다 세션이 통째로 사라져, AdminAccessFilter 가 404 를 내고 배포마다 Discord grant 링크를 다시 받아야 했다.
-    // Redis 컨테이너는 앱 배포와 독립적으로 유지되므로(provision-runtime.sh 가 "있으면 skip") 세션이 배포를 견딘다.
+    // Redis 컨테이너는 앱 배포와 독립적으로 유지되므로 세션이 배포를 견딘다.
     // 세션에는 신원뿐 아니라 CSRF 토큰도 실려 있어(AdminCsrfPreloadInterceptor) 함께 영속된다.
     //
     // Spring Session 라이브러리(org.springframework.session:spring-session-data-redis)가 아니라 Boot 의 이 모듈을

@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # DB 박스 Security Group
 #
-# 3306 은 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
+# 3306(MySQL)·6379(Redis) 는 앱 EC2 SG(prod·dev 앱 박스 공용) 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
 # 인터넷에 직접 노출하지 않는다. SSH 는 EC2 Instance Connect·팀원 접속을 위해 열되
 # var.ssh_ingress_cidr 로 좁힌다.
 #
@@ -35,6 +35,14 @@ resource "aws_security_group" "db_ec2" {
     description     = "MySQL from app EC2"
     from_port       = 3306
     to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2.id]
+  }
+
+  ingress {
+    description     = "Redis from app EC2"
+    from_port       = 6379
+    to_port         = 6379
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2.id]
   }
@@ -97,6 +105,12 @@ data "aws_iam_policy_document" "db_instance" {
     sid       = "ReadAlertWebhook"
     actions   = ["ssm:GetParameter"]
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/discord-alert-webhook-url"]
+  }
+
+  statement {
+    sid       = "ReadRedisPassword"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/redis-password"]
   }
 
   # 관측 수집기(alloy)가 쓰는 Grafana Cloud 자격 공유 경로 (#771).
