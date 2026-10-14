@@ -3,12 +3,10 @@ description: 러너의 공인 IP 만 대상 인스턴스의 22번에 잠시 열�
 
 # 왜 필요한가 — 신 계정에서는 러너가 어떤 박스에도 SSH 를 붙일 수 없다.
 #
-# terraform/security_groups.tf 의 앱 SG 는 22번을 var.ssh_ingress_cidr 로 연다. 그 기본값은
-# 203.0.113.1/32 (RFC 5737 문서화용, 라우팅되지 않는 대역)이고, 같은 파일의 lifecycle 이
-# ingress 를 ignore_changes 로 묶어 둔다. 주석이 밝히듯 현재 계정의 "github actions 배포용
-# 0.0.0.0/0:22" 는 terraform 이 아니라 사람이 콘솔에서 넣은 규칙이다.
+# terraform/security_groups.tf 의 앱 SG 에는 22 번 규칙이 없다. 평소 배포는 SSM 경유(#1196)이고,
+# 이 액션은 계정 이관 워크플로가 SSM 으로 바뀔 때까지(#1210) 그 워크플로만 쓴다.
 #
-# 즉 갓 만든 계정의 SG 에는 그 규칙이 없다. 그대로 두면 provision 의 scp·ssh 가 첫 이관에서
+# 즉 갓 만든 계정의 SG 에는 22 번이 없다. 그대로 두면 provision 의 scp·ssh 가 첫 이관에서
 # 확정적으로 막히고, rehearsal·cutover 의 앱 박스 접근도 함께 막힌다. 콘솔에서 손으로 열라고
 # 하면 "딸깍" 이 아니게 되므로, 필요한 순간에 필요한 IP 만 열고 끝나면 닫는다.
 #
