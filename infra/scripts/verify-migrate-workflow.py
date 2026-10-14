@@ -9,6 +9,7 @@
  5) run 블록 bash -n + shellcheck SC2154(미할당 참조)                 ('names: unbound variable')
  6) terraform variables.tf 의 validation 을 config 출력값에 실제 적용  ('image_bucket_name 형식')
  7) 모든 job 이름이 jobs 에 존재하는가
+ 8) terraform-grafana 의 자원마다 import 블록이 있는가                 (이관 때 Grafana state 재구성)
 """
 import yaml, re, subprocess, tempfile, os, sys, json
 
@@ -116,6 +117,19 @@ if os.path.exists(tfvars):
                 if sample2 != sample and not re.search(pattern, sample2):
                     errs.append(f"[terraform] TF_VAR_{vname} <- config.{out} = '{sample2}' 가 "
                                 f"validation /{pattern}/ 을 통과하지 못함")
+
+# ---- 8) grafana 자원마다 import 블록 ----
+# infra_grafana job 은 빈 state 에서 생성 대상이 나오면 멈춘다. 블록 누락을 이관 실행 전에 잡는다.
+gdir = 'terraform-grafana'
+if os.path.isdir(gdir):
+    resources, imported = set(), set()
+    for fn in sorted(os.listdir(gdir)):
+        if fn.endswith('.tf'):
+            src = open(os.path.join(gdir, fn)).read()
+            resources |= set(re.findall(r'^resource\s+"(grafana_\w+)"\s+"(\w+)"', src, re.M))
+            imported |= set(re.findall(r'^\s*to\s*=\s*(grafana_\w+)\.(\w+)', src, re.M))
+    for t, n in sorted(resources - imported):
+        errs.append(f"[terraform-grafana] {t}.{n} 에 import 블록 없음 (imports.tf)")
 
 print(f"job {len(jobs)}개 검사")
 if warns:

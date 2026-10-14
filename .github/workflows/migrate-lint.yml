@@ -11,6 +11,7 @@ on:
       - '.github/workflows/migrate-lint.yml'
       - 'infra/scripts/verify-migrate-workflow.py'
       - 'terraform/variables.tf'
+      - 'terraform-grafana/*.tf'
   workflow_dispatch:
 
 permissions:
