@@ -19,6 +19,9 @@ crash.*.log
 # Backend 설정 — 계정번호 포함 (자격증명에서 파생 생성, README "일상 워크플로우" 참고)
 backend.hcl
 
+# state 복구 때 restore/imports.tf 를 복사한 사본 (README "state 와 import 블록")
+restore_imports.tf
+
 # CLI config
 .terraformrc
 terraform.rc
