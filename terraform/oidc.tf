@@ -90,7 +90,7 @@ data "aws_iam_policy_document" "ecr_push" {
     resources = ["*"]
   }
 
-  # SSM 경유 SSH (infra 의 .github/actions/ssm-ssh). 위 SSH 게이트를 대체한다(#1196).
+  # SSM 경유 SSH (infra 의 .github/actions/ssm-ssh). 위 SSH 게이트를 대체한다(#1196). prod 까지 전환되면 게이트 권한은 삭제.
   statement {
     sid     = "SshOverSsm"
     actions = ["ssm:StartSession"]

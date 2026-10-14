@@ -21,7 +21,7 @@ on:
       # 아직 구 계정을 가리킨다. 아래 가드는 정확히 그 불일치를 잡으라고 있는 것이라, 이관에서는
       # 우회 경로를 따로 열어 준다 — 가드를 느슨하게 고치는 대신 "이관이라고 명시할 때만" 비킨다.
       migration_host:
-        description: "[이관 전용] 배포 대상 호스트를 직접 지정한다. 채우면 도메인↔EC2_HOST 가드를 건너뛴다. 평소에는 비워 둘 것."
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드다 — 도메인 가드를 건너뛰고 구 호스트 TLS cert 를 복사한다. 평소에는 비워 둘 것."
         required: false
         type: string
       migration_role_arn:
@@ -41,7 +41,7 @@ on:
         required: false
         type: string
       migration_host:
-        description: "[이관 전용] 배포 대상 호스트. 채우면 도메인↔EC2_HOST 가드를 건너뛴다."
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드(도메인 가드 우회·구 호스트 TLS cert 복사)."
         required: false
         type: string
       migration_role_arn:
@@ -182,35 +182,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # 배포 대상(EC2_HOST)이 그 환경의 도메인이 가리키는 IP 와 다르면, 환경 secret override 가
-      # 잘못된 것(예: dev env EC2_HOST 누락 → repo prod 값으로 fallback). 하드코딩 IP 대신 DNS 를
-      # source of truth 로 동적 검증해, dev 코드가 엉뚱한(특히 prod) 서버로 나가는 걸 SSH/docker 전에 끊는다.
-      - name: Guard — 배포 대상이 환경 도메인 DNS 와 일치하는지
-        id: guard
-        env:
-          DOMAIN: ${{ needs.resolve.outputs.domain }}
-          TARGET: ${{ secrets.EC2_HOST }}
-          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-          MIGRATION_HOST: ${{ inputs.migration_host }}
-        run: |
-          # 이관 중에는 도메인과 배포 대상이 일부러 다르다(위 입력 주석). 우회를 로그에 크게 남겨,
-          # 평소 배포에서 이 경로가 켜지면 바로 눈에 띄게 한다.
-          if [ -n "${MIGRATION_HOST:-}" ]; then
-            echo "::warning::[이관 모드] 도메인 가드 우회 — $MIGRATION_HOST 로 배포한다 ($DOMAIN 은 아직 구 계정을 가리킨다)"
-            exit 0
-          fi
-          # 양쪽을 IP 로 정규화해 비교한다 — EC2_HOST 가 IP 든 hostname(EC2 public DNS 등)이든
-          # getent 가 IP 로 풀어주므로, 형식 차이로 인한 false-abort 없이 "같은 호스트냐"만 본다.
-          EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
-          ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
-          echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
-          if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
-            echo "reason=[$ENVIRONMENT] 배포 대상 EC2_HOST($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — 환경 secret 오설정(dev/prod 교차배선) 의심" >> "$GITHUB_OUTPUT"
-            echo "::error::배포 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 환경 secret 오설정 의심, 중단."
-            exit 1
-          fi
-
       # (옛 러너측 'Discord admin secret 필수' 가드는 제거됐다 — 그 secret 들이 SSM 으로 옮겨가 러너의
       #  GH secrets 검사가 더는 성립하지 않기 때문. 같은 브릭 조건(admin secret 빈 값 → 도메인 잠금)은
       #  아래 Deploy 스텝의 box 측 가드가 SSM pull 직후 값으로 검사한다. 전 환경 공통이라 커버리지도 넓다.
@@ -262,25 +233,43 @@ jobs:
           echo "service-port=$PORT" >> "$GITHUB_OUTPUT"
           echo "extractor-url=$EXTRACTOR_URL" >> "$GITHUB_OUTPUT"
 
-      # 이관 세미 디플로이(migration_host)에서만 연다. 신 계정 SG 는 22번이 닫힌 채 생성되고
-      # (security_groups.tf 의 ingress 는 ignore_changes 라 terraform 관리 밖, 구 계정은 사람이 콘솔로
-      # 넣은 개방 규칙 덕에 평소 배포가 된다), 이 job 자신의 러너 IP 를 열어야 한다 — 게이트를 다른
-      # job(workflow_call 호출자)에서 미리 열어도 그 job 은 별개 러너라 IP 가 달라 소용없다(실측 —
-      # "dial tcp <ip>:22: i/o timeout"). AWS 자격(위 스텝)이 있어야 ssh-gate 가 SG 를 조작할 수 있어
-      # 이 순서(자격 → 게이트)여야 한다.
-      # 이관 때만이 아니라 평소 배포에서도 연다. 신 계정 SG 는 22번이 닫힌 채 생성되므로, 컷오버가
-      # 끝난 환경은 이 게이트 없이는 scp 가 "dial tcp <ip>:22: i/o timeout" 으로 확정 실패한다(실측).
-      #
-      # continue-on-error 인 이유: 아직 이관하지 않은 환경은 구 계정 역할을 쓰는데 거기엔 SG 조작
-      # 권한이 없다(그 계정 terraform 은 이관 대상이 아니라 apply 하지 않는다). 구 계정에는 사람이
-      # 넣은 개방 규칙이 이미 있어 게이트 없이도 배포가 되므로, 여기서 멈추면 멀쩡한 배포를 막는 꼴이
-      # 된다. 신 계정에서 게이트가 실패하면 바로 다음 scp 가 타임아웃으로 드러난다.
-      - name: SSH 게이트 개방 (러너 IP 만·배포 구간 한정)
-        continue-on-error: true
-        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
+      # 배포 대상 박스에 SSM Session Manager 를 거쳐 SSH 한다(infra 의 ssm-ssh). 박스 SG 에 22 번이 없다(#1196).
+      # 박스는 이 job 이 잡은 역할의 계정에서 Name 태그로 찾는다. 이관 때는 그 역할이 신 계정이라 신 박스를 찾는다.
+      - name: Prepare SSH over SSM
+        id: box
+        uses: TeamPiKi/infra/.github/actions/ssm-ssh@main
         with:
-          action: open
           instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
+          user: ${{ secrets.EC2_USER }}
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+
+      # 배포 대상 박스의 공인 IP 가 그 환경 도메인이 가리키는 IP 와 다르면 Name 태그나 환경 배선이 잘못된 것이다.
+      # 하드코딩 IP 대신 DNS 를 source of truth 로 비교해, dev 코드가 엉뚱한(특히 prod) 서버로 나가는 걸 빌드 전에 끊는다.
+      - name: Guard — 배포 대상이 환경 도메인 DNS 와 일치하는지
+        id: guard
+        env:
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
+          INSTANCE_ID: ${{ steps.box.outputs.instance-id }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          MIGRATION_HOST: ${{ inputs.migration_host }}
+        run: |
+          # 이관 중에는 도메인과 배포 대상이 일부러 다르다(위 입력 주석). 우회를 로그에 크게 남겨,
+          # 평소 배포에서 이 경로가 켜지면 바로 눈에 띄게 한다.
+          if [ -n "${MIGRATION_HOST:-}" ]; then
+            echo "::warning::[이관 모드] 도메인 가드 우회 — 신 계정 박스로 배포한다 ($DOMAIN 은 아직 구 계정을 가리킨다)"
+            exit 0
+          fi
+          EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
+          ACTUAL=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          [ "$ACTUAL" = "None" ] && ACTUAL=""
+          echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED instance=$INSTANCE_ID instanceIP=$ACTUAL"
+          if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
+            echo "reason=[$ENVIRONMENT] 배포 대상 박스($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — Name 태그·환경 배선 오류 의심" >> "$GITHUB_OUTPUT"
+            echo "::error::배포 대상 박스(${INSTANCE_ID}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 중단."
+            exit 1
+          fi
 
       - name: Login to Amazon ECR
         id: ecr_login
@@ -300,36 +289,31 @@ jobs:
           docker push "$IMAGE_LATEST"
           docker push "$IMAGE_SHA"
 
-      # 배포에 필요한 설정(nginx conf·provision 스크립트·alloy 공용 블록 3파일·healthcheck·슬롯 블록)을 SSH 연결
-      # 1회로 함께 올린다. 각각 scp 하면 핸드셰이크·액션 셋업이 반복돼 수십 초라 한 임시 집결 디렉토리
-      # (/tmp/piki-deploy)에 안착시킨다 — strip_components: 2 로 depth-3 소스는 파일명만 남고, alloy 블록
-      # (depth-4)은 alloy/ 하위(/tmp/piki-deploy/alloy/*)로 남아 provision-runtime.sh 가 그 경로로 호출한다(#743).
-      # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
+      # 배포에 필요한 설정(nginx conf·provision 스크립트·alloy 공용 블록 3파일·healthcheck·슬롯 블록)을 한 임시 집결
+      # 디렉토리(/tmp/piki-deploy)에 올린다. alloy 블록만 alloy/ 하위로 둔다 — provision-runtime.sh 가 그 경로로 호출한다(#743).
+      # 다운스트림(Apply nginx·Provision·Deploy·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
       # source: infra/* 는 Checkout(서비스 전용), shared-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 공용 정본.
-      # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
-      # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
-
       - name: Upload deploy files
         id: upload_files
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: |
-            infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
-            infra/scripts/provision-runtime.sh,
-            shared-infra/blocks/alloy/config.alloy,
-            shared-infra/blocks/alloy/provision-alloy.sh,
-            shared-infra/blocks/alloy/provision-alloy-ssm.sh,
-            shared-infra/blocks/healthcheck.sh,
-            shared-infra/blocks/run_container.sh,
-            shared-infra/blocks/slot_decide.sh,
-            shared-infra/blocks/slot_switch.sh,
-            shared-infra/blocks/deploy_slot.sh,
-            shared-infra/blocks/ssm_env.sh
-          target: "/tmp/piki-deploy"
-          strip_components: 2
+        timeout-minutes: 10
+        env:
+          HOST: ${{ steps.box.outputs.host }}
+          NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
+        run: |
+          ssh -n "$HOST" 'mkdir -p /tmp/piki-deploy/alloy'
+          scp "infra/nginx/$NGINX_CONF" \
+            infra/scripts/provision-runtime.sh \
+            shared-infra/blocks/healthcheck.sh \
+            shared-infra/blocks/run_container.sh \
+            shared-infra/blocks/slot_decide.sh \
+            shared-infra/blocks/slot_switch.sh \
+            shared-infra/blocks/deploy_slot.sh \
+            shared-infra/blocks/ssm_env.sh \
+            "$HOST:/tmp/piki-deploy/"
+          scp shared-infra/blocks/alloy/config.alloy \
+            shared-infra/blocks/alloy/provision-alloy.sh \
+            shared-infra/blocks/alloy/provision-alloy-ssm.sh \
+            "$HOST:/tmp/piki-deploy/alloy/"
 
       # TLS 인증서 보장 — cert 가 없을 때만 발급(idempotent). dev 첫 배포에서만 동작하고,
       # prod 는 cert 가 이미 있어 통째로 skip(=nginx 안 멈춤, 다운타임 0).
@@ -344,40 +328,32 @@ jobs:
         if: ${{ inputs.migration_host != '' }}
         env:
           OLD_HOST: ${{ secrets.EC2_HOST }}
-          NEW_HOST: ${{ inputs.migration_host }}
+          HOST: ${{ steps.box.outputs.host }}
           SSH_USER: ${{ secrets.EC2_USER }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           set -euo pipefail
-          # migration_host 는 dispatch 입력이라 임의 값이 올 수 있다. 검증 없이 /etc/letsencrypt(TLS 개인키)를
-          # 그 호스트로 보내면 dispatch 권한자가 키를 임의 호스트로 유출시킬 수 있다. 신 계정의 실제 EIP 목록과
-          # 대조해, 승인된 EIP 가 아니면 중단한다(fail-closed — describe 권한이 없어 검증 불가여도 중단).
-          APPROVED=$(aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text 2>/dev/null | tr '\t' '\n')
-          echo "$APPROVED" | grep -qx "$NEW_HOST" || {
-            echo "::error::migration_host($NEW_HOST) 가 신 계정 EIP 목록에 없음(또는 describe 권한 없음) — TLS 개인키 유출 방지로 중단"; exit 1; }
           umask 077
           echo "$SSH_KEY" > /tmp/mig_key.pem && chmod 600 /tmp/mig_key.pem
+          # 구 호스트는 다른 계정 박스라 이 job 의 역할로는 SSM 을 쓸 수 없다 — 공인 IP 로 직접 SSH 한다
+          # (구 계정 SG 의 22 번이 열려 있어야 한다). 신 박스는 위 SSM 별칭으로 간다.
           SSHOPT=(-i /tmp/mig_key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
           # 구 호스트에서 /etc/letsencrypt 를 tar 로 말아 러너로 받아 신 호스트로 푼다(러너 릴레이).
           # /etc/letsencrypt 는 root 소유라 sudo. live 심볼릭·archive·renewal 설정·options-ssl·dhparams 가 통째로 옮겨져
           # nginx conf 가 참조하는 파일이 다 따라온다(다음 스텝의 개별 복사도 no-op 가 된다).
           ssh "${SSHOPT[@]}" "$SSH_USER@$OLD_HOST" 'sudo tar -C /etc -czf - letsencrypt' > /tmp/le.tgz
           [ -s /tmp/le.tgz ] || { echo "::error::구 호스트에서 /etc/letsencrypt 를 가져오지 못했다 (cert 존재·sudo 권한 확인)"; exit 1; }
-          ssh "${SSHOPT[@]}" "$SSH_USER@$NEW_HOST" 'sudo tar -C /etc -xzf -' < /tmp/le.tgz
+          ssh "$HOST" 'sudo tar -C /etc -xzf -' < /tmp/le.tgz
           rm -f /tmp/mig_key.pem /tmp/le.tgz
-          echo "::notice::TLS cert 복사 완료 — $OLD_HOST → $NEW_HOST (HTTP-01 건너뜀, 컷오버 즉시 HTTPS 유효)"
+          echo "::notice::TLS cert 복사 완료 — $OLD_HOST → $HOST (HTTP-01 건너뜀, 컷오버 즉시 HTTPS 유효)"
 
       - name: Ensure TLS cert (certbot if missing)
         id: cert
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DOMAIN
-          script: |
+          SCRIPT: |
             if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
               echo "[certbot] $DOMAIN cert 이미 존재 — skip"
             else
@@ -400,20 +376,19 @@ jobs:
               SRC=$(find /usr -name ssl-dhparams.pem 2>/dev/null | head -1)
               [ -n "$SRC" ] && sudo cp "$SRC" /etc/letsencrypt/ssl-dhparams.pem && echo "[certbot] ssl-dhparams.pem 복사"
             fi
+        run: |
+          EXPORTS=$(for v in DOMAIN; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Apply nginx config
         id: nginx
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
           SERVICE_PORT: ${{ steps.addr.outputs.service-port }}
-        with:
-          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: NGINX_CONF,DOMAIN,SERVICE_PORT
-          script: |
+          SCRIPT: |
             SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
             # api conf 가 include 하는 piki-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
@@ -447,11 +422,15 @@ jobs:
               sudo cp "${DST}.bak" "$DST" 2>/dev/null || true
               exit 1
             fi
+        run: |
+          EXPORTS=$(for v in NGINX_CONF DOMAIN SERVICE_PORT; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
         id: provision
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           # 환경은 트리거 브랜치에서 derive — dev MySQL 기동/Alloy environment 라벨을 가른다.
           # MySQL 초기 자격증명은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM
           # (/piki-core/<env>/db-*)으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
@@ -461,19 +440,18 @@ jobs:
           # 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다).
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
           # extractor prod 박스는 자체 Alloy 가 수집한다 (dev 동거 extractor 는 #862 로 폐지 — 전 환경이 전용 박스 사용).
-        with:
-          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT
-          script: |
+          SCRIPT: |
             chmod +x /tmp/piki-deploy/provision-runtime.sh
             /tmp/piki-deploy/provision-runtime.sh
+        run: |
+          EXPORTS=$(for v in ENVIRONMENT; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Deploy to ${{ needs.resolve.outputs.environment }}
         id: deploy
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           # 앱 컨테이너 런타임 시크릿(DB·JWT·OAuth·Apple·S3·Firebase·Discord admin 등)은 더 이상 러너가
           # SSH 로 밀어넣지 않는다 — 박스가 아래 script 에서 SSM(/piki-core/<env>/*)을 직접 pull 한다
           # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값뿐이다 (ECR pull 자격증명은
@@ -507,13 +485,8 @@ jobs:
           MEM_SWAP: ${{ needs.resolve.outputs.mem_swap }}
           # 전환 후 프론트 경유 검증의 Host 헤더
           DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL,SERVICE_PORT,JAVA_TOOL_OPTIONS,MEM_LIMIT,MEM_SWAP,DOMAIN
-          script: |
+          SCRIPT: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 공용 블록(ssm_env.sh)이 KEY=VALUE 파일로
             # 만들고 아래 docker run 에 --env-file 로 넘긴다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는
@@ -619,6 +592,9 @@ jobs:
               --memory "$MEM_LIMIT" --memory-swap "$MEM_SWAP" \
               --add-host host.docker.internal:host-gateway \
               --label piki.observe=true --label piki.service=piki-core --label piki.metrics.path=/actuator/prometheus
+        run: |
+          EXPORTS=$(for v in ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED IMAGE_TAG EXTRACT_REMOTE_BASE_URL SERVICE_PORT JAVA_TOOL_OPTIONS MEM_LIMIT MEM_SWAP DOMAIN; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Write deployment summary
         if: always()
@@ -629,11 +605,11 @@ jobs:
           SHORT_SHA="${SHORT_SHA:0:7}"
           COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
 
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key && chmod 600 /tmp/ec2_key
-          ACTIVE_SLOT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER }}@${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}" \
-            'docker ps --filter "name=^piki-core-" --format "{{.Names}}" 2>/dev/null | head -1' 2>/dev/null || echo "")
-          rm -f /tmp/ec2_key
+          ACTIVE_SLOT=""
+          if [ -n "${{ steps.box.outputs.host }}" ]; then
+            ACTIVE_SLOT=$(ssh -n "${{ steps.box.outputs.host }}" \
+              'docker ps --filter "name=^piki-core-" --format "{{.Names}}" 2>/dev/null | head -1' 2>/dev/null || echo "")
+          fi
 
           if [ "$ACTIVE_SLOT" = "piki-core-blue" ]; then
             NOW="🔵 blue"
@@ -649,6 +625,8 @@ jobs:
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (EC2 배포 - 기동·헬스·전환 중 하나, 스텝 로그의 [deploy_slot] 단계 참조)"
+          elif [ "${{ steps.box.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (SSM 접속 준비)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
@@ -752,15 +730,17 @@ jobs:
 
           if [ "${{ steps.guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.guard.outputs.reason }}"
-            CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
+            CAUSE="${CAUSE:-환경 도메인과 배포 대상 박스 불일치 (Name 태그·환경 배선 오류)}"
           elif [ "${{ steps.resolve_jar.outcome }}" = "failure" ]; then
             CAUSE="JAR 준비 실패 (workflow_run 이면 CI 아티팩트 다운로드 — app-jar 누락/만료 · actions:read 권한, dispatch 면 Gradle 빌드)"
           elif [ "${{ steps.aws_credentials.outcome }}" = "failure" ] || [ "${{ steps.ecr_login.outcome }}" = "failure" ]; then
             CAUSE="ECR 인증 실패 (OIDC assume-role 또는 ECR 로그인 — 신뢰조건·IAM 권한 확인)"
+          elif [ "${{ steps.box.outcome }}" = "failure" ]; then
+            CAUSE="SSM 접속 준비 실패 (Name 태그 인스턴스 1개·SSM 등록·ssm:StartSession 권한 확인)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
-            CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
+            CAUSE="EC2 파일 업로드 실패 (SSM 경유 scp — 세션 채널 권한·SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"
           elif [ "${{ steps.nginx.outcome }}" = "failure" ]; then
@@ -784,21 +764,6 @@ jobs:
             -H "Content-Type: application/json; charset=utf-8" \
             --data "$(jq -n --arg content "$TEXT" '{content:$content, allowed_mentions:{parse:["users"]}}')") || HTTP_CODE="000"
           [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] || echo "::warning::Discord 알림 전송 실패 (HTTP $HTTP_CODE) $(cat /tmp/discord_resp.json 2>/dev/null)"
-
-      # 위에서 연 게이트를 회수한다. always() — 이 job 이 어디서 실패해도 22번이 열린 채 남지 않게.
-      # !=skipped 로 두는 이유: ssh-gate 는 SG 를 순서대로 처리해, 앞 SG 에 규칙을 넣은 뒤 다음 SG 에서
-      # 실패하면 open 스텝 자체는 failure 이지만 22번은 이미 일부 열려 있다(#1134 에서 실제로 겪은 함정).
-      # 회수는 continue-on-error 를 두지 않는다. 실패하면 러너 IP 로 22번이 열린 채 남는데,
-      # GitHub 러너 IP 는 공유 풀이라 다음에 그 주소를 받는 쪽이 우리 박스에 닿는다. 배포가
-      # 성공했더라도 그 상태는 사람이 치워야 하므로 job 을 빨갛게 만들어 드러낸다.
-      # 게이트를 연 적이 없으면(구 계정처럼 권한이 없어 open 이 건너뛰어진 경우) 상태 파일이 없어
-      # 이 스텝은 그대로 통과한다.
-      - name: SSH 게이트 회수
-        if: always()
-        uses: TeamPiKi/core/.github/actions/ssh-gate@dev
-        with:
-          action: close
-          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
 
   # main(prod) 배포 성공 후에만 GitHub Release 자동 생성 — 릴리스 = 실제로 라이브된 버전.
   # 배포 실패 시 release 가 needs(deploy) 실패로 skip 되어 "안 뜬 버전의 릴리스"가 안 남는다.
