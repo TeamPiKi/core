@@ -88,14 +88,6 @@ variable "ec2_ami_id" {
   default = "ami-0f5ddb19e2fbe4cc4"
 }
 
-variable "ssh_ingress_cidr" {
-  description = "SSH 접속을 허용할 CIDR. 실제로는 본인/팀원 공인 IP/32 로 좁힐 것"
-  type        = string
-  # TODO: 팀원 IP 확보 후 terraform.tfvars 에서 실제 값으로 override 할 것.
-  # 아래는 RFC 5737 문서화용 예약 대역(TEST-NET-3) 의 placeholder 이며 실제 라우팅되지 않음.
-  default = "203.0.113.1/32"
-}
-
 # ----- RDS -----
 
 variable "db_instance_class" {

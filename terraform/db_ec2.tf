@@ -19,15 +19,15 @@
 # DB 박스 Security Group
 #
 # 3306(MySQL)·6379(Redis) 는 앱 EC2 SG(prod·dev 앱 박스 공용) 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
-# 인터넷에 직접 노출하지 않는다. SSH 는 EC2 Instance Connect·팀원 접속을 위해 열되
-# var.ssh_ingress_cidr 로 좁힌다.
+# 인터넷에 직접 노출하지 않는다. SSH 는 SSM 경유라 22 번이 없다(#1196).
 #
 # egress 는 열어 둔다. RDS 와 달리 이 박스는 스스로 바깥에 나가야 한다 — SSM 에서 DB 자격증명을
 # 읽고, 백업을 S3 에 올리고, docker 이미지를 받는다. 사설 서브넷 + NAT Gateway 로 가리는 선택지는
 # NAT 만 월 $40 이 넘어 이 이관의 절감액을 통째로 삼킨다.
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "db_ec2" {
-  name        = "piki-prod-db-sg"
+  name = "piki-prod-db-sg"
+  # description 은 바꾸면 SG 가 새로 만들어져 옛 문구 그대로 둔다.
   description = "Allow MySQL from app EC2 SG only, SSH from team CIDR"
   vpc_id      = aws_vpc.main.id
 
@@ -45,14 +45,6 @@ resource "aws_security_group" "db_ec2" {
     to_port         = 6379
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2.id]
-  }
-
-  ingress {
-    description = "SSH (EC2 Instance Connect / team)"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_ingress_cidr]
   }
 
   egress {

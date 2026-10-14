@@ -1,21 +1,14 @@
 # -----------------------------------------------------------------------------
-# EC2 Security Group — SSH(22) + HTTP(80) + HTTPS(443)
+# EC2 Security Group — HTTP(80) + HTTPS(443). SSH 는 SSM 경유라 22 번이 없다(#1196).
 #
 # 앱 포트는 외부에 노출하지 않는다. 박스의 nginx 가 TLS 를 종료하고 127.0.0.1 에 바인딩된
 # blue·green 슬롯으로 forward 한다(포트 정본: TeamPiKi/infra contracts/ports.json).
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "ec2" {
-  name        = "${local.name_prefix}-ec2-sg"
+  name = "${local.name_prefix}-ec2-sg"
+  # description 은 바꾸면 SG 가 새로 만들어져 옛 문구 그대로 둔다.
   description = "Allow SSH and HTTP/HTTPS to EC2"
   vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_ingress_cidr]
-  }
 
   ingress {
     description = "HTTP (redirect to HTTPS at reverse proxy layer)"
@@ -41,10 +34,7 @@ resource "aws_security_group" "ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # SSH(22) 등 ingress 규칙은 PIKI-Infra maintainer 들이 콘솔/cli 로 직접 관리한다.
-  # github actions 배포용 0.0.0.0/0:22, 팀원 SSH IP 등이 콘솔/cli 로 추가돼 있어,
-  # terraform 이 ingress 를 덮어쓰면 그 규칙이 제거돼 배포·팀원 SSH 가 끊긴다.
-  # 위 ingress 블록은 신규 환경의 초기 생성값일 뿐, 이후엔 콘솔이 권위를 가지므로 변경을 무시한다.
+  # ingress 는 콘솔/CLI 가 권위를 가진다(TeamPiKi/infra conventions/infra.md 3절). 위 블록은 신규 환경의 초기 생성값이다.
   lifecycle {
     ignore_changes = [ingress]
   }

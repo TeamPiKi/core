@@ -23,9 +23,8 @@ name: Migrate
 # 계정 박스에 같은 키로 붙는다. 새 키를 발급하면 프라이빗 키 보관에 PAT 가 필요하고, 구·신 키가 갈려
 # EC2_SSH_KEY 를 언제 갈아끼울지가 또 하나의 상태 전환이 된다(그 사이 deploy.yml 이 깨진다).
 #
-# 러너 SSH 접근: 신 계정 SG 는 22번이 사실상 닫힌 채 생성된다(security_groups.tf 의 ssh_ingress_cidr
-# 기본값이 문서화용 예약 대역 + ingress ignore_changes). 필요한 구간에만 러너 IP/32 를 여는 일은
-# ./.github/actions/ssh-gate 가 맡는다.
+# 러너 SSH 접근: 신 계정 SG 는 22번이 닫힌 채 생성된다(평소 배포는 SSM 경유, #1196). 필요한 구간에만
+# 러너 IP/32 를 여는 일은 ./.github/actions/ssh-gate 가 맡는다. SSM 전환은 #1210.
 
 on:
   workflow_dispatch:
