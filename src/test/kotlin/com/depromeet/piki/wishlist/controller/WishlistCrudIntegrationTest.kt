@@ -721,22 +721,24 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `빈 문자열 memo 를 보내면 메모가 삭제된다`() {
+    fun `빈 문자열 memo 를 보내면 메모가 지워지고 이전 메모는 이력에 남는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val authHeader = "Bearer ${memberToken(userId)}"
         val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
 
-        mockMvc
-            .perform(
-                multipart("/api/v1/wishlists/$wishId")
-                    .param("memo", "지울 메모")
-                    .with {
-                        it.method = "PATCH"
-                        it
-                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
-            ).andExpect(status().isOk)
+        repeat(2) {
+            mockMvc
+                .perform(
+                    multipart("/api/v1/wishlists/$wishId")
+                        .param("memo", "지울 메모")
+                        .with {
+                            it.method = "PATCH"
+                            it
+                        }.header(HttpHeaders.AUTHORIZATION, authHeader),
+                ).andExpect(status().isOk)
+        }
 
         mockMvc
             .perform(
@@ -752,6 +754,14 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.memo").value(nullValue()))
+        entityManager.flush()
+        val contents =
+            jdbcTemplate.queryForList(
+                "SELECT content FROM wish_memos WHERE wish_id = ? ORDER BY written_at, id",
+                String::class.java,
+                wishId,
+            )
+        assertEquals(listOf("지울 메모", null), contents, "같은 메모를 다시 보내면 쌓지 않는다")
     }
 
     @Test

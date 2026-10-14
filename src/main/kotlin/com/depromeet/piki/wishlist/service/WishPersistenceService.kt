@@ -17,6 +17,8 @@ import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
+import com.depromeet.piki.wishlist.domain.WishMemo
+import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.ApplyWishUserInputCommand
 import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
@@ -33,6 +35,7 @@ import java.util.UUID
 @Service
 class WishPersistenceService(
     private val wishRepository: WishRepository,
+    private val wishMemoRepository: WishMemoRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemParseOutboxRepository: ItemParseOutboxRepository,
@@ -109,7 +112,7 @@ class WishPersistenceService(
         val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput)
         val item = lockedItemOf(wish)
         itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = command.userId))
-        command.memo?.let { wish.updateMemo(it) }
+        command.memo?.let { writeMemo(wish, it) }
         return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
@@ -121,12 +124,11 @@ class WishPersistenceService(
         itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput(PRE_UPLOAD_VALIDATION_IMAGE_URL))
     }
 
-    // 메모만 바꿔도 행 락이 필요하다. 전 컬럼 UPDATE 라 락 없이 읽으면 그 사이 확정된 아이템을 옛 값으로 되덮는다
     @Transactional
     fun updateMemo(command: UpdateWishMemoCommand): WishResult {
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
-        wish.updateMemo(command.memo)
+        writeMemo(wish, command.memo)
         return WishResult(wish = wish, item = wish.itemId?.let(itemRepository::findById), card = itemCardService.cardOf(wish.cardQuery()))
     }
 
@@ -141,6 +143,15 @@ class WishPersistenceService(
         item ?: throw WishException.failedNotRefreshable()
         parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REFRESH, item.refreshInput())
         return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+    }
+
+    private fun writeMemo(
+        wish: Wish,
+        rawMemo: String,
+    ) {
+        val memo = WishMemo.written(wish.getId(), rawMemo)
+        if (memo.sameContentAs(wishMemoRepository.findCurrentByWishId(wish.getId()))) return
+        wishMemoRepository.save(memo)
     }
 
     // 버전 생성과 같은 행 잠금을 잡아 토너먼트 시작과 직렬화한다

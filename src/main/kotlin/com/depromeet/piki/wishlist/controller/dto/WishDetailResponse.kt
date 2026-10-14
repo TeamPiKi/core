@@ -42,7 +42,7 @@ data class WishDetailResponse(
         ): WishDetailResponse =
             WishDetailResponse(
                 wish = WishItemResponse.WishView.from(detail.wishResult.wish),
-                memo = detail.wishResult.wish.memo,
+                memo = detail.memo,
                 item = WishItemResponse.ItemView.from(detail.wishResult),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
             )

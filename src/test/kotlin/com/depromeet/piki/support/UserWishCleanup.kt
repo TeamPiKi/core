@@ -13,6 +13,7 @@ fun JdbcTemplate.deleteWishDataOf(userId: UUID) {
             .filterNotNull()
             .distinct()
     deleteParseOutboxOf(wishIds.map(ItemSlot::wish))
+    update("DELETE m FROM wish_memos m JOIN wishes w ON w.id = m.wish_id WHERE w.user_id = ?", userBytes)
     update("DELETE FROM wishes WHERE user_id = ?", userBytes)
     deleteItems(itemIds)
 }

@@ -41,6 +41,7 @@ import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.DefaultProfileImages
+import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
@@ -57,6 +58,7 @@ class TournamentService(
     private val itemRepository: ItemRepository,
     private val itemCardService: ItemCardService,
     private val wishRepository: WishRepository,
+    private val wishMemoRepository: WishMemoRepository,
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
@@ -520,7 +522,11 @@ class TournamentService(
         val pendingLink = card.pendingLink
         // 이 상품이 요청자 본인의 위시에 담겨 있으면 그 위시의 개인 메모를 함께 내린다(#906). 조회를 요청자
         // 소유 wish 로 한정하므로 남의 메모는 구조적으로 내려갈 수 없다. 게스트·미담음·삭제된 위시는 조회에 안 잡힌다.
-        val memo = item?.let { wishRepository.findByItemIdsAndUserId(listOf(it.getId()), userId).firstOrNull()?.memo }
+        val memo =
+            item
+                ?.let { wishRepository.findByItemIdsAndUserId(listOf(it.getId()), userId).firstOrNull() }
+                ?.let { wishMemoRepository.findCurrentByWishId(it.getId()) }
+                ?.content
         return TournamentItemDetail(
             tournamentItemId = tournamentItem.getId(),
             itemId = item?.getId(),

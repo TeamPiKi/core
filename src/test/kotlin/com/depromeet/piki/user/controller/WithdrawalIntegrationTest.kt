@@ -203,6 +203,10 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         insertUserDetail(userId)
         insertUserDevice(userId)
         val wishId = insertWish(userId)
+        jdbcTemplate.update(
+            "INSERT INTO wish_memos (wish_id, content, written_at, created_at, updated_at) VALUES (?, '메모', NOW(6), NOW(6), NOW(6))",
+            wishId,
+        )
         val notificationId = insertNotification(userId)
 
         mockMvc()
@@ -242,6 +246,13 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
                 wishId,
             )
         assertEquals(0L, wishCount, "wish 가 하드삭제되어야 한다")
+        val memoCount =
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM wish_memos WHERE wish_id = ?",
+                Long::class.java,
+                wishId,
+            )
+        assertEquals(0L, memoCount, "위시 메모가 하드삭제되어야 한다")
 
         // notifications 하드삭제
         val notiCount =

@@ -74,33 +74,4 @@ class WishTest {
 
         Wish(userId = owner, itemId = 1L).verifyOwnedBy(owner)
     }
-
-    @Test
-    fun `updateMemo 는 앞뒤 공백을 정리해 메모를 저장한다`() {
-        val wish = Wish(userId = UUID.randomUUID(), itemId = 1L)
-
-        wish.updateMemo("  생일 선물 후보  ")
-
-        assertEquals("생일 선물 후보", wish.memo)
-    }
-
-    @Test
-    fun `updateMemo 에 빈 문자열이나 공백만 주면 메모가 삭제된다`() {
-        val wish = Wish(userId = UUID.randomUUID(), itemId = 1L)
-
-        wish.updateMemo("메모")
-        wish.updateMemo("   ")
-
-        assertNull(wish.memo)
-    }
-
-    @Test
-    fun `updateMemo 는 100자까지 허용하고 초과하면 실패한다`() {
-        val wish = Wish(userId = UUID.randomUUID(), itemId = 1L)
-
-        wish.updateMemo("가".repeat(100))
-
-        assertEquals(100, wish.memo?.length)
-        assertFailsWith<IllegalArgumentException> { wish.updateMemo("가".repeat(101)) }
-    }
 }

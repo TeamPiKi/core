@@ -23,10 +23,6 @@ class Wish(
     var itemId: Long? = itemId
         protected set
 
-    @Column(length = MEMO_MAX_LENGTH)
-    var memo: String? = null
-        protected set
-
     init {
         itemId?.let { require(it > 0) { "itemId 는 양수여야 한다: $it" } }
     }
@@ -48,19 +44,7 @@ class Wish(
         this.itemId = itemId
     }
 
-    fun updateMemo(rawMemo: String) {
-        val normalized = rawMemo.trim().ifEmpty { null }
-        normalized?.let {
-            require(it.length <= MEMO_MAX_LENGTH) { "메모는 ${MEMO_MAX_LENGTH}자 이하여야 한다: ${it.length}자" }
-        }
-        memo = normalized
-    }
-
     fun delete() {
         deletedAt = LocalDateTime.now()
-    }
-
-    companion object {
-        const val MEMO_MAX_LENGTH = 100
     }
 }

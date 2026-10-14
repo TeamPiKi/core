@@ -13,6 +13,7 @@ import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishException
+import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
 import com.depromeet.piki.wishlist.service.dto.DeleteWishCommand
@@ -37,6 +38,7 @@ class WishlistService(
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
+    private val wishMemoRepository: WishMemoRepository,
     private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemCardService: ItemCardService,
@@ -109,6 +111,7 @@ class WishlistService(
         val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
         return WishDetailResult(
             wishResult = WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery())).withSourcePlatform(),
+            memo = wishMemoRepository.findCurrentByWishId(wish.getId())?.content,
             history = item?.let { itemSnapshotRepository.findPriceHistoryByItemId(it.getId(), PRICE_HISTORY_LIMIT) }.orEmpty(),
         )
     }

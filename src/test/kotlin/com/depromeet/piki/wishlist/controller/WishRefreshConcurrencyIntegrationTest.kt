@@ -17,6 +17,7 @@ import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.uuidToBytes
+import com.depromeet.piki.support.wishItemIdOf
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
@@ -134,8 +135,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `파싱 성공과 메모 수정이 동시에 와도 행 락으로 직렬화되어 확정된 아이템과 메모가 모두 보존된다`() {
-        // 메모 UPDATE 는 전 컬럼을 쓰므로 락 없이 읽으면 그 사이 확정된 item_id 를 null 로 되덮는다(lost update)
+    fun `파싱 성공과 메모 수정이 동시에 와도 확정된 아이템과 메모가 모두 보존된다`() {
         val userId = UUID.randomUUID()
         userJpaRepository.save(
             User(id = userId, nickname = "memo-race", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER),
@@ -214,9 +214,9 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
 
             assertEquals(2, succeeded.get())
             assertEquals(0, failed.get())
-            val row = jdbcTemplate.queryForMap("SELECT item_id, memo FROM wishes WHERE id = ?", wish.getId())
-            assertEquals("동시 메모", row["memo"], "메모가 저장되어야 한다")
-            assertNotNull(row["item_id"], "파싱이 확정한 아이템이 메모 갱신의 전 컬럼 UPDATE 에 되덮이면 안 된다")
+            val memos = jdbcTemplate.queryForList("SELECT content FROM wish_memos WHERE wish_id = ?", String::class.java, wish.getId())
+            assertEquals(listOf("동시 메모"), memos, "메모가 저장되어야 한다")
+            assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()), "파싱이 확정한 아이템이 남아야 한다")
         } finally {
             jdbcTemplate.deleteWishDataOf(userId)
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
