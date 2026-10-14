@@ -307,7 +307,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\"}[$__rate_interval])))"
+          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\", span_name!=\"http get /api/v1/notifications/subscribe\"}[$__rate_interval])))"
         }
       ],
       "description": "http 히스토그램 버킷이 없어(무료티어) spanmetrics 로 계산"
@@ -590,7 +590,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\", span_name!=\"http get /api/v1/notifications/subscribe\"}[$__rate_interval])))",
           "legendFormat": "p50"
         },
         {
@@ -599,7 +599,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\", span_name!=\"http get /api/v1/notifications/subscribe\"}[$__rate_interval])))",
           "legendFormat": "p95"
         },
         {
@@ -608,7 +608,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum(rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\", span_name!=\"http get /api/v1/notifications/subscribe\"}[$__rate_interval])))",
           "legendFormat": "p99"
         }
       ],
@@ -656,7 +656,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "histogram_quantile(0.95, sum by (span_name) (rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (span_name) (rate(traces_spanmetrics_latency{job=\"piki-core\", span_kind=\"SPAN_KIND_SERVER\", deployment_environment=\"$environment\", span_name!=\"http get /api/v1/notifications/subscribe\"}[$__rate_interval])))",
           "legendFormat": "{{span_name}}"
         }
       ]
