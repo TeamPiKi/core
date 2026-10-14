@@ -114,9 +114,10 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
 
-    # maxmemory 를 넘기면 noeviction(기본값)이라 쓰기가 실패한다. 탈퇴 마커 같은 키가 조용히 축출되면 보안 구멍이다.
+    # 가득 차면 축출한다. 기본값 noeviction 은 모든 쓰기를 실패시켜 전원 로그인 불능이 된다.
+    # 인덱스 키(refresh:idx)가 축출되면 전 기기 무효화가 세션을 놓친다. 이 위험은 축출 알림으로만 지킨다(#1205).
     # RDB 저장 실패에는 쓰기를 막지 않는다. 잃는 것은 재시작 뒤 재로그인뿐이라 로그인 불능보다 가볍다.
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --stop-writes-on-bgsave-error no"]
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy allkeys-lru --stop-writes-on-bgsave-error no"]
 
     mem_limit: 128m
 
