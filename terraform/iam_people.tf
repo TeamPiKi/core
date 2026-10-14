@@ -100,9 +100,10 @@ data "aws_iam_policy_document" "backend_daily" {
       "arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:document/SSM-SessionManagerRunShell",
     ]
   }
+  # 세션 id 는 IAM 사용자 이름으로 시작한다(실측). OpenDataChannel 이 없으면 세션이 열리자마자 끊긴다.
   statement {
     sid       = "OwnSessions"
-    actions   = ["ssm:TerminateSession", "ssm:ResumeSession"]
+    actions   = ["ssm:TerminateSession", "ssm:ResumeSession", "ssmmessages:OpenDataChannel"]
     resources = ["arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:session/$${aws:username}-*"]
   }
   statement {
