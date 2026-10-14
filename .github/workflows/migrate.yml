@@ -1288,18 +1288,12 @@ jobs:
 
   # core 앱 — 빌드·ECR push·배포·nginx·cert 복사까지 deploy.yml 이 통째로 처리한다.
   deploy_core_app:
-    needs: [guard, config, deploy_core, side_hosts, deploy_extractor]
-    # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 EXTRACT_REMOTE_BASE_URL 로 실측 헬스
-    # 프로브를 하고(#862), 그 주소가 비어 있거나 안 뜬 상태면 배포를 막는다(fail-fast, 의도된 안전장치).
-    # deploy_extractor 를 끈 경우(skipped)도 진행한다 — extractor 박스 자체는 infra_apps 가 세웠고,
-    # core 배포의 헬스 프로브는 "그 주소가 응답하는가" 만 본다. 서비스가 아직 안 떴다면 그 프로브가
-    # 걸러낼 것이므로 여기서 미리 막지 않는다.
-    #
-    # side_hosts 의 성공을 함께 요구한다. 그게 빠져 있으면 side_hosts 가 실패했을 때 extractor_ip 가 빈
-    # 값으로 내려와 migration_extractor_address 가 ":8090" 이 되고, deploy.yml 의 빈-host 가드("http://"
-    # 정확히 일치)를 통과해 헬스 프로브에서 확정 실패한다. 그 실패는 다시 cutover 의 게이트를 막아
-    # 컷오버가 구조적으로 도달 불가가 된다 — 원인이 side_hosts 인데 증상은 core 배포 실패로 보인다.
-    if: ${{ always() && needs.deploy_core.result == 'success' && needs.side_hosts.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
+    needs: [guard, config, deploy_core, deploy_extractor]
+    # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 extractor 헬스를 실측하고(#862), 안 뜬
+    # 상태면 배포를 막는다(fail-fast, 의도된 안전장치). deploy_extractor 를 끈 경우(skipped)도 진행한다 —
+    # extractor 박스 자체는 infra_apps 가 세웠고, 서비스가 아직 안 떴다면 그 프로브가 걸러낸다.
+    # extractor 주소는 deploy.yml 이 넘겨받은 역할의 계정에서 Name 태그로 계산하므로 이관용 override 가 없다.
+    if: ${{ always() && needs.deploy_core.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
@@ -1307,12 +1301,6 @@ jobs:
       sha: ${{ needs.config.outputs.deploy_sha }}
       migration_host: ${{ needs.deploy_core.outputs.app_ip }}
       migration_role_arn: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
-      # 평소 배포는 secrets.EXTRACTOR_PROD_ADDRESS(구 계정)를 쓰지만, 이관 중엔 아직 신 계정 extractor 로
-      # 바뀌지 않은 상태다(그 secret 갱신은 컷오버 후 사람이 할 정리 항목). 신 계정 IP 로 override 한다 —
-      # 안 넘기면 러너가 구 계정 extractor 에 SG·네트워크가 막혀 못 닿아 헬스 프로브에서 확정 실패한다(실측).
-      # 사설 IP 다 — 이 값은 앱 박스가 extractor 를 부를 주소이고, 공인 IP 로 부르면 SG 참조 규칙에
-      # 걸려 막힌다(side_hosts 주석 참조). 러너가 SSH 로 붙는 주소(extractor_ip)와 용도가 다르다.
-      migration_extractor_address: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
       # 이관은 이 파일이 놓인 브랜치(dev)에서 호출되므로, 넘기지 않으면 deploy.yml 이 브랜치만 보고
       # prod 이관을 dev 환경으로 배선한다 — dev 키로 prod 박스에 붙어 SSH 인증이 실패한다(실측).
       migration_env: ${{ inputs.env }}
@@ -1332,7 +1320,6 @@ jobs:
       # 공인 IP 는 러너가 SSH 로 붙을 때만 쓴다. 박스끼리의 호출은 아래 사설 IP 를 쓴다.
       extractor_ip: ${{ steps.find.outputs.extractor_ip }}
       renderer_ip: ${{ steps.find.outputs.renderer_ip }}
-      extractor_private_ip: ${{ steps.find.outputs.extractor_private_ip }}
     steps:
       - name: AWS 자격 (신 계정 OIDC 역할)
         uses: aws-actions/configure-aws-credentials@v4
@@ -1351,18 +1338,12 @@ jobs:
               --query "Reservations[].Instances[].$2" --output text | tr '\t' '\n' | head -1
           }
           EX=$(ip_of piki-extractor PublicIpAddress); RE=$(ip_of piki-headless-browser PublicIpAddress)
-          # 사설 IP 를 따로 뽑는다. 앱 박스에서 extractor 를 부를 때 공인 IP 를 쓰면 트래픽이 인터넷
-          # 게이트웨이를 돌아 나갔다 들어와, extractor SG 의 "앱 SG 에서만 허용" 규칙이 소스를 앱 박스의
-          # 공인 IP 로 보고 막는다(실측: 헬스 프로브가 http://<공인>:8090 에서 실패). 같은 VPC 안에서는
-          # 사설 IP 로 가야 SG 참조가 성립한다.
-          EXP=$(ip_of piki-extractor PrivateIpAddress)
           # 못 찾으면 멈춘다 — 빈 값을 넘기면 호출된 레포가 자기 secrets.EC2_HOST(구 계정)로 폴백해
           # 이관 중에 구 계정 박스를 덮어쓴다. 그게 이 단계에서 가장 위험한 실패다.
           [ -n "$EX" ] && [ "$EX" != "None" ] || { echo "::error::extractor 박스를 못 찾음(tag:Name=piki-extractor, running) — infra_apps apply 여부 확인"; exit 1; }
           [ -n "$RE" ] && [ "$RE" != "None" ] || { echo "::error::renderer 박스를 못 찾음(tag:Name=piki-headless-browser, running) — infra_apps apply 여부 확인"; exit 1; }
-          [ -n "$EXP" ] && [ "$EXP" != "None" ] || { echo "::error::extractor 사설 IP 를 못 찾음 — 앱 박스가 extractor 를 부를 주소가 없다"; exit 1; }
-          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; echo "extractor_private_ip=$EXP"; } >> "$GITHUB_OUTPUT"
-          echo "::notice::extractor=$EX(사설 $EXP) renderer=$RE"
+          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; } >> "$GITHUB_OUTPUT"
+          echo "::notice::extractor=$EX renderer=$RE"
 
   # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
   # uses(재사용 호출)로 부르지 않는다 — secrets: inherit 이 호출자(core)의 EC2_SSH_KEY 를 주입해,
@@ -1628,10 +1609,10 @@ jobs:
             env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
           fi
-          # 스모크 — 신 계정 앱 헬스(블루/그린 8080·8081). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
+          # 스모크 — 신 계정 앱 헬스(nginx 상태 파일이 가리키는 서빙 슬롯). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
           SSHOPT=(-i key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
           ssh "${SSHOPT[@]}" "ubuntu@$DST_APP_HOST" \
-            'curl -fsS http://localhost:8080/actuator/health || curl -fsS http://localhost:8081/actuator/health' \
+            'curl -fsS "http://localhost$(grep -oE ":[0-9]+" /etc/nginx/piki-upstream.conf | head -1)/actuator/health"' \
             || { echo "::error::신 계정 앱 헬스 실패 — 배포 상태 확인 후 재실행"; exit 1; }
           echo "::notice::신 계정 앱 헬스 OK"
 
@@ -1721,7 +1702,6 @@ jobs:
   # 이것을 자동화하지 않고 안내만 했더니, dev 컷오버 직후 평소 배포가 곧바로 깨졌다(실측).
   #   EC2_HOST 가 구 계정 IP → deploy.yml 의 도메인↔호스트 가드가 배포를 중단
   #   AWS_ECR_PUSH_ROLE_ARN 이 구 계정 → 이미지를 옛 계정 ECR 로 push
-  #   EXTRACTOR_PROD_ADDRESS 가 구 계정 → 신 앱이 옛 extractor 를 호출
   # prod 에서는 같은 공백이 운영 배포 실패로 직결되고, 컷오버 직후 누가 배포하면 그 창에 그대로 걸린다.
   #
   # Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
@@ -1730,7 +1710,7 @@ jobs:
   # 코드에 박힌 것(migrate.yml 의 OLD_ACCOUNT_ID)은 여기서 손대지 않는다 — 커밋·리뷰를 거쳐야 하고,
   # 그 값은 "다음 이관의 출발점" 이라 사람이 보고 넘기는 편이 맞다. finalize 안내에 남는다.
   rewire:
-    needs: [guard, config, side_hosts, deploy_core, cutover]
+    needs: [guard, config, deploy_core, cutover]
     if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -1766,7 +1746,6 @@ jobs:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
           ENV: ${{ inputs.env }}
           APP_IP: ${{ needs.deploy_core.outputs.app_ip }}
-          EXTRACTOR_ADDR: ${{ needs.side_hosts.outputs.extractor_private_ip }}:8090
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
         run: |
@@ -1797,9 +1776,6 @@ jobs:
           # 가드에 걸려 멈춘다. 그 경우는 경고로 남기고 사람이 채운다.
           [ -n "$APP_IP" ] && set_secret EC2_HOST "$APP_IP" \
             || { echo "::warning::앱 IP 를 못 얻어 EC2_HOST 를 건드리지 않았다"; fail=1; }
-          # extractor 는 같은 VPC 안에서 부르므로 사설 IP 여야 한다(공인 IP 면 SG 참조 규칙에 걸린다).
-          [ "$EXTRACTOR_ADDR" != ":8090" ] && set_secret EXTRACTOR_PROD_ADDRESS "$EXTRACTOR_ADDR" \
-            || { echo "::warning::extractor 사설 IP 를 못 얻어 EXTRACTOR_PROD_ADDRESS 를 건드리지 않았다"; fail=1; }
           [ -n "$ECR_ROLE" ] && set_var AWS_ECR_PUSH_ROLE_ARN "$ECR_ROLE" \
             || { echo "::warning::ECR push 역할 ARN 을 못 얻었다"; fail=1; }
           # DB provision 역할은 prod-db Environment 에 쓴다. provision-db-observability.yml 이 그 Environment 로
@@ -1827,11 +1803,11 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "배포 배선 갱신 ${{ job.status }} (env=${{ inputs.env }})"
-          detail: "EC2_HOST · EXTRACTOR_PROD_ADDRESS · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
+          detail: "EC2_HOST · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
 
   # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
   #
-  # cutover 의 스모크는 박스 안에서 localhost:8080 을 본다. 그것만으로는 SG·nginx·TLS·DNS 를 거친
+  # cutover 의 스모크는 박스 안에서 서빙 슬롯을 직접 본다. 그것만으로는 SG·nginx·TLS·DNS 를 거친
   # 실제 경로가 살아 있는지 알 수 없다 — 실측으로 모든 job 이 success 인데 도메인이 응답하지 않았다.
   # 여기서는 러너(외부)에서 공개 도메인으로 실제 API 를 호출하고, 실패하면 박스에 들어가 원인을
   # 수집해 Discord 로 함께 보낸다. only=verify 로 단독 실행해 진단 도구로도 쓴다.
@@ -1926,10 +1902,10 @@ jobs:
                 -o ConnectTimeout=15 "ubuntu@$APP_HOST" '
             echo "── 컨테이너 ──"; docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10
             echo "── nginx ──"; systemctl is-active nginx; sudo nginx -t 2>&1 | tail -2
-            echo "── 업스트림 설정 ──"; cat /etc/nginx/piki-core-upstream.conf 2>/dev/null || echo "(없음)"
+            echo "── 업스트림 설정 ──"; cat /etc/nginx/piki-upstream.conf 2>/dev/null || echo "(없음)"
             echo "── 로컬 헬스 ──"
-            curl -s -o /dev/null -w "8080=%{http_code} " --max-time 5 http://localhost:8080/health
-            curl -s -o /dev/null -w "8081=%{http_code} " --max-time 5 http://localhost:8081/health
+            SLOT=$(grep -oE ":[0-9]+" /etc/nginx/piki-upstream.conf 2>/dev/null | head -1)
+            curl -s -o /dev/null -w "slot${SLOT}=%{http_code} " --max-time 5 "http://localhost${SLOT}/health"
             curl -sk -o /dev/null -w "443=%{http_code}\n" --max-time 5 https://localhost/health
             echo "── 앱 로그 끝 ──"
             docker logs --tail 25 $(docker ps --filter name=piki-core --format "{{.Names}}" | head -1) 2>&1 | tail -25
@@ -1996,12 +1972,11 @@ jobs:
             echo
             echo "| 무엇 | 어디 | 바꿀 값 |"
             echo "|---|---|---|"
-            # EC2_HOST·EXTRACTOR_PROD_ADDRESS·두 역할 ARN 은 rewire job 이 Environment 수준에 자동으로 쓴다.
+            # EC2_HOST·두 역할 ARN 은 rewire job 이 Environment 수준에 자동으로 쓴다.
             # 그 job 이 실패했을 때만 손으로 할 목록에 되살린다 — 성공했는데도 안내에 남겨 두면
             # "아직 할 일이 있다" 는 잘못된 신호가 된다.
             if [ "$REWIRE" != "success" ]; then
               echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP (rewire 실패) |"
-              echo "| \`EXTRACTOR_PROD_ADDRESS\` | Environment \`$ENV\` secret | 신 계정 extractor **사설** IP:8090 (rewire 실패) |"
               echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
               [ "$ENV" = prod ] && echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
             fi
@@ -2013,7 +1988,7 @@ jobs:
             echo "역할 ARN 의 정확한 이름은 신 계정 terraform output 또는 IAM 콘솔에서 확인한다"
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::남은 수동 정리 7건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · EXTRACTOR_PROD_ADDRESS · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제 · 앱 SG 22번 인바운드(배포용). 자세한 내용은 실행 Summary."
+          echo "::warning::남은 수동 정리 6건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제 · 앱 SG 22번 인바운드(배포용). 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
         id: sum

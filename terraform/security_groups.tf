@@ -1,10 +1,8 @@
 # -----------------------------------------------------------------------------
 # EC2 Security Group — SSH(22) + HTTP(80) + HTTPS(443)
 #
-# 8080 (Spring Boot) 은 외부에 노출하지 않는다.
-# EC2 내부에서 Nginx 또는 Caddy 를 reverse proxy 로 두고 TLS 를 종료한 뒤
-# localhost:8080 (var.app_port) 으로 forward 하는 구조를 전제로 한다.
-# Spring Boot 는 application.yml 에서 server.address=127.0.0.1 로 바인딩.
+# 앱 포트는 외부에 노출하지 않는다. 박스의 nginx 가 TLS 를 종료하고 127.0.0.1 에 바인딩된
+# blue·green 슬롯으로 forward 한다(포트 정본: TeamPiKi/infra contracts/ports.json).
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "ec2" {
   name        = "${local.name_prefix}-ec2-sg"
