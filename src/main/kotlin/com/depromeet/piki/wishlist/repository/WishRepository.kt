@@ -13,11 +13,6 @@ interface WishRepository {
     // 탈퇴 cascade — 그 유저의 위시를 일괄 하드삭제하고 영향 건수를 돌려준다. 멱등.
     fun hardDeleteAllByUserId(userId: UUID): Int
 
-    fun countByItemIdsAndUserId(
-        itemIds: List<Long>,
-        userId: UUID,
-    ): Long
-
     // id desc 정렬로 최대 limit 건. cursor 가 있으면 그 id 미만만(다음 페이지). 삭제된 행은 제외.
     fun findPage(
         userId: UUID,

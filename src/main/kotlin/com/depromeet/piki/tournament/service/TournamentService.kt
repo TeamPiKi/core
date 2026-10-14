@@ -202,8 +202,8 @@ class TournamentService(
         // 요청 내 중복 확인 — wishCount 는 unique itemId 기준이라 먼저 걸러야 정확하다
         val requestedItemIds = command.itemIds.toSet()
         if (requestedItemIds.size != command.itemIds.size) throw TournamentException.duplicateTournamentItem()
-        val wishCount = wishRepository.countByItemIdsAndUserId(command.itemIds, userId)
-        if (wishCount < command.itemIds.size) throw TournamentException.itemNotInWishlist()
+        val wishes = wishRepository.findByItemIdsAndUserId(command.itemIds, userId)
+        if (!wishes.mapNotNull { it.itemId }.containsAll(requestedItemIds)) throw TournamentException.itemNotInWishlist()
         if (requestedItemIds.any { it in existingItemIds }) throw TournamentException.duplicateTournamentItem()
         if (existingTournamentItems.size + command.itemIds.size > TOURNAMENT_MAX_ITEM_COUNT) {
             throw TournamentException.tooManyTournamentItems()
@@ -215,7 +215,6 @@ class TournamentService(
                 .toSet()
         if (command.itemIds.any { it !in foundItemIds }) throw TournamentException.notFoundItems()
         // 판정은 카드에 뜨는 값으로 한다(#858). 파싱 중인 위시는 아이템이 없어 여기서 걸러진다
-        val wishes = wishRepository.findByItemIdsAndUserId(command.itemIds, userId)
         requireEntryEligible(
             itemCardService.cardsOf(wishes.map { it.cardQuery() }).values,
             TournamentException::itemIncomplete,

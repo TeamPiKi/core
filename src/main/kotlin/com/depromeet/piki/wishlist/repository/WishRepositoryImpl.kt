@@ -17,11 +17,6 @@ class WishRepositoryImpl(
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = wishJpaRepository.hardDeleteAllByUserId(userId)
 
-    override fun countByItemIdsAndUserId(
-        itemIds: List<Long>,
-        userId: UUID,
-    ): Long = wishJpaRepository.countByItemIdInAndUserIdAndDeletedAtIsNull(itemIds, userId)
-
     override fun findPage(
         userId: UUID,
         cursor: WishCursor?,

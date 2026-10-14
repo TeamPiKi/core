@@ -2728,6 +2728,24 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `POST tournaments-id-items-wish 는 같은 아이템의 내 위시가 둘이어도 위시에 없는 아이템이 섞이면 403 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val wishedItemId = saveWishItem()
+        wishJpaRepository.save(Wish(userId = userId, itemId = wishedItemId))
+        val othersItemId = saveWishItem(owner = otherUserId)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$wishedItemId,$othersItemId]}"""),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-016"))
+    }
+
+    @Test
     fun `POST tournaments-id-items-wish 에서 파싱 중인 출전까지 32개를 넘으면 400 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)

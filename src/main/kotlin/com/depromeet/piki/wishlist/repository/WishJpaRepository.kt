@@ -22,16 +22,6 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         @Param("itemId") itemId: Long,
     ): List<WishCardView>
 
-    // 출전 소유 체크용 — 위시가 item 을 직접 참조하므로(#1051) 조인 없이 센다.
-    @Query(
-        "SELECT COUNT(DISTINCT w.id) FROM Wish w " +
-            "WHERE w.itemId IN :itemIds AND w.userId = :userId AND w.deletedAt IS NULL",
-    )
-    fun countByItemIdInAndUserIdAndDeletedAtIsNull(
-        @Param("itemIds") itemIds: Collection<Long>,
-        @Param("userId") userId: UUID,
-    ): Long
-
     fun findByUserIdAndDeletedAtIsNullOrderByIdDesc(
         userId: UUID,
         limit: Limit,
