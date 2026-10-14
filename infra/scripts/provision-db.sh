@@ -238,6 +238,22 @@ for i in $(seq 1 15); do
   fi
 done
 
+# 축출 알림이 읽는 계열이다. 수집이 끊기면 그 알림은 NoData 로만 울린다.
+REDIS_EXPORTER_CONTAINER="piki-redis-exporter"
+for i in $(seq 1 15); do
+  body="$(curl -fsS --max-time 10 http://127.0.0.1:9121/metrics 2>/dev/null)" || body=""
+  if grep -q '^redis_up 1$' <<< "$body" && grep -q '^redis_evicted_keys_total ' <<< "$body"; then
+    echo "[redis-exporter] 수집 확인 (redis_up=1 + redis_evicted_keys_total, attempt $i)"
+    break
+  fi
+  sleep 2
+  if [ "$i" -eq 15 ]; then
+    echo "[redis-exporter] 수집이 확인되지 않는다. REDIS_PASSWORD·접속 경로 확인"
+    docker logs "$REDIS_EXPORTER_CONTAINER" --tail 10 2>&1 | sed 's/^/[redis-exporter] /'
+    exit 1
+  fi
+done
+
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
 # repo 의 스크립트와 박스의 것이 어긋나지 않게 한다.
