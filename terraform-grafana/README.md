@@ -42,20 +42,10 @@ db 는 백업.
 
 `backend.hcl` 은 `terraform/` 과 같은 값이다. 버킷명에 계정번호가 있어 gitignore 하고, 자격증명에서 파생해 만든다.
 
-## state 와 import 블록
-
-state 는 AWS 계정의 버킷에 있고 Grafana 자원은 계정 밖에 있다. 계정 이관으로 버킷이 바뀌면 자원은
-그대로인데 state 만 빈다. 2차 이관에서 실제로 state 가 구 계정 버킷과 함께 사라졌다 (#1200).
-
-- `imports.tf` 의 import 블록이 빈 state 에서 기존 자원을 state 로 들인다. 이미 state 에 있으면 아무 일도 하지 않는다.
-- **새 grafana 자원을 추가하면 `imports.tf` 에 블록도 추가한다.** 빠지면 이관 워크플로 정적 검증(migrate-lint)이 실패한다.
-- 이관 때는 `migrate.yml` 의 `infra_grafana` job 이 이 재구성을 돌린다. plan 에 생성 대상이 나오면 apply 전에 멈춘다.
-- 빈 state 에서 import 한 직후의 plan 은 변경 4건을 보인다. contact point 3개의 웹훅 URL(import 가 보안 필드를 비워 옴)과
-  폴더의 `prevent_destroy_if_not_empty`(Grafana 에 저장되지 않는 provider 속성)다. apply 하면 수렴한다.
-
 ## 일상 워크플로우
 
-AWS 자격 준비는 `terraform/README.md` 를 따른다. 웹훅 SSM 조회와 state 접근에 필요하다.
+AWS 자격은 state 버킷이 있는 계정으로 잡는다(준비는 `terraform/README.md`, 프로필을 쓰면 `AWS_PROFILE` 지정).
+웹훅 SSM 조회와 state 접근에 필요하다.
 
 ```bash
 cd terraform-grafana
@@ -77,6 +67,31 @@ terraform apply
 
 plan 출력의 contact point 블록은 웹훅 URL 을 가린다. `terraform show -json` 결과에는 평문으로 들어 있어 공유하지 않는다.
 
+## state 와 import 블록
+
+state 는 AWS 계정의 버킷에 있고 Grafana 자원은 계정 밖에 있다. 계정 이관으로 버킷이 바뀌면 자원은
+그대로인데 state 만 빈다. 2차 이관에서 실제로 state 가 구 계정 버킷과 함께 사라졌다 (#1200).
+
+`restore/imports.tf` 가 자원 전부의 import 블록을 갖는다. 루트 모듈이 읽지 않는 폴더라 평소 plan 에는 끼지 않는다.
+루트에 상시 두면 아직 Grafana 에 없는 새 자원의 import 가 plan 을 실패시킨다.
+
+- **새 grafana 자원을 추가하면 `restore/imports.tf` 에 블록도 추가한다.** 자원과 블록이 1:1 이 아니면 이관 워크플로 정적 검증(migrate-lint)이 실패한다.
+- 이관 때는 `migrate.yml` 의 `infra_grafana` job 이 이 파일을 루트로 복사해 재구성한다. plan 에 생성·교체 대상이 나오면 apply 전에 멈춘다.
+  이 job 만 다시 돌리려면 `only=grafana`.
+- state 가 비었는데 이관이 아닌 경우(버킷 사고 등)는 로컬에서 같은 일을 한다. 위 1)·2) 뒤:
+
+```bash
+cp restore/imports.tf restore_imports.tf   # gitignore 됨
+terraform init -backend-config=backend.hcl
+terraform plan    # N to import, 0 to add, 0 to destroy 이어야 한다
+terraform apply
+rm restore_imports.tf
+terraform plan    # No changes
+```
+
+빈 state 에서 import 한 직후의 plan 은 변경 4건을 보인다. contact point 3개의 웹훅 URL(import 가 보안 필드를 비워 옴)과
+폴더의 `prevent_destroy_if_not_empty`(Grafana 에 저장되지 않는 provider 속성)다. apply 하면 수렴한다.
+
 ## 시크릿
 
 코드·tfvars 에 시크릿을 두지 않는다. 전부 SSM(`/piki/observability/`):
@@ -91,7 +106,7 @@ plan 출력의 contact point 블록은 웹훅 URL 을 가린다. `terraform show
 
 ## 규율
 
-- **알림·대시보드 변경은 PR -> 리뷰 -> apply.** apply 는 수동(로컬)이다.
+- **알림·대시보드 변경은 PR -> 리뷰 -> apply.** 평소 apply 는 수동(로컬)이다. 계정 이관 때만 `infra_grafana` job 이 apply 한다.
 - **apply 전 `plan` 으로 드리프트를 확인한다.** 예상 밖 diff 는 누가 UI 에서 고쳤다는 뜻 —
   되돌릴지(그냥 apply) 코드에 흡수할지 PR 로 정한다.
 - **디스코드 메시지 규율**: 본문은 각 룰의 `summary` annotation 이 정본이고, summary 에
