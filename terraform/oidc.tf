@@ -89,6 +89,29 @@ data "aws_iam_policy_document" "ecr_push" {
     actions   = ["ec2:DescribeInstances", "ec2:DescribeSecurityGroups"]
     resources = ["*"]
   }
+
+  # SSM 경유 SSH (infra 의 .github/actions/ssm-ssh). 위 SSH 게이트를 대체한다(#1196).
+  statement {
+    sid     = "SshOverSsm"
+    actions = ["ssm:StartSession"]
+    resources = [
+      aws_instance.app.arn,
+      aws_instance.dev_app.arn,
+      "arn:aws:ssm:${var.aws_region}::document/AWS-StartSSHSession",
+    ]
+    # 문서를 빼고 부르면 열리는 기본 셸 세션(SSH 키 없이 sudo 가능한 ssm-user)을 막는다.
+    condition {
+      test     = "BoolIfExists"
+      variable = "ssm:SessionDocumentAccessCheck"
+      values   = ["true"]
+    }
+  }
+  # 세션 id 가 역할 세션 이름(GitHubActions)으로 시작해 session/${aws:userid}-* 로는 좁혀지지 않는다(extractor 실측).
+  statement {
+    sid       = "SsmSessionChannel"
+    actions   = ["ssm:TerminateSession", "ssmmessages:OpenDataChannel"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:session/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "github_ecr_push" {
