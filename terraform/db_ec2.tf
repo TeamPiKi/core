@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # DB 박스 Security Group
 #
-# 3306 은 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
+# 3306(MySQL)·6379(Redis) 는 앱 EC2 SG(prod·dev 앱 박스 공용) 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
 # 인터넷에 직접 노출하지 않는다. SSH 는 EC2 Instance Connect·팀원 접속을 위해 열되
 # var.ssh_ingress_cidr 로 좁힌다.
 #
@@ -35,6 +35,14 @@ resource "aws_security_group" "db_ec2" {
     description     = "MySQL from app EC2"
     from_port       = 3306
     to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2.id]
+  }
+
+  ingress {
+    description     = "Redis from app EC2"
+    from_port       = 6379
+    to_port         = 6379
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2.id]
   }
@@ -99,6 +107,12 @@ data "aws_iam_policy_document" "db_instance" {
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/discord-alert-webhook-url"]
   }
 
+  statement {
+    sid       = "ReadRedisPassword"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/redis-password"]
+  }
+
   # 관측 수집기(alloy)가 쓰는 Grafana Cloud 자격 공유 경로 (#771).
   statement {
     sid       = "ReadObservabilityCredentials"
@@ -160,9 +174,6 @@ resource "aws_iam_role_policy" "db_instance" {
 # ssm:UpdateInstanceInformation 등이 필요하고, 그 묶음이 이 AWS 관리형 정책이다. 이게 없으면
 # describe-instance-information 에 인스턴스가 뜨지 않고 SendCommand 가 InvalidInstanceId 로
 # 실패한다(2026-08-16 실측 - agent 는 깔려 있는데 이 권한이 없어 db 박스만 미등록이었다).
-#
-# 앱 박스 role 에는 같은 정책이 콘솔에서 수동으로 붙어 있어 terraform 코드에 흔적이 없다.
-# 여기서는 코드로 명시해, 인스턴스를 재생성해도 SSM 관리가 따라오게 한다.
 resource "aws_iam_role_policy_attachment" "db_ssm_core" {
   role       = aws_iam_role.db.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"

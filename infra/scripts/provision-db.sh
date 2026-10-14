@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DB 박스 런타임 프로비저닝 — 멱등(idempotent). (#898)
 #
-# terraform 의 user_data 는 docker·swap 까지만 깔고 끝난다. MySQL 기동과 백업 cron 설치는
+# terraform 의 user_data 는 docker·swap 까지만 깔고 끝난다. MySQL·Redis 기동과 백업 cron 설치는
 # 여기가 맡는다 — user_data 는 첫 부팅에만 실행돼 스크립트를 고쳐도 반영되지 않고, 반영하려면
 # 인스턴스 교체가 필요한데 이 박스에서 교체는 곧 데이터 손실이기 때문이다.
 #
@@ -84,6 +84,8 @@ case "$DB_EXPORTER_PASSWORD" in
     exit 1 ;;
 esac
 
+REDIS_PASSWORD="$(ssm_param redis-password)" || { echo "[redis] SSM redis-password 조회 실패 — IAM(ReadRedisPassword)·파라미터 존재 확인"; exit 1; }
+
 # 컨테이너 기동은 compose 에 맡긴다. "이미 있으면 skip" 을 손으로 짜지 않아도 되고, 정의가
 # 스크립트가 아니라 파일 하나에 모여 무엇이 떠 있어야 하는지 한눈에 드러난다.
 #
@@ -117,6 +119,7 @@ fi
 echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
 DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
 DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
+REDIS_PASSWORD="$REDIS_PASSWORD" \
   docker compose --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" up -d --wait \
   || { echo "[mysql] compose up 실패"; exit 1; }
 echo "[mysql] compose up 완료"

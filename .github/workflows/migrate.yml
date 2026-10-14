@@ -48,7 +48,7 @@ on:
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, iam, infra, provision, rehearsal, deploy, cutover, verify, finalize]
+        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, verify, finalize]
       dry_run:
         description: "true 면 되돌리기 어려운 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
         required: false
@@ -689,6 +689,82 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "infra_core ${{ job.status }} (env=${{ inputs.env }})"
+
+  # ── Grafana terraform. Grafana Cloud 자원은 계정 밖이라 그대로 남지만 state 는 계정 버킷에 있어 새 버킷에는 없다. ──
+  #
+  # terraform-grafana/restore/imports.tf 의 import 블록이 기존 자원을 새 state 로 들인다(#1200). 이 단계가 없던 2차
+  # 이관에서 state 가 구 버킷과 함께 사라졌다. 생성·교체 대상은 기존 자원과 부딪히므로 apply 전에 멈춘다.
+  infra_grafana:
+    needs: [guard, config, ssm]
+    if: ${{ always() && needs.guard.result == 'success' && (needs.ssm.result == 'success' || needs.ssm.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'infra' || inputs.only == 'grafana') }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      # wrapper 가 stdout 에 줄을 덧붙여 terraform show -json 을 jq 로 읽지 못한다.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Grafana 토큰 (ssm 단계가 이식한 값)
+        run: |
+          set -euo pipefail
+          token=$(aws ssm get-parameter --name /piki/observability/grafana-terraform-token \
+            --with-decryption --query Parameter.Value --output text)
+          echo "::add-mask::$token"
+          echo "GRAFANA_AUTH=$token" >> "$GITHUB_ENV"
+
+      - name: backend.hcl 생성 (계정 파생) + import 블록 복사 + init
+        working-directory: terraform-grafana
+        env:
+          TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
+        run: |
+          set -euo pipefail
+          printf 'bucket = "%s"\n' "$TFSTATE_BUCKET" > backend.hcl
+          # 이미 state 에 있는 자원의 블록은 terraform 이 건너뛰어 재실행(dev 뒤 prod)에도 그대로 쓴다.
+          cp restore/imports.tf restore_imports.tf
+          terraform init -backend-config=backend.hcl -input=false
+
+      - name: plan (생성·교체 대상이 있으면 중단)
+        working-directory: terraform-grafana
+        run: |
+          set -euo pipefail
+          terraform plan -input=false -out=tfplan
+          # plan JSON 에는 웹훅 URL 이 평문으로 들어 있어 주소만 뽑는다.
+          plan_json=$(terraform show -json tfplan)
+          creates=$(jq -r '.resource_changes[] | select(.change.actions == ["create"]) | .address' <<<"$plan_json" | paste -sd ' ' -)
+          replaces=$(jq -r '.resource_changes[] | select(.change.actions != ["create"] and (.change.actions | index("create"))) | .address' <<<"$plan_json" | paste -sd ' ' -)
+          if [ -n "$creates" ]; then
+            echo "::error::생성 대상 있음($creates). terraform-grafana/restore/imports.tf 에 import 블록 추가 필요"
+          fi
+          if [ -n "$replaces" ]; then
+            echo "::error::교체 대상 있음($replaces). tainted 면 로컬에서 terraform untaint 뒤 재실행 (terraform-grafana/README 의 대시보드 read 403 플레이크)"
+          fi
+          [ -z "$creates$replaces" ]
+
+      - name: apply (dry_run 이면 건너뜀)
+        if: ${{ inputs.dry_run == false }}
+        working-directory: terraform-grafana
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve tfplan
+          echo "::notice::infra apply 완료 - grafana"
+
+      - name: Discord 보고 (infra_grafana 결과)
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "infra_grafana ${{ job.status }} (env=${{ inputs.env }})"
 
   # ── migrate-2b: extractor·renderer terraform. core 의 VPC·subnet·SG 를 data 소스로 참조 → core 성공에 의존(needs). ──
   #
@@ -1888,7 +1964,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1951,6 +2027,7 @@ jobs:
             echo "| ssm | ${{ needs.ssm.result }} |"
             echo "| iam_users | ${{ needs.iam_users.result }} |"
             echo "| infra_core | ${{ needs.infra_core.result }} |"
+            echo "| infra_grafana | ${{ needs.infra_grafana.result }} |"
             echo "| infra_apps | ${{ needs.infra_apps.result }} |"
             echo "| provision | ${{ needs.provision.result }} |"
             echo "| ssm_hosts (박스 주소 재작성) | ${{ needs.ssm_hosts.result }} |"
@@ -1978,7 +2055,7 @@ jobs:
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} verify=${{ needs.verify.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_grafana=${{ needs.infra_grafana.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} verify=${{ needs.verify.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
