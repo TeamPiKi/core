@@ -28,10 +28,6 @@ on:
         description: "[이관 전용] ECR push 에 쓸 역할 ARN. 신 계정 이미지 푸시용. 비우면 vars.AWS_ECR_PUSH_ROLE_ARN."
         required: false
         type: string
-      migration_extractor_address:
-        description: "[이관 전용] host:port 형식. 채우면 secrets.EXTRACTOR_PROD_ADDRESS(구 계정) 대신 이 주소로 헬스 프로브·배포한다."
-        required: false
-        type: string
       migration_env:
         description: "[이관 전용] dev|prod. 채우면 브랜치 대신 이 값으로 환경을 정한다. 이관은 항상 dev 브랜치에서 호출되므로 이것이 없으면 prod 이관이 dev 환경으로 잘못 배선된다."
         required: false
@@ -50,10 +46,6 @@ on:
         type: string
       migration_role_arn:
         description: "[이관 전용] ECR push 에 쓸 역할 ARN(신 계정)."
-        required: false
-        type: string
-      migration_extractor_address:
-        description: "[이관 전용] host:port. 신 계정 extractor 주소로 EXTRACTOR_PROD_ADDRESS 를 override."
         required: false
         type: string
       migration_env:
@@ -259,6 +251,17 @@ jobs:
           role-to-assume: ${{ inputs.migration_role_arn != '' && inputs.migration_role_arn || vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # 서비스 포트와 extractor 주소는 infra 정본에서 매 배포 계산한다. 주소를 시크릿에 적어 두면 포트·박스가
+      # 바뀔 때 조용히 낡는다. 이관 때는 위 역할이 신 계정이라 신 계정 extractor 를 찾는다.
+      - name: Resolve service port and extractor address
+        id: addr
+        run: |
+          PORT=$(jq -er '.core.port' shared-infra/contracts/ports.json)
+          EXTRACTOR_URL=$(bash shared-infra/blocks/service_url.sh \
+            --ports-file shared-infra/contracts/ports.json --service extractor)
+          echo "service-port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "extractor-url=$EXTRACTOR_URL" >> "$GITHUB_OUTPUT"
+
       # 이관 세미 디플로이(migration_host)에서만 연다. 신 계정 SG 는 22번이 닫힌 채 생성되고
       # (security_groups.tf 의 ingress 는 ignore_changes 라 terraform 관리 밖, 구 계정은 사람이 콘솔로
       # 넣은 개방 규칙 덕에 평소 배포가 된다), 이 job 자신의 러너 IP 를 열어야 한다 — 게이트를 다른
@@ -404,18 +407,20 @@ jobs:
         env:
           NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
+          SERVICE_PORT: ${{ steps.addr.outputs.service-port }}
         with:
           host: ${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: NGINX_CONF,DOMAIN
+          envs: NGINX_CONF,DOMAIN,SERVICE_PORT
           script: |
             SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
             # api conf 가 include 하는 piki-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
             # blue-green 전환 전이라도 include 대상이 존재하도록 초기화한다.
             # 실제 active 포트 전환은 blue-green(Health check)이 담당하므로 이미 있으면 건드리지 않는다.
-            [ -f /etc/nginx/piki-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
+            # 값은 자리 표시다. 서빙 슬롯은 deploy_slot 이 기록한다.
+            [ -f /etc/nginx/piki-upstream.conf ] || echo "server 127.0.0.1:$SERVICE_PORT;" | sudo tee /etc/nginx/piki-upstream.conf
             # 새 인스턴스(cloud-init nginx)는 stock default 사이트가 켜져 있어 catch-all 로 충돌 → 제거.
             sudo rm -f /etc/nginx/sites-enabled/default
             # 환경당 conf 는 $DOMAIN 하나만 enabled 여야 한다. 도메인 rename(#488 depromeet retire 등) 후
@@ -492,12 +497,11 @@ jobs:
           SPRINGDOC_ENABLED: ${{ needs.resolve.outputs.environment == 'dev' && 'true' || 'false' }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
-          # 전 환경이 extractor 전용 박스 하나를 공유한다(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
-          # dev 도 동거 컨테이너(host.docker.internal:8090)가 아니라 전용 박스를 본다(#862) — 동거는 어떤 워크플로도
-          # 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다(AWS 계정 이전 인시던트).
-          # 워크플로 밖 수동 관리 포인트를 없애 재발을 막는다.
-          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
-          EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', inputs.migration_extractor_address != '' && inputs.migration_extractor_address || secrets.EXTRACTOR_PROD_ADDRESS) }}
+          # 전 환경이 extractor 전용 박스 하나를 공유한다. dev 도 동거 컨테이너가 아니라 전용 박스를 본다(#862) —
+          # 동거는 어떤 워크플로도 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다.
+          # 주소는 위 Resolve 스텝이 정본으로 계산한다(public repo 라 내부 주소를 코드에 박지 않는다).
+          EXTRACT_REMOTE_BASE_URL: ${{ steps.addr.outputs.extractor-url }}
+          SERVICE_PORT: ${{ steps.addr.outputs.service-port }}
           JAVA_TOOL_OPTIONS: ${{ needs.resolve.outputs.jvm_opts }}
           MEM_LIMIT: ${{ needs.resolve.outputs.mem_limit }}
           MEM_SWAP: ${{ needs.resolve.outputs.mem_swap }}
@@ -508,7 +512,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL,JAVA_TOOL_OPTIONS,MEM_LIMIT,MEM_SWAP,DOMAIN
+          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL,SERVICE_PORT,JAVA_TOOL_OPTIONS,MEM_LIMIT,MEM_SWAP,DOMAIN
           script: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
             # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 공용 블록(ssm_env.sh)이 KEY=VALUE 파일로
@@ -567,14 +571,7 @@ jobs:
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
             fi
-            # 원격 추출은 파싱의 유일 경로다 — base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS secret 미설정 →
-            # base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는 통과해
-            # 배포는 성공하나 모든 파싱이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
-            if [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; then
-              echo "::error::EXTRACT_REMOTE_BASE_URL 의 host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
-              exit 1
-            fi
-            # host 가 채워져 있어도 값이 낡았거나(SG·주소 변경) extractor 가 죽어 있으면 배포는 성공하고 모든 파싱만
+            # 주소가 맞아도 SG 가 막혔거나 extractor 가 죽어 있으면 배포는 성공하고 모든 파싱만
             # 런타임에 실패한다 — 계정 이전 때 dev 가 정확히 이 모양으로 전멸했다(#862). 앱 박스에서 extractor 헬스를
             # 배포 전에 실측해, 배선이 끊긴 채 배포가 성공으로 남는 것을 막는다(실패 시 기존 컨테이너 유지 = 안전).
             if ! curl -sf -m 5 "$EXTRACT_REMOTE_BASE_URL/actuator/health" > /dev/null; then
@@ -600,22 +597,24 @@ jobs:
 
             docker pull "$IMAGE"
 
-            # 상태 파일이 없으면 초기 상태(8080 서빙 가정)로 먼저 초기화한다 (Apply nginx config 의 부트스트랩과 같은 기본값).
-            [ -f /etc/nginx/piki-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
+            # 상태 파일이 없으면 자리 표시로 먼저 초기화한다 (Apply nginx config 의 부트스트랩과 같은 값).
+            [ -f /etc/nginx/piki-upstream.conf ] || echo "server 127.0.0.1:$SERVICE_PORT;" | sudo tee /etc/nginx/piki-upstream.conf
 
             # ── blue-green 배포: 공용 블록(deploy_slot)이 결정·로그 덤프·잔재 정리·기동·슬롯 헬스·전환·구 슬롯 종료를 맡는다.
             # 실패 시 새 슬롯을 정리하고 exit 1, 그동안 트래픽은 구 슬롯이 서빙한다. 값은 전부 여기서 준다.
-            # --publish 127.0.0.1 바인딩(nginx 경유로만 노출, actuator 직접 scrape 우회 차단)과 metrics 포트 라벨은 블록이 채운다.
+            # --publish 127.0.0.1 바인딩(nginx 경유로만 노출, actuator 직접 scrape 우회 차단)·metrics 포트 라벨·PORT env 는 블록이 채운다.
             # 슬롯 헬스 60×5s: 콜드 JVM + Flyway 에 blue+green 공존 swap 압박이 겹치면 부팅이 120초를 넘겨 120초 상한에서
             #   간헐 롤백됐다(#628). 200 이면 즉시 통과라 정상 속도엔 영향 없다.
             # verify-cmd: 전환 직후 소비자 경로(443 → nginx → 새 슬롯)를 통째로 검증한다. /health 는 conf 가 127.0.0.1 에만
             #   열어 둔 내부 검증 경로라 -k 와 Host 헤더가 필요하다.
             # --memory/--memory-swap/JAVA_TOOL_OPTIONS 는 resolve job 이 박스 크기별로 정한다(그쪽 주석이 산정 근거).
             # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md).
+            # --legacy-slot: 옛 슬롯(blue 8080·green 8081) 중 서빙 중인 쪽을 알아보게 한다(#1202). 이 인자가 없으면
+            #   옛 blue 가 서빙 중일 때 새 blue 기동 전에 지워진다. dev·prod 가 새 슬롯으로 한 번씩 배포된 뒤 제거.
             bash /tmp/piki-deploy/deploy_slot.sh \
               --state-file /etc/nginx/piki-upstream.conf \
-              --slot-a blue:8080 --slot-b green:8081 \
-              --name-prefix piki-core --container-port 8080 \
+              --service-port "$SERVICE_PORT" --name-prefix piki-core \
+              --legacy-slot blue:8080 --legacy-slot green:8081 \
               --log-dir /var/log/piki \
               --health-path /health --health-interval 5 --health-attempts 60 \
               --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN" \
@@ -634,15 +633,15 @@ jobs:
           COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
 
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key && chmod 600 /tmp/ec2_key
-          ACTIVE_PORT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
+          ACTIVE_SLOT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
             "${{ secrets.EC2_USER }}@${{ inputs.migration_host != '' && inputs.migration_host || secrets.EC2_HOST }}" \
-            'grep -oP "\\d+" /etc/nginx/piki-upstream.conf 2>/dev/null | head -1' 2>/dev/null || echo "")
+            'docker ps --filter "name=^piki-core-" --format "{{.Names}}" 2>/dev/null | head -1' 2>/dev/null || echo "")
           rm -f /tmp/ec2_key
 
-          if [ "$ACTIVE_PORT" = "8080" ]; then
-            NOW="🔵 blue (8080)"
-          elif [ "$ACTIVE_PORT" = "8081" ]; then
-            NOW="🟢 green (8081)"
+          if [ "$ACTIVE_SLOT" = "piki-core-blue" ]; then
+            NOW="🔵 blue"
+          elif [ "$ACTIVE_SLOT" = "piki-core-green" ]; then
+            NOW="🟢 green"
           else
             NOW="알 수 없음"
           fi

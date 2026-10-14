@@ -1,4 +1,6 @@
 server:
+  # 로컬 기본값. 배포는 정본(TeamPiKi/infra contracts/ports.json) 값을 PORT 로 넘긴다(ListenPortWarning).
+  port: ${PORT:8080}
   # 응답 gzip 압축 — example 로 비대한 /v3/api-docs OpenAPI JSON 의 전송 시간을 크게 줄인다(문서 로딩 DX, #788).
   # 앱 전역 응답에 적용된다(모바일 API JSON 도 함께 축소되는 이득). min-response-size 미만의 작은 응답은 압축 생략.
   compression:
@@ -160,7 +162,7 @@ product:
       # 파싱(링크·이미지)의 유일 경로인 원격 추출 서비스(extractor) 주소. 기본값을 두지 않는다 —
       # env 누락이 localhost 등으로 조용히 흘러 모든 파싱이 런타임에만 실패하는 침묵 창을 만들지 않고,
       # 부팅에서 즉시 실패시킨다(RemoteExtractionHttpClientConfig). 로컬 dual-boot 는 .env 의
-      # EXTRACT_REMOTE_BASE_URL=http://localhost:8090 으로 명시한다(.env.example 참고).
+      # EXTRACT_REMOTE_BASE_URL 로 명시한다(.env.example 참고). 배포는 정본으로 계산한 주소를 넘긴다.
       base-url: ${EXTRACT_REMOTE_BASE_URL:}
 
 s3:
