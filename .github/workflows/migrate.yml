@@ -1313,7 +1313,7 @@ jobs:
           title: "[세미 디플로이] 신 계정 앱 배포 시작 (env=${{ inputs.env }})"
           detail: "대상 ${{ steps.tf.outputs.app_ip }} — core·extractor·renderer 를 신 계정 박스에 띄운다. DNS 는 아직 구 계정."
 
-  # core 앱 — 빌드·ECR push·배포·nginx·cert 복사까지 deploy.yml 이 통째로 처리한다.
+  # core 앱 — 빌드·ECR push·배포·nginx 까지 deploy.yml 이 통째로 처리한다. cert 는 provision 이 옮겨 뒀다.
   deploy_core_app:
     needs: [guard, config, deploy_core, deploy_extractor]
     # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 extractor 헬스를 실측하고(#862), 안 뜬
@@ -1332,9 +1332,8 @@ jobs:
       # prod 이관을 dev 환경으로 배선한다 — dev 키로 prod 박스에 붙어 SSH 인증이 실패한다(실측).
       migration_env: ${{ inputs.env }}
 
-  # extractor·renderer 박스 주소 — 두 레포 terraform 에 outputs.tf 가 없어 state 로는 못 읽는다.
-  # 대신 인스턴스 Name 태그로 조회한다(두 레포 모두 tags = { Name = var.name_prefix } 실측 —
-  # piki-extractor · piki-headless-browser). 신 계정 자격으로 EC2 를 직접 물어 IP 를 얻는다.
+  # extractor·renderer 박스가 신 계정에 떠 있는지 배포 트리거 전에 본다(Name 태그 piki-extractor ·
+  # piki-headless-browser). 주소는 넘기지 않는다 — 두 레포 배포가 넘겨받은 역할의 계정에서 같은 태그로 찾는다.
   side_hosts:
     needs: [guard, config, deploy_core]
     # deploy_core_app(core 배포) 은 extractor 헬스를 배포 전에 실측 프로브한다(deploy.yml, #862 재발 방지).
@@ -1343,10 +1342,6 @@ jobs:
     if: ${{ needs.deploy_core.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
-    outputs:
-      # 공인 IP 는 러너가 SSH 로 붙을 때만 쓴다. 박스끼리의 호출은 아래 사설 IP 를 쓴다.
-      extractor_ip: ${{ steps.find.outputs.extractor_ip }}
-      renderer_ip: ${{ steps.find.outputs.renderer_ip }}
     steps:
       - name: AWS 자격 (신 계정 OIDC 역할)
         uses: aws-actions/configure-aws-credentials@v4
@@ -1355,24 +1350,20 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
-      - name: 박스 IP 조회 (Name 태그)
-        id: find
+      - name: 박스 존재 확인 (Name 태그)
         run: |
           set -euo pipefail
-          ip_of() { # $1=Name $2=PublicIpAddress|PrivateIpAddress
-            aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=$1" "Name=instance-state-name,Values=running" \
-              --query "Reservations[].Instances[].$2" --output text | tr '\t' '\n' | head -1
-          }
-          EX=$(ip_of piki-extractor PublicIpAddress); RE=$(ip_of piki-headless-browser PublicIpAddress)
-          # 못 찾으면 멈춘다 — 빈 값을 넘기면 호출된 레포가 자기 secrets.EC2_HOST(구 계정)로 폴백해
-          # 이관 중에 구 계정 박스를 덮어쓴다. 그게 이 단계에서 가장 위험한 실패다.
-          [ -n "$EX" ] && [ "$EX" != "None" ] || { echo "::error::extractor 박스를 못 찾음(tag:Name=piki-extractor, running) — infra_apps apply 여부 확인"; exit 1; }
-          [ -n "$RE" ] && [ "$RE" != "None" ] || { echo "::error::renderer 박스를 못 찾음(tag:Name=piki-headless-browser, running) — infra_apps apply 여부 확인"; exit 1; }
-          { echo "extractor_ip=$EX"; echo "renderer_ip=$RE"; } >> "$GITHUB_OUTPUT"
-          echo "::notice::extractor=$EX renderer=$RE"
+          for n in piki-extractor piki-headless-browser; do
+            ID=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$n" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].InstanceId' --output text)
+            [ -n "$ID" ] && [ "$ID" != "None" ] || {
+              echo "::error::$n 박스를 못 찾음(running) — infra_apps apply 여부 확인"; exit 1; }
+            echo "::notice::$n = $ID"
+          done
 
-  # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 workflow_call·migration_host 를 연다).
+  # 각 레포의 deploy 를 신 계정 박스 대상으로 호출한다(그 레포가 migration_role_arn·request_id 를 연다).
+  # migration_role_arn 이 곧 대상 계정이다. 빠지면 그 레포 기본 역할(구 계정)로 배포해 구 박스를 덮어쓴다.
   # uses(재사용 호출)로 부르지 않는다 — secrets: inherit 이 호출자(core)의 EC2_SSH_KEY 를 주입해,
   # 사이드 키(piki-extractor-key)로 만든 박스에 core 키로 붙어 "unable to authenticate" 가 난다(실측:
   # 같은 키를 쓰는 renderer 는 dispatch 방식이라 성공했다). API dispatch 로 부르면 그 레포가 자기
@@ -1386,7 +1377,6 @@ jobs:
       - name: extractor 배포 트리거 + 완료 대기
         env:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-          HOST: ${{ needs.side_hosts.outputs.extractor_ip }}
           ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
@@ -1396,8 +1386,8 @@ jobs:
           # migration_role_arn: 그 레포의 vars.AWS_ECR_PUSH_ROLE_ARN 은 구 계정 역할이라 신 계정에서
           # assume 이 안 된다("Not authorized to perform sts:AssumeRoleWithWebIdentity", 실측).
           gh workflow run deploy.yml --repo "$REPO" --ref main \
-            -f migration_host="$HOST" -f migration_role_arn="$ROLE" -f request_id="$REQ"
-          echo "::notice::extractor 배포 트리거 — host=$HOST req=$REQ"
+            -f migration_role_arn="$ROLE" -f request_id="$REQ"
+          echo "::notice::extractor 배포 트리거 — req=$REQ"
 
           RUN_ID=""
           for _ in $(seq 1 30); do
@@ -1443,7 +1433,7 @@ jobs:
       - name: renderer 배포 트리거 + 완료 대기
         env:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-          HOST: ${{ needs.side_hosts.outputs.renderer_ip }}
+          ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
           [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — renderer 배포를 트리거할 수 없다"; exit 1; }
@@ -1453,8 +1443,8 @@ jobs:
           # 다른 실행의 결론을 기다리게 되어, 우리 배포가 실패해도 성공으로 오판할 수 있다.
           REQ="migrate-${{ github.run_id }}-${{ github.run_attempt }}"
           gh workflow run deploy.yml --repo "$REPO" --ref main \
-            -f migration_host="$HOST" -f request_id="$REQ"
-          echo "::notice::renderer 배포 트리거 — host=$HOST req=$REQ"
+            -f migration_role_arn="$ROLE" -f request_id="$REQ"
+          echo "::notice::renderer 배포 트리거 — req=$REQ"
 
           # 조회는 전부 재시도로 감싼다 — set -e 아래서 gh 가 일시적으로 실패하면 폴링이 통째로 끊기고,
           # 원격 배포는 계속 도는데 이 job 만 실패해 cutover 가 막힌다(재실행하면 중복 dispatch).
@@ -2027,7 +2017,7 @@ jobs:
             echo "| provision | ${{ needs.provision.result }} |"
             echo "| ssm_hosts (박스 주소 재작성) | ${{ needs.ssm_hosts.result }} |"
             echo "| rehearsal | ${{ needs.rehearsal.result }} |"
-            echo "| side_hosts (extractor·renderer IP 조회) | ${{ needs.side_hosts.result }} |"
+            echo "| side_hosts (extractor·renderer 박스 확인) | ${{ needs.side_hosts.result }} |"
             echo "| deploy core | ${{ needs.deploy_core_app.result }} |"
             echo "| deploy extractor | ${{ needs.deploy_extractor.result }} |"
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
