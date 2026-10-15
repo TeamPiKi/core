@@ -14,26 +14,31 @@
 set -uo pipefail
 
 FREEZE_STATE_FILE="${FREEZE_STATE_FILE:-/tmp/piki-migrate-frozen}"
-SRC_APP_HOST="${SRC_APP_HOST:?구 계정 앱 박스 호스트}"
-SRC_APP_KEY="${SRC_APP_KEY:?구 계정 앱 박스 SSH 키파일}"
 
 log() { echo "[migrate-unfreeze] $(date -u +%H:%M:%S) $*"; }
 
 # 파일이 없거나 비었으면 되살릴 게 없다 — 이미 무장해제됐거나 애초에 freeze 가 없었다.
 # 이 경로는 실패 처리 중에 불리므로 여기서 다시 죽지 않게 항상 0 으로 끝난다.
+# 호스트 검사보다 먼저 본다. 구 박스 SSH 준비가 실패해 호스트가 빈 실행은 freeze 도 없었다.
 [ -s "$FREEZE_STATE_FILE" ] || { log "복구 대상 없음 — 생략"; exit 0; }
 
+SRC_APP_HOST="${SRC_APP_HOST:?구 계정 앱 박스 호스트}"
+SRC_APP_KEY="${SRC_APP_KEY:?구 계정 앱 박스 SSH 키파일}"
+
 log "구 앱 컨테이너 재기동: $(tr '\n' ' ' < "$FREEZE_STATE_FILE")"
-if ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 \
-     -i "$SRC_APP_KEY" "ubuntu@$SRC_APP_HOST" 'xargs -r docker start' < "$FREEZE_STATE_FILE"; then
-  log "롤백 완료 — 구 계정 서비스 복구"
-  echo "::notice::freeze 롤백 완료 — 구 계정 앱을 되살렸다. DNS 는 아직 구 계정을 가리킨다."
-  exit 0
-else
-  log "롤백 실패"
-  echo "::error::freeze 롤백 실패 — 구 계정 박스($SRC_APP_HOST)에서 직접 docker start 해야 한다: $(tr '\n' ' ' < "$FREEZE_STATE_FILE")"
-  # 0 으로 끝내지 않는다. 이 경로는 "구 서비스가 내려간 채 남았다" 는 뜻인데, 0 을 돌려주면 호출한
-  # 스텝이 초록불이 되고 컷오버 실패 안내가 "롤백이 돌아 구 서비스는 복구됐다" 고 단정해 버린다.
-  # 상태 파일은 남겨 둔다 — 재실행·재시도가 같은 컨테이너 목록을 다시 집어야 하기 때문이다.
-  exit 1
-fi
+# SSM 채널은 스로틀·agent 재연결로 한 번씩 늦게 열린다. docker start 는 멱등이라 다시 시도해도 안전하다.
+for attempt in 1 2 3; do
+  if ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+       -i "$SRC_APP_KEY" "ubuntu@$SRC_APP_HOST" 'xargs -r docker start' < "$FREEZE_STATE_FILE"; then
+    log "롤백 완료 — 구 계정 서비스 복구"
+    echo "::notice::freeze 롤백 완료 — 구 계정 앱을 되살렸다. DNS 는 아직 구 계정을 가리킨다."
+    exit 0
+  fi
+  [ "$attempt" -lt 3 ] && sleep 10
+done
+log "롤백 실패"
+echo "::error::freeze 롤백 실패 — 구 계정 박스($SRC_APP_HOST)에서 직접 docker start 해야 한다: $(tr '\n' ' ' < "$FREEZE_STATE_FILE")"
+# 0 으로 끝내지 않는다. 이 경로는 "구 서비스가 내려간 채 남았다" 는 뜻인데, 0 을 돌려주면 호출한
+# 스텝이 초록불이 되고 컷오버 실패 안내가 "롤백이 돌아 구 서비스는 복구됐다" 고 단정해 버린다.
+# 상태 파일은 남겨 둔다 — 재실행·재시도가 같은 컨테이너 목록을 다시 집어야 하기 때문이다.
+exit 1
