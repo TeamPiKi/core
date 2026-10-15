@@ -21,7 +21,7 @@ on:
       # 아직 구 계정을 가리킨다. 아래 가드는 정확히 그 불일치를 잡으라고 있는 것이라, 이관에서는
       # 우회 경로를 따로 열어 준다 — 가드를 느슨하게 고치는 대신 "이관이라고 명시할 때만" 비킨다.
       migration_host:
-        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드다 — 도메인 가드를 건너뛰고 구 호스트 TLS cert 를 복사한다. 평소에는 비워 둘 것."
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드다 — 도메인 가드를 건너뛴다. 평소에는 비워 둘 것."
         required: false
         type: string
       migration_role_arn:
@@ -41,7 +41,7 @@ on:
         required: false
         type: string
       migration_host:
-        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드(도메인 가드 우회·구 호스트 TLS cert 복사)."
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드(도메인 가드 우회)."
         required: false
         type: string
       migration_role_arn:
@@ -319,43 +319,21 @@ jobs:
       # prod 는 cert 가 이미 있어 통째로 skip(=nginx 안 멈춤, 다운타임 0).
       # certonly --standalone 은 nginx 와 무관하게 :80 을 잠깐 점유해 발급하므로, SSL 을 참조하는
       # nginx conf 적용(다음 스텝)보다 먼저여야 nginx -t 가 통과한다.
-      # 이관 세미 디플로이(migration_host)의 cert 최초 설정. HTTP-01 은 DNS 가 그 호스트를 가리켜야
-      # 발급되는데, 컷오버 전엔 DNS 가 아직 구 호스트라 신 호스트에서 fresh 발급이 원리적으로 실패한다
-      # (검증 요청이 구 호스트로 감). cert 는 도메인에 묶인 거라, 구 호스트의 /etc/letsencrypt 를 그대로
-      # 신 호스트로 옮기면 유효한 HTTPS 로 바로 뜨고, 컷오버 후 갱신은 DNS 가 신 호스트라 정상 동작한다.
-      # 아래 'Ensure TLS cert' 는 cert 가 이미 있으면 HTTP-01 을 건너뛰므로, 이 복사가 그 fresh 발급을 대신한다.
-      - name: (이관) 구 호스트 TLS cert 복사
-        if: ${{ inputs.migration_host != '' }}
-        env:
-          OLD_HOST: ${{ secrets.EC2_HOST }}
-          HOST: ${{ steps.box.outputs.host }}
-          SSH_USER: ${{ secrets.EC2_USER }}
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          echo "$SSH_KEY" > /tmp/mig_key.pem && chmod 600 /tmp/mig_key.pem
-          # 구 호스트는 다른 계정 박스라 이 job 의 역할로는 SSM 을 쓸 수 없다 — 공인 IP 로 직접 SSH 한다
-          # (구 계정 SG 의 22 번이 열려 있어야 한다). 신 박스는 위 SSM 별칭으로 간다.
-          SSHOPT=(-i /tmp/mig_key.pem -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
-          # 구 호스트에서 /etc/letsencrypt 를 tar 로 말아 러너로 받아 신 호스트로 푼다(러너 릴레이).
-          # /etc/letsencrypt 는 root 소유라 sudo. live 심볼릭·archive·renewal 설정·options-ssl·dhparams 가 통째로 옮겨져
-          # nginx conf 가 참조하는 파일이 다 따라온다(다음 스텝의 개별 복사도 no-op 가 된다).
-          ssh "${SSHOPT[@]}" "$SSH_USER@$OLD_HOST" 'sudo tar -C /etc -czf - letsencrypt' > /tmp/le.tgz
-          [ -s /tmp/le.tgz ] || { echo "::error::구 호스트에서 /etc/letsencrypt 를 가져오지 못했다 (cert 존재·sudo 권한 확인)"; exit 1; }
-          ssh "$HOST" 'sudo tar -C /etc -xzf -' < /tmp/le.tgz
-          rm -f /tmp/mig_key.pem /tmp/le.tgz
-          echo "::notice::TLS cert 복사 완료 — $OLD_HOST → $HOST (HTTP-01 건너뜀, 컷오버 즉시 HTTPS 유효)"
-
+      # 이관 세미 디플로이(migration_host)에서는 migrate.yml provision 이 구 박스 cert 를 미리 옮겨 둬 skip 된다.
+      # 그때 cert 가 없으면 발급하지 않고 멈춘다. DNS 가 아직 구 박스라 HTTP-01 이 원리적으로 실패한다.
       - name: Ensure TLS cert (certbot if missing)
         id: cert
         timeout-minutes: 15
         env:
           HOST: ${{ steps.box.outputs.host }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
+          MIGRATION_HOST: ${{ inputs.migration_host }}
           SCRIPT: |
             if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
               echo "[certbot] $DOMAIN cert 이미 존재 — skip"
+            elif [ -n "$MIGRATION_HOST" ]; then
+              echo "::error::[이관 모드] 신 박스에 $DOMAIN cert 가 없다 — migrate.yml 의 provision 을 먼저 실행할 것"
+              exit 1
             else
               echo "[certbot] $DOMAIN cert 발급 (standalone)"
               # --pre-hook/--post-hook 는 발급 시점뿐 아니라 certbot 갱신 타이머가 쓰는 renewal 설정에도
@@ -377,7 +355,7 @@ jobs:
               [ -n "$SRC" ] && sudo cp "$SRC" /etc/letsencrypt/ssl-dhparams.pem && echo "[certbot] ssl-dhparams.pem 복사"
             fi
         run: |
-          EXPORTS=$(for v in DOMAIN; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          EXPORTS=$(for v in DOMAIN MIGRATION_HOST; do printf 'export %s=%q; ' "$v" "${!v}"; done)
           ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Apply nginx config
