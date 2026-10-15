@@ -5,6 +5,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Jwks
+import io.micrometer.observation.ObservationRegistry
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.security.KeyPair
@@ -62,7 +63,7 @@ class AppleOAuthClientTest {
     inner class ParseEcPrivateKey {
         @Test
         fun `정상 PEM 을 EC PrivateKey 로 파싱한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val key = client.parseEcPrivateKey(testP8Pem)
             assertEquals("EC", key.algorithm)
         }
@@ -70,14 +71,14 @@ class AppleOAuthClientTest {
         @Test
         fun `환경변수 한 줄 형태 - 리터럴 백슬래시 n 을 실제 개행으로 치환해 파싱한다`() {
             val flattened = testP8Pem.replace("\n", "\\n")
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val key = client.parseEcPrivateKey(flattened)
             assertEquals("EC", key.algorithm)
         }
 
         @Test
         fun `손상된 base64 는 예외를 던진다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             assertFailsWith<IllegalArgumentException> {
                 client.parseEcPrivateKey("-----BEGIN PRIVATE KEY-----\n!!!notbase64!!!\n-----END PRIVATE KEY-----")
             }
@@ -88,7 +89,7 @@ class AppleOAuthClientTest {
     inner class BuildClientSecret {
         @Test
         fun `client_secret 헤더와 클레임이 Apple 명세를 따른다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val clientSecret = client.buildClientSecret()
 
             // public key 로 검증 (Apple 이 client_secret 받아 동일하게 검증함)
@@ -124,7 +125,7 @@ class AppleOAuthClientTest {
     inner class VerifyIdToken {
         @Test
         fun `v1 - aud 가 clientId 와 일치하면 OAuthUserInfo 를 반환한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val sub = "001234.abcdef.5678"
             val idToken = signAppleIdToken(audience = "com.test.service", subject = sub)
 
@@ -137,7 +138,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `v2 - aud 가 bundleId 와 일치하면 OAuthUserInfo 를 반환한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val sub = "002345.bcdefg.6789"
             val idToken = signAppleIdToken(audience = "com.test.app", subject = sub)
 
@@ -148,7 +149,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `email 클레임이 있으면 OAuthUserInfo,email 로 추출한다 (최초 동의)`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val idToken =
                 signAppleIdToken(
                     audience = "com.test.service",
@@ -163,7 +164,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `email 클레임이 없으면 email 은 null 이다 (2회차·미동의)`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val idToken = signAppleIdToken(audience = "com.test.service", subject = "001234.abcdef.5678")
 
             val result = verifyIntegrated(client, idToken, expectedAud = "com.test.service", jwksJson = testJwksJson)
@@ -173,7 +174,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `email 클레임이 빈 문자열이면 null 로 정규화된다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val idToken = signAppleIdToken(audience = "com.test.service", subject = "001234.abcdef.5678", email = "")
 
             val result = verifyIntegrated(client, idToken, expectedAud = "com.test.service", jwksJson = testJwksJson)
@@ -183,7 +184,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `sub 누락 - OAuthException providerError 를 던진다 (500 누출 방지)`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val now = Date()
             val idTokenWithoutSub =
                 Jwts
@@ -210,7 +211,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `aud 불일치 - OAuthException providerError 를 던진다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val idToken = signAppleIdToken(audience = "com.other.service", subject = "001234.xx")
 
             val ex =
@@ -222,7 +223,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `issuer 가 Apple 이 아니면 OAuthException providerError 를 던진다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val idToken =
                 signAppleIdToken(
                     audience = "com.test.service",
@@ -237,7 +238,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `서명 키가 JWKS 에 없는 kid 면 OAuthException providerError 를 던진다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             // JWKS 에 없는 kid 로 서명된 토큰
             val foreignKeyPair = generateEcKeyPair()
             val now = Date()
@@ -264,7 +265,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `서명이 위조되면 OAuthException providerError 를 던진다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             // 같은 kid 로 다른 키쌍으로 서명 → JWKS 의 public key 로 verify 실패
             val foreignKeyPair = generateEcKeyPair()
             val now = Date()
@@ -297,7 +298,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `JWKS 에 없는 kid 는 키 회전으로 보고 재시도 트리거다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val foreign = generateEcKeyPair()
             val unknownKidToken =
                 signAppleIdToken(
@@ -313,7 +314,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `kid 는 맞지만 서명이 위조된 경우는 재시도 트리거가 아니다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val foreign = generateEcKeyPair()
             // kid 는 JWKS 에 있는 testKid 지만 다른 키로 서명 → 서명 검증 실패(키 회전 아님).
             // JWKS 를 다시 받아도 복구되지 않으므로 재시도하면 안 된다.
@@ -339,7 +340,7 @@ class AppleOAuthClientTest {
             audience: String,
             eventsJson: String?,
         ): io.jsonwebtoken.Claims {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val now = Date()
             val builder =
                 Jwts
@@ -360,7 +361,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `aud 가 clientId 와 일치하면 events 를 파싱해 반환한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val claims =
                 eventClaims(
                     audience = "com.test.service",
@@ -375,7 +376,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `aud 가 bundleId 와 일치해도 통과한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val claims =
                 eventClaims(
                     audience = "com.test.app",
@@ -390,7 +391,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `aud 가 우리 client_id 가 아니면 401 로 거부한다 (위조 방어)`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val claims =
                 eventClaims(
                     audience = "com.attacker.service",
@@ -403,7 +404,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `events 클레임이 없으면 401 로 거부한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val claims = eventClaims(audience = "com.test.service", eventsJson = null)
 
             val ex = assertFailsWith<AppleNotificationException> { client.toNotificationEvent(claims) }
@@ -412,7 +413,7 @@ class AppleOAuthClientTest {
 
         @Test
         fun `events JSON 이 손상되면 401 로 거부한다`() {
-            val client = AppleOAuthClient(props())
+            val client = AppleOAuthClient(props(), ObservationRegistry.NOOP)
             val claims = eventClaims(audience = "com.test.service", eventsJson = "{not-json")
 
             val ex = assertFailsWith<AppleNotificationException> { client.toNotificationEvent(claims) }

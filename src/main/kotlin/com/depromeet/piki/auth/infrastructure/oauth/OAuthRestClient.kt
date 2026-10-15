@@ -1,5 +1,6 @@
 package com.depromeet.piki.auth.infrastructure.oauth
 
+import io.micrometer.observation.ObservationRegistry
 import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.web.client.RestClient
 import java.time.Duration
@@ -11,7 +12,10 @@ object OAuthRestClient {
     private val CONNECT_TIMEOUT = Duration.ofSeconds(5)
     private val READ_TIMEOUT = Duration.ofSeconds(10)
 
-    fun create(baseUrl: String): RestClient =
+    fun create(
+        baseUrl: String,
+        observationRegistry: ObservationRegistry,
+    ): RestClient =
         RestClient
             .builder()
             .baseUrl(baseUrl)
@@ -20,5 +24,6 @@ object OAuthRestClient {
                     setConnectTimeout(CONNECT_TIMEOUT)
                     setReadTimeout(READ_TIMEOUT)
                 },
-            ).build()
+            ).observationRegistry(observationRegistry)
+            .build()
 }
