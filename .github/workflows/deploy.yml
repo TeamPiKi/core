@@ -329,7 +329,8 @@ jobs:
           DOMAIN: ${{ needs.resolve.outputs.domain }}
           MIGRATION_HOST: ${{ inputs.migration_host }}
           SCRIPT: |
-            if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+            # live/ 는 root 만 읽는다(0700). sudo 없이 보면 cert 가 있어도 늘 "없음" 이다.
+            if sudo test -d "/etc/letsencrypt/live/$DOMAIN"; then
               echo "[certbot] $DOMAIN cert 이미 존재 — skip"
             elif [ -n "$MIGRATION_HOST" ]; then
               echo "::error::[이관 모드] 신 박스에 $DOMAIN cert 가 없다 — migrate.yml 의 provision 을 먼저 실행할 것"
