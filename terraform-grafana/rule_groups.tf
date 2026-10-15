@@ -10,15 +10,15 @@ resource "grafana_rule_group" "piki_db" {
   disable_provenance = true
 
   rule {
-    name           = "prod DB 백업이 24시간 넘게 성공하지 않음"
+    name           = "prod DB 백업이 3시간 넘게 성공하지 않음"
     condition      = "B"
     for            = "10m"
     no_data_state  = "Alerting"
     exec_err_state = "Alerting"
     is_paused      = false
     annotations = {
-      description = "마지막 성공 이후 경과 시간이 24시간을 넘었습니다. 백업은 유일한 복구 경로이므로 즉시 확인이 필요합니다. 박스에서 `journalctl -t piki-db-backup --since \"2 days ago\"` 로 원인을 봅니다. 지표가 아예 없어 NoData 로 발화한 경우라면 백업 박스나 alloy 수집기가 멈춘 것입니다."
-      summary     = "prod DB 백업이 24시간 넘게 성공하지 않았습니다."
+      description = "백업은 매시 돌고, 마지막 성공 이후 경과 시간이 3시간을 넘었습니다. 백업은 유일한 복구 경로이므로 즉시 확인이 필요합니다. 박스에서 `journalctl -t piki-db-backup --since \"6 hours ago\"` 로 원인을 봅니다. 지표가 아예 없어 NoData 로 발화한 경우라면 백업 박스나 alloy 수집기가 멈춘 것입니다."
+      summary     = "prod DB 백업이 3시간 넘게 성공하지 않았습니다."
     }
     labels = {
       service  = "piki-db"
@@ -56,7 +56,7 @@ resource "grafana_rule_group" "piki_db" {
           {
             "evaluator": {
               "params": [
-                86400
+                10800
               ],
               "type": "gt"
             }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DB 박스 논리 백업 — mysqldump 를 gzip 해 S3 에 올린다 (#898).
 #
-# cron 이 하루 한 번 호출한다(설치는 provision-db.sh). RDS 를 걷어내면서 사라진 관리형 백업을
+# cron 이 매시 호출한다(설치는 provision-db.sh). RDS 를 걷어내면서 사라진 관리형 백업을
 # 대신하는 유일한 복구 경로이므로, 실패를 조용히 넘기지 않고 로그에 남기고 비정상 종료한다.
 #
 # --single-transaction 이 핵심이다. InnoDB 의 일관된 스냅샷을 트랜잭션으로 떠서 테이블 락을
@@ -112,12 +112,13 @@ mkdir -p "$WORK_DIR"
 # 덤프 → gzip. root 로 뜬다(스키마 전체와 routine·trigger 까지 읽어야 한다).
 # --databases 를 쓰면 CREATE DATABASE / USE 문이 함께 담겨 빈 서버에 그대로 복원된다.
 # --routines --triggers --events: 스키마 외 객체까지 포함해 "이 파일 하나면 복구된다"를 지킨다.
+# --source-data=2: 덤프 시점의 binlog 위치를 주석으로 남겨, 서버가 살아 있으면 그 뒤 변경분을 binlog 로 이어 붙일 수 있게 한다.
 #
 # 파이프 중간(mysqldump)의 실패를 놓치지 않도록 set -o pipefail 이 위에서 켜져 있다 —
 # 이게 없으면 덤프가 깨져도 gzip 성공 코드만 보고 손상된 파일을 업로드한다.
 log "덤프 시작: ${DB_NAME}"
 if ! docker exec -e MYSQL_PWD="$DB_ROOT_PASSWORD" "$CONTAINER" \
-  mysqldump -u root --single-transaction --routines --triggers --events \
+  mysqldump -u root --single-transaction --source-data=2 --routines --triggers --events \
   --databases "$DB_NAME" 2>"${WORK_DIR}/dump.err" | gzip > "${WORK_DIR}/${FILE}"; then
   DUMP_ERR="$(tail -3 "${WORK_DIR}/dump.err" 2>/dev/null || true)"
   rm -f "${WORK_DIR}/${FILE}"
@@ -143,4 +144,7 @@ fi
 rm -f "${WORK_DIR}/${FILE}" "${WORK_DIR}/dump.err"
 write_metrics 1 "$SIZE"
 log "완료"
-notify_discord "piki prod DB 백업 성공" "파일: ${FILE} (${SIZE} bytes)"
+# 성공은 하루 한 회차(00:00 KST)만 알린다. 매시 알리면 채널이 묻혀 실패 알림을 놓친다.
+if [ "$(date -u +%H)" = "15" ]; then
+  notify_discord "piki prod DB 백업 성공" "파일: ${FILE} (${SIZE} bytes)"
+fi
