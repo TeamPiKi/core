@@ -67,3 +67,8 @@ import {
   to = grafana_rule_group.parsing
   id = "piki-alerts:parsing"
 }
+
+import {
+  to = grafana_rule_group.health
+  id = "piki-alerts:health"
+}
