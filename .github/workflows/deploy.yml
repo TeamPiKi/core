@@ -320,15 +320,20 @@ jobs:
       # certonly --standalone 은 nginx 와 무관하게 :80 을 잠깐 점유해 발급하므로, SSL 을 참조하는
       # nginx conf 적용(다음 스텝)보다 먼저여야 nginx -t 가 통과한다.
       # 이관 세미 디플로이(migration_host)에서는 migrate.yml provision 이 구 박스 cert 를 미리 옮겨 둬 skip 된다.
+      # 그때 cert 가 없으면 발급하지 않고 멈춘다. DNS 가 아직 구 박스라 HTTP-01 이 원리적으로 실패한다.
       - name: Ensure TLS cert (certbot if missing)
         id: cert
         timeout-minutes: 15
         env:
           HOST: ${{ steps.box.outputs.host }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
+          MIGRATION_HOST: ${{ inputs.migration_host }}
           SCRIPT: |
             if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
               echo "[certbot] $DOMAIN cert 이미 존재 — skip"
+            elif [ -n "$MIGRATION_HOST" ]; then
+              echo "::error::[이관 모드] 신 박스에 $DOMAIN cert 가 없다 — migrate.yml 의 provision 을 먼저 실행할 것"
+              exit 1
             else
               echo "[certbot] $DOMAIN cert 발급 (standalone)"
               # --pre-hook/--post-hook 는 발급 시점뿐 아니라 certbot 갱신 타이머가 쓰는 renewal 설정에도
@@ -350,7 +355,7 @@ jobs:
               [ -n "$SRC" ] && sudo cp "$SRC" /etc/letsencrypt/ssl-dhparams.pem && echo "[certbot] ssl-dhparams.pem 복사"
             fi
         run: |
-          EXPORTS=$(for v in DOMAIN; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          EXPORTS=$(for v in DOMAIN MIGRATION_HOST; do printf 'export %s=%q; ' "$v" "${!v}"; done)
           ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Apply nginx config

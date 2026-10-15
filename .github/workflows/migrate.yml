@@ -15,7 +15,9 @@ name: Migrate
 #           infra/scripts/bootstrap-oidc.sh 를 한 번 붙여넣으면 발판이 생기고, 나중에 지울 키가 남지 않는다.
 #   구 계정: secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET. 순수 read-only 는 아니다 — 릴레이·이미지 버킷 읽기에
 #           더해, prod DB 제어(SSM 경로)에서 ssm:SendCommand·ListCommandInvocations·GetCommandInvocation 이,
-#           구 앱 박스 SSH(SSM 경유)에서 ec2:DescribeInstances·ssm:StartSession(AWS-StartSSHSession) 이 필요하다.
+#           구 앱 박스 SSH(SSM 경유)에서 ec2:DescribeInstances·ssm:StartSession(AWS-StartSSHSession)·
+#           ssm:TerminateSession·ssmmessages:OpenDataChannel(session/*) 이 필요하다. 마지막이 없으면 세션이
+#           열리자마자 끊긴다(terraform/iam_people.tf 실측). 이관 전에 이 키로 start-session 을 한 번 확인할 것.
 #           (박스 안 GetParameter·kms:Decrypt·릴레이 업로드는 DB 인스턴스 role 이 하고, 이 키가 하지 않는다.) 이미 있는 계정이라 키가 정상 경로다.
 #   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout).
 #
@@ -987,8 +989,27 @@ jobs:
             echo "::error::prod DB provision 실패 — Status=$STATUS (박스 instance-role 의 tfstate provision/* s3:GetObject 권한·스크립트 로그 확인)"; exit 1; }
           echo "::notice::prod DB provision 완료 — $DB_TAG (MySQL·백업 cron·Alloy)"
 
+      # 이미 있으면 구 계정을 부르지 않는다. 컷오버 뒤 provision 재실행은 도메인이 신 박스라 아래 IP 가드에 걸린다.
+      - name: 신 앱 박스 TLS cert 유무
+        id: cert
+        env:
+          DST: ${{ steps.box.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: |
+          set -euo pipefail
+          rc=0
+          # shellcheck disable=SC2029  # $DOMAIN 의 클라이언트 측 확장은 의도
+          ssh "$DST" "sudo test -d '/etc/letsencrypt/live/$DOMAIN'" || rc=$?
+          case $rc in
+            0) echo "present=true" >> "$GITHUB_OUTPUT"
+               echo "::notice::신 박스에 $DOMAIN cert 가 이미 있다 — 구 박스 cert 복사 생략" ;;
+            1) echo "present=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::신 박스 SSH 실패 — cert 유무를 판단할 수 없다"; exit 1 ;;
+          esac
+
       - name: 구 계정 앱 박스 SSH 준비 (SSM 경유)
         id: src
+        if: ${{ steps.cert.outputs.present == 'false' }}
         uses: ./.github/actions/migrate-src-ssh
         with:
           instance-name: ${{ needs.config.outputs.app_tag }}
@@ -1002,6 +1023,7 @@ jobs:
       # cert 는 도메인에 묶여 있어 구 박스 것을 옮기면 바로 유효하고, deploy.yml 의 'Ensure TLS cert' 는 cert 가 있으면 건너뛴다.
       # deploy.yml 에 두지 않는 이유: prod 이관의 deploy.yml 은 main 커밋을 체크아웃해 dev 에만 있는 이 레포 액션을 못 볼 수 있다.
       - name: 구 앱 박스 TLS cert 복사
+        if: ${{ steps.cert.outputs.present == 'false' }}
         env:
           SRC: ${{ steps.src.outputs.host }}
           DST: ${{ steps.box.outputs.host }}
