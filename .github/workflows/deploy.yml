@@ -302,6 +302,7 @@ jobs:
         run: |
           ssh -n "$HOST" 'mkdir -p /tmp/piki-deploy/alloy'
           scp "infra/nginx/$NGINX_CONF" \
+            infra/nginx/main/nginx.conf \
             infra/scripts/provision-runtime.sh \
             shared-infra/blocks/healthcheck.sh \
             shared-infra/blocks/run_container.sh \
@@ -389,6 +390,8 @@ jobs:
               sudo rm -f "$old" "/etc/nginx/sites-available/$bn"
             done
             # 현재 설정 백업 후 교체. nginx -t 검증 실패 시 이전 설정으로 롤백하고 배포를 중단한다.
+            sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+            sudo cp /tmp/piki-deploy/nginx.conf /etc/nginx/nginx.conf
             sudo cp "$DST" "${DST}.bak" 2>/dev/null || true
             sudo cp "$SRC" "$DST"
             # 사이트 활성화(idempotent) — 새 dev 인스턴스는 symlink 가 없어 명시적으로 enable.
@@ -398,6 +401,7 @@ jobs:
               echo "nginx config 적용 + reload 완료"
             else
               echo "nginx -t 실패 — 이전 설정으로 롤백하고 중단"
+              sudo cp /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
               sudo cp "${DST}.bak" "$DST" 2>/dev/null || true
               exit 1
             fi

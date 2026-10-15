@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
-# (swap / redis(dev) / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
+# (swap / redis(dev) / nginx default·exporter / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
 # swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
@@ -187,6 +187,21 @@ if [ -e /etc/nginx/sites-enabled/default ]; then
   sudo nginx -t && sudo nginx -s reload
 else
   echo "[nginx] default 없음 — skip"
+fi
+
+# 4-1) nginx 연결 수 exporter — 127.0.0.1:9112 stub_status(infra/nginx/main/nginx.conf)를 읽어 Alloy 가 라벨로 수집한다.
+#    piki-core 가 아니라 piki-nginx 로 붙인다. 같은 job 이면 앱이 죽어도 up{job="piki-core"} 가 1 로 남는다.
+NGINX_EXPORTER_IMAGE="public.ecr.aws/nginx/nginx-prometheus-exporter:1.5.3"
+NGINX_EXPORTER_ARGS="--nginx.scrape-uri=http://127.0.0.1:9112/stub_status --web.listen-address=127.0.0.1:9113"
+if [ "$(docker inspect -f '{{.Config.Image}} {{join .Args " "}}' piki-nginx-exporter 2>/dev/null)" = "$NGINX_EXPORTER_IMAGE $NGINX_EXPORTER_ARGS" ]; then
+  echo "[nginx-exporter] 같은 이미지·인자로 실행 중 — skip"
+else
+  docker pull -q "$NGINX_EXPORTER_IMAGE"
+  docker rm -f piki-nginx-exporter >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086 # 인자 문자열을 낱말로 나눠 넘긴다
+  docker run -d --name piki-nginx-exporter --restart unless-stopped --network host --memory 32m \
+    --label piki.observe=true --label piki.service=piki-nginx --label piki.metrics.port=9113 \
+    "$NGINX_EXPORTER_IMAGE" $NGINX_EXPORTER_ARGS
 fi
 
 # 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
