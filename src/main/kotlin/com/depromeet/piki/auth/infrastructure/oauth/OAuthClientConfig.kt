@@ -6,6 +6,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.google.GoogleOAuthClient
 import com.depromeet.piki.auth.infrastructure.oauth.google.GoogleProperties
 import com.depromeet.piki.auth.infrastructure.oauth.kakao.KakaoOAuthClient
 import com.depromeet.piki.auth.infrastructure.oauth.kakao.KakaoProperties
+import io.micrometer.observation.ObservationRegistry
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -17,14 +18,23 @@ import org.springframework.context.annotation.Configuration
 @ConditionalOnProperty(name = ["oauth.client.enabled"], havingValue = "true", matchIfMissing = true)
 class OAuthClientConfig {
     @Bean
-    fun googleOAuthClient(googleProperties: GoogleProperties): OAuthClient = GoogleOAuthClient(googleProperties)
+    fun googleOAuthClient(
+        googleProperties: GoogleProperties,
+        observationRegistry: ObservationRegistry,
+    ): OAuthClient = GoogleOAuthClient(googleProperties, observationRegistry)
 
     @Bean
-    fun kakaoOAuthClient(kakaoProperties: KakaoProperties): OAuthClient = KakaoOAuthClient(kakaoProperties)
+    fun kakaoOAuthClient(
+        kakaoProperties: KakaoProperties,
+        observationRegistry: ObservationRegistry,
+    ): OAuthClient = KakaoOAuthClient(kakaoProperties, observationRegistry)
 
     // 반환 타입을 AppleOAuthClient 로 노출한다 — OAuthClient(소셜 로그인) 와 AppleNotificationVerifier
     // (서버-서버 알림 검증)를 한 인스턴스가 모두 구현하므로, 두 주입 지점에 같은 빈이 쓰여 JWKS 캐시를 공유한다.
     // 여전히 OAuthClient 구현이라 List<OAuthClient> 주입(소셜 로그인 registry)과도 호환된다.
     @Bean
-    fun appleOAuthClient(appleProperties: AppleProperties): AppleOAuthClient = AppleOAuthClient(appleProperties)
+    fun appleOAuthClient(
+        appleProperties: AppleProperties,
+        observationRegistry: ObservationRegistry,
+    ): AppleOAuthClient = AppleOAuthClient(appleProperties, observationRegistry)
 }

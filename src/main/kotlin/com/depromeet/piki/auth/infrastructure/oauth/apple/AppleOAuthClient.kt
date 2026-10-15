@@ -13,6 +13,7 @@ import io.jsonwebtoken.Header
 import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.Locator
 import io.jsonwebtoken.security.Jwks
+import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.util.LinkedMultiValueMap
@@ -27,12 +28,13 @@ import java.util.Date
 
 class AppleOAuthClient(
     private val props: AppleProperties,
+    observationRegistry: ObservationRegistry,
 ) : OAuthClient,
     AppleNotificationVerifier {
     override val provider = OAuthProvider.APPLE
 
     private val log = LoggerFactory.getLogger(javaClass)
-    private val appleClient = OAuthRestClient.create(APPLE_BASE_URL)
+    private val appleClient = OAuthRestClient.create(APPLE_BASE_URL, observationRegistry)
 
     @Volatile private var cachedJwksJson: String? = null
     @Volatile private var jwksCachedAt = 0L
