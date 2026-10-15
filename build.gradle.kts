@@ -60,6 +60,9 @@ dependencies {
 
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    // Lettuce 의 TCP_USER_TIMEOUT 은 epoll 에서만 걸린다(RedisConfig). 배포 서버는 arm64, CI 는 x86_64.
+    runtimeOnly("io.netty:netty-transport-native-epoll::linux-aarch_64")
+    runtimeOnly("io.netty:netty-transport-native-epoll::linux-x86_64")
 
     // admin 백오피스 세션을 톰캣 메모리가 아니라 Redis 에 둔다(#885). 인메모리면 blue-green 배포로 컨테이너가
     // 교체될 때마다 세션이 통째로 사라져, AdminAccessFilter 가 404 를 내고 배포마다 Discord grant 링크를 다시 받아야 했다.
