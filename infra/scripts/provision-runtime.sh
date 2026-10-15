@@ -139,6 +139,15 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
   # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
   # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
   # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
+  # prod DB 박스와 같은 메모리 튜닝. 값의 근거는 infra/compose/db.yml.
+  MYSQL_ARGS=(--performance-schema=OFF --innodb-buffer-pool-size=64M --max-connections=60)
+  # 있으면 skip 이라 인자만 바꾸면 기존 컨테이너에 반영되지 않는다. 인자가 다를 때만 재생성한다(데이터는 볼륨에 남음).
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql' \
+    && [ "$(docker inspect -f '{{join .Config.Cmd " "}}' piki-mysql)" != "${MYSQL_ARGS[*]}" ]; then
+    echo "[mysql] piki-mysql 기동 인자가 다름 — 정상 종료 후 재생성"
+    docker stop -t 60 piki-mysql >/dev/null
+    docker rm piki-mysql >/dev/null
+  fi
   if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql'; then
     echo "[mysql] piki-mysql 이미 존재 — skip"
   else
@@ -152,7 +161,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
       -e MYSQL_USER="${DB_USERNAME}" \
       -e MYSQL_PASSWORD="${DB_PASSWORD}" \
       -e MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" \
-      mysql:8.4
+      mysql:8.4 "${MYSQL_ARGS[@]}"
   fi
 
   # MySQL readiness 대기 — docker run 직후엔 init(첫 기동 시 DB/user 생성 + 재시작) 중이라,
@@ -168,7 +177,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
     [ "$i" -eq 30 ] && { echo "[mysql] readiness timeout (60s)"; exit 1; }
   done
 else
-  echo "[mysql] prod 환경 — skip (RDS 사용)"
+  echo "[mysql] prod 환경 — skip (DB 박스 사용)"
 fi
 
 # 4) nginx default 사이트 — 불필요한 stock catch-all 노출. 있으면 제거하고 reload.
