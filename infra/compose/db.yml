@@ -57,7 +57,8 @@ services:
       - --max-connections=60
 
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      # 인증 없이 ping 하면 매번 Access denied 로 Aborted_connects 가 오른다(10초마다). ping 은 인증 실패에도 0 이라 판정은 같다.
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u \"$$MYSQL_USER\" --silent"]
       interval: 10s
       timeout: 5s
       retries: 12
