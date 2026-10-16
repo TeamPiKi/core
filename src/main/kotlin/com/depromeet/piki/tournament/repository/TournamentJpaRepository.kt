@@ -73,9 +73,6 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
         pageable: Pageable,
     ): List<Tournament>
 
-    fun findBySourceTournamentIdAndDeletedAtIsNull(sourceTournamentId: Long): List<Tournament>
-
-
     // 활성 초대코드 조회는 base 컬럼 invite_code 가 아니라 generated 컬럼 active_invite_code 로 한다.
     // uk_tournaments_active_invite_code 유니크 인덱스가 이 컬럼에만 걸려 있어, invite_code 로 조회하면
     // MySQL 8 이 인덱스를 못 써 tournaments 풀스캔이 된다. 삭제행은 active_invite_code 가 NULL 이라
