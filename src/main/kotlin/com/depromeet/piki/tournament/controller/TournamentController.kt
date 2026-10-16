@@ -1,6 +1,7 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.tournament.controller.dto.CreateFromPlayCodeRequest
 import com.depromeet.piki.tournament.controller.dto.CreateTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.CreateTournamentResponse
 import com.depromeet.piki.tournament.controller.dto.GroupResultResponse
@@ -175,6 +176,17 @@ class TournamentController(
     ): ApiResponseBody<Long> {
         // idempotent get-or-create: 신규 생성·기존 클론 반환 모두 200. 항상 "생성"이 아니므로 201 을 쓰지 않는다.
         val tournamentId = tournamentService.createFromPlayLink(userId, sourceTournamentId)
+        return ApiResponseBody.ok(tournamentId)
+    }
+
+    // 경로에 id 를 두지 않는다 - 코드로 들어오는 사람은 토너먼트 id 를 모른다. 그게 이 경로의 요점이다.
+    @PostMapping("/from-play-code")
+    override fun createFromPlayCode(
+        @AuthenticationPrincipal userId: UUID,
+        @Valid @RequestBody request: CreateFromPlayCodeRequest,
+    ): ApiResponseBody<Long> {
+        // from-play-link 와 같은 idempotent get-or-create 라 201 이 아니라 200 이다.
+        val tournamentId = tournamentService.createFromPlayCode(userId, request.code)
         return ApiResponseBody.ok(tournamentId)
     }
 

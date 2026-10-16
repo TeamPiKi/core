@@ -32,6 +32,7 @@ import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentUserJpaRepository
 import com.depromeet.piki.tournament.service.PLAY_LINK_DURATION_DAYS
+import com.depromeet.piki.tournament.service.TOURNAMENT_MAX_PARTICIPANT_COUNT
 import com.depromeet.piki.tournament.service.TournamentErrorCode
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -70,6 +71,8 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @RecordApplicationEvents
@@ -4596,6 +4599,182 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
         val events = applicationEvents.stream(TournamentPlayedFromLink::class.java).toList()
         assertEquals(1, events.size)
+    }
+
+    // ---- #1013 완료된 토너먼트에 코드로 입장 ----------------------------------------------
+
+    @Test
+    fun `POST from-play-code 는 완료된 토너먼트의 코드로 입장해 ROOT id 를 돌려준다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        val code = inviteCodeOf(rootId)
+        createPlayLink(mockMvc, rootId)
+
+        val result = mockMvc
+            .perform(
+                post("/api/v1/tournaments/from-play-code")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"code":"$code"}"""),
+            ).andExpect(status().isOk)
+            .andReturn()
+
+        // 링크 경로와 같은 결과 - 클론이 아니라 ROOT 참여 행이 생긴다(#1027 이후).
+        assertEquals(rootId, objectMapper.readTree(result.response.contentAsString)["data"].asLong())
+        assertNotNull(tournamentUserJpaRepository.findByTournamentIdAndUserIdAndDeletedAtIsNull(rootId, otherUserId))
+    }
+
+    // 이 이슈의 핵심 가드다. 코드는 생성 시점에 발급돼 늘 존재하므로, 게이트가 없으면 주최자가
+    // 공유를 켜지 않은 토너먼트도 코드만 알면 뚫린다.
+    @Test
+    fun `POST from-play-code 는 공유를 켜지 않은 완료 토너먼트를 404 로 막는다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        val code = inviteCodeOf(rootId)
+        // 플레이 링크를 만들지 않는다.
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/from-play-code")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"code":"$code"}"""),
+            ).andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-026"))
+
+        assertNull(tournamentUserJpaRepository.findByTournamentIdAndUserIdAndDeletedAtIsNull(rootId, otherUserId))
+    }
+
+    // 회귀 가드: 대기실 코드는 종전대로 join 경로를 쓴다. 이 API 로 오면 409 로 돌려보낸다 -
+    // 두 경로는 정원·중복 검사와 발행 이벤트가 다르다.
+    @Test
+    fun `POST from-play-code 는 PENDING 토너먼트를 409 로 막는다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (_, code) = createTournamentWithInviteCode(mockMvc)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/from-play-code")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"code":"$code"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-023"))
+    }
+
+    @Test
+    fun `POST from-play-code 는 없는 코드를 400 으로 막는다`() {
+        val mockMvc = buildMockMvc()
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/from-play-code")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"code":"ZZZ999"}"""),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-020"))
+    }
+
+    // 링크 경로와 같은 멱등 동작. 두 번 눌러도 참여 행이 늘지 않는다.
+    @Test
+    fun `POST from-play-code 는 이미 참여 중이면 같은 id 를 돌려준다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        val code = inviteCodeOf(rootId)
+        createPlayLink(mockMvc, rootId)
+
+        repeat(2) {
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/from-play-code")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"code":"$code"}"""),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data").value(rootId))
+        }
+        assertEquals(2, tournamentUserJpaRepository.countByTournamentIdAndDeletedAtIsNull(rootId))
+    }
+
+    // 정원을 링크 경로에도 걸었다(#1013). 코드만 막으면 "링크 달라고 하면 들어가지는" 상태가 된다.
+    @Test
+    fun `POST from-play-link 는 정원이 차면 409 로 막는다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        createPlayLink(mockMvc, rootId)
+
+        // 주최자 1명 + 7명 = 8명으로 정원을 채운다.
+        repeat(TOURNAMENT_MAX_PARTICIPANT_COUNT - 1) { i ->
+            val filler = UUID.randomUUID()
+            saveUser(filler, "https://cdn.example.com/f$i.jpg", "채움$i")
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$rootId/from-play-link")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(filler)),
+                ).andExpect(status().isOk)
+        }
+        assertEquals(
+            TOURNAMENT_MAX_PARTICIPANT_COUNT,
+            tournamentUserJpaRepository.countByTournamentIdAndDeletedAtIsNull(rootId),
+        )
+
+        saveUser(otherUserId, "https://cdn.example.com/other.jpg", "초과유저")
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$rootId/from-play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-030"))
+    }
+
+    // 미리보기가 상태별로 갈린다. 예전엔 checkJoinable(null) 하나라 COMPLETED 가 409 로 막혀,
+    // 코드로 들어오기 전에 무엇을 보게 될지 알 수 없었다.
+    @Test
+    fun `GET by-invite-code 는 완료된 토너먼트도 미리보기를 내려준다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        val code = inviteCodeOf(rootId)
+        createPlayLink(mockMvc, rootId)
+
+        mockMvc
+            .perform(get("/api/v1/tournaments/by-invite-code").param("code", code))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.tournamentId").value(rootId))
+            .andExpect(jsonPath("$.data.itemCount").value(2))
+    }
+
+    // 공유를 안 켰으면 미리보기도 막힌다 - 입장이 막히는데 미리보기만 열리면 "보이는데 못 들어가는"
+    // 상태가 된다.
+    @Test
+    fun `GET by-invite-code 는 공유를 켜지 않은 완료 토너먼트를 404 로 막는다`() {
+        val mockMvc = buildMockMvc()
+        val (rootId, _, _) = completeTournamentWith2Items(mockMvc)
+        val code = inviteCodeOf(rootId)
+
+        mockMvc
+            .perform(get("/api/v1/tournaments/by-invite-code").param("code", code))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-026"))
+    }
+
+    private fun inviteCodeOf(tournamentId: Long): String =
+        tournamentJpaRepository.findByIdAndDeletedAtIsNull(tournamentId)!!.inviteCode
+
+    private fun createPlayLink(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+    ) {
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"),
+            ).andExpect(status().isOk)
     }
 
     private fun completeTournamentWith2Items(mockMvc: MockMvc): TournamentStart {
