@@ -30,7 +30,7 @@ interface WishRepository {
     // 호출부가 반환 개수로 누락 여부를 판단한다.
     fun findAllByIds(ids: List<Long>): List<Wish>
 
-    // 한 유저의 위시를 itemId 목록으로 조회. itemId 는 유저 내에서 사실상 1:1
+    // 한 유저의 위시를 itemId 목록으로 조회. 살아 있는 위시 안에서 itemId 는 유저마다 하나다(유니크)
     fun findByItemIdsAndUserId(
         itemIds: List<Long>,
         userId: UUID,

@@ -30,6 +30,8 @@ class WishMemo(
 
     fun sameContentAs(current: WishMemo?): Boolean = content == current?.content
 
+    fun copyTo(wishId: Long): WishMemo = WishMemo(wishId = wishId, content = content, writtenAt = writtenAt)
+
     companion object {
         const val MAX_LENGTH = 100
 

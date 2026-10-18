@@ -18,6 +18,12 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
 
     fun findByIdAndDeletedAtIsNull(id: Long): TournamentItem?
 
+    // 유니크에서 빠진 옛 출전은 같은 아이템으로 여럿 살아 있을 수 있다
+    fun findFirstByTournamentIdAndItemIdAndDeletedAtIsNullOrderByIdAsc(
+        tournamentId: Long,
+        itemId: Long,
+    ): TournamentItem?
+
     @Query("SELECT t FROM TournamentItem t WHERE t.tournamentId = :tournamentId AND t.deletedAt IS NULL ORDER BY t.id ASC")
     fun findAllByTournamentIdAndNotDeleted(@Param("tournamentId") tournamentId: Long): List<TournamentItem>
 
@@ -103,7 +109,7 @@ interface TournamentItemJpaRepository : JpaRepository<TournamentItem, Long> {
         @Param("now") now: LocalDateTime,
     )
 
-    // 담은 사람만 갈아끼운다(#1081). 유니크 키가 (tournament_id, item_id)라 user_id 는 키에 없어 충돌하지 않는다.
+    // 담은 사람만 갈아끼운다(#1081). 유니크 키가 (tournament_id, item_id, live)라 user_id 는 키에 없어 충돌하지 않는다.
     // 참여가 회원에게 넘어간 방으로 범위를 좁힌다 — 넘어가지 않은 방까지 옮기면 그 방에 없는 사람이 아이템 주인이 된다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(

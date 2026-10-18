@@ -2,15 +2,24 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.completeLatest
+import com.depromeet.piki.support.wishItemIdOf
+import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
+import com.depromeet.piki.wishlist.domain.WishMemo
+import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.service.WishPersistenceService
 import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import jakarta.persistence.EntityManager
@@ -27,6 +36,7 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,6 +58,12 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var entityManager: EntityManager
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired private lateinit var wishMemoRepository: WishMemoRepository
+
+    @Autowired private lateinit var tournamentItemRepository: TournamentItemRepository
+
+    @Autowired private lateinit var itemParseOutboxRepository: ItemParseOutboxRepository
 
     @Test
     fun `처음 보는 링크는 아이템 없이 담기고 파싱을 요청한다`() {
@@ -170,6 +186,66 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.code").value("WISH-009"))
     }
 
+    @Test
+    fun `같은 사용자의 두 위시가 같은 아이템으로 확정되면 나중 위시가 지워지고 메모는 쓴 시각 그대로 앞 위시로 옮겨진다`() {
+        val user = newMember()
+        val finalUrl = "https://www.musinsa.com/products/8100010"
+        val first = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse("https://musinsa.onelink.me/PvkC/merge0010"))).wish
+        val second = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse(finalUrl))).wish
+        wishMemoRepository.save(WishMemo(wishId = first.getId(), content = "선물용", writtenAt = LocalDateTime.of(2026, 10, 19, 10, 5)))
+        wishMemoRepository.save(WishMemo(wishId = second.getId(), content = "사이즈 M", writtenAt = LocalDateTime.of(2026, 10, 19, 10, 0)))
+        complete(first.slot, finalUrl)
+
+        val settlement = complete(second.slot, finalUrl)
+
+        entityManager.flush()
+        assertEquals(ExtractionSettlement.Applied(ItemStatus.READY), settlement)
+        val itemId = assertNotNull(jdbcTemplate.wishItemIdOf(first.getId()))
+        assertEquals(2, versionCountOf(itemId), "합쳐져도 새 버전은 아이템에 쌓인다")
+        assertNotNull(deletedAtOf("wishes", second.getId()))
+        assertNull(deletedAtOf("wishes", first.getId()))
+        assertEquals(
+            listOf("사이즈 M" to LocalDateTime.of(2026, 10, 19, 10, 0), "선물용" to LocalDateTime.of(2026, 10, 19, 10, 5)),
+            memosOf(first.getId()),
+        )
+    }
+
+    // 지운 위시까지 합치면 사용자가 지운 메모가 남은 위시에 나타난다
+    @Test
+    fun `지운 위시가 이미 담긴 아이템으로 확정되면 합치지 않고 채워 메모를 옮기지 않는다`() {
+        val user = newMember()
+        val finalUrl = "https://www.musinsa.com/products/8100011"
+        val first = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse("https://musinsa.onelink.me/PvkC/merge0011"))).wish
+        val second = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse(finalUrl))).wish
+        wishMemoRepository.save(WishMemo(wishId = second.getId(), content = "지운 위시 메모", writtenAt = LocalDateTime.of(2026, 10, 19, 10, 0)))
+        complete(first.slot, finalUrl)
+        second.delete()
+
+        complete(second.slot, finalUrl)
+
+        entityManager.flush()
+        assertEquals(jdbcTemplate.wishItemIdOf(first.getId()), jdbcTemplate.wishItemIdOf(second.getId()))
+        assertEquals(emptyList(), memosOf(first.getId()))
+    }
+
+    @Test
+    fun `같은 토너먼트의 두 출전이 같은 아이템으로 확정되면 나중 출전이 지워진다`() {
+        val owner = newMember()
+        val finalUrl = "https://www.musinsa.com/products/8100012"
+        val first = tournamentItemRepository.save(TournamentItem(tournamentId = 8100012L, userId = owner, itemId = null))
+        val second = tournamentItemRepository.save(TournamentItem(tournamentId = 8100012L, userId = owner, itemId = null))
+        listOf(first to "https://musinsa.onelink.me/PvkC/merge0012", second to finalUrl).forEach { (entry, url) ->
+            itemParseOutboxRepository.save(ItemParseOutbox.of(entry.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))))
+        }
+        complete(first.slot, finalUrl)
+
+        complete(second.slot, finalUrl)
+
+        entityManager.flush()
+        assertNotNull(deletedAtOf("tournament_items", second.getId()))
+        assertNull(deletedAtOf("tournament_items", first.getId()))
+    }
+
     // 등록 뒤 파싱 성공과 같은 경로로 아이템을 확정한다
     private fun registerParsed(
         userId: UUID,
@@ -177,9 +253,20 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         finalUrl: String? = url,
     ): Long {
         val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse(url)))
+        complete(result.wish.slot, finalUrl)
+        entityManager.flush()
+        entityManager.clear()
+        val itemId = jdbcTemplate.queryForObject("SELECT item_id FROM wishes WHERE id = ?", Long::class.java, result.wish.getId())
+        return assertNotNull(itemId)
+    }
+
+    private fun complete(
+        slot: ItemSlot,
+        finalUrl: String?,
+    ): ExtractionSettlement =
         itemParsingService.completeLatest(
             entityManager,
-            result.wish.slot,
+            slot,
             ProductSnapshot(
                 name = "공유 상품",
                 price = 10_000,
@@ -189,11 +276,18 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
                 method = ExtractionMethod.STRUCTURED,
             ),
         )
-        entityManager.flush()
-        entityManager.clear()
-        val itemId = jdbcTemplate.queryForObject("SELECT item_id FROM wishes WHERE id = ?", Long::class.java, result.wish.getId())
-        return assertNotNull(itemId)
-    }
+
+    private fun deletedAtOf(
+        table: String,
+        id: Long,
+    ): LocalDateTime? = jdbcTemplate.queryForObject("SELECT deleted_at FROM $table WHERE id = ?", LocalDateTime::class.java, id)
+
+    private fun memosOf(wishId: Long): List<Pair<String?, LocalDateTime>> =
+        jdbcTemplate.query(
+            "SELECT content, written_at FROM wish_memos WHERE wish_id = ? ORDER BY written_at",
+            { rs, _ -> rs.getString("content") to rs.getObject("written_at", LocalDateTime::class.java) },
+            wishId,
+        )
 
     private fun versionCountOf(itemId: Long): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?", Int::class.java, itemId) ?: 0

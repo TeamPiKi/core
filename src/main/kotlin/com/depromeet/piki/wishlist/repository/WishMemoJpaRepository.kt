@@ -10,6 +10,8 @@ import java.util.UUID
 interface WishMemoJpaRepository : JpaRepository<WishMemo, Long> {
     fun findFirstByWishIdOrderByWrittenAtDescIdDesc(wishId: Long): WishMemo?
 
+    fun findAllByWishId(wishId: Long): List<WishMemo>
+
     @Modifying
     @Query("DELETE FROM WishMemo m WHERE m.wishId IN (SELECT w.id FROM Wish w WHERE w.userId = :userId)")
     fun hardDeleteAllByUserId(

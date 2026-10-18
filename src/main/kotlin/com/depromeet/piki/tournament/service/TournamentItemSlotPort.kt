@@ -1,8 +1,10 @@
 package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.item.domain.ItemSlotType
+import com.depromeet.piki.item.service.ItemSlotFill
 import com.depromeet.piki.item.service.ItemSlotPort
 import com.depromeet.piki.item.service.ItemSlotState
+import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import org.springframework.stereotype.Component
 
@@ -18,8 +20,22 @@ class TournamentItemSlotPort(
     override fun fill(
         id: Long,
         itemId: Long,
-    ) {
+    ): ItemSlotFill {
         val tournamentItem = tournamentItemRepository.findByIdIncludingDeletedForUpdate(id) ?: error("토너먼트 아이템 $id 이 없다")
-        tournamentItem.fill(itemId)
+        val holder =
+            holderOf(tournamentItem, itemId) ?: run {
+                tournamentItem.fill(itemId)
+                return ItemSlotFill.Filled
+            }
+        tournamentItem.softDelete()
+        return ItemSlotFill.AlreadyHeld(holder.slot)
+    }
+
+    private fun holderOf(
+        tournamentItem: TournamentItem,
+        itemId: Long,
+    ): TournamentItem? {
+        tournamentItem.deletedAt?.let { return null }
+        return tournamentItemRepository.findByTournamentIdAndItemId(tournamentItem.tournamentId, itemId)
     }
 }

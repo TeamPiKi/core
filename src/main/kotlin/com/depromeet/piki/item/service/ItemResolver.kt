@@ -8,7 +8,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
-// 호출부 트랜잭션 안에서 돈다. 같은 새 값을 동시에 확정하면 unique 위반으로 한쪽이 롤백되고 그 아웃박스는 회수 대상이 된다
+// 호출부 트랜잭션 안에서 돈다. 같은 새 값을 동시에 확정하면 unique 위반으로 한쪽이 롤백되고 파서가 한 번 다시 기록한다
 @Component
 class ItemResolver(
     private val itemRepository: ItemRepository,

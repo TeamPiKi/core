@@ -2728,11 +2728,10 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `POST tournaments-id-items-wish 는 같은 아이템의 내 위시가 둘이어도 위시에 없는 아이템이 섞이면 403 을 반환한다`() {
+    fun `POST tournaments-id-items-wish 는 위시에 있는 아이템과 없는 아이템이 섞이면 403 을 반환한다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val wishedItemId = saveWishItem()
-        wishJpaRepository.save(Wish(userId = userId, itemId = wishedItemId))
         val othersItemId = saveWishItem(owner = otherUserId)
 
         mockMvc

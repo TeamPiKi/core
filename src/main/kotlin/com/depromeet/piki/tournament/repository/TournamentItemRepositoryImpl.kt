@@ -34,6 +34,11 @@ class TournamentItemRepositoryImpl(
         normalized: NormalizedInput,
     ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, normalized).firstOrNull()
 
+    override fun findByTournamentIdAndItemId(
+        tournamentId: Long,
+        itemId: Long,
+    ): TournamentItem? = tournamentItemJpaRepository.findFirstByTournamentIdAndItemIdAndDeletedAtIsNullOrderByIdAsc(tournamentId, itemId)
+
     override fun findIdByTournamentIdAndItemCanonical(
         tournamentId: Long,
         canonical: CanonicalInput,

@@ -124,6 +124,7 @@ class WishPersistenceService(
         itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput(PRE_UPLOAD_VALIDATION_IMAGE_URL))
     }
 
+    // 합치기가 메모를 옮기는 동안 잠금을 기다린다. 잠그지 않으면 옮긴 뒤 사라지는 위시에 쓴 메모가 조용히 버려진다
     @Transactional
     fun updateMemo(command: UpdateWishMemoCommand): WishResult {
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
