@@ -110,7 +110,7 @@ class WishlistService(
         val displayByCard = itemDisplayService.resolveDisplay(pageWishes.map { it.displayCard() })
         val itemsById = itemRepository.findByIds(pageWishes.map { it.itemId }).associateBy { it.getId() }
         // 우승 칩(#1236) — 이 페이지에 보이는 상품만 한 번에 물어 N+1 을 만들지 않는다(표시값·상품 조회와 같은 결).
-        val winnerItemIds = tournamentWinnerReader.findWinnerItemIds(userId, pageWishes.map { it.itemId })
+        val winnersByItem = tournamentWinnerReader.findWinnerTournamentIdsByItem(userId, pageWishes.map { it.itemId })
         val entries =
             pageWishes.map { wish ->
                 // item 은 wish 와 함께 영속화되며 병합 시 함께 옮겨진다(WishItemMergeListener). 없으면 영속화 경로가 깨진 코드 버그다.
@@ -119,7 +119,7 @@ class WishlistService(
                     wish = wish,
                     item = item,
                     snapshot = displayByCard.getValue(wish.displayCard()),
-                    isWinner = wish.itemId in winnerItemIds,
+                    winnerTournamentIds = winnersByItem[wish.itemId].orEmpty(),
                 ).withSourcePlatform()
             }
 
@@ -150,13 +150,15 @@ class WishlistService(
         val item = itemRepository.findById(wish.itemId) ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
         // 표시값 파생(#857·#1051) — 목록(getWishlist)과 같은 규칙.
         val history = itemSnapshotRepository.findPriceHistoryByItemId(wish.itemId, PRICE_HISTORY_LIMIT)
+        // 우승 칩(#1236) — 목록과 같은 규칙으로 판정한다. 상세는 상품이 하나라 그 하나만 묻는다.
+        val winners = tournamentWinnerReader.findWinnerTournamentIdsByItem(userId, listOf(wish.itemId))
         return WishDetail(
             wish = wish,
             item = item,
             snapshot = itemDisplayService.resolveDisplay(wish.displayCard()),
             history = history,
             sourcePlatform = sourcePlatformResolver.resolve(item.link),
-            isWinner = tournamentWinnerReader.findWinnerItemIds(userId, listOf(wish.itemId)).isNotEmpty(),
+            winnerTournamentIds = winners[wish.itemId].orEmpty(),
         )
     }
 

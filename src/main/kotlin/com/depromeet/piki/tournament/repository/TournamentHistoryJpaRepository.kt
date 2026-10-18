@@ -15,7 +15,7 @@ interface TournamentHistoryJpaRepository : JpaRepository<TournamentHistory, Long
     fun findAllByTournamentIdInAndDeletedAtIsNull(tournamentIds: List<Long>): List<TournamentHistory>
 
     /**
-     * 이 사용자가 **자기 플레이의 결승에서 고른** 상품들(itemId). 위시 목록의 우승 칩 판정에 쓴다(#1236).
+     * 이 사용자가 **자기 플레이의 결승에서 고른** 상품들과, 그 우승이 난 토너먼트. 위시 카드의 우승 칩(#1236).
      *
      * 기준이 참여 행(TournamentUser)인 것이 핵심이다. 그룹 합산 순위가 아니라 "내가 선택한 1등" 이므로,
      * 같은 소셜 토너먼트라도 사람마다 답이 다르다. 결승 한 행만 보면 되어 순위 전체를 계산할 필요가 없다
@@ -28,17 +28,22 @@ interface TournamentHistoryJpaRepository : JpaRepository<TournamentHistory, Long
      * FK·연관관계를 두지 않는 규약이라 암시적 조인으로 엮는다(TournamentItemJpaRepository 의 선례와 같은 형태).
      *
      * itemIds 로 먼저 좁혀, 한 페이지에 보이는 상품만 본다. 위시가 수백 건이어도 조회 비용이 페이지 크기에 묶인다.
+     *
+     * 정렬은 결승 기록 id 역순 — 곧 "우승한 순서의 역순"이다. 참여 행의 완료 시각(completedAt)을 쓰지 않는 이유는
+     * 그 값이 완료 판정의 출처가 아니어서(#1027) 레거시 행에 비어 있을 수 있기 때문이다. 기록 id 는 항상 있다.
      */
     @Query(
-        "SELECT DISTINCT s.itemId FROM TournamentHistory h, TournamentUser tu, TournamentItem ti, ItemSnapshot s " +
+        "SELECT s.itemId AS itemId, h.tournamentId AS tournamentId " +
+            "FROM TournamentHistory h, TournamentUser tu, TournamentItem ti, ItemSnapshot s " +
             "WHERE h.tournamentUserId = tu.id AND tu.userId = :userId AND tu.deletedAt IS NULL " +
             "AND h.currentRound = :finalRound AND h.deletedAt IS NULL " +
             "AND ti.id = h.selectedTournamentItemId AND ti.deletedAt IS NULL " +
-            "AND s.id = ti.snapshotId AND s.itemId IN :itemIds",
+            "AND s.id = ti.snapshotId AND s.itemId IN :itemIds " +
+            "ORDER BY h.id DESC",
     )
-    fun findWinnerItemIds(
+    fun findWinnerItems(
         @Param("userId") userId: UUID,
         @Param("itemIds") itemIds: Collection<Long>,
         @Param("finalRound") finalRound: Int,
-    ): List<Long>
+    ): List<WinnerItemView>
 }

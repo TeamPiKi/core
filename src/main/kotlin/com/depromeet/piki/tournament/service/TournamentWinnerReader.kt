@@ -20,21 +20,25 @@ class TournamentWinnerReader(
     private val tournamentHistoryJpaRepository: TournamentHistoryJpaRepository,
 ) {
     /**
-     * [itemIds] 중 이 사용자가 **자기 플레이의 결승에서 고른** 상품들.
+     * [itemIds] 중 이 사용자가 **자기 플레이의 결승에서 고른** 상품 → 그 우승이 난 토너먼트들(최신 우승 순).
      *
      * 호출자가 관심 있는 상품만 넘기고 그 부분집합을 돌려받는다. 한 페이지에 보이는 것만 묻게 되어
-     * 위시가 수백 건이어도 비용이 페이지 크기에 묶인다.
+     * 위시가 수백 건이어도 비용이 페이지 크기에 묶인다. 결과에 없는 itemId 는 우승 이력이 없다는 뜻이다.
      *
-     * 빈 입력에 쿼리를 날리지 않는다 — `IN ()` 은 DB 마다 문법이 갈리고, 어차피 답이 공집합이다.
+     * 한 상품이 여러 판에서 이길 수 있어 값이 리스트다. 어느 하나를 서버가 고르지 않고 전부 넘긴다 —
+     * "이 상품이 이긴 판들" 을 보여줄지 최신 하나만 쓸지는 화면이 정할 일이다.
+     *
+     * 빈 입력에 쿼리를 날리지 않는다 — `IN ()` 은 DB 마다 문법이 갈리고, 어차피 답이 빈 맵이다.
      */
     @Transactional(readOnly = true)
-    fun findWinnerItemIds(
+    fun findWinnerTournamentIdsByItem(
         userId: UUID,
         itemIds: Collection<Long>,
-    ): Set<Long> {
-        if (itemIds.isEmpty()) return emptySet()
+    ): Map<Long, List<Long>> {
+        if (itemIds.isEmpty()) return emptyMap()
+        // 쿼리가 최신 우승 순으로 정렬해 돌려주므로 groupBy 가 그 순서를 그대로 유지한다.
         return tournamentHistoryJpaRepository
-            .findWinnerItemIds(userId, itemIds, Tournament.FINAL_ROUND_SIZE)
-            .toSet()
+            .findWinnerItems(userId, itemIds, Tournament.FINAL_ROUND_SIZE)
+            .groupBy({ it.itemId }, { it.tournamentId })
     }
 }

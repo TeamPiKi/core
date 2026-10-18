@@ -23,7 +23,6 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
@@ -73,8 +72,8 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
 
         playFinal(mockMvc, tournamentId, cards, winner = winnerCard)
 
-        assertEquals(true, isWinnerInList(mockMvc, winnerItemId), "결승에서 고른 상품에 칩이 없다")
-        assertEquals(false, isWinnerInList(mockMvc, loserItemId), "탈락한 상품에 칩이 붙었다")
+        assertEquals(listOf(tournamentId), winnersInList(mockMvc, winnerItemId), "결승에서 고른 상품이 그 토너먼트를 가리키지 않는다")
+        assertEquals(emptyList(), winnersInList(mockMvc, loserItemId), "탈락한 상품에 칩이 붙었다")
     }
 
     @Test
@@ -88,8 +87,8 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, winnerItemId))
 
         // 목록과 상세가 같은 규칙을 쓰는지 — 두 화면이 어긋나면 칩이 깜빡이는 것처럼 보인다.
-        assertEquals(true, isWinnerInDetail(mockMvc, wishIdOf(ownerId, winnerItemId)))
-        assertEquals(false, isWinnerInDetail(mockMvc, wishIdOf(ownerId, loserItemId)))
+        assertEquals(listOf(tournamentId), winnersInDetail(mockMvc, wishIdOf(ownerId, winnerItemId)))
+        assertEquals(emptyList(), winnersInDetail(mockMvc, wishIdOf(ownerId, loserItemId)))
     }
 
     @Test
@@ -110,8 +109,37 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         val secondCards = tournamentItemIdsOf(second)
         playFinal(mockMvc, second, secondCards, winner = cardIdOf(secondCards, rivalB))
 
-        assertEquals(true, isWinnerInList(mockMvc, itemId), "뒤 토너먼트의 탈락이 앞의 우승을 지웠다")
-        assertEquals(true, isWinnerInList(mockMvc, rivalB), "2차 우승자에 칩이 없다")
+        assertEquals(listOf(first), winnersInList(mockMvc, itemId), "뒤 토너먼트의 탈락이 앞의 우승을 지웠다")
+        assertEquals(listOf(second), winnersInList(mockMvc, rivalB), "2차 우승자에 칩이 없다")
+    }
+
+    @Test
+    fun `여러 판에서 이긴 상품은 최신 우승이 앞에 오고 한 판만 지우면 그것만 빠진다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val itemId = saveWishItem(ownerId, "두 번 우승한 상품")
+        val rivalA = saveWishItem(ownerId, "상대 A")
+        val rivalB = saveWishItem(ownerId, "상대 B")
+
+        val first = startTournamentWith(mockMvc, listOf(itemId, rivalA))
+        val firstCards = tournamentItemIdsOf(first)
+        playFinal(mockMvc, first, firstCards, winner = cardIdOf(firstCards, itemId))
+
+        val second = startTournamentWith(mockMvc, listOf(itemId, rivalB))
+        val secondCards = tournamentItemIdsOf(second)
+        playFinal(mockMvc, second, secondCards, winner = cardIdOf(secondCards, itemId))
+
+        // 나중에 이긴 판이 앞 — 칩을 눌러 한 곳으로 보낼 때 가장 최근 승부로 가게 된다.
+        assertEquals(listOf(second, first), winnersInList(mockMvc, itemId), "최신 우승이 앞에 오지 않는다")
+
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$second")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
+            ).andExpect(status().isOk)
+
+        // 지운 판만 빠지고 나머지 우승은 남는다 — 칩 자체는 그대로다.
+        assertEquals(listOf(first), winnersInList(mockMvc, itemId), "지운 판 외의 우승까지 사라졌다")
     }
 
     @Test
@@ -123,7 +151,7 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         val tournamentId = startTournamentWith(mockMvc, listOf(winnerItemId, loserItemId))
         val cards = tournamentItemIdsOf(tournamentId)
         playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, winnerItemId))
-        assertTrue(isWinnerInList(mockMvc, winnerItemId), "삭제 전부터 칩이 없어 이 테스트가 의미를 잃는다")
+        assertTrue(winnersInList(mockMvc, winnerItemId).isNotEmpty(), "삭제 전부터 칩이 없어 이 테스트가 의미를 잃는다")
 
         mockMvc
             .perform(
@@ -131,7 +159,7 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
             ).andExpect(status().isOk)
 
-        assertEquals(false, isWinnerInList(mockMvc, winnerItemId), "토너먼트를 지웠는데 칩이 남았다")
+        assertEquals(emptyList(), winnersInList(mockMvc, winnerItemId), "토너먼트를 지웠는데 칩이 남았다")
     }
 
     @Test
@@ -147,8 +175,8 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         // 주최자는 rival 을 골랐다 — 내 플레이 기준이면 mine 에 칩이 없어야 한다.
         playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, rival))
 
-        assertEquals(false, isWinnerInList(mockMvc, mine), "내가 고르지 않은 상품에 칩이 붙었다")
-        assertEquals(true, isWinnerInList(mockMvc, rival))
+        assertEquals(emptyList(), winnersInList(mockMvc, mine), "내가 고르지 않은 상품에 칩이 붙었다")
+        assertEquals(listOf(tournamentId), winnersInList(mockMvc, rival))
     }
 
     @Test
@@ -157,15 +185,16 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         saveUser(ownerId, "주최자")
         val itemId = saveWishItem(ownerId, "담기만 한 상품")
 
-        assertEquals(false, isWinnerInList(mockMvc, itemId))
+        assertEquals(emptyList(), winnersInList(mockMvc, itemId))
     }
 
     // ── 헬퍼 ───────────────────────────────────────────────────────────────
 
-    private fun isWinnerInList(
+    // 목록에서 그 상품이 이긴 토너먼트 id 들(응답 순서 그대로 — 최신 우승이 앞).
+    private fun winnersInList(
         mockMvc: MockMvc,
         itemId: Long,
-    ): Boolean {
+    ): List<Long> {
         val result =
             mockMvc
                 .perform(
@@ -177,13 +206,16 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         val entry =
             entries.firstOrNull { it["item"]["id"].asLong() == itemId }
                 ?: error("위시 목록에 item $itemId 가 없다")
-        return entry["isWinner"].asBoolean()
+        // JsonNode 자체의 map(Jackson 3)이 Kotlin 의 Iterable.map 보다 먼저 잡혀 원소 변환이 안 된다 —
+        // 인덱스로 훑는 이 repo 의 선례(OpenApiDocsIntegrationTest 등)를 따른다.
+        val ids = entry["winnerTournamentIds"]
+        return (0 until ids.size()).map { ids.path(it).asLong() }
     }
 
-    private fun isWinnerInDetail(
+    private fun winnersInDetail(
         mockMvc: MockMvc,
         wishId: Long,
-    ): Boolean {
+    ): List<Long> {
         val result =
             mockMvc
                 .perform(
@@ -191,7 +223,8 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
                 ).andExpect(status().isOk)
                 .andReturn()
-        return objectMapper.readTree(result.response.contentAsString)["data"]["isWinner"].asBoolean()
+        val ids = objectMapper.readTree(result.response.contentAsString)["data"]["winnerTournamentIds"]
+        return (0 until ids.size()).map { ids.path(it).asLong() }
     }
 
     private fun wishIdOf(
@@ -199,8 +232,11 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         itemId: Long,
     ): Long =
         wishJpaRepository
-            .findByUserIdAndDeletedAtIsNullOrderByIdDesc(userId, org.springframework.data.domain.Limit.of(100))
-            .first { it.itemId == itemId }
+            .findByUserIdAndDeletedAtIsNullOrderByIdDesc(
+                userId,
+                org.springframework.data.domain.Limit
+                    .of(100),
+            ).first { it.itemId == itemId }
             .getId()
 
     // 결승 한 판으로 끝나는 토너먼트를 만들어 시작까지 한다(아이템 2개 = 첫 매치가 곧 결승).
@@ -301,5 +337,6 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
             .apply<org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    private fun authHeader(userId: UUID): String = "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
+    private fun authHeader(userId: UUID): String =
+        "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
 }

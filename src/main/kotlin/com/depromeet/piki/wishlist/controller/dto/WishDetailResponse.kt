@@ -34,10 +34,10 @@ data class WishDetailResponse(
     )
     val priceHistory: List<PriceHistoryEntry>,
     @field:Schema(
-        description = "이 상품이 내 토너먼트 결승에서 뽑힌 적 있는지 — 목록 응답의 같은 필드와 같은 규칙으로 판정한다.",
-        example = "true",
+        description = "이 상품이 우승한 내 토너먼트들 — 목록 응답의 같은 필드와 같은 규칙·순서로 내려간다.",
+        example = "[1402, 1397]",
     )
-    val isWinner: Boolean = false,
+    val winnerTournamentIds: List<Long> = emptyList(),
 ) {
     companion object {
         // requesterId 는 editedByMe(수기 버전을 내가 넣었는지) 파생용 — 편집자 식별자(UUID)는 응답에 노출하지 않는다.
@@ -50,7 +50,7 @@ data class WishDetailResponse(
                 memo = detail.wish.memo,
                 item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, detail.sourcePlatform),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
-                isWinner = detail.isWinner,
+                winnerTournamentIds = detail.winnerTournamentIds,
             )
     }
 

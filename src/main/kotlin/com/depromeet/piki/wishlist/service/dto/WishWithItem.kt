@@ -8,8 +8,8 @@ import com.depromeet.piki.wishlist.domain.Wish
 // 표시값(name/price/image/status)은 snapshot 에서, 정체성(id·sourceUrl=link)은 item 에서 온다.
 // reused·refreshNeeded 는 공유 등록(#853)의 attach 메타 — 등록 경로만 채우고 그 외(조회·수기 수정 등)는 기본값 false.
 // sourcePlatform 은 응답 경계(WishlistService)가 링크에서 판정해 채운다. 영속화 계층은 비워 둔다.
-// isWinner 도 같은 자리에서 채운다 — 토너먼트에서 파생하는 값이라 위시 영속화와 무관하고,
-// 등록 직후 응답에는 쓸 일이 없어 기본값 false 다(막 담은 상품이 우승했을 리 없다).
+// winnerTournamentIds 도 같은 자리에서 채운다 — 토너먼트에서 파생하는 값이라 위시 영속화와 무관하고,
+// 등록 직후 응답에는 쓸 일이 없어 기본값이 빈 목록이다(막 담은 상품이 우승했을 리 없다).
 data class WishWithItem(
     val wish: Wish,
     val item: Item,
@@ -17,5 +17,5 @@ data class WishWithItem(
     val reused: Boolean = false,
     val refreshNeeded: Boolean = false,
     val sourcePlatform: String? = null,
-    val isWinner: Boolean = false,
+    val winnerTournamentIds: List<Long> = emptyList(),
 )
