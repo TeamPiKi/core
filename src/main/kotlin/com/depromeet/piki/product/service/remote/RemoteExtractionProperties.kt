@@ -16,7 +16,7 @@ data class RemoteExtractionProperties(
     // 기본값의 정본은 계약(extraction.proto 의 caller_read_timeout_seconds)이다. 전 경로가 같은 클라이언트·같은 값을
     // 쓰고, extractor 는 자기 내부 예산이 이 값 미만인지 테스트로 대조한다.
     // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
-    // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
+    // slow-drip 응답(read 마다 타임아웃 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
     // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음).
     val readTimeoutMs: Int = ExtractionEndpoints.CALLER_READ_TIMEOUT_MS,
 ) {

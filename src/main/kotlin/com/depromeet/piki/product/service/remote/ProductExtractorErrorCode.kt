@@ -15,7 +15,7 @@ import com.depromeet.piki.product.service.ExtractionFailureCode
 // 나머지는 비 RETRYABLE(즉시 FAILED).
 //
 // bucket 은 확정 실패를 메트릭에서 무엇으로 셀지의 정본이다(#936). 일시(TRANSIENT_FAILURE)는 종결 집계에
-// 닿지 않으므로 bucket 이 없다(카탈로그의 transient code 와 같은 모양).
+// 닿지 않으므로 bucket 이 없다(계약의 TRANSIENT code 와 같은 모양).
 //
 // status 교정: 종전엔 두 팩토리 모두 502 를 직접 들었으나, category 가 status 를 소유하게 되며
 // PERMANENT_FAILURE(SERVER_ERROR)는 500 으로 파생된다(에픽 결정 2 의 OAuthException.misconfigured 502→500 과 동형).
@@ -32,7 +32,7 @@ enum class ProductExtractorErrorCode(
     // 우리 방어가 발동했거나(호스트 차단·리다이렉트 이상) 이 바이너리가 모르는 code 로 422 가 온 경우.
     // tolerant reader — 모르는 code 라도 422 면 확정 실패다(extractor 계약 §1). 재시도 무의미.
     // 둘 다 "코드를 조사한다"가 대응이라 internal_error 로 센다: 전자는 우리 방어·버그이고, 후자는 매핑이
-    // 뒤처졌다는 신호(카탈로그·translate 갱신)라 결국 코드 작업으로 귀결된다.
+    // 뒤처졌다는 신호(계약·translate 갱신)라 결국 코드 작업으로 귀결된다.
     PERMANENT_FAILURE(
         "EXTRACTOR-002",
         ErrorCategory.SERVER_ERROR,
