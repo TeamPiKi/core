@@ -41,6 +41,22 @@ class ProductLinkTest {
     }
 
     @Test
+    fun `귀결점은 http 와 https 를 받는다`() {
+        assertEquals("http", ProductLink.parseHop("http://shop.example.com/items/42").value.scheme)
+        assertEquals("https", ProductLink.parseHop("https://shop.example.com/items/42").value.scheme)
+    }
+
+    @Test
+    fun `귀결점도 http·https 가 아닌 scheme 과 host 없는 주소는 거부한다`() {
+        listOf("ftp://example.com", "file:///etc/passwd", "javascript:alert(1)").forEach { raw ->
+            assertFailsWith<ProductLinkException>("$raw 는 거부되어야 함") { ProductLink.parseHop(raw) }
+        }
+        listOf("http:///p", "https:p").forEach { raw ->
+            assertFailsWith<IllegalArgumentException>("$raw 는 거부되어야 함") { ProductLink.parseHop(raw) }
+        }
+    }
+
+    @Test
     fun `URI 파싱 자체가 실패하는 raw 는 형식 오류로 거부한다`() {
         // 예: data: URI 의 본문에 illegal character 가 들어가면 URI_create 단계에서 IllegalArgumentException
         val ex =

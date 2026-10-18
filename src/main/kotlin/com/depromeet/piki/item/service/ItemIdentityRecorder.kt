@@ -60,8 +60,8 @@ class ItemIdentityRecorder(
             return
         }
         val parsed =
-            runCatching { ProductLink.parse(finalUrl) }.getOrElse {
-                // 귀결점이 URL 계약(https 등)을 벗어남 — 대상 서버의 비정상 리다이렉트다. 정체성 미확정으로 둔다.
+            runCatching { ProductLink.parseHop(finalUrl) }.getOrElse {
+                // 귀결점이 URL 계약(http·https·host)을 벗어남 — 대상 서버의 비정상 리다이렉트다. 정체성 미확정으로 둔다.
                 log.warn("canonical 확정 건너뜀 - 귀결점 파싱 불가 item={}", itemId)
                 ItemIdentityMetrics.record(meterRegistry, ItemIdentityMetrics.CANONICAL_UNPARSABLE)
                 return
