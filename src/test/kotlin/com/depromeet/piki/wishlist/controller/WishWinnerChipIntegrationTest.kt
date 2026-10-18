@@ -163,20 +163,24 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `남의 플레이 결과는 내 위시 칩에 영향을 주지 않는다`() {
+    fun `같은 토너먼트라도 다른 참여자가 고른 상품은 내 칩이 되지 않는다`() {
         val mockMvc = buildMockMvc()
         saveUser(ownerId, "주최자")
         saveUser(guestPlayerId, "참여자")
-        val mine = saveWishItem(ownerId, "내 상품")
-        val rival = saveWishItem(ownerId, "상대 상품")
-        val tournamentId = startTournamentWith(mockMvc, listOf(mine, rival))
+        val itemA = saveWishItem(ownerId, "주최자가 고를 상품")
+        val itemB = saveWishItem(ownerId, "참여자가 고를 상품")
+        // 참여자는 시작 전에 초대로 들어온다 — 시작 뒤에는 합류할 수 없다.
+        val tournamentId = startTournamentWith(mockMvc, listOf(itemA, itemB), invite = guestPlayerId)
         val cards = tournamentItemIdsOf(tournamentId)
 
-        // 주최자는 rival 을 골랐다 — 내 플레이 기준이면 mine 에 칩이 없어야 한다.
-        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, rival))
+        // 같은 판을 둘이 각자 플레이해 서로 다른 결론을 낸다. 참여자는 자기 start 로 플레이를 열어야 한다(#1027).
+        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, itemA), player = ownerId)
+        startPlaying(mockMvc, tournamentId, guestPlayerId)
+        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, itemB), player = guestPlayerId)
 
-        assertEquals(emptyList(), winnersInList(mockMvc, mine), "내가 고르지 않은 상품에 칩이 붙었다")
-        assertEquals(listOf(tournamentId), winnersInList(mockMvc, rival))
+        // 내 위시 목록은 내 플레이만 반영한다. 참여자가 고른 B 가 섞이면 "내가 선택한 1등" 이 아니게 된다.
+        assertEquals(listOf(tournamentId), winnersInList(mockMvc, itemA), "내가 고른 상품에 칩이 없다")
+        assertEquals(emptyList(), winnersInList(mockMvc, itemB), "다른 참여자가 고른 상품이 내 칩으로 새어 들어왔다")
     }
 
     @Test
@@ -240,9 +244,11 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
             .getId()
 
     // 결승 한 판으로 끝나는 토너먼트를 만들어 시작까지 한다(아이템 2개 = 첫 매치가 곧 결승).
+    // invite 를 주면 그 사용자를 초대 코드로 합류시킨다 — 시작 전에만 가능하므로 여기서 함께 처리한다.
     private fun startTournamentWith(
         mockMvc: MockMvc,
         itemIds: List<Long>,
+        invite: UUID? = null,
     ): Long {
         val created =
             mockMvc
@@ -252,7 +258,18 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""{"name":"우승 칩 테스트"}"""),
                 ).andReturn()
-        val tournamentId = objectMapper.readTree(created.response.contentAsString)["data"]["tournamentId"].asLong()
+        val data = objectMapper.readTree(created.response.contentAsString)["data"]
+        val tournamentId = data["tournamentId"].asLong()
+        invite?.let { guest ->
+            val code = data["inviteCode"].asText()
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/join")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(guest))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"inviteCode":"$code"}"""),
+                ).andExpect(status().isOk)
+        }
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/items/wish")
@@ -268,16 +285,31 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
         return tournamentId
     }
 
+    // 참여자의 "시작" 은 주최자의 시작과 다른 일이다 — 자기 참여 행을 플레이 시작으로 전이시킨다(#1027).
+    // 이걸 빼면 참여 행이 PENDING 에 머물러 매치 기록이 409 로 막힌다.
+    private fun startPlaying(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        player: UUID,
+    ) {
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(player)),
+            ).andExpect(status().isOk)
+    }
+
     private fun playFinal(
         mockMvc: MockMvc,
         tournamentId: Long,
         cards: List<Long>,
         winner: Long,
+        player: UUID = ownerId,
     ) {
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/matches")
-                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId))
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(player))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
                         """{"currentRound":2,"firstTournamentItemId":${cards[0]},""" +
