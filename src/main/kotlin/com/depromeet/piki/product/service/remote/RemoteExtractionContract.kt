@@ -43,26 +43,17 @@ internal object RemoteExtractionContract {
     //
     // 어느 예외로 보내는지가 곧 메트릭 reason 이다 — 예외의 errorCode 가 bucket 을 들고 있고(ExtractionFailureCode),
     // ItemParsingMetrics.reasonOf 가 그 bucket 을 라벨로 옮긴다. 문구는 여기서 갈리지 않는다(고정 사용자 문구).
+    //
+    // 확정은 링크 자체의 사실과 우리 쪽 차단뿐이다. 받은 페이지를 보고 내린 판정(상품 아님·빈 셸·4xx·값 불신)은
+    // 계약이 일시로 두므로 여기 오지 않는다 — 그 건은 attempt 소진으로 닫히고 code 별 관측은 extractor 메트릭이 진다.
     internal val PERMANENT_TRANSLATIONS: Map<ExtractionErrorCode, () -> BaseException> =
         mapOf(
-            // 사용자가 상품 아닌 걸 넣었다 — 정상 트래픽.
-            ExtractionErrorCode.NOT_PRODUCT_PAGE to { ProductSnapshotException.notProductPage() },
+            // 형식 위반·없는 host — 사용자가 상품 링크가 아닌 걸 넣었다.
             ExtractionErrorCode.INVALID_URL to { ProductSnapshotException.notProductPage() },
-            // 우리 구성으로 못 읽었다 — 도메인 허가 후보 신호.
-            ExtractionErrorCode.EMPTY_SHELL to { ProductSnapshotException.noExtractableContent() },
-            ExtractionErrorCode.NO_EXTRACTABLE_CONTENT to { ProductSnapshotException.noExtractableContent() },
-            // 대상이 우리를 막았다 — BLOCKED 정책 후보.
-            ExtractionErrorCode.FETCH_CLIENT_ERROR to { ProductExtractorException.blockedByTarget() },
-            ExtractionErrorCode.PERMANENT_UPSTREAM to { ProductExtractorException.blockedByTarget() },
-            // 추출은 됐는데 값을 믿을 수 없다 — 모델·프롬프트·검증 규칙 소관.
-            // IMAGE_UNSUPPORTED(이미지 경로 전용)도 "받은 결과를 상품 정보로 쓸 수 없다"는 같은 성격이다.
-            ExtractionErrorCode.UNTRUSTWORTHY_VALUE to { ProductSnapshotException.untrustworthyValue() },
-            ExtractionErrorCode.LLM_INVALID_RESPONSE to { ProductSnapshotException.untrustworthyValue() },
+            // 이미지 경로 전용 — 받은 파일을 상품 정보로 쓸 수 없다.
             ExtractionErrorCode.IMAGE_UNSUPPORTED to { ProductSnapshotException.untrustworthyValue() },
-            // 우리 방어가 발동했다 — 정상 흐름이면 애초에 우리 경계(SSRF 가드·리다이렉트 제한)가 먼저 걸렀어야 한다.
+            // 우리 방어(SSRF 가드)가 발동했다 — 정상 흐름이면 우리 경계가 먼저 걸렀어야 한다.
             ExtractionErrorCode.BLOCKED_HOST to { ProductExtractorException.permanentFailure() },
-            ExtractionErrorCode.TOO_MANY_REDIRECTS to { ProductExtractorException.permanentFailure() },
-            ExtractionErrorCode.MALFORMED_REDIRECT to { ProductExtractorException.permanentFailure() },
         )
 
     // 원격 추출 호출 한 건의 전부 — POST 부터 3갈래(2xx 매핑 / 422+code 확정 / 그 외 일시)가 이 함수 안에서 끝난다.

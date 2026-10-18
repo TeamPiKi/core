@@ -563,21 +563,21 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `URL 파싱이 대상 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 blocked 로 센다`() {
+    fun `URL 파싱이 우리 방어 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 internal_error 로 센다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             // 재시도해도 결정론적으로 재실패하는 영구 오류(원격 422 확정 실패)는 recover 를 기다리지 않고
             // (약 150초 헛돔 방지) 워커가 즉시 FAILED 로 종결한다.
-            stubProductLinkExtractor.build = { throw ProductExtractorException.blockedByTarget() }
-            val blockedBefore = parseCount("failed", "blocked")
+            stubProductLinkExtractor.build = { throw ProductExtractorException.permanentFailure() }
+            val internalErrorBefore = parseCount("failed", "internal_error")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 
             itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
-            // 결과 메트릭(#506·#936): 대상이 막아 확정 실패한 건은 result=failed,reason=blocked 로 +1.
+            // 결과 메트릭(#506·#936): 우리 방어(SSRF 가드)로 확정 실패한 건은 result=failed,reason=internal_error 로 +1.
             // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 워커→메트릭 배선까지 함께 고정한다.
-            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)
