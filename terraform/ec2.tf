@@ -97,14 +97,14 @@ resource "aws_instance" "app" {
 
 # -----------------------------------------------------------------------------
 # 개발(dev) EC2 — 신규 인스턴스.
-# 동일 VPC/서브넷/SG 를 공유하며, 별도 EIP 와 도메인(dev.*)으로 분리.
+# 동일 VPC/서브넷을 쓰고, SG·EIP·도메인(dev.*)은 분리.
 # -----------------------------------------------------------------------------
 resource "aws_instance" "dev_app" {
   ami                    = var.ec2_ami_id != null ? var.ec2_ami_id : data.aws_ami.ubuntu_2404_arm64[0].id
   instance_type          = var.ec2_instance_type_dev
   subnet_id              = aws_subnet.public.id
   availability_zone      = var.azs[0]
-  vpc_security_group_ids = [aws_security_group.ec2.id]
+  vpc_security_group_ids = [aws_security_group.dev_app.id]
   # dev 전용 키페어 — prod(team3-SE-1)와 분리해 dev 키 유출이 prod 접근으로 번지지 않게 한다.
   # AWS 콘솔에서 미리 생성(.pem 다운로드)해 두고 이름으로 참조. 개인키는 dev env EC2_SSH_KEY 로 주입.
   key_name             = "team3-dev-SE-1"
