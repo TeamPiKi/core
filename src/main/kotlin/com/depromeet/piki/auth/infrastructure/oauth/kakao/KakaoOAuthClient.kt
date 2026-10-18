@@ -8,6 +8,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.auth.infrastructure.oauth.kakao.dto.KakaoTokenResponse
 import com.depromeet.piki.auth.infrastructure.oauth.kakao.dto.KakaoUserInfoResponse
 import com.depromeet.piki.auth.infrastructure.oauth.logOAuthProviderError
+import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -18,13 +19,14 @@ import org.springframework.web.util.UriComponentsBuilder
 
 class KakaoOAuthClient(
     private val kakaoProperties: KakaoProperties,
+    observationRegistry: ObservationRegistry,
 ) : OAuthClient {
     override val provider = OAuthProvider.KAKAO
 
     private val log = LoggerFactory.getLogger(javaClass)
 
-    private val authClient = OAuthRestClient.create(AUTH_BASE_URL)
-    private val apiClient = OAuthRestClient.create(API_BASE_URL)
+    private val authClient = OAuthRestClient.create(AUTH_BASE_URL, observationRegistry)
+    private val apiClient = OAuthRestClient.create(API_BASE_URL, observationRegistry)
 
     override fun buildAuthUrl(state: String, redirectUri: String?): String =
         UriComponentsBuilder

@@ -66,7 +66,8 @@ SRC_AWS_SECRET="${SRC_AWS_SECRET:?구 계정 시크릿}"
 # 경계를 공유하려고 파일로 남긴다 — migrate-unfreeze.sh 가 이 파일을 읽어 되살린다.
 FREEZE_STATE_FILE="${FREEZE_STATE_FILE:-/tmp/piki-migrate-frozen}"
 
-SSHOPT=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
+# ConnectTimeout 은 주지 않는다. 호스트는 SSM 별칭이라 ssm-ssh 가 쓴 30초가 맞고, 명령줄 값이 그걸 덮는다.
+SSHOPT=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21" # db-backup.sh 와 같은 핀. 박스에 aws CLI 가 없어도 된다.
 RELAY_KEY="migrate/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 WORK=/tmp/piki-migrate

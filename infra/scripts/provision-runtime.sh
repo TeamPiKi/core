@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
-# (swap / redis(dev) / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
+# (swap / redis(dev) / nginx default·exporter / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
 # swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
@@ -139,6 +139,15 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
   # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
   # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
   # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
+  # prod DB 박스와 같은 메모리 튜닝. 값의 근거는 infra/compose/db.yml.
+  MYSQL_ARGS=(--performance-schema=OFF --innodb-buffer-pool-size=64M --max-connections=60)
+  # 있으면 skip 이라 인자만 바꾸면 기존 컨테이너에 반영되지 않는다. 인자가 다를 때만 재생성한다(데이터는 볼륨에 남음).
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql' \
+    && [ "$(docker inspect -f '{{join .Config.Cmd " "}}' piki-mysql)" != "${MYSQL_ARGS[*]}" ]; then
+    echo "[mysql] piki-mysql 기동 인자가 다름 — 정상 종료 후 재생성"
+    docker stop -t 60 piki-mysql >/dev/null
+    docker rm piki-mysql >/dev/null
+  fi
   if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql'; then
     echo "[mysql] piki-mysql 이미 존재 — skip"
   else
@@ -152,7 +161,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
       -e MYSQL_USER="${DB_USERNAME}" \
       -e MYSQL_PASSWORD="${DB_PASSWORD}" \
       -e MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" \
-      mysql:8.4
+      mysql:8.4 "${MYSQL_ARGS[@]}"
   fi
 
   # MySQL readiness 대기 — docker run 직후엔 init(첫 기동 시 DB/user 생성 + 재시작) 중이라,
@@ -168,7 +177,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
     [ "$i" -eq 30 ] && { echo "[mysql] readiness timeout (60s)"; exit 1; }
   done
 else
-  echo "[mysql] prod 환경 — skip (RDS 사용)"
+  echo "[mysql] prod 환경 — skip (DB 박스 사용)"
 fi
 
 # 4) nginx default 사이트 — 불필요한 stock catch-all 노출. 있으면 제거하고 reload.
@@ -178,6 +187,21 @@ if [ -e /etc/nginx/sites-enabled/default ]; then
   sudo nginx -t && sudo nginx -s reload
 else
   echo "[nginx] default 없음 — skip"
+fi
+
+# 4-1) nginx 연결 수 exporter — 127.0.0.1:9112 stub_status(infra/nginx/main/nginx.conf)를 읽어 Alloy 가 라벨로 수집한다.
+#    piki-core 가 아니라 piki-nginx 로 붙인다. 같은 job 이면 앱이 죽어도 up{job="piki-core"} 가 1 로 남는다.
+NGINX_EXPORTER_IMAGE="public.ecr.aws/nginx/nginx-prometheus-exporter:1.5.3"
+NGINX_EXPORTER_ARGS="--nginx.scrape-uri=http://127.0.0.1:9112/stub_status --web.listen-address=127.0.0.1:9113"
+if [ "$(docker inspect -f '{{.Config.Image}} {{join .Args " "}}' piki-nginx-exporter 2>/dev/null)" = "$NGINX_EXPORTER_IMAGE $NGINX_EXPORTER_ARGS" ]; then
+  echo "[nginx-exporter] 같은 이미지·인자로 실행 중 — skip"
+else
+  docker pull -q "$NGINX_EXPORTER_IMAGE"
+  docker rm -f piki-nginx-exporter >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086 # 인자 문자열을 낱말로 나눠 넘긴다
+  docker run -d --name piki-nginx-exporter --restart unless-stopped --network host --memory 32m \
+    --label piki.observe=true --label piki.service=piki-nginx --label piki.metrics.port=9113 \
+    "$NGINX_EXPORTER_IMAGE" $NGINX_EXPORTER_ARGS
 fi
 
 # 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
