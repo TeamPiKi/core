@@ -83,7 +83,8 @@ class WishlistApiExamples(
                         name = "조회 성공 (다음 페이지 있음)",
                         payload =
                             ApiResponseBody.ok(
-                                data = listOf(sampleEntry),
+                                // 우승 칩이 붙은 항목과 아닌 항목을 함께 둔다 — isWinner 가 항목마다 갈리는 값임을 드러낸다.
+                                data = listOf(winnerSampleEntry, sampleEntry),
                                 pageResponse = PageResponse(nextCursor = "1024", hasNext = true),
                             ),
                     )
@@ -417,6 +418,9 @@ class WishlistApiExamples(
 
     // URL 등록 응답 전용(#853) — 등록 경로는 attach 메타(reused·refreshNeeded)가 non-null 로 내려간다.
     // 새 파싱을 만든 등록: 캐시에 붙지 않았으므로 둘 다 false.
+    // 우승 칩이 붙는 항목(#1236) — 이 상품을 내 토너먼트 결승에서 골랐다. 그 토너먼트를 지우면 다시 false 가 된다.
+    private val winnerSampleEntry = sampleEntry.copy(isWinner = true)
+
     private val pendingRegistrationEntry = pendingSampleEntry.copy(reused = false, refreshNeeded = false)
 
     // 파싱 없이 다른 등록의 완성 값(캐시)에 붙은 등록 — 값이 갱신 권고 임계(24h)보다 낡아 refreshNeeded=true.

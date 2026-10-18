@@ -33,6 +33,11 @@ data class WishDetailResponse(
             "가격 기록이 하나도 없으면 빈 배열이다(그때는 item.status 로 대기와 실패를 가른다).",
     )
     val priceHistory: List<PriceHistoryEntry>,
+    @field:Schema(
+        description = "이 상품이 내 토너먼트 결승에서 뽑힌 적 있는지 — 목록 응답의 같은 필드와 같은 규칙으로 판정한다.",
+        example = "true",
+    )
+    val isWinner: Boolean = false,
 ) {
     companion object {
         // requesterId 는 editedByMe(수기 버전을 내가 넣었는지) 파생용 — 편집자 식별자(UUID)는 응답에 노출하지 않는다.
@@ -45,6 +50,7 @@ data class WishDetailResponse(
                 memo = detail.wish.memo,
                 item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, detail.sourcePlatform),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
+                isWinner = detail.isWinner,
             )
     }
 

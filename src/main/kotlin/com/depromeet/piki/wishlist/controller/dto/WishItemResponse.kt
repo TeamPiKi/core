@@ -30,6 +30,14 @@ data class WishItemResponse(
         nullable = true,
     )
     val refreshNeeded: Boolean? = null,
+    @field:Schema(
+        description =
+            "이 상품이 내 토너먼트 결승에서 뽑힌 적 있는지 — 위시 카드의 우승 칩 표시에 쓴다. " +
+                "기준은 그룹 합산 순위가 아니라 내가 플레이한 결과이며, 한 번이라도 해당되면 true 다. " +
+                "그 토너먼트를 삭제하면 다시 false 가 된다.",
+        example = "true",
+    )
+    val isWinner: Boolean = false,
 ) {
     companion object {
         fun from(
@@ -38,6 +46,7 @@ data class WishItemResponse(
             WishItemResponse(
                 wish = WishView.from(result.wish),
                 item = ItemView.from(result),
+                isWinner = result.isWinner,
             )
 
         // URL 등록 응답 전용 — 공유 attach 메타(#853)까지 싣는다. 등록만 이 오버로드를 쓰고,

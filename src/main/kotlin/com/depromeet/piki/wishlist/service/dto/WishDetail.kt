@@ -17,4 +17,6 @@ data class WishDetail(
     val snapshot: ItemSnapshot,
     val history: List<ItemSnapshot>,
     val sourcePlatform: String?,
+    // 이 상품이 내 토너먼트 결승에서 뽑힌 적 있는지(#1236). 목록과 같은 규칙으로 판정해 두 화면이 어긋나지 않게 한다.
+    val isWinner: Boolean = false,
 )

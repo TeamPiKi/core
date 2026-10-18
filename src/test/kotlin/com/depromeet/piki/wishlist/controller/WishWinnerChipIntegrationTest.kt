@@ -1,0 +1,305 @@
+package com.depromeet.piki.wishlist.controller
+
+import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.repository.ItemJpaRepository
+import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.item.service.ItemParsingService
+import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
+import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.domain.User
+import com.depromeet.piki.user.repository.UserJpaRepository
+import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.repository.WishJpaRepository
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.context.WebApplicationContext
+import tools.jackson.databind.ObjectMapper
+import java.util.UUID
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+// 위시 카드의 우승 칩(#1236) 계약. 판정 기준이 "그룹 합산 순위" 가 아니라 "내가 플레이한 결승에서 내가 고른 것" 이라
+// 사람마다 답이 다르고, 같은 토너먼트에서도 참여자별로 갈린다. 그 갈림을 여기서 고정한다.
+//
+// 아이템 2개로 시작하면 첫 매치가 곧 결승(round=2)이라, 우승 판정에 필요한 최소 상태를 한 번의 기록으로 만든다.
+@Transactional
+class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var webApplicationContext: WebApplicationContext
+
+    @Autowired private lateinit var objectMapper: ObjectMapper
+
+    @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
+
+    @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
+
+    @Autowired private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
+
+    @Autowired private lateinit var wishJpaRepository: WishJpaRepository
+
+    @Autowired private lateinit var userJpaRepository: UserJpaRepository
+
+    @Autowired private lateinit var jwtProvider: JwtProvider
+
+    private val ownerId: UUID = UUID.fromString("a1111111-2222-3333-4444-555555555555")
+
+    private val guestPlayerId: UUID = UUID.fromString("b1111111-2222-3333-4444-555555555555")
+
+    @Test
+    fun `내 토너먼트 결승에서 고른 상품은 위시 목록에 우승 칩이 붙는다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val winnerItemId = saveWishItem(ownerId, "우승 상품")
+        val loserItemId = saveWishItem(ownerId, "탈락 상품")
+        val tournamentId = startTournamentWith(mockMvc, listOf(winnerItemId, loserItemId))
+        val cards = tournamentItemIdsOf(tournamentId)
+        val winnerCard = cardIdOf(cards, winnerItemId)
+
+        playFinal(mockMvc, tournamentId, cards, winner = winnerCard)
+
+        assertEquals(true, isWinnerInList(mockMvc, winnerItemId), "결승에서 고른 상품에 칩이 없다")
+        assertEquals(false, isWinnerInList(mockMvc, loserItemId), "탈락한 상품에 칩이 붙었다")
+    }
+
+    @Test
+    fun `우승 칩은 위시 상세에서도 목록과 같게 내려온다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val winnerItemId = saveWishItem(ownerId, "우승 상품")
+        val loserItemId = saveWishItem(ownerId, "탈락 상품")
+        val tournamentId = startTournamentWith(mockMvc, listOf(winnerItemId, loserItemId))
+        val cards = tournamentItemIdsOf(tournamentId)
+        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, winnerItemId))
+
+        // 목록과 상세가 같은 규칙을 쓰는지 — 두 화면이 어긋나면 칩이 깜빡이는 것처럼 보인다.
+        assertEquals(true, isWinnerInDetail(mockMvc, wishIdOf(ownerId, winnerItemId)))
+        assertEquals(false, isWinnerInDetail(mockMvc, wishIdOf(ownerId, loserItemId)))
+    }
+
+    @Test
+    fun `한 토너먼트에서 탈락해도 다른 토너먼트에서 우승했으면 칩이 남는다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val itemId = saveWishItem(ownerId, "한 번은 우승한 상품")
+        val rivalA = saveWishItem(ownerId, "상대 A")
+        val rivalB = saveWishItem(ownerId, "상대 B")
+
+        // 1차: 우승
+        val first = startTournamentWith(mockMvc, listOf(itemId, rivalA))
+        val firstCards = tournamentItemIdsOf(first)
+        playFinal(mockMvc, first, firstCards, winner = cardIdOf(firstCards, itemId))
+
+        // 2차: 같은 상품이 탈락
+        val second = startTournamentWith(mockMvc, listOf(itemId, rivalB))
+        val secondCards = tournamentItemIdsOf(second)
+        playFinal(mockMvc, second, secondCards, winner = cardIdOf(secondCards, rivalB))
+
+        assertEquals(true, isWinnerInList(mockMvc, itemId), "뒤 토너먼트의 탈락이 앞의 우승을 지웠다")
+        assertEquals(true, isWinnerInList(mockMvc, rivalB), "2차 우승자에 칩이 없다")
+    }
+
+    @Test
+    fun `토너먼트를 삭제하면 그 우승으로 붙었던 칩이 사라진다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val winnerItemId = saveWishItem(ownerId, "우승 상품")
+        val loserItemId = saveWishItem(ownerId, "탈락 상품")
+        val tournamentId = startTournamentWith(mockMvc, listOf(winnerItemId, loserItemId))
+        val cards = tournamentItemIdsOf(tournamentId)
+        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, winnerItemId))
+        assertTrue(isWinnerInList(mockMvc, winnerItemId), "삭제 전부터 칩이 없어 이 테스트가 의미를 잃는다")
+
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$tournamentId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
+            ).andExpect(status().isOk)
+
+        assertEquals(false, isWinnerInList(mockMvc, winnerItemId), "토너먼트를 지웠는데 칩이 남았다")
+    }
+
+    @Test
+    fun `남의 플레이 결과는 내 위시 칩에 영향을 주지 않는다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        saveUser(guestPlayerId, "참여자")
+        val mine = saveWishItem(ownerId, "내 상품")
+        val rival = saveWishItem(ownerId, "상대 상품")
+        val tournamentId = startTournamentWith(mockMvc, listOf(mine, rival))
+        val cards = tournamentItemIdsOf(tournamentId)
+
+        // 주최자는 rival 을 골랐다 — 내 플레이 기준이면 mine 에 칩이 없어야 한다.
+        playFinal(mockMvc, tournamentId, cards, winner = cardIdOf(cards, rival))
+
+        assertEquals(false, isWinnerInList(mockMvc, mine), "내가 고르지 않은 상품에 칩이 붙었다")
+        assertEquals(true, isWinnerInList(mockMvc, rival))
+    }
+
+    @Test
+    fun `토너먼트를 한 번도 돌리지 않으면 칩이 없다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(ownerId, "주최자")
+        val itemId = saveWishItem(ownerId, "담기만 한 상품")
+
+        assertEquals(false, isWinnerInList(mockMvc, itemId))
+    }
+
+    // ── 헬퍼 ───────────────────────────────────────────────────────────────
+
+    private fun isWinnerInList(
+        mockMvc: MockMvc,
+        itemId: Long,
+    ): Boolean {
+        val result =
+            mockMvc
+                .perform(
+                    get("/api/v1/wishlists")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
+                ).andExpect(status().isOk)
+                .andReturn()
+        val entries = objectMapper.readTree(result.response.contentAsString)["data"]
+        val entry =
+            entries.firstOrNull { it["item"]["id"].asLong() == itemId }
+                ?: error("위시 목록에 item $itemId 가 없다")
+        return entry["isWinner"].asBoolean()
+    }
+
+    private fun isWinnerInDetail(
+        mockMvc: MockMvc,
+        wishId: Long,
+    ): Boolean {
+        val result =
+            mockMvc
+                .perform(
+                    get("/api/v1/wishlists/$wishId")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
+                ).andExpect(status().isOk)
+                .andReturn()
+        return objectMapper.readTree(result.response.contentAsString)["data"]["isWinner"].asBoolean()
+    }
+
+    private fun wishIdOf(
+        userId: UUID,
+        itemId: Long,
+    ): Long =
+        wishJpaRepository
+            .findByUserIdAndDeletedAtIsNullOrderByIdDesc(userId, org.springframework.data.domain.Limit.of(100))
+            .first { it.itemId == itemId }
+            .getId()
+
+    // 결승 한 판으로 끝나는 토너먼트를 만들어 시작까지 한다(아이템 2개 = 첫 매치가 곧 결승).
+    private fun startTournamentWith(
+        mockMvc: MockMvc,
+        itemIds: List<Long>,
+    ): Long {
+        val created =
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments")
+                        .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""{"name":"우승 칩 테스트"}"""),
+                ).andReturn()
+        val tournamentId = objectMapper.readTree(created.response.contentAsString)["data"]["tournamentId"].asLong()
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":${itemIds.joinToString(",", "[", "]")}}"""),
+            ).andExpect(status().isOk)
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/start")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId)),
+            ).andExpect(status().isOk)
+        return tournamentId
+    }
+
+    private fun playFinal(
+        mockMvc: MockMvc,
+        tournamentId: Long,
+        cards: List<Long>,
+        winner: Long,
+    ) {
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/matches")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(ownerId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """{"currentRound":2,"firstTournamentItemId":${cards[0]},""" +
+                            """"secondTournamentItemId":${cards[1]},"selectedTournamentItemId":$winner}""",
+                    ),
+            ).andExpect(status().isOk)
+    }
+
+    private fun tournamentItemIdsOf(tournamentId: Long): List<Long> =
+        tournamentItemJpaRepository
+            .findAllByTournamentIdAndNotDeleted(tournamentId)
+            .map { it.getId() }
+
+    // 출전 카드는 상품을 버전(snapshot)으로 가리키므로 itemId 로 되찾으려면 그 단계를 거친다.
+    private fun cardIdOf(
+        cards: List<Long>,
+        itemId: Long,
+    ): Long =
+        cards.first { cardId ->
+            val card = tournamentItemJpaRepository.findById(cardId).orElseThrow()
+            itemSnapshotJpaRepository.findById(card.snapshotId).orElseThrow().itemId == itemId
+        }
+
+    private fun saveWishItem(
+        userId: UUID,
+        name: String,
+    ): Long {
+        // 필요한 것은 "READY 인 위시 아이템" 이라는 상태뿐이라 등록 API 를 타지 않고 행을 직접 심는다.
+        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
+        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
+        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
+        snapshot.markProcessing()
+        itemParsingService.markExtracted(
+            snapshot.getId(),
+            ProductSnapshot(name = name, price = 10_000, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
+            expectedAttempt = 0,
+        )
+        return item.getId()
+    }
+
+    private fun saveUser(
+        id: UUID,
+        nickname: String,
+    ): User =
+        userJpaRepository.save(
+            User(
+                id = id,
+                nickname = nickname,
+                profileImage = "https://img.example.com/p.png",
+                identityType = IdentityType.MEMBER,
+            ),
+        )
+
+    private fun buildMockMvc(): MockMvc =
+        MockMvcBuilders
+            .webAppContextSetup(webApplicationContext)
+            .apply<org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder>(springSecurity())
+            .build()
+
+    private fun authHeader(userId: UUID): String = "Bearer ${jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)}"
+}
