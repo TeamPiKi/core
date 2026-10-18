@@ -187,8 +187,21 @@ class ItemIdentityRecordingIntegrationTest : IntegrationTestSupport() {
             itemIdentityRecorder.recordParsingIdentity(item.getId(), null)
             assertNull(itemRepository.findById(item.getId())?.canonicalHash)
 
-            itemIdentityRecorder.recordParsingIdentity(item.getId(), "http://insecure.example.com/p/1")
+            itemIdentityRecorder.recordParsingIdentity(item.getId(), "ftp://insecure.example.com/p/1")
             assertNull(itemRepository.findById(item.getId())?.canonicalHash)
+        } finally {
+            cleanup(listOf(item.getId()))
+        }
+    }
+
+    @Test
+    fun `http 귀결점은 같은 주소의 https 와 같은 정체성으로 확정된다`() {
+        val item = newItem("https://unknown-mall.example.com/p/1000008")
+        try {
+            itemIdentityRecorder.recordParsingIdentity(item.getId(), "http://unknown-mall.example.com/product/1000008")
+
+            val expected = CanonicalLink.of(ProductLink.parse("https://unknown-mall.example.com/product/1000008"))
+            assertEquals(expected.hash, itemRepository.findById(item.getId())?.canonicalHash)
         } finally {
             cleanup(listOf(item.getId()))
         }
