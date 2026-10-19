@@ -9,6 +9,7 @@ import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.service.ItemRegistrar
+import com.depromeet.piki.item.service.UniqueConflictRetry
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
@@ -93,7 +94,9 @@ class TournamentItemService(
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        tournamentItemPersistenceService.applyUserInput(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
+        UniqueConflictRetry.once("tournamentItem=$tournamentItemId") {
+            tournamentItemPersistenceService.applyUserInput(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
+        }
     }
 
     companion object {

@@ -11,10 +11,7 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
 import io.micrometer.observation.ObservationRegistry
-import org.hibernate.exception.ConstraintViolationException
-import org.hibernate.exception.ConstraintViolationException.ConstraintKind
 import org.slf4j.LoggerFactory
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
 
@@ -83,7 +80,7 @@ class ItemParser(
         extracted: ProductSnapshot,
         started: Long,
     ) {
-        runCatchingException { markExtractedRetryingOnce(itemParseOutboxId, extracted) }.fold(
+        runCatchingException { UniqueConflictRetry.once("outbox=$itemParseOutboxId") { itemParsingService.markExtracted(itemParseOutboxId, extracted) } }.fold(
             onSuccess = { settlement -> if (settlement is ExtractionSettlement.Applied) recordSettled(itemParseOutboxId, logSubject, extracted, settlement.status, started) },
             onFailure = { e ->
                 markError(e)
@@ -91,19 +88,6 @@ class ItemParser(
             },
         )
     }
-
-    // 다른 파싱이 같은 아이템을 먼저 확정하면 유니크가 거부한다. 새 트랜잭션의 스냅샷은 그 커밋을 보고 이어 간다
-    private fun markExtractedRetryingOnce(
-        itemParseOutboxId: Long,
-        extracted: ProductSnapshot,
-    ): ExtractionSettlement =
-        try {
-            itemParsingService.markExtracted(itemParseOutboxId, extracted)
-        } catch (e: DataIntegrityViolationException) {
-            val violation = (e.cause as? ConstraintViolationException)?.takeIf { it.kind == ConstraintKind.UNIQUE } ?: throw e
-            log.info("item.parse.retry outbox={} key={} 먼저 확정된 행을 보고 다시 기록", itemParseOutboxId, violation.constraintName)
-            itemParsingService.markExtracted(itemParseOutboxId, extracted)
-        }
 
     // 같은 값으로 다시 돌려도 또 막히므로 실패로 닫음
     private fun rejectReady(

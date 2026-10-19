@@ -9,6 +9,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemRegistrar
+import com.depromeet.piki.item.service.UniqueConflictRetry
 import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
@@ -125,7 +126,7 @@ class WishlistService(
             command.image?.let {
                 imageStorage.upload(it.bytes, "items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
-        return wishPersistenceService.applyUserInput(command.toApplyUserInput(imageUrl)).withSourcePlatform()
+        return UniqueConflictRetry.once("wish=${command.wishId}") { wishPersistenceService.applyUserInput(command.toApplyUserInput(imageUrl)) }.withSourcePlatform()
     }
 
     fun refreshWishItem(command: RefreshWishItemCommand): WishResult {

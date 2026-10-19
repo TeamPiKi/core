@@ -586,6 +586,48 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `실패 위시를 사용자 입력으로 살릴 때 같은 상품의 위시가 있으면 그 위시에 합쳐지고 그 위시를 응답한다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val url = "https://shop.example.com/products/merge-input"
+        val failedWishId = seedFailedWish(userId, url)
+        val holder = wishPersistenceService.persist(RegisterWishFromUrlCommand(userId, ProductLink.parse("https://short.example.com/merge-input"))).wish
+        itemParsingService.completeLatest(
+            entityManager,
+            holder.slot,
+            ProductSnapshot(name = "먼저 확정된 상품", price = 10_000, currency = "KRW", imageUrl = "https://img.example.com/m.png", finalUrl = ProductLink.parse(url)),
+        )
+
+        val image = MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3))
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$failedWishId")
+                    .file(image)
+                    .param("name", "직접 입력한 이름")
+                    .param("price", "50000")
+                    .param("memo", "같이 저장")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.wish.id").value(holder.getId()))
+            .andExpect(jsonPath("$.data.item.id").value(itemIdOf(holder.getId())))
+            .andExpect(jsonPath("$.data.item.name").value("직접 입력한 이름"))
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$failedWishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("WISH-004"))
+        mockMvc
+            .perform(get("/api/v1/wishlists/${holder.getId()}").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.memo").value("같이 저장"))
+    }
+
+    @Test
     fun `이름 없이 FAILED 위시 item 을 복구하려 하면 400 BAD_REQUEST 가 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()

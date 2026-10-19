@@ -2371,6 +2371,34 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH tournaments-id-items-itemId 는 파싱 실패한 후보가 같은 상품의 후보와 겹치면 그 후보에 합치고 실패한 후보를 지운다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val link = "https://shop.example.com/products/${UUID.randomUUID()}"
+        val failed = saveParsingTournamentItem(tournamentId, link = link, failed = true)
+        val holder = saveTournamentItemFor(tournamentId, itemJpaRepository.save(linkItem(link)))
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/${failed.getId()}")
+                    .file(MockMultipartFile("image", "p.png", "image/png", byteArrayOf(1, 2, 3)))
+                    .param("name", "수정된 이름")
+                    .param("price", "50000")
+                    .param("currency", "KRW")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId/items/${failed.getId()}").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("TOURNAMENT-010"))
+        mockMvc
+            .perform(get("/api/v1/tournaments/$tournamentId/items/${holder.getId()}").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.name").value("수정된 이름"))
+    }
+
+    @Test
     fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 있으면 가격 없는 내 미완성 값에도 이름만 수정이 성공한다`() {
         // 회귀(#1006 과 같은 축): base 가 카드 표시값이 아니면 화면엔 가격이 떠 있는데 안 보낸 가격이 빈 값에서 합쳐져 400 이 된다
         val mockMvc = buildMockMvc()

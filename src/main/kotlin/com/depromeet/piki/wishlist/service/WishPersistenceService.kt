@@ -1,17 +1,14 @@
 package com.depromeet.piki.wishlist.service
 
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
-import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemCardService
-import com.depromeet.piki.item.service.ItemResolver
+import com.depromeet.piki.item.service.ItemSlotFill
 import com.depromeet.piki.item.service.ParsingEnqueuer
+import com.depromeet.piki.item.service.UserInputRecorder
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.Wish
@@ -37,10 +34,8 @@ class WishPersistenceService(
     private val wishRepository: WishRepository,
     private val wishMemoRepository: WishMemoRepository,
     private val itemRepository: ItemRepository,
-    private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val itemParseOutboxRepository: ItemParseOutboxRepository,
     private val itemCardService: ItemCardService,
-    private val itemResolver: ItemResolver,
+    private val userInputRecorder: UserInputRecorder,
     private val parsingEnqueuer: ParsingEnqueuer,
     private val userService: UserService,
 ) {
@@ -110,10 +105,10 @@ class WishPersistenceService(
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
         val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput)
-        val item = lockedItemOf(wish)
-        itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = command.userId))
-        command.memo?.let { writeMemo(wish, it) }
-        return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+        val recorded = userInputRecorder.record(wish.slot, wish.itemId, values, createdBy = command.userId)
+        val survivor = survivorOf(wish, recorded.fill)
+        command.memo?.let { writeMemo(survivor, it) }
+        return WishResult(wish = survivor, item = recorded.item, card = itemCardService.cardOf(survivor.cardQuery()))
     }
 
     // 이미지를 올리기 전에 거절해 S3 에 고아 객체가 남지 않게 한다. 최종 판정은 applyUserInput 이 락 안에서 다시 한다
@@ -155,15 +150,14 @@ class WishPersistenceService(
         wishMemoRepository.save(memo)
     }
 
-    // 버전 생성과 같은 행 잠금을 잡아 토너먼트 시작과 직렬화한다
-    private fun lockedItemOf(wish: Wish): Item {
-        val itemId =
-            wish.itemId ?: run {
-                val latest = itemParseOutboxRepository.findLatestBySlot(wish.slot) ?: error("위시 ${wish.getId()} 의 요청이 없다")
-                itemResolver.resolve(latest.input, finalUrl = null).getId().also(wish::fill)
-            }
-        return itemRepository.findByIdForUpdate(itemId) ?: error("item $itemId 가 없다")
-    }
+    private fun survivorOf(
+        wish: Wish,
+        fill: ItemSlotFill,
+    ): Wish =
+        when (fill) {
+            ItemSlotFill.Filled -> wish
+            is ItemSlotFill.AlreadyHeld -> wishRepository.findById(fill.holder.id) ?: error("위시 ${fill.holder.id} 가 없다")
+        }
 }
 
 private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

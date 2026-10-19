@@ -24,11 +24,7 @@ class SnapshotAccessConventionTest {
             "notification/handler/ItemRefreshCompletedHandler.kt" to
                 "버전 자체 — 새로고침으로 방금 성공한 그 버전의 이름",
             "notification/handler/TournamentItemDeletedHandler.kt" to "버전 자체 — 삭제된 출전 카드가 보던 버전의 이름",
-            "tournament/service/TournamentItemPersistenceService.kt" to
-                "쓰기(사용자 입력 적재). 입력 base 는 카드 표시값",
             "wishlist/service/WishlistService.kt" to "가격 이력(버전 자체)·표시값 입력",
-            "wishlist/service/WishPersistenceService.kt" to
-                "쓰기(사용자 입력 적재). 입력 base 는 카드 표시값",
         )
 
     @Test

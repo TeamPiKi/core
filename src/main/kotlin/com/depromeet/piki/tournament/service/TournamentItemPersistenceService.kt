@@ -2,18 +2,13 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.image.domain.ProductImageKey
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.domain.UserInput
-import com.depromeet.piki.item.repository.ItemParseOutboxRepository
-import com.depromeet.piki.item.repository.ItemRepository
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemCardService
-import com.depromeet.piki.item.service.ItemResolver
 import com.depromeet.piki.item.service.ParsingEnqueuer
+import com.depromeet.piki.item.service.UserInputRecorder
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -32,12 +27,9 @@ class TournamentItemPersistenceService(
     private val tournamentRepository: TournamentRepository,
     private val tournamentUserRepository: TournamentUserRepository,
     private val tournamentItemRepository: TournamentItemRepository,
-    private val itemRepository: ItemRepository,
-    private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val itemParseOutboxRepository: ItemParseOutboxRepository,
     private val eventPublisher: ApplicationEventPublisher,
     private val itemCardService: ItemCardService,
-    private val itemResolver: ItemResolver,
+    private val userInputRecorder: UserInputRecorder,
     private val parsingEnqueuer: ParsingEnqueuer,
 ) {
     // 이미 담긴 링크면 한도를 깎기 전에 409 로 끊는다(#973). 최종 판정은 persistLinkItem 이 트랜잭션 안에서 다시 한다
@@ -140,8 +132,7 @@ class TournamentItemPersistenceService(
         val tournamentItem = locked ?: throw TournamentException.notFoundTournamentItem()
         verifyEditor(tournamentItem, tournamentId, userId)
         val values = itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency))
-        val item = lockedItemOf(tournamentItem)
-        itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy = userId))
+        userInputRecorder.record(tournamentItem.slot, tournamentItem.itemId, values, createdBy = userId)
     }
 
     // 이미지를 올리기 전에 거절해 S3 에 고아 객체가 남지 않게 한다. 최종 판정은 applyUserInput 이 락 안에서 다시 한다
@@ -177,18 +168,6 @@ class TournamentItemPersistenceService(
     ) {
         if (tournamentItem.tournamentId != tournamentId) throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.userId != userId) throw TournamentException.forbiddenTournament()
-    }
-
-    // 버전 생성과 같은 행 잠금을 잡아 토너먼트 시작과 직렬화한다
-    private fun lockedItemOf(tournamentItem: TournamentItem): Item {
-        val itemId =
-            tournamentItem.itemId ?: run {
-                val latest =
-                    itemParseOutboxRepository.findLatestBySlot(tournamentItem.slot)
-                        ?: error("토너먼트 아이템 ${tournamentItem.getId()} 의 요청이 없다")
-                itemResolver.resolve(latest.input, finalUrl = null).getId().also(tournamentItem::fill)
-            }
-        return itemRepository.findByIdForUpdate(itemId) ?: error("item $itemId 가 없다")
     }
 
     // 이미지 업로드(외부 호출) 전에 권한·상태·복제를 미리 검증해 거부될 요청이 S3 에 orphan raw 를 남기지 않게 한다.

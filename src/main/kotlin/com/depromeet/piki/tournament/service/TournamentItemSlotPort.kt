@@ -28,7 +28,7 @@ class TournamentItemSlotPort(
                 return ItemSlotFill.Filled
             }
         tournamentItem.softDelete()
-        return ItemSlotFill.AlreadyHeld(holder.slot)
+        return ItemSlotFill.AlreadyHeld(holder.slot, tournamentItem.userId)
     }
 
     private fun holderOf(
@@ -36,6 +36,7 @@ class TournamentItemSlotPort(
         itemId: Long,
     ): TournamentItem? {
         tournamentItem.deletedAt?.let { return null }
+        tournamentItem.itemId?.let { return null }
         return tournamentItemRepository.findByTournamentIdAndItemId(tournamentItem.tournamentId, itemId)
     }
 }

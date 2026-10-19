@@ -31,7 +31,7 @@ class WishSlotPort(
             }
         wishMemoRepository.saveAll(wishMemoRepository.findAllByWishId(wish.getId()).map { it.copyTo(holder.getId()) })
         wish.delete()
-        return ItemSlotFill.AlreadyHeld(holder.slot)
+        return ItemSlotFill.AlreadyHeld(holder.slot, wish.userId)
     }
 
     private fun holderOf(
@@ -39,6 +39,7 @@ class WishSlotPort(
         itemId: Long,
     ): Wish? {
         wish.deletedAt?.let { return null }
+        wish.itemId?.let { return null }
         return wishRepository.findByItemIdsAndUserId(listOf(itemId), wish.userId).firstOrNull()
     }
 }
