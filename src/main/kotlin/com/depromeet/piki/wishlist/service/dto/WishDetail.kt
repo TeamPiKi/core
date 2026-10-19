@@ -17,4 +17,6 @@ data class WishDetail(
     val snapshot: ItemSnapshot,
     val history: List<ItemSnapshot>,
     val sourcePlatform: String?,
+    // 이 상품이 우승한 내 토너먼트들(#1236, 최신 우승 순). 목록과 같은 규칙으로 판정해 두 화면이 어긋나지 않게 한다.
+    val winnerTournamentIds: List<Long> = emptyList(),
 )
