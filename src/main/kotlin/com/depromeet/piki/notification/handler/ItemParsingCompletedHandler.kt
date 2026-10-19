@@ -41,6 +41,6 @@ class ItemParsingCompletedHandler(
     companion object {
         // 출처별로 갈라야 하는데 템플릿 테이블은 타입당 한 행이라 코드가 소유한다. 백오피스(#252) 편집 대상이 아니다
         const val WISH_COMPLETION_MESSAGE = "위시 저장이 성공했어요"
-        const val TOURNAMENT_COMPLETION_MESSAGE = "아이템이 등록됐어요"
+        const val TOURNAMENT_COMPLETION_MESSAGE = "토너먼트 후보가 등록됐어요"
     }
 }

@@ -8,8 +8,8 @@ class NotificationTemplateRendererTest {
 
     @Test
     fun `플레이스홀더를 변수 값으로 치환한다`() {
-        val result = renderer.render("\${actorName}님이 아이템을 추가했어요", mapOf("actorName" to "철수"))
-        assertEquals("철수님이 아이템을 추가했어요", result)
+        val result = renderer.render("\${actorName}님이 토너먼트 후보를 담았어요", mapOf("actorName" to "철수"))
+        assertEquals("철수님이 토너먼트 후보를 담았어요", result)
     }
 
     @Test

@@ -311,7 +311,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         assertEquals(1, saved.size)
         assertEquals("https://x/snap.png", saved.first().actorImageUrl) // 발송 시점 actor 프사가 그대로 박혔다
         // 같은 컨텍스트의 변수(actorName)가 템플릿에 렌더돼 제목에 박힌다 — 변수·프사가 한 조회에서 함께 흐르는지 end-to-end 로 가드한다.
-        assertEquals("행위자님이 아이템을 추가했어요", saved.first().title)
+        assertEquals("행위자님이 토너먼트 후보를 담았어요", saved.first().title)
     }
 
     @Test

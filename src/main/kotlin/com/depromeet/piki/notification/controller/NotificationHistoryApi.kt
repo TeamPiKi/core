@@ -41,19 +41,19 @@ interface NotificationHistoryApi {
                 "| `type` | 트리거 | `kind` | `refId` | `title` 예시 |\n" +
                 "|---|---|---|---|---|\n" +
                 "| `TOURNAMENT_JOINED` | 토너먼트 참가 | `TOURNAMENT` | tournamentId | {참가자}님이 참가했어요 |\n" +
-                "| `TOURNAMENT_ITEM_ADDED` | 아이템 추가 | `TOURNAMENT` | tournamentId | {참가자}님이 아이템을 추가했어요 |\n" +
-                "| `TOURNAMENT_ITEM_DELETED` | 아이템 삭제 | `TOURNAMENT` | tournamentId | {참가자}님이 '{상품명}'을(를) 삭제했어요 |\n" +
+                "| `TOURNAMENT_ITEM_ADDED` | 토너먼트 후보 추가 | `TOURNAMENT` | tournamentId | {참가자}님이 토너먼트 후보를 담았어요 |\n" +
+                "| `TOURNAMENT_ITEM_DELETED` | 토너먼트 후보 삭제 | `TOURNAMENT` | tournamentId | {참가자}님이 '{상품명}'을(를) 삭제했어요 |\n" +
                 "| `TOURNAMENT_STARTED` | 토너먼트 시작 | `TOURNAMENT` | tournamentId | {주최자}님이 토너먼트를 시작했어요 |\n" +
                 "| `TOURNAMENT_PLAYED_FROM_LINK` | 플레이링크로 플레이 시작 | `TOURNAMENT` | ROOT 토너먼트 id | {플레이어}님이 회원님 토너먼트를 플레이했어요 |\n" +
                 "| `TOURNAMENT_COMPLETED` | 멤버가 클론 완료 | `TOURNAMENT` | ROOT 토너먼트 id | {멤버}님이 회원님 토너먼트를 완료했어요 |\n" +
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
-                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"아이템이 등록됐어요\") |\n" +
+                "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"토너먼트 후보가 등록됐어요\") |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ITEM_REFRESH_COMPLETED` | 위시 새로고침(재추출) 성공 | `WISH`(+`wishId`) | itemId | {아이템 이름} (+ `body` = \"최신 상품 정보로 새로고침했어요\") |\n" +
                 "| `ITEM_REFRESH_FAILED` | 위시 새로고침(재추출) 실패 | `WISH`(+`wishId`) | itemId | 새로고침에 실패했어요 (+ `body` = \"기존 상품 정보는 그대로 남아 있어요\") |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
                 "> `ITEM_PARSING_COMPLETED` 의 `body` 는 **등록 출처로 갈린다** — 위시에 담은 사람은 \"위시 저장이 성공했어요\", " +
-                "토너먼트에 올린 사람은 \"아이템이 등록됐어요\" 를 받는다. 화면 분기는 `body` 문구가 아니라 `type`·`kind` 로 한다.\n\n" +
+                "토너먼트에 올린 사람은 \"토너먼트 후보가 등록됐어요\" 를 받는다. 화면 분기는 `body` 문구가 아니라 `type`·`kind` 로 한다.\n\n" +
                 "> 파싱 알림(`ITEM_PARSING_*`)만 `kind` 가 발행 출처(위시 등록 / 토너먼트 추가)에 따라 갈린다 — 같은 `type` 이 두 플로우에서 발행되기 때문. " +
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> **등록과 새로고침은 `type` 으로 갈린다(#1036).** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 " +
