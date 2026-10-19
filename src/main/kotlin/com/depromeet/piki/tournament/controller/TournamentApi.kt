@@ -2,6 +2,7 @@ package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.web.ClientType
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.tournament.controller.dto.CreateFromPlayCodeRequest
 import com.depromeet.piki.tournament.controller.dto.CreateTournamentRequest
 import com.depromeet.piki.tournament.controller.dto.CreateTournamentResponse
 import com.depromeet.piki.tournament.controller.dto.GroupResultResponse
@@ -853,7 +854,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (플레이 링크 만료)",
+                description = "상태 충돌 (플레이 링크 만료 `TOURNAMENT-027` · 참여 인원 초과 `TOURNAMENT-030`)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],
@@ -861,6 +862,58 @@ interface TournamentApi {
     fun createFromPlayLink(
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "원본 토너먼트 ID", example = "1") sourceTournamentId: Long,
+    ): ApiResponseBody<Long>
+
+    @Operation(
+        summary = "완료된 토너먼트에 코드로 입장",
+        description =
+            "완료된 토너먼트의 6자리 코드로 입장해 내 플레이를 만든다. `from-play-link` 와 같은 일을 하고 **주소만 다르다** " +
+                "- 링크를 열 수 없는 자리(오프라인에서 코드를 불러주는 등)를 위한 경로다.\n\n" +
+                "**코드는 초대 코드와 같은 값이다.** 토너먼트 생성 시점에 발급돼 바뀌지 않으며, 상태에 따라 다른 문을 연다.\n\n" +
+                "| 대상 상태 | 이 API | 게이트 |\n" +
+                "|---|---|---|\n" +
+                "| PENDING | **409** (`TOURNAMENT-023`) — `POST /{id}/join` 을 쓴다 | - |\n" +
+                "| COMPLETED | 플레이 생성 | 공유 링크가 유효해야 한다 (14일) |\n\n" +
+                "**공유를 켜지 않은 토너먼트는 코드로도 열리지 않는다** - 주최자가 공유 링크를 만들지 않았으면 404(`TOURNAMENT-026`). " +
+                "주최자가 나가 링크가 무효화된 경우도 같은 게이트에 걸린다. 만료 후 재발급하면 코드도 함께 살아난다.\n\n" +
+                "**멱등하다.** 이미 참여 중이면 기존 토너먼트 id 를 그대로 200 으로 돌려준다(링크 만료와 무관). " +
+                "그래서 201 이 아니라 200 이다.\n\n" +
+                "**정원은 8명이다**(주최자 포함, 참여 행 기준). 초대·링크·코드가 같은 제한을 공유한다.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "입장 성공 또는 기존 참여 반환 (플레이할 토너먼트 id)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "코드 형식이 아님 (영문 대문자 3 + 숫자 3) · 해당 코드의 토너먼트 없음(`TOURNAMENT-020`)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "공유 링크가 만들어지지 않은 토너먼트 (`TOURNAMENT-026`)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description =
+                    "완료되지 않은 토너먼트(`TOURNAMENT-023`) · 공유 링크 만료(`TOURNAMENT-027`) · " +
+                        "참여 인원 초과(`TOURNAMENT-030`)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+        ],
+    )
+    fun createFromPlayCode(
+        @Parameter(hidden = true) userId: UUID,
+        request: CreateFromPlayCodeRequest,
     ): ApiResponseBody<Long>
 
     @Operation(
