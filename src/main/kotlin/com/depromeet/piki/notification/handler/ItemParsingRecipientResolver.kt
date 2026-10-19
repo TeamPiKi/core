@@ -20,10 +20,16 @@ class ItemParsingRecipientResolver(
     fun routingOf(slot: ItemSlot): NotificationRouting =
         when (slot.type) {
             ItemSlotType.WISH -> NotificationRouting.Wish(slot.id)
+            ItemSlotType.TOURNAMENT_ITEM -> tournamentRoutingOf(slot) ?: NotificationRouting.Wish(null)
+        }
+
+    fun tournamentRoutingOf(slot: ItemSlot): NotificationRouting.Tournament? =
+        when (slot.type) {
+            ItemSlotType.WISH -> null
             ItemSlotType.TOURNAMENT_ITEM ->
                 tournamentItemRepository.findByIdIncludingDeleted(slot.id)?.let {
                     NotificationRouting.Tournament(it.tournamentId, it.getId())
-                } ?: NotificationRouting.Wish(null)
+                }
         }
 
     // 해소 통지(#1028). 이 버전 직전엔 미완이던 카드가 이 버전으로 채워지면 그 주인에게 간다. 요청한 카드는 완료 알림을 받아 뺀다

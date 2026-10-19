@@ -2,7 +2,6 @@ package com.depromeet.piki.notification.handler
 
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.notification.domain.NotificationKind
 import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.stereotype.Component
@@ -34,9 +33,9 @@ class ItemParsingCompletedHandler(
     }
 
     private fun completionMessageOf(routing: NotificationRouting): String =
-        when (routing.routingKind) {
-            NotificationKind.TOURNAMENT -> TOURNAMENT_COMPLETION_MESSAGE
-            else -> WISH_COMPLETION_MESSAGE
+        when (routing) {
+            is NotificationRouting.Wish -> WISH_COMPLETION_MESSAGE
+            is NotificationRouting.Tournament -> TOURNAMENT_COMPLETION_MESSAGE
         }
 
     companion object {
