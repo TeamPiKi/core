@@ -8,6 +8,7 @@ import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
+import com.depromeet.piki.item.event.ItemSlotMerged
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -59,9 +60,14 @@ class ItemParsingService(
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
         val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, slot.owner))
-        slot.itemId ?: itemSlots.fill(outbox.slot, item.getId())
+        val fill = slot.itemId?.let { ItemSlotFill.Filled } ?: itemSlots.fill(outbox.slot, item.getId())
         outbox.succeed()
-        eventPublisher.publishEvent(parsingFact(outbox, slot, version))
+        eventPublisher.publishEvent(
+            when (fill) {
+                ItemSlotFill.Filled -> parsingFact(outbox, slot, version)
+                is ItemSlotFill.AlreadyHeld -> ItemSlotMerged(outbox.slot, fill.holder, slot.owner)
+            },
+        )
         return ExtractionSettlement.Applied(if (version.isReady()) ItemStatus.READY else ItemStatus.INCOMPLETE)
     }
 

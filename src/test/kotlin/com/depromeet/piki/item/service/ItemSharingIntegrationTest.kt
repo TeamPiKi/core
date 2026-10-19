@@ -7,6 +7,8 @@ import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.event.ItemParsingCompleted
+import com.depromeet.piki.item.event.ItemSlotMerged
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -28,6 +30,8 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
+import org.springframework.test.context.event.ApplicationEvents
+import org.springframework.test.context.event.RecordApplicationEvents
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -44,7 +48,10 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 @Transactional
+@RecordApplicationEvents
 class ItemSharingIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var applicationEvents: ApplicationEvents
+
     @Autowired private lateinit var wishPersistenceService: WishPersistenceService
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
@@ -208,6 +215,20 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
             listOf("사이즈 M" to LocalDateTime.of(2026, 10, 19, 10, 0), "선물용" to LocalDateTime.of(2026, 10, 19, 10, 5)),
             memosOf(first.getId()),
         )
+    }
+
+    @Test
+    fun `나중 위시가 앞 위시에 합쳐지면 파싱 완료 대신 앞 위시를 가리키는 합침 사실을 발행한다`() {
+        val user = newMember()
+        val finalUrl = "https://www.musinsa.com/products/8100013"
+        val first = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse("https://musinsa.onelink.me/PvkC/merge0013"))).wish
+        val second = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse(finalUrl))).wish
+        complete(first.slot, finalUrl)
+
+        complete(second.slot, finalUrl)
+
+        assertEquals(listOf(ItemSlotMerged(second.slot, first.slot, user)), applicationEvents.stream(ItemSlotMerged::class.java).toList())
+        assertEquals(listOf(first.slot), applicationEvents.stream(ItemParsingCompleted::class.java).map { it.slot }.toList())
     }
 
     // 지운 위시까지 합치면 사용자가 지운 메모가 남은 위시에 나타난다
