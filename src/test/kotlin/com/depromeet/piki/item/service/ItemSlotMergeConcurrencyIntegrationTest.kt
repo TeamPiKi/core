@@ -21,6 +21,7 @@ import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.runningQueries
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
@@ -142,7 +143,7 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
                         jdbcTemplate.queryForObject("SELECT id FROM items WHERE id = ? FOR UPDATE", Long::class.java, item.getId())
                         jdbcTemplate.update("UPDATE wishes SET item_id = ? WHERE id = ?", item.getId(), holder.getId())
                         holderFilled.countDown()
-                        await().atMost(Duration.ofSeconds(5)).until { itemLockWaiters() > 0 }
+                        await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.runningQueries("%from items %for update%") > 0 }
                     }
                 }
             assertTrue(holderFilled.await(5, TimeUnit.SECONDS))
@@ -173,13 +174,6 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
         }
     }
-
-    // 테스트 계정은 PROCESS 권한이 없어 잠금 대기 표를 못 읽는다. 같은 계정의 연결은 보여 실행 중인 아이템 잠금 쿼리로 대기를 본다
-    private fun itemLockWaiters(): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE ID <> CONNECTION_ID() AND INFO LIKE '%from items %for update%'",
-            Int::class.java,
-        ) ?: 0
 
     private fun assertWishesMergeUnderRace(finalUrl: String) {
         val userId = UUID.randomUUID()

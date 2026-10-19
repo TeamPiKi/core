@@ -13,12 +13,14 @@ import com.depromeet.piki.item.service.UniqueConflictRetry
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
+import com.depromeet.piki.tournament.service.dto.AddTournamentItemsFromWish
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 @Service
 class TournamentItemService(
+    private val tournamentService: TournamentService,
     private val tournamentItemPersistenceService: TournamentItemPersistenceService,
     private val imageStorage: ImageStorage,
     private val imagePresignService: ImagePresignService,
@@ -27,6 +29,12 @@ class TournamentItemService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val itemRegistrar: ItemRegistrar,
 ) {
+    // 파싱 중이던 후보가 같은 상품으로 먼저 확정되면 유니크가 거부한다. 다시 실행하면 그 후보가 보여 409 다
+    fun addItemsFromWish(
+        userId: UUID,
+        command: AddTournamentItemsFromWish,
+    ): List<Long> = UniqueConflictRetry.once("tournament=${command.tournamentId}") { tournamentService.addItemsFromWish(userId, command) }
+
     // 등록 한도는 회원인 토너먼트 오너 몫에서 깎는다(#339). 요청자 기준이면 무한 발급되는 게스트로 갈아타며 한도를 리셋할 수 있다
     private fun ownerIdOf(tournamentId: Long): UUID {
         val tournament =

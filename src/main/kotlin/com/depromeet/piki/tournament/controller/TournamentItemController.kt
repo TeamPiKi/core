@@ -49,7 +49,7 @@ class TournamentItemController(
         @PathVariable tournamentId: Long,
         @Valid @RequestBody request: AddTournamentItemsRequest,
     ): ApiResponseBody<AddTournamentItemsFromWishResponse> {
-        val tournamentItemIds = tournamentService.addItemsFromWish(userId, request.toAddTournamentItemsFromWish(tournamentId))
+        val tournamentItemIds = tournamentItemService.addItemsFromWish(userId, request.toAddTournamentItemsFromWish(tournamentId))
         return ApiResponseBody.ok(AddTournamentItemsFromWishResponse(tournamentItemIds))
     }
 

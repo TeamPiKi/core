@@ -1,29 +1,43 @@
 package com.depromeet.piki.tournament.controller
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
+import com.depromeet.piki.item.service.UniqueConflictRetry
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
+import com.depromeet.piki.support.runningQueries
 import com.depromeet.piki.support.uuidToBytes
+import com.depromeet.piki.tournament.domain.TournamentItem
+import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
+import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -48,6 +62,70 @@ class TournamentWishAddConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
     @Autowired private lateinit var wishJpaRepository: WishJpaRepository
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
+    @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
+    @Autowired private lateinit var transactionManager: PlatformTransactionManager
+
+    // 후보 확정을 SQL 로 재현한다. 담기의 삽입이 그 확정을 기다린 뒤에 커밋해야 담기의 스냅샷이 커밋 전으로 고정된다
+    @Test
+    fun `위시에서 담기가 같은 상품으로 확정 중인 후보와 겹치면 다시 실행해 409 를 반환한다`() {
+        val ownerId = UUID.randomUUID()
+        userJpaRepository.save(User(id = ownerId, nickname = "race-conf", profileImage = "https://cdn.example.com/o.jpg", identityType = IdentityType.MEMBER))
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(itemVersion(itemId = item.getId(), createdBy = ownerId))
+        wishJpaRepository.save(Wish(userId = ownerId, itemId = item.getId()))
+        val mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).apply<DefaultMockMvcBuilder>(springSecurity()).build()
+        val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
+        val retryLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val retryLogger = LoggerFactory.getLogger(UniqueConflictRetry::class.java) as Logger
+        retryLogger.addAppender(retryLogs)
+        val confirmer = Executors.newSingleThreadExecutor()
+        var tournamentId = 0L
+        try {
+            val createResult =
+                mockMvc
+                    .perform(
+                        post("/api/v1/tournaments")
+                            .header(HttpHeaders.AUTHORIZATION, ownerAuth)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""{"name":"확정동시성토너먼트"}"""),
+                    ).andReturn()
+            tournamentId = objectMapper.readTree(createResult.response.contentAsString)["data"]["tournamentId"].asLong()
+            val confirmingEntry = tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = UUID.randomUUID(), itemId = null))
+            val entryFilled = CountDownLatch(1)
+            val confirming =
+                confirmer.submit {
+                    TransactionTemplate(transactionManager).executeWithoutResult {
+                        jdbcTemplate.update("UPDATE tournament_items SET item_id = ? WHERE id = ?", item.getId(), confirmingEntry.getId())
+                        entryFilled.countDown()
+                        await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.runningQueries("%insert into tournament_items%") > 0 }
+                    }
+                }
+            assertTrue(entryFilled.await(5, TimeUnit.SECONDS))
+
+            mockMvc
+                .perform(
+                    post("/api/v1/tournaments/$tournamentId/items/wish")
+                        .header(HttpHeaders.AUTHORIZATION, ownerAuth)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(mapOf("itemIds" to listOf(item.getId())))),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
+            confirming.get(5, TimeUnit.SECONDS)
+
+            assertTrue(retryLogs.list.any { it.formattedMessage.startsWith("item.confirm.retry tournament=$tournamentId") })
+        } finally {
+            confirmer.shutdownNow()
+            retryLogger.detachAppender(retryLogs)
+            if (tournamentId != 0L) {
+                jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
+                jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
+                jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
+            }
+            jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(ownerId))
+            jdbcTemplate.deleteItems(listOf(item.getId()))
+            jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
+        }
+    }
 
     @Test
     fun `위시 아이템 담기를 동시에 두 번 요청하면 행 락으로 직렬화되어 32개 상한을 초과하지 않는다`() {
