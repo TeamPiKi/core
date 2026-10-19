@@ -166,7 +166,7 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 - **도메인 → 응답 DTO**: 응답 DTO 의 `companion object` 에 `from(도메인)` 정적 팩토리. 예: `UserResponse.from(user)`, `WishItemResponse.WishView.from(wish)`.
 - **요청 DTO → 도메인/커맨드**: 요청 DTO 의 `toXxx()` 인스턴스 메서드. 예: `CreateTournamentRequest.toCreateTournament()`.
-- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 원격 추출 응답 DTO 의 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
+- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 생성 응답 클래스(`ExtractionResult`)의 확장 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
 - **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `companion object` 정적 팩토리. 예: `ItemSnapshot.pending(...)`, `ItemSnapshot.manual(...)`.
 
 매핑 분기·정규화는 단위 테스트로 검증한다 (`.claude/rules/testing-principles.md` 의 "분기 위치 결정 트리" (3) 매퍼 함수 분기).

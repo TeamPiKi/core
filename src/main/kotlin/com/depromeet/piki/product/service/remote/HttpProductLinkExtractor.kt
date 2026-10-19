@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
 // 원격 추출 서비스(extractor)의 링크 추출 클라이언트. 계약 정본은 TeamPiKi/infra 의
-// contracts/extraction-api.md 이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
+// contracts/extraction.proto(모양)·extraction-api.md(동작 규칙)이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
 // (HttpImageSnapshotExtractor)와 공유하므로 RemoteExtractionContract 한 곳에 있다 — 여기는 링크 고유의 요청(URL)만 진다.
 //
 // 차단(BLOCKED)은 여기서 끝난다 — 요청을 아예 내보내지 않으므로 extractor·renderer 는 그 도메인의 존재조차
