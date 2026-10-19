@@ -195,8 +195,7 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentByIdForUpdate(command.tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        if (!tournament.isRoot()) throw TournamentException.clonedTournamentCannotAddItems()
+        tournament.checkItemsAddable()
         tournamentUserRepository.findByTournamentIdAndUserId(command.tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
         val existingTournamentItems = tournamentItemRepository.findAllByTournamentId(command.tournamentId)
@@ -216,7 +215,7 @@ class TournamentService(
                 .map { it.getId() }
                 .toSet()
         if (command.itemIds.any { it !in foundItemIds }) throw TournamentException.notFoundItems()
-        // 판정은 카드에 뜨는 값으로 한다(#858). 파싱 중인 위시는 아이템이 없어 여기서 걸러진다
+        // 판정은 카드에 뜨는 값으로 한다(#858). 위시 카드는 아이템이 있어 파싱 중·실패가 없고 미완성만 걸린다
         requireEntryEligible(
             itemCardService.cardsOf(wishes.map { it.cardQuery() }).values,
             TournamentException::itemIncomplete,
@@ -282,21 +281,7 @@ class TournamentService(
         owner.startPlaying()
         // 시작이 커밋된 뒤에만 참가자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentStarted(tournamentId = tournamentId, actorId = userId))
-        return StartResult(
-            tournamentId = tournamentId,
-            items =
-                tournamentItems
-                    .map { item ->
-                        val snapshot = item.requireValue(cardById)
-                        TournamentStartResult(
-                            tournamentItemId = item.getId(),
-                            name = snapshot.name,
-                            price = snapshot.price,
-                            currency = snapshot.currency,
-                            imageUrl = snapshot.imageUrl,
-                        )
-                    }.sortedWith(compareBy({ it.price }, { it.tournamentItemId })),
-        )
+        return startResultOf(tournamentId, tournamentItems, cardById)
     }
 
     // #1027: 멤버·게스트의 "시작" 은 클론 생성이 아니라 자기 ROOT 참여 행을 플레이 시작으로 전이하는 것이다.
@@ -318,11 +303,18 @@ class TournamentService(
             tournamentUserRepository.save(callerTU)
         }
 
-        val cardById = cardsOf(root, effectiveItems)
-        return StartResult(
-            tournamentId = root.getId(),
+        return startResultOf(root.getId(), effectiveItems, cardsOf(root, effectiveItems))
+    }
+
+    private fun startResultOf(
+        tournamentId: Long,
+        tournamentItems: List<TournamentItem>,
+        cardById: Map<Long, ItemCard>,
+    ): StartResult =
+        StartResult(
+            tournamentId = tournamentId,
             items =
-                effectiveItems
+                tournamentItems
                     .map { item ->
                         val snapshot = item.requireValue(cardById)
                         TournamentStartResult(
@@ -334,7 +326,6 @@ class TournamentService(
                         )
                     }.sortedWith(compareBy({ it.price }, { it.tournamentItemId })),
         )
-    }
 
     @Transactional(readOnly = true)
     fun getTournamentById(
@@ -520,13 +511,7 @@ class TournamentService(
         val card = itemCardService.cardOf(tournamentItem.cardQuery(tournament))
         val item = tournamentItem.itemId?.let { itemRepository.findById(it) }
         val pendingLink = card.pendingLink
-        // 이 상품이 요청자 본인의 위시에 담겨 있으면 그 위시의 개인 메모를 함께 내린다(#906). 조회를 요청자
-        // 소유 wish 로 한정하므로 남의 메모는 구조적으로 내려갈 수 없다. 게스트·미담음·삭제된 위시는 조회에 안 잡힌다.
-        val memo =
-            item
-                ?.let { wishRepository.findByItemIdsAndUserId(listOf(it.getId()), userId).firstOrNull() }
-                ?.let { wishMemoRepository.findCurrentByWishId(it.getId()) }
-                ?.content
+        val memo = item?.let { wishMemoOf(it.getId(), userId) }
         return TournamentItemDetail(
             tournamentItemId = tournamentItem.getId(),
             itemId = item?.getId(),
@@ -615,14 +600,13 @@ class TournamentService(
         val items = tournamentItemRepository.findAllByTournamentIds(tournaments.map { it.getId() })
         if (items.isEmpty()) return emptyMap()
         val tournamentById = tournaments.associateBy { it.getId() }
-        val queryById = items.associate { it.getId() to it.cardQuery(tournamentById.getValue(it.tournamentId)) }
-        val cards = itemCardService.cardsOf(queryById.values)
+        val cardById = cardsOf(items) { tournamentById.getValue(it.tournamentId) }
         return items
             .groupBy { it.tournamentId }
             .mapValues { (_, tournamentItems) ->
                 TournamentThumbnails.select(
                     tournamentItems.map {
-                        val card = cards.getValue(queryById.getValue(it.getId()))
+                        val card = it.cardIn(cardById)
                         TournamentThumbnails.Candidate(
                             recency = it.getId(),
                             imageUrl = card.display?.imageUrl?.takeIf { card.isReady() },
@@ -1156,9 +1140,7 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — 삭제 시 원본을 건드리므로 막는다(#977, 추가 금지 032 와 같은 결).
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
+        tournament.checkItemsModifiable()
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()
@@ -1192,7 +1174,7 @@ class TournamentService(
         tournamentItem: TournamentItem,
         cardById: Map<Long, ItemCard>,
     ): TournamentDetail.ItemDetail {
-        val card = cardById[tournamentItem.getId()] ?: error("카드 없음 — tournamentItemId=${tournamentItem.getId()}")
+        val card = tournamentItem.cardIn(cardById)
         return TournamentDetail.ItemDetail(
             tournamentItemId = tournamentItem.getId(),
             itemId = card.itemId,
@@ -1288,19 +1270,36 @@ class TournamentService(
         if (cards.any { !it.isReady() }) throw notReady()
     }
 
-    // 키는 tournament_item id. 시작 전엔 지금 보이는 값, 시작 후엔 시작 시각 기준 값이다
     private fun cardsOf(
         tournament: Tournament,
         tournamentItems: Collection<TournamentItem>,
+    ): Map<Long, ItemCard> = cardsOf(tournamentItems) { tournament }
+
+    // 키는 tournament_item id. 시작 전엔 지금 보이는 값, 시작 후엔 시작 시각 기준 값이다
+    private fun cardsOf(
+        tournamentItems: Collection<TournamentItem>,
+        tournamentOf: (TournamentItem) -> Tournament,
     ): Map<Long, ItemCard> {
-        val queryById = tournamentItems.associate { it.getId() to it.cardQuery(tournament) }
+        val queryById = tournamentItems.associate { it.getId() to it.cardQuery(tournamentOf(it)) }
         val cards = itemCardService.cardsOf(queryById.values)
         return queryById.mapValues { (_, query) -> cards.getValue(query) }
     }
 
+    private fun TournamentItem.cardIn(cardById: Map<Long, ItemCard>): ItemCard =
+        cardById[getId()] ?: error("카드 없음 — tournamentItemId=${getId()}")
+
     // 시작한 토너먼트의 출전은 모두 READY 라 값이 있다. 없으면 시작 게이트가 깨진 코드 버그다
     private fun TournamentItem.requireValue(cardById: Map<Long, ItemCard>): ItemSnapshot =
-        cardById[getId()]?.display ?: error("출전 값 없음 — tournamentItemId=${getId()}")
+        cardIn(cardById).display ?: error("출전 값 없음 — tournamentItemId=${getId()}")
+
+    // 요청자 소유 위시로만 찾아 남의 메모는 내려갈 수 없다
+    private fun wishMemoOf(
+        itemId: Long,
+        userId: UUID,
+    ): String? {
+        val wish = wishRepository.findByItemIdsAndUserId(listOf(itemId), userId).firstOrNull() ?: return null
+        return wishMemoRepository.findCurrentByWishId(wish.getId())?.content
+    }
 
     private fun computeRanking(histories: List<TournamentHistory>): List<Pair<Long, Int>> {
         val finalMatch =
@@ -1388,4 +1387,15 @@ internal fun Tournament.checkJoinable(inviteCode: String?) {
     if (!isPending()) throw TournamentException.notPendingTournament()
     if (!isInviteValid()) throw TournamentException.inviteExpired()
     inviteCode?.let { if (this.inviteCode != it) throw TournamentException.invalidInviteCode() }
+}
+
+internal fun Tournament.checkItemsAddable() {
+    if (!isPending()) throw TournamentException.notPendingTournament()
+    if (!isRoot()) throw TournamentException.clonedTournamentCannotAddItems()
+}
+
+// 클론은 원본 아이템을 이어받을 뿐 소유 행이 없어 수정·삭제가 원본을 건드린다(#977)
+internal fun Tournament.checkItemsModifiable() {
+    if (!isRoot()) throw TournamentException.clonedTournamentCannotModifyItems()
+    if (!isPending()) throw TournamentException.notPendingTournament()
 }

@@ -26,8 +26,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
-// TournamentItemService 의 외부 호출이 트랜잭션 밖에 있도록 저장만 별도 빈으로 분리한다.
-// 같은 빈에서 @Transactional 메서드를 직접 호출하면 Spring AOP proxy 를 거치지 않아 트랜잭션이 무력화된다.
+// TournamentItemService 의 외부 호출이 트랜잭션 밖에 있도록 저장만 별도 빈으로 둔다
 @Service
 class TournamentItemPersistenceService(
     private val tournamentRepository: TournamentRepository,
@@ -89,8 +88,7 @@ class TournamentItemPersistenceService(
         return tournamentItemRepository.findIdByTournamentIdAndNormalizedInput(tournamentId, normalized)
     }
 
-    @Transactional
-    fun rejectIfWontFit(
+    private fun rejectIfWontFit(
         userId: UUID,
         tournamentId: Long,
         incomingCount: Int,
@@ -162,15 +160,13 @@ class TournamentItemPersistenceService(
         itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput(name = name, price = price, imageUrl = PRE_UPLOAD_VALIDATION_IMAGE_URL, currency = currency))
     }
 
-    // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없다 — 수정 시 원본을 건드리므로 막는다(#977)
     private fun verifyEditable(
         userId: UUID,
         tournamentId: Long,
     ): Tournament {
         val tournament = tournamentRepository.findTournamentById(tournamentId) ?: throw TournamentException.notFoundTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotModifyItems() }
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId) ?: throw TournamentException.forbiddenTournament()
+        tournament.checkItemsModifiable()
+        requireParticipant(tournamentId, userId)
         return tournament
     }
 
@@ -217,10 +213,15 @@ class TournamentItemPersistenceService(
         userId: UUID,
         tournamentId: Long,
     ) {
-        if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        tournament.sourceTournamentId?.let { throw TournamentException.clonedTournamentCannotAddItems() }
-        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId)
-            ?: throw TournamentException.forbiddenTournament()
+        tournament.checkItemsAddable()
+        requireParticipant(tournamentId, userId)
+    }
+
+    private fun requireParticipant(
+        tournamentId: Long,
+        userId: UUID,
+    ) {
+        tournamentUserRepository.findByTournamentIdAndUserId(tournamentId, userId) ?: throw TournamentException.forbiddenTournament()
     }
 
     private fun hasRoomFor(

@@ -2,8 +2,8 @@ package com.depromeet.piki.tournament.service
 
 import com.depromeet.piki.common.ratelimit.ItemQuotaGuard
 import com.depromeet.piki.common.storage.ImageStorage
-import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.domain.ProductImage
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.domain.UploadFormat
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
@@ -26,12 +26,7 @@ class TournamentItemService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val itemRegistrar: ItemRegistrar,
 ) {
-    // 아이템 등록 비용은 요청자가 아니라 **토너먼트 오너**의 몫에서 깎는다(#339). 참여자에는 게스트가 섞이는데
-    // 게스트 계정은 무한 발급되므로 요청자 기준으로 세면 계정을 갈아타며 한도를 리셋할 수 있다. 오너는 반드시
-    // 회원이라(토너먼트 생성이 회원 전용) 그 우회가 성립하지 않는다.
-    //
-    // tournament 를 다시 조회하는 것은 verifyCanAddItems 와 중복이지만, 오너를 함께 돌려주도록 그 시그니처를
-    // 바꾸면 호출부 전부가 쓰지도 않는 값을 받게 된다. 조회 1회 비용을 택했다.
+    // 등록 한도는 회원인 토너먼트 오너 몫에서 깎는다(#339). 요청자 기준이면 무한 발급되는 게스트로 갈아타며 한도를 리셋할 수 있다
     private fun ownerIdOf(tournamentId: Long): UUID {
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)

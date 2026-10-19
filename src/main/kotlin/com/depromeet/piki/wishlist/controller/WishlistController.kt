@@ -22,7 +22,6 @@ import com.depromeet.piki.wishlist.service.dto.GetWishQuery
 import com.depromeet.piki.wishlist.service.dto.GetWishlistQuery
 import com.depromeet.piki.wishlist.service.dto.PresignWishImageUploadsCommand
 import com.depromeet.piki.wishlist.service.dto.RefreshWishItemCommand
-import com.depromeet.piki.wishlist.service.dto.WishResult
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -49,8 +48,6 @@ class WishlistController(
     private val wishlistService: WishlistService,
     private val wishExternalEntryRecorder: WishExternalEntryRecorder,
 ) : WishlistApi {
-    private fun toResponse(result: WishResult): WishItemResponse = WishItemResponse.from(result)
-
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     override fun registerFromUrl(
@@ -79,7 +76,7 @@ class WishlistController(
         @RequestBody request: ConfirmImageUploadRequest,
     ): ApiResponseBody<List<WishItemResponse>> {
         val results = wishlistService.confirmImageRegistration(ConfirmWishImageRegistrationCommand(userId = userId, imageKeys = request.toImageKeys()))
-        return ApiResponseBody.created(results.map { toResponse(it) })
+        return ApiResponseBody.created(results.map(WishItemResponse::from))
     }
 
     @GetMapping
@@ -89,7 +86,7 @@ class WishlistController(
         @RequestParam(required = false) size: Int?,
     ): ApiResponseBody<List<WishItemResponse>> {
         val page = wishlistService.getWishlist(GetWishlistQuery(userId = userId, cursor = WishCursor.parse(cursor), size = WishlistSize.of(size)))
-        val data = page.entries.map { toResponse(it) }
+        val data = page.entries.map(WishItemResponse::from)
         return ApiResponseBody.ok(
             data = data,
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
@@ -115,7 +112,7 @@ class WishlistController(
         @RequestPart("image", required = false) image: MultipartFile?,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.recoverWishItem(request.toCommand(userId, wishId, image))
-        return ApiResponseBody.ok(toResponse(result))
+        return ApiResponseBody.ok(WishItemResponse.from(result))
     }
 
     @PostMapping("/{wishId}/refresh")
@@ -124,7 +121,7 @@ class WishlistController(
         @PathVariable wishId: Long,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.refreshWishItem(RefreshWishItemCommand(userId = userId, wishId = wishId))
-        return ApiResponseBody.ok(toResponse(result))
+        return ApiResponseBody.ok(WishItemResponse.from(result))
     }
 
     @DeleteMapping("/{wishId}")
@@ -136,10 +133,7 @@ class WishlistController(
         return ApiResponseBody.ok()
     }
 
-    // 다중 삭제는 의미상 DELETE 지만, DELETE + body 는 중간자(게이트웨이·LB·CDN)가 body 를 스트립/거절할 수 있어
-    // (RFC 9110 은 DELETE body 의미를 정의하지 않음) id 목록을 query param(?ids=1,2,3)으로 받는다.
-    // 누락 시 required=false + orEmpty 로 WishDeleteIds 검증(400)에 닿게 한다 — required=true 면 누락이
-    // MissingServletRequestParameterException → 캐치올 500 으로 새기 때문이다.
+    // DELETE body 는 게이트웨이·CDN 이 버릴 수 있어 query 로 받는다. required=true 면 누락이 캐치올 500 으로 샌다
     @DeleteMapping
     override fun deleteWishes(
         @AuthenticationPrincipal userId: UUID,

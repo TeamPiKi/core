@@ -44,8 +44,6 @@ class TournamentException private constructor(
 
         fun notFoundItems(): TournamentException = TournamentException(TournamentErrorCode.NOT_FOUND_ITEMS)
 
-        // 파싱 중(PARSING)이거나 실패한(FAILED) 상품을 위시에서 토너먼트에 추가하려 한 경우.
-        // 곧 READY 가 되거나 영구 실패라 현재 상태와 충돌 → 409. 미완성(INCOMPLETE)은 itemIncomplete 가 따로 진다.
         fun itemNotReady(): TournamentException = TournamentException(TournamentErrorCode.ITEM_NOT_READY)
 
         // 추출이 일부 필드만 채운(INCOMPLETE) 상품을 담으려 한 경우. itemNotReady 와 가르는 이유는 해법이 달라서다 —
