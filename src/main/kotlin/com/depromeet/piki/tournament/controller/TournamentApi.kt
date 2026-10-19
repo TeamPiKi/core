@@ -126,7 +126,7 @@ interface TournamentApi {
             플레이 링크 공유는 isRoot && isOwner 일 때만 허용된다. isOwner 단독으로 분기하면 CLONE 소유자에게도 공유 버튼이 노출되어 시안 위반이다.
             응답의 status 필드에 따라 포함되는 데이터가 달라진다.
             - PENDING: pending 필드 (아이템 목록, 참여자 목록)
-              - 각 아이템에 status 포함 (READY / PENDING / PROCESSING / FAILED). PENDING·PROCESSING 이면 name·price·imageUrl 은 null 이라 응답에서 제외됨
+              - 각 아이템에 status 포함 (PARSING / FAILED / INCOMPLETE / READY). PARSING·FAILED 이면 itemId·name·price·currency·imageUrl 은 null 이라 응답에서 제외됨. INCOMPLETE 는 일부만 있음
               - 각 아이템에 userId 포함 (해당 아이템을 담은 참여자의 userId)
               - 각 참여자에 itemCount 포함 (해당 참여자가 이 토너먼트에 담은 아이템 수)
               - 각 참여자에 isHost 포함 (이 토너먼트를 만든 주최자면 true). 클라이언트는 이 값으로 프로필 우측 하단에 HostBadge 를 그린다.
@@ -520,7 +520,7 @@ interface TournamentApi {
             ApiResponse(
                 responseCode = "409",
                 description =
-                    "상태 충돌 (PENDING이 아닌 토너먼트 · PROCESSING/FAILED 상품 포함 · " +
+                    "상태 충돌 (PENDING이 아닌 토너먼트 · PARSING/FAILED 상품 포함 · " +
                         "값이 비어 있는 미완성 상품 포함 · 가격 정보 없는 상품 포함 · " +
                         "주최자가 아직 시작하지 않음 · 이미 본인 클론이 있음 — 뒤 둘은 멤버 시작 경로)",
                 content = [

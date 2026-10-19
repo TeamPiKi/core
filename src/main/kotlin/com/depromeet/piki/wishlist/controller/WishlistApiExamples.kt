@@ -126,7 +126,7 @@ class WishlistApiExamples(
                     add(
                         status = HttpStatus.OK,
                         name = "FAILED 항목에 사용자 입력 (READY 로 복구)",
-                        payload = ApiResponseBody.ok(sampleEntry),
+                        payload = ApiResponseBody.ok(userInputEntry),
                     )
                     add(
                         status = HttpStatus.OK,
@@ -426,6 +426,8 @@ class WishlistApiExamples(
         )
 
     private val refreshingSampleEntry = sampleEntry.copy(item = sampleEntry.item.copy(refreshing = true))
+
+    private val userInputEntry = sampleEntry.copy(item = sampleEntry.item.copy(method = null, userInput = true))
 
     // 이미지 등록 v2 presigned 발급 응답 샘플 — 클라는 각 uploadUrl 로 contentType 을 Content-Type 헤더에 실어 S3 에 직접 PUT 한 뒤
     // imageKey 들을 confirm 으로 되돌려준다. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.

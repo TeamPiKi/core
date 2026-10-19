@@ -23,9 +23,6 @@ import org.springframework.http.MediaType
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
-// 아이템 등록 한도(#339) 응답 설명. 위시 등록 계열 4개 엔드포인트가 같은 문구를 쓰므로 한 곳에 둔다.
-// 세는 단위가 요청 수가 아니라 item 수라는 점, 그리고 몫이 위시 전용이 아니라 계정 전체 몫이라는 점이
-// 클라이언트 계약의 핵심이라 명시한다.
 private const val RATE_LIMIT_DESCRIPTION =
     "아이템 등록 한도 초과 (code: WISH-010). 몫은 위시 전용이 아니라 계정 하나의 몫이라, 이 사용자가 소유한 " +
         "토너먼트에 아이템이 추가된 양(참여 게스트가 넣은 것 포함)도 같은 몫에서 빠진다. 한도는 요청 수가 아니라 " +
@@ -33,7 +30,6 @@ private const val RATE_LIMIT_DESCRIPTION =
         "남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
         "Retry-After 헤더에 한도가 풀리기까지 남은 시간(초)이 실린다."
 
-// 전역 가용량 소진(#927) 응답 설명. 429 와 원인이 다르다 — 요청자가 자기 몫을 다 쓴 것이 아니라 서비스가 꽉 찼다.
 private const val CAPACITY_DESCRIPTION =
     "서비스 전체의 시간당 처리 가용량 소진 (code: COMMON-SERVER-BUSY). 요청자가 자기 몫을 다 쓴 429 와 달리, " +
         "서비스가 감당하기로 정한 총량이 찬 상태라 같은 시각 모든 사용자에게 동일하게 나간다. 정상 운영에서는 " +
@@ -45,7 +41,7 @@ interface WishlistApi {
     @Operation(
         summary = "위시리스트 등록 (URL)",
         description = """
-            상품 페이지 URL 을 받아 위시리스트에 등록한다. 메타데이터(이름/가격/이미지) 추출은 외부 LLM 호출이라
+            상품 페이지 URL 을 받아 위시리스트에 등록한다. 메타데이터(이름/가격/이미지) 추출은
             오래 걸리므로 동기로 기다리지 않는다. 등록 즉시 item.status=PARSING(item.id 는 null) 인 항목을 201 로 반환하고,
             백그라운드 파싱이 성공하면 상품이 확정돼 READY 또는 INCOMPLETE, 실패하면 FAILED 가 된다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 완료·실패 알림을 받고 위시리스트를 재조회해 확인한다. URL 형식 오류는 등록 전에 400 으로 거른다.
@@ -420,21 +416,21 @@ interface WishlistApi {
     @Operation(
         summary = "위시 항목 새로고침 (링크 재추출)",
         description = """
-            위시 항목의 상품 정보를 원본 링크로 다시 추출해 최신(가격·이미지 등)으로 새로고침한다. 추출은 외부 LLM 호출이라
+            위시 항목의 상품 정보를 원본 링크로 다시 추출해 최신(가격·이미지 등)으로 새로고침한다. 추출은 오래 걸려
             동기로 기다리지 않는다 — item.refreshing=true 로 200 을 반환하고, 그동안 값과 status 는 새로고침 전 것을 유지한다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 결과를 통보받는데, 등록과 달리
             완료·실패는 `ITEM_REFRESH_COMPLETED` / `ITEM_REFRESH_FAILED` 로 온다(#1036). 일부 필드만 채워진 경우는 등록과 같은 `ITEM_PARSING_INCOMPLETE` 다.
-            이미 새로고침이 진행 중이면 새 추출을 만들지 않고 현재 상태를 그대로 반환한다(멱등).
-            새로고침은 성공(READY) 항목의 재추출 전용이다. 추출에 실패(FAILED)한 항목은 새로고침 대신 보정으로 복구한다(409).
+            이미 새로고침이 진행 중이거나 등록 파싱이 아직 끝나지 않은 항목(PARSING)이면 새 추출을 만들지 않고 현재 상태를 그대로 반환한다(멱등).
+            새로고침은 상품이 확정된 항목(READY·INCOMPLETE)의 재추출 전용이다. 추출에 실패(FAILED)한 항목은 새로고침 대신 사용자 입력(PATCH)으로 복구한다(409).
             링크가 없는 항목(이미지로 등록한 위시)은 재추출 입력이 없어 새로고침할 수 없다(400). 본인 위시만 가능하다.
-            옛 추출 버전은 보존돼, 이 위시를 토너먼트에 출전시켜 둔 경우 출전 시점 정보가 새로고침에 영향받지 않는다.
+            이 상품을 토너먼트에 출전시켜 둔 경우 시작 전 출전 카드에는 새 값이 보이고, 시작한 토너먼트의 출전 값은 시작 시각 기준이라 바뀌지 않는다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "새로고침 접수 (item.refreshing=true, 파싱은 백그라운드) — 이미 진행 중이면 현재 상태를 그대로 반환(멱등)",
+                description = "새로고침 접수 (item.refreshing=true, 파싱은 백그라운드) — 이미 진행 중이거나 등록 파싱 중(PARSING)이면 현재 상태를 그대로 반환(멱등)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -484,7 +480,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "추출 실패(FAILED) 항목은 새로고침 대상이 아님 (보정으로 복구) · 새로고침은 성공(READY) 항목 전용 · 탈퇴한 계정(code: USER-003)",
+                description = "추출 실패(FAILED) 항목은 새로고침 대상이 아님 (사용자 입력으로 복구) · 새로고침은 READY·INCOMPLETE 항목 전용 · 탈퇴한 계정(code: USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -781,9 +777,9 @@ interface WishlistApi {
         summary = "위시리스트 이미지 등록 v2 - 업로드 확정",
         description = """
             이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PARSING 위시로 즉시 등록하고 목록을 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 URL 등록과 같은 작업 큐에 적재하며, 이후 추출(Gemini Vision)·전이(READY/FAILED) 흐름도 같다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 URL 등록과 같은 작업 큐에 적재하며, 이후 추출·전이(READY/INCOMPLETE/FAILED) 흐름도 같다.
             결과 모양(WishItemResponse)은 URL 등록과 동일하다 — 다만 URL 이 없어 sourceUrl 이 null 이며,
-            추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 보정 API(PATCH)로 복구한다.
+            추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 사용자 입력 API(PATCH)로 복구한다.
         """,
     )
     @ApiResponses(

@@ -24,7 +24,7 @@ data class WishDetailResponse(
     @field:Schema(
         description = "가격 이력 — 이 상품의 가격 기록을 최신순으로 최대 50건. 서버가 추출한 값과 " +
             "사용자가 직접 입력한 값을 함께 담으며, 사용자 입력은 **같은 상품을 담은 다른 사용자가 넣은 것도 포함**한다 " +
-            "(누가 넣었는지는 editedByMe 로만 구분되고 편집자 식별자는 내리지 않는다). 출처 기록 도입 전 버전만 빠진다. " +
+            "(누가 넣었는지는 editedByMe 로만 구분되고 편집자 식별자는 내리지 않는다). 이름·가격·이미지 중 하나라도 빈 버전과 출처 기록 도입 전 버전은 빠진다. " +
             "method·userInput 은 신뢰도 등급이 아니라 맥락 표시다. 서버 추출값도 완전하지 않고(LLM 은 재추출 시 값이 달라질 수 있다), " +
             "사용자 입력은 사용자가 페이지를 직접 보고 적은 값이다. 다만 서로 다른 값을 재고 있을 수 있어(페이지 표시가 vs 실구매가) " +
             "구분해 보여주기를 권한다. " +
@@ -35,7 +35,6 @@ data class WishDetailResponse(
     val priceHistory: List<PriceHistoryEntry>,
 ) {
     companion object {
-        // requesterId 는 editedByMe(사용자 입력 버전을 내가 넣었는지) 파생용 — 편집자 식별자(UUID)는 응답에 노출하지 않는다.
         fun from(
             detail: WishDetailResult,
             requesterId: UUID,

@@ -53,7 +53,7 @@ interface TournamentItemApi {
             - READY: 이름·가격·이미지가 모두 있음
             - INCOMPLETE: 일부만 있음 (사용자 입력으로 채우면 READY)
             - FAILED: 상품을 확정하지 못하고 파싱 실패 (상품 페이지 아님 또는 추출 불가)
-            sourceUrl: 등록 시 입력한 원본 링크. 이미지로 등록한 경우 null.
+            sourceUrl: 상품 페이지 링크. 파싱 성공 전에는 등록 때 입력한 링크, 성공 뒤에는 확정된 상품 페이지 주소. 이미지로 등록한 경우 null.
             memo: 이 상품이 **요청자 본인의 위시리스트에 있으면** 그 위시의 개인 메모(최대 100자). 누가 토너먼트에
             추가했는지와 무관하게 본인 위시 기준으로 판정하며, 본인 메모만 내려간다(타인 메모는 어떤 경우에도 없음).
             위시에 없거나 메모를 안 적었거나 게스트면 필드 자체가 생략된다.
@@ -175,7 +175,7 @@ interface TournamentItemApi {
                 responseCode = "409",
                 description =
                     "상태 충돌 (PENDING이 아닌 토너먼트 · 이미 등록된 아이템 · 요청 내 중복 아이템 · " +
-                        "PARSING/FAILED 등 미완료 상품 포함 · 값이 비어 있는 미완성 상품 포함)",
+                        "값이 비어 있는 미완성 상품 포함)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -441,7 +441,7 @@ interface TournamentItemApi {
         summary = "이미지로 토너먼트 아이템 추가 v2 - 업로드 확정",
         description = """
             이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PARSING 아이템으로 즉시 추가하고 tournamentItemIds 를 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 링크 추가와 같은 작업 큐에 적재하며, 이후 파싱(Gemini Vision)·전이(READY/FAILED) 흐름도 같다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 링크 추가와 같은 작업 큐에 적재하며, 이후 파싱·전이(READY/INCOMPLETE/FAILED) 흐름도 같다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )

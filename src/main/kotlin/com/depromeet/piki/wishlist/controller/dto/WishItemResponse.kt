@@ -7,11 +7,11 @@ import com.depromeet.piki.wishlist.service.dto.WishResult
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
 
-@Schema(description = "위시 항목 — 위시 기록(wish)과 상품 스냅샷(item)의 묶음")
+@Schema(description = "위시 항목 — 위시 기록(wish)과 상품(item)의 묶음")
 data class WishItemResponse(
     @field:Schema(description = "위시 기록")
     val wish: WishView,
-    @field:Schema(description = "상품 스냅샷")
+    @field:Schema(description = "상품")
     val item: ItemView,
 ) {
     companion object {
@@ -40,7 +40,7 @@ data class WishItemResponse(
         }
     }
 
-    @Schema(description = "상품 스냅샷")
+    @Schema(description = "상품")
     data class ItemView(
         @field:Schema(description = "상품 ID. 파싱이 성공해 상품이 확정되기 전에는 null", example = "512", nullable = true)
         val id: Long?,
@@ -57,7 +57,7 @@ data class WishItemResponse(
         )
         val refreshing: Boolean,
         @field:Schema(
-            description = "지금 보이는 값을 서버가 뽑은 경로. STRUCTURED(구조화 파서)·LLM. 사용자 입력과 경로 기록 전 버전은 null.",
+            description = "지금 보이는 값을 서버가 뽑은 경로. STRUCTURED(구조화 파서)·LLM. 사용자 입력과 경로 기록 전 버전은 null. PARSING·FAILED 시 null.",
             example = "STRUCTURED",
             nullable = true,
         )
@@ -72,7 +72,7 @@ data class WishItemResponse(
         val name: String?,
         @field:Schema(description = "스냅샷 시점의 현재 판매가 (PARSING·FAILED 시 null)", example = "119000", nullable = true)
         val price: Int?,
-        @field:Schema(description = "통화 코드 (ISO 4217)", example = "KRW", nullable = true)
+        @field:Schema(description = "통화 코드 (ISO 4217, PARSING·FAILED 시 null)", example = "KRW", nullable = true)
         val currency: String?,
         @field:Schema(
             description = "상품 대표 이미지 URL (PARSING·FAILED 시 null)",
