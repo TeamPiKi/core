@@ -88,14 +88,6 @@ variable "ec2_ami_id" {
   default = "ami-0f5ddb19e2fbe4cc4"
 }
 
-variable "ssh_ingress_cidr" {
-  description = "SSH 접속을 허용할 CIDR. 실제로는 본인/팀원 공인 IP/32 로 좁힐 것"
-  type        = string
-  # TODO: 팀원 IP 확보 후 terraform.tfvars 에서 실제 값으로 override 할 것.
-  # 아래는 RFC 5737 문서화용 예약 대역(TEST-NET-3) 의 placeholder 이며 실제 라우팅되지 않음.
-  default = "203.0.113.1/32"
-}
-
 # ----- RDS -----
 
 variable "db_instance_class" {
@@ -146,12 +138,12 @@ variable "db_ec2_instance_type" {
 
 variable "db_ec2_volume_size" {
   description = <<-EOT
-    DB 박스 루트 볼륨 크기(GB). OS(약 3GB) + docker 이미지(mysql·aws-cli·alloy 약 1.5GB) +
-    데이터·백업 임시파일 기준으로 10GB 면 절반이 남는다. 앱 박스(20GB)와 달리 앱 이미지를
-    받지 않아 소비가 작다. EBS 는 확대만 가능하고 축소가 안 되므로 작게 시작한다.
+    DB 박스 루트 볼륨 크기(GB). OS·swapfile·docker 이미지만으로 약 7GB 라 10GB 에서는 여유가
+    1GB 아래였다(2026-10 실측). EBS 는 확대만 가능하고, 확대 뒤 박스에서 growpart·resize2fs 로
+    파일시스템을 넓혀야 df 에 반영된다.
   EOT
   type        = number
-  default     = 10
+  default     = 20
 }
 
 variable "db_backup_bucket_name" {

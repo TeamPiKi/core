@@ -31,7 +31,7 @@ class ExtractionErrorCatalogTest {
 
     @Test
     fun `계약의 확정 실패 code 는 전수가 translate 의 명시 분기로 있다`() {
-        val expected = parsingPermanentCodes.map { it.name }.toSet()
+        val expected = parsingPermanentCodes.toSet()
         val mapped = RemoteExtractionContract.PERMANENT_TRANSLATIONS.keys
         val missing = expected - mapped
         val unknown = mapped - expected
@@ -43,13 +43,13 @@ class ExtractionErrorCatalogTest {
                     if (missing.isNotEmpty()) {
                         appendLine(
                             "- 매핑 누락(모르는 code 용 fallback 으로 떨어져 internal_error 로 집계된다): " +
-                                missing.sorted().joinToString(", "),
+                                missing.map { it.name }.sorted().joinToString(", "),
                         )
                     }
                     if (unknown.isNotEmpty()) {
                         appendLine(
                             "- 계약에 없는 code 를 매핑하고 있다(오타이거나 계약에서 사라진 code): " +
-                                unknown.sorted().joinToString(", "),
+                                unknown.map { it.name }.sorted().joinToString(", "),
                         )
                     }
                 },
@@ -67,7 +67,7 @@ class ExtractionErrorCatalogTest {
                 if (bucket == Bucket.BUCKET_UNSPECIFIED) {
                     return@mapNotNull "${code.name}: 계약에 bucket 이 없다(확정 실패는 bucket 필수)"
                 }
-                val translate = RemoteExtractionContract.PERMANENT_TRANSLATIONS[code.name] ?: return@mapNotNull null
+                val translate = RemoteExtractionContract.PERMANENT_TRANSLATIONS[code] ?: return@mapNotNull null
                 val reason = ItemParsingMetrics.reasonOf(translate())
                 val expected = bucket.name.lowercase()
                 reason.takeIf { it != expected }?.let { "${code.name}: 계약 bucket=$expected 인데 메트릭 reason=$it 로 집계된다" }

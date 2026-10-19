@@ -44,6 +44,14 @@ class AdminTemplatePageRenderIntegrationTest : IntegrationTestSupport() {
             .andExpect(content().string(not(containsString("badge ACTIVITY"))))
     }
 
+    @Test
+    fun `템플릿 목록의 행은 편집 화면 주소를 싣는다`() {
+        mockMvc()
+            .perform(get("/admin/templates"))
+            .andExpect(status().isOk)
+            .andExpect(content().string(containsString("data-href=\"/admin/templates/TOURNAMENT_JOINED\"")))
+    }
+
     // 타입 이름(TOURNAMENT_JOINED)은 URL·헤딩에서 나와 폼 채움과 무관하게 통과하므로 단언하지 않는다.
     // 편집 화면의 본질은 DB 문구를 th:value/th:text 로 폼에 채우는 것이라, 시드 title 원문(치환 전 변수 표기 그대로)을 단언한다.
     @Test

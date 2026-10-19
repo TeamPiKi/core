@@ -6,7 +6,6 @@ environment = "dev"
 
 # 본인 공인 IP/32 로 좁힐 것. 예: "123.45.67.89/32"
 # 여러 팀원은 SG 레벨에서 ingress 블록을 추가하거나, 별도 변수로 list 처리.
-ssh_ingress_cidr = "203.0.113.1/32"
 
 # 이미지 버킷 실명 — 계정번호 파생. <ACCOUNT_ID> 는 aws sts get-caller-identity --query Account 로 확인
 image_bucket_name = "piki-images-<ACCOUNT_ID>"

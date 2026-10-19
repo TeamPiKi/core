@@ -228,13 +228,13 @@ class HttpProductLinkExtractorTest {
     }
 
     @Test
-    fun `422 NOT_PRODUCT_PAGE 는 기존 ProductSnapshotException 으로 되돌려 워커 의미(not_product)를 보존한다`() {
+    fun `422 INVALID_URL 은 기존 ProductSnapshotException 으로 되돌려 워커 의미(not_product)를 보존한다`() {
         val extractor =
             extractorWith { server ->
                 server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
                     withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .body("""{"code":"NOT_PRODUCT_PAGE"}"""),
+                        .body("""{"code":"INVALID_URL"}"""),
                 )
             }
 
@@ -251,18 +251,9 @@ class HttpProductLinkExtractorTest {
         // 계약 bucket 과 이 reason 이 같은지는 ExtractionErrorCatalogTest 가 별도로 대조한다.
         val expected =
             mapOf(
-                "NOT_PRODUCT_PAGE" to ItemParsingMetrics.REASON_NOT_PRODUCT,
                 "INVALID_URL" to ItemParsingMetrics.REASON_NOT_PRODUCT,
-                "EMPTY_SHELL" to ItemParsingMetrics.REASON_UNREADABLE,
-                "NO_EXTRACTABLE_CONTENT" to ItemParsingMetrics.REASON_UNREADABLE,
-                "FETCH_CLIENT_ERROR" to ItemParsingMetrics.REASON_BLOCKED,
-                "PERMANENT_UPSTREAM" to ItemParsingMetrics.REASON_BLOCKED,
-                "UNTRUSTWORTHY_VALUE" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
-                "LLM_INVALID_RESPONSE" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
                 "IMAGE_UNSUPPORTED" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
                 "BLOCKED_HOST" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
-                "TOO_MANY_REDIRECTS" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
-                "MALFORMED_REDIRECT" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
             )
 
         expected.forEach { (code, reason) ->

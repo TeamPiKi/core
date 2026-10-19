@@ -19,7 +19,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 | state 위치 | `s3://piki-tfstate-<ACCOUNT_ID>/terraform.tfstate` | 팀 공유 + 단일 진실 원천 |
 | 락 메커니즘 | S3 native (`use_lockfile = true`) | Terraform 1.10+ 의 S3 conditional PUT 락. DynamoDB 추가 운영 부담 0 |
 | 버킷 보안 | versioning ON / 퍼블릭 차단 / SSE-S3 | 롤백 가능, 외부 노출 차단 |
-| 접근 권한 | IAM 그룹 `PIKI-Infra` (BE 3 명) | 외부도, 다른 그룹도 state 못 봄 |
+| 접근 권한 | 관리자 역할 `piki-admin` (아래 권한 모델) | 조회 그룹은 S3 객체를 못 읽어 state 를 못 봄 |
 
 이 문서와 코드의 `<ACCOUNT_ID>` 는 AWS 계정번호 자리다. public repo 라 계정번호를 커밋하지 않는 규율(infra `conventions/infra.md`)에 따라, 실값은 자격증명에서 파생해(`aws sts get-caller-identity`) gitignore 된 `backend.hcl` 과 환경변수로 주입한다 (아래 워크플로우) — 계정번호를 어디에 따로 적어 둘 필요가 없다.
 
@@ -34,30 +34,15 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 ## 권한 모델
 
-| 주체 | 가능한 일 | 권한 출처 |
-|---|---|---|
-| `PIKI-Infra` 그룹 (조재중 / qkrdmswl / parksevin98) | tfstate 버킷 읽기/쓰기, `terraform plan` | 커스텀 정책 `PIKITerraformStateAccess` (버킷 `piki-tfstate-<ACCOUNT_ID>` + 그 객체에 한정 — 다른 S3 버킷 접근 불가) |
-| `AdministratorAccess` 부여된 사용자 (parksevin98) | 모든 AWS 리소스 변경 (= apply 가능) | `AdministratorAccess` 직접 부여 |
-| 그 외 | state 접근 자체 불가 | 정책 없음 |
+사람 권한은 `iam_people.tf` 가 정본이다. 그룹 소속만 CLI 로 넣는다(사람 이메일을 커밋하지 않는다).
 
-→ **계획 / 검토는 BE 3 명 모두, apply 실행은 1 명** — PR 리뷰 비유로 하면 "다 같이 보고 한 명이 머지" 형태.
+| 주체 | 가능한 일 |
+|---|---|
+| `PiKi-Viewer` 그룹 | 콘솔 조회(ViewOnlyAccess). S3 객체·SSM 시크릿은 못 읽는다 |
+| `PiKi-Backend` 그룹 | 조회 + SSM 서버 접속·원격 명령 + `/piki*` 시크릿 읽기 + 비용 조회 + `aws login` |
+| `piki-admin` 역할 | 모든 변경. 백엔드 그룹만, Touch ID(MFA) 로 로그인한 지 20분 안에만 전환된다 |
 
-### `PIKITerraformStateAccess` 정책 범위
-
-```json
-{
-  "Effect": "Allow",
-  "Action": "s3:ListBucket",
-  "Resource": "arn:aws:s3:::piki-tfstate-<ACCOUNT_ID>"
-}
-{
-  "Effect": "Allow",
-  "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-  "Resource": "arn:aws:s3:::piki-tfstate-<ACCOUNT_ID>/*"
-}
-```
-
-→ **이 한 버킷의 객체** 외엔 접근 불가. 향후 다른 S3 버킷 (앱 업로드 / 로그 / 백업 등) 이 생겨도 PIKI-Infra 멤버 권한이 자동으로 새지 않음.
+→ **`terraform plan`·`apply` 는 둘 다 `piki-admin` 으로 돈다.** plan 도 state 버킷에 락을 쓰고, 이 스택이 IAM 을 만들어 apply 권한이 곧 관리자 권한이다. 자동화 도구(Claude 등)는 사람이 Touch ID 를 누르지 않으면 관리자가 될 수 없다.
 
 ## 변수 값 / secret 어디서 받나
 
@@ -68,7 +53,7 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 | 변수 | 종류 | 비고 |
 |---|---|---|
 | `image_bucket_name` | 환경 설정 (필수) | default 없음 — 계정번호 포함이라 커밋 금지. 자격증명에서 파생 ("일상 워크플로우"의 도출 명령이 자동 세팅) |
-| `ssh_ingress_cidr` | 환경 설정 | default 는 placeholder (`203.0.113.1/32`). 실제 작업 IP 로 override |
+| `db_backup_bucket_name` | 환경 설정 (필수) | 위와 같음 |
 
 그 외 변수 (`project`, `environment`, `aws_region`, VPC CIDR, EC2 instance type 등) 는 `variables.tf` 의 default 그대로 쓴다.
 
@@ -80,7 +65,6 @@ state 가 없으면 terraform 은 AWS 에 떠있는 리소스를 "내가 모르�
 
 ```bash
 export TF_VAR_image_bucket_name="piki-images-$(aws sts get-caller-identity --query Account --output text)"   # 계정번호 파생 — 공지 불필요
-export TF_VAR_ssh_ingress_cidr='<본인 공인 IP>/32'
 ```
 
 세션 종료 시 자동 소멸. 디스크에 평문 안 남음.
@@ -101,31 +85,40 @@ cp terraform.tfvars.example terraform.tfvars
 
 ## 일상 워크플로우
 
-### 0. (최초 1 회) AWS CLI 자격증명 export
+### 0. (최초 1 회) 프로필 준비
 
-본인 IAM 사용자에서 액세스 키 발급 → 작업 세션 동안만 export.
+액세스 키는 만들지 않는다. 노트북 준비(`aws login` 프로필 `piki`)는 infra `conventions/infra.md` 5절. 여기에 관리자 역할 프로필 둘을 더한다.
 
-```bash
-export AWS_ACCESS_KEY_ID="AKIA..."
-export AWS_SECRET_ACCESS_KEY="..."
-export AWS_REGION="ap-northeast-2"
+```ini
+[profile piki-admin]
+region = ap-northeast-2
+role_arn = arn:aws:iam::<ACCOUNT_ID>:role/piki-admin
+source_profile = piki
+
+# terraform 은 aws login 자격을 직접 못 읽어 CLI 를 거친다(로컬 terraform 1.14·AWS 프로바이더 5.x)
+[profile piki-tf]
+region = ap-northeast-2
+credential_process = aws configure export-credentials --profile piki-admin --format process
 ```
-
-`~/.aws/credentials` 같은 영구 파일에 저장하지 말 것. **작업 종료 후 콘솔에서 키 비활성화 / 삭제.**
 
 ### 1. 작업 시작
 
 ```bash
+aws login --profile piki     # 브라우저에서 새로 로그인 + Touch ID. 20분 안에 아래 plan 까지 시작한다
+export AWS_PROFILE=piki-tf
 cd terraform
 # 버킷명은 전부 계정번호 파생(piki-*-<계정번호>)이라 자격증명에서 도출한다 — 값을 외우거나 공지에서 찾을 필요 없음.
 # 파생값이라 재실행해도 항상 현재 자격증명 계정 기준 같은 값이 나와 덮어써도 안전하다.
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 echo "bucket = \"piki-tfstate-$ACCOUNT\"" > backend.hcl   # gitignore 됨 — 커밋 금지
 export TF_VAR_image_bucket_name="piki-images-$ACCOUNT"
+export TF_VAR_db_backup_bucket_name="piki-db-backup-$ACCOUNT"
 
 terraform init -backend-config=backend.hcl     # 첫 실행 시 또는 backend 설정 변경 시. provider 다운 + S3 backend 연결
 terraform plan   # state 읽고 AWS 와 비교, 변경 미리 보기
 ```
+
+역할 세션은 1시간이다. 그 뒤엔 `aws login` 부터 다시 한다.
 
 ### 2. 적용 (admin 만)
 
@@ -136,8 +129,7 @@ terraform apply  # 락 잠그고 실제 AWS 변경 + state 업데이트
 ### 3. 작업 종료
 
 ```bash
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-# 콘솔에서 액세스 키 비활성화 / 삭제
+unset AWS_PROFILE
 ```
 
 ## 마이그레이션 / 버킷 설정 검증
