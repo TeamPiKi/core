@@ -63,7 +63,7 @@ class ItemVersionsTest {
     }
 
     @Test
-    fun `내 값도 공유 값도 없으면 남의 입력이 아닌 최신 버전을 본다`() {
+    fun `내 값도 기계 READY 도 없으면 남의 입력이 아닌 최신 버전을 본다`() {
         val othersIncomplete = incomplete(1, by = other)
         val othersInput = userVersion(2, by = other)
 
@@ -75,15 +75,6 @@ class ItemVersionsTest {
         val othersInput = userVersion(1, by = other)
 
         assertEquals(othersInput, display(othersInput))
-    }
-
-    // 추정 백필이 옛 행에 만든 사람을 채우므로 공유 여부는 출처로만 가른다
-    @Test
-    fun `출처를 모르는 도입 전 READY 는 남이 만들었어도 공유 값이다`() {
-        val myIncomplete = incomplete(1, by = me)
-        val legacy = version(2, ready = true, userInput = false, by = other)
-
-        assertEquals(legacy, display(myIncomplete, legacy))
     }
 
     @Test

@@ -141,7 +141,7 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `userInput 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
+    fun `userInput 은 base 값 위에 입력을 합친 READY 새 버전을 만들고 base 는 그대로다`() {
         val base = version(name = "나이키", price = 99_000, currency = "KRW")
         val editor = UUID.randomUUID()
 
@@ -160,7 +160,7 @@ class ItemSnapshotTest {
 
     // 추출이 못 채운 필드를 사용자가 채우면 READY 가 된다는 INCOMPLETE 의 완성 경로(#944)
     @Test
-    fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 병합된 READY 버전이 된다`() {
+    fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 합친 READY 버전이 된다`() {
         val base = version(name = "몬치치 인형", price = null)
 
         val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 25_000, imageUrl = null, currency = "KRW").filledFrom(base)), createdBy = UUID.randomUUID())
@@ -185,7 +185,7 @@ class ItemSnapshotTest {
     }
 
     @Test
-    fun `사용자 입력 병합 후에도 이름 가격 이미지 중 하나가 비면 ItemException 이다`() {
+    fun `사용자 입력을 합친 뒤에도 이름 가격 이미지 중 하나가 비면 ItemException 이다`() {
         val inputs =
             listOf(
                 Triple(null, 1_000, "https://img.example.com/a.png"),

@@ -16,7 +16,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
-// 정체 값 조회는 DB 가 만든 해시 칸과 unique 색인을 타므로 DB 로 검증한다
+// 정체 URL 조회는 unique 색인을 타므로 DB 로 검증한다
 @Transactional
 class ItemResolverIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemResolver: ItemResolver

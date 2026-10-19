@@ -132,7 +132,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.priceHistory[3].price").value(95_000))
             .andExpect(jsonPath("$.data.priceHistory[3].method").value("STRUCTURED"))
             .andExpect(jsonPath("$.data.item.id").value(itemId))
-            // 내 입력보다 새로운 공유 READY 가 없어 표시값은 내 입력이다(#1051)
+            // 내 입력보다 새로운 기계 READY 가 없어 표시값은 내 입력이다(#1051)
             .andExpect(jsonPath("$.data.item.price").value(99_000))
             .andExpect(jsonPath("$.data.item.userInput").value(true))
     }

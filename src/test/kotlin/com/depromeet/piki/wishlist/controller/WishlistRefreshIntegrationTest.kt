@@ -3,10 +3,10 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
-import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -89,7 +89,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
-            val (wishId, itemId, oldVersionId) = seedReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
+            val (wishId, itemId, oldVersionId) = saveReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
 
             mockMvc
                 .perform(
@@ -128,7 +128,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val (wishId, itemId, _) = seedReadyWish(userId, "https://shop.example.com/products/inprogress", "옛 상품", 10_000)
+            val (wishId, itemId, _) = saveReadyWish(userId, "https://shop.example.com/products/inprogress", "옛 상품", 10_000)
             repeat(2) {
                 mockMvc
                     .perform(
@@ -178,7 +178,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val attacker = UUID.randomUUID()
         insertMember(attacker)
         try {
-            val (wishId, _, _) = seedReadyWish(owner, "https://shop.example.com/products/owned", "옛 상품", 10_000)
+            val (wishId, _, _) = saveReadyWish(owner, "https://shop.example.com/products/owned", "옛 상품", 10_000)
 
             mockMvc
                 .perform(
@@ -248,7 +248,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val url = "https://shop.example.com/products/refresh-failed-before"
-            val (wishId, itemId, _) = seedReadyWish(userId, url, "옛 상품", 10_000)
+            val (wishId, itemId, _) = saveReadyWish(userId, url, "옛 상품", 10_000)
             val slot = ItemSlot.wish(wishId)
             itemParseOutboxRepository.save(failedOutbox(slot, url))
 
@@ -278,7 +278,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             stubLinkSnapshotExtractor.build = {
                 ProductSnapshot(name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
-            val (wishId, _, _) = seedReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
+            val (wishId, _, _) = saveReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
 
             mockMvc
                 .perform(
@@ -311,7 +311,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val url = "https://shop.example.com/products/input-while-refreshing"
-            val (wishId, itemId, _) = seedReadyWish(userId, url, "기계 값", 10_000)
+            val (wishId, itemId, _) = saveReadyWish(userId, url, "기계 값", 10_000)
             val slot = ItemSlot.wish(wishId)
             itemParseOutboxRepository.save(ItemParseOutbox.of(slot, ParsePurpose.REFRESH, ParseInput.Link(ProductLink.parse(url))))
 
@@ -359,18 +359,24 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // (wishId, itemId, versionId)
-    private fun seedReadyWish(
+    // 파싱 경로를 거치지 않고 행만 저장한다
+    private fun saveReadyWish(
         userId: UUID,
         url: String,
         name: String,
         price: Int,
-    ): Triple<Long, Long, Long> {
+    ): SavedWish {
         val item = itemRepository.save(linkItem(url))
         val version = itemSnapshotRepository.save(itemVersion(item.getId(), name = name, price = price, createdBy = userId))
         val wish = wishRepository.save(Wish(userId = userId, itemId = item.getId()))
-        return Triple(wish.getId(), item.getId(), version.getId())
+        return SavedWish(wishId = wish.getId(), itemId = item.getId(), versionId = version.getId())
     }
+
+    private data class SavedWish(
+        val wishId: Long,
+        val itemId: Long,
+        val versionId: Long,
+    )
 
     private fun failedOutbox(
         slot: ItemSlot,

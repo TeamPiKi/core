@@ -3,6 +3,7 @@ package com.depromeet.piki.tournament.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -513,8 +514,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val itemB = itemJpaRepository.save(linkItem("https://shop.example.com/products/pin-b"))
         saveTournamentItemFor(tournamentId, itemA, name = "A 옛값", price = 100_000, currency = "KRW", imageUrl = "https://i.example/a1.png")
         saveTournamentItemFor(tournamentId, itemB, name = "B 옛값", price = 200_000, currency = "KRW", imageUrl = "https://i.example/b1.png")
-        saveMachineVersion(itemA.getId(), "A 새값", 110_000)
-        saveMachineVersion(itemB.getId(), "B 새값", 210_000)
+        saveMachineReady(itemA.getId(), "A 새값", 110_000)
+        saveMachineReady(itemB.getId(), "B 새값", 210_000)
 
         mockMvc
             .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
@@ -530,7 +531,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.items[0].price").value(110_000))
             .andExpect(jsonPath("$.data.items[1].name").value("B 새값"))
 
-        saveMachineVersion(itemA.getId(), "A 더새값", 120_000)
+        saveMachineReady(itemA.getId(), "A 더새값", 120_000)
         mockMvc
             .perform(get("/api/v1/tournaments/$tournamentId").header(HttpHeaders.AUTHORIZATION, authHeader(userId)))
             .andExpect(status().isOk)
@@ -586,7 +587,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val itemId = saveIncompleteWishItem()
-        saveMachineReadySnapshot(itemId)
+        saveMachineReady(itemId)
 
         mockMvc
             .perform(
@@ -2026,8 +2027,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     // 클론 id 로만 닿던 가드다. 클론이 사라져 from-play-link 가 ROOT id 를 돌려주므로 이 사유에 도달할 수 없다.
     // 가드 코드(clonedTournamentCannotModifyItems)·에러코드 제거는 Phase 4.
 
-    // 완료된 ROOT + 그 플레이링크로 참여한 게스트(otherUserId)를 만들어 (rootId, joinedId(=rootId), 원본 tournamentItemId) 를 준다.
-    private fun cloneFromCompletedRoot(mockMvc: MockMvc): Triple<Long, Long, Long> {
+    // 완료된 ROOT 에 그 플레이링크로 게스트(otherUserId)가 참여한다. 클론이 사라져 joinedId 는 rootId 와 같다
+    private fun cloneFromCompletedRoot(mockMvc: MockMvc): PlayLinkJoin {
         saveUser(otherUserId, "https://cdn.example.com/other.jpg", "다른유저")
         val (rootId, rootTi, _) = completeTournamentWith2Items(mockMvc)
         mockMvc.perform(
@@ -2043,7 +2044,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, authHeader(otherUserId)),
                 ).andReturn()
         val cloneId = objectMapper.readTree(cloneResult.response.contentAsString)["data"].asLong()
-        return Triple(rootId, cloneId, rootTi)
+        return PlayLinkJoin(rootId = rootId, joinedId = cloneId, rootTournamentItemId = rootTi)
     }
 
     @Test
@@ -2371,7 +2372,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `PATCH tournaments-id-items-itemId 는 남이 채운 READY 가 있으면 가격 없는 내 미완성 값에도 이름만 수정이 성공한다`() {
-        // 회귀(#1006 과 같은 축): base 가 카드 표시값이 아니면 화면엔 가격이 떠 있는데 안 보낸 가격이 빈 값에서 병합돼 400 이 된다
+        // 회귀(#1006 과 같은 축): base 가 카드 표시값이 아니면 화면엔 가격이 떠 있는데 안 보낸 가격이 빈 값에서 합쳐져 400 이 된다
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)
         val incompleteItem = itemJpaRepository.save(imageItem())
@@ -2382,7 +2383,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             price = null,
             imageUrl = "https://img.example.com/i.png",
         ).getId()
-        saveMachineReadySnapshot(incompleteItem.getId())
+        saveMachineReady(incompleteItem.getId())
 
         mockMvc
             .perform(
@@ -2393,7 +2394,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
         val userVersion = latestVersionOf(incompleteItem.getId())
         assertEquals("내가 고친 이름", userVersion.name)
-        assertEquals(89_000, userVersion.price, "안 보낸 가격은 카드가 보여주던 표시값에서 병합돼야 한다")
+        assertEquals(89_000, userVersion.price, "안 보낸 가격은 카드가 보여주던 표시값에서 합쳐져야 한다")
     }
 
     @Test
@@ -2415,6 +2416,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .param("name", "내가 고친 이름")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.PRICE_REQUIRED_FOR_READY.code))
     }
 
     @Test
@@ -2470,6 +2472,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .param("currency", "KRW")
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.NOT_PENDING_TOURNAMENT.code))
     }
 
     @Test
@@ -2905,14 +2908,20 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val item2Id: Long,
     )
 
+    private data class PlayLinkJoin(
+        val rootId: Long,
+        val joinedId: Long,
+        val rootTournamentItemId: Long,
+    )
+
     // 위시 없이 item 정체성만 저장 — wish 소유 확인 실패(403) 시나리오용. 표시값·상태는 snapshot 소관이라 여기선 빈 item 만.
     private fun saveItem(): Long = itemJpaRepository.save(imageItem()).getId()
 
-    // 같은 상품을 다른 카드의 요청이 새로 파싱해 성공한 공유 값
-    private fun saveMachineVersion(
+    // 같은 상품을 다른 카드의 요청이 파싱해 성공한 기계 READY
+    private fun saveMachineReady(
         itemId: Long,
-        name: String,
-        price: Int,
+        name: String = "남이 채운 이름",
+        price: Int = 89_000,
     ): ItemSnapshot =
         itemSnapshotJpaRepository.save(
             itemVersion(itemId = itemId, name = name, price = price, imageUrl = "https://i.example/$price.png"),
@@ -2963,17 +2972,6 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         )
         wishJpaRepository.save(Wish(userId = owner, itemId = item.getId()))
         return item.getId()
-    }
-
-    // 다른 사용자가 같은 상품을 담아 파싱이 성공한 공유 READY. 표시값은 기계 출처 READY 만 공유 후보로 본다
-    private fun saveMachineReadySnapshot(
-        itemId: Long,
-        name: String = "남이 채운 이름",
-        price: Int = 89_000,
-    ) {
-        itemSnapshotJpaRepository.save(
-            itemVersion(itemId = itemId, name = name, price = price, imageUrl = "https://img.example.com/b.png"),
-        )
     }
 
     // 가격만 빠진 부분 추출(#944)이라 INCOMPLETE

@@ -29,7 +29,7 @@ class ItemCardTest {
     }
 
     @Test
-    fun `실패한 요청만 있는 카드는 보낸 값만으로 이름 가격 이미지가 다 있어야 한다`() {
+    fun `실패한 요청만 있는 카드는 보낸 값을 그대로 쓴다`() {
         val card = ItemCard.Unresolved(failedRequest())
 
         assertEquals(ItemStatus.FAILED, card.status)
@@ -37,6 +37,12 @@ class ItemCardTest {
         assertEquals("직접 입력", values.name)
         assertEquals(5_000, values.price)
         assertEquals("https://img.example.com/m.png", values.imageUrl)
+    }
+
+    @Test
+    fun `실패한 요청만 있는 카드는 보낸 값에 이미지가 없으면 거부한다`() {
+        val card = ItemCard.Unresolved(failedRequest())
+
         val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "직접 입력", price = 5_000, imageUrl = null, currency = null)) }
         assertEquals(ItemErrorCode.IMAGE_REQUIRED_FOR_READY, e.errorCode)
     }
@@ -60,6 +66,12 @@ class ItemCardTest {
         assertEquals(ItemStatus.INCOMPLETE, card.status)
         val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "이름만", price = null, imageUrl = null, currency = null)) }
         assertEquals(ItemErrorCode.PRICE_REQUIRED_FOR_READY, e.errorCode)
+    }
+
+    @Test
+    fun `미완성 카드는 비어 있는 필드만 보내도 나머지를 지금 값으로 채운다`() {
+        val card = ItemCard.Resolved(display = version(price = null), refreshing = false)
+
         assertEquals(10_000, card.userInputValues(UserInput(name = null, price = 10_000, imageUrl = null, currency = null)).price)
     }
 

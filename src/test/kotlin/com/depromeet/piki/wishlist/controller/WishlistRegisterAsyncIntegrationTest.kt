@@ -230,7 +230,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "기본 상품") }
-            // 별칭이 테스트 간 상태가 되므로 다른 테스트와 URL 을 공유하지 않는다
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/9942"))
             val auth = "Bearer ${memberToken(userId)}"
 

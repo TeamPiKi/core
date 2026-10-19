@@ -10,7 +10,7 @@ import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
 import java.util.UUID
 
-// 파싱 성공·수동 보정 때만 생기고 바뀌지 않는다
+// 파싱 성공·사용자 입력 때만 생기고 바뀌지 않는다
 @Entity
 @Table(name = "item_snapshots")
 class ItemSnapshot(

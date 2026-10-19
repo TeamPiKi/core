@@ -2,6 +2,7 @@ package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -508,6 +509,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
                         it
                     }.header(HttpHeaders.AUTHORIZATION, authHeader),
             ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.PRICE_REQUIRED_FOR_READY.code))
     }
 
     @Test
@@ -548,7 +550,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `실패 위시를 직접 보정하면 아이템이 확정되고 READY 로 복구된다`() {
+    fun `실패 위시에 사용자 입력을 채우면 아이템이 확정되고 READY 로 복구된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -852,7 +854,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `FAILED 위시 item 을 이미지와 함께 보정하면 200 과 갱신된 imageUrl 로 복구된다`() {
+    fun `FAILED 위시 item 에 이미지와 함께 사용자 입력을 채우면 200 과 갱신된 imageUrl 로 복구된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -878,7 +880,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 보정 시 지원하지 않는 형식을 보내면 400 BAD_REQUEST 가 반환된다`() {
+    fun `사용자 입력 이미지가 지원하지 않는 형식이면 400 BAD_REQUEST 가 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -899,7 +901,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 보정 시 빈 이미지를 보내면 400 BAD_REQUEST 가 반환된다`() {
+    fun `사용자 입력 이미지가 비어 있으면 400 BAD_REQUEST 가 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
@@ -920,7 +922,7 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 보정 중 S3 업로드가 실패하면 502 BAD_GATEWAY 가 반환된다`() {
+    fun `사용자 입력 이미지의 S3 업로드가 실패하면 502 BAD_GATEWAY 가 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)

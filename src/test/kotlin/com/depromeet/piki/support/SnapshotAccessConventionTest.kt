@@ -40,7 +40,7 @@ class SnapshotAccessConventionTest {
         if (offenders.isNotEmpty()) {
             fail(
                 "ItemSnapshotRepository 를 직접 쓰는 새 클래스가 있다. 사용자 화면 행동에 관여하는 읽기면 " +
-                    "ItemDisplayService(표시값)를 거치고, 원본이 정당한 갈래(쓰기·정체성·버전 자체·표시값 입력)면 " +
+                    "ItemCardService(카드 값)를 거치고, 원본이 정당한 갈래(쓰기·정체성·버전 자체·카드 계산의 입력)면 " +
                     "이 테스트의 allowedRawConsumers 에 갈래를 적고 등록하라:\n" +
                     offenders.joinToString("\n") { it.path },
             )
