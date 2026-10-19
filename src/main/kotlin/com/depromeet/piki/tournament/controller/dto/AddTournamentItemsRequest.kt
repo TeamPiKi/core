@@ -16,6 +16,6 @@ data class AddTournamentItemsRequest(
     // Bean Validation 위반 메시지의 single source. OpenAPI example(TournamentItemApiExamples)이 같은 상수를 참조해
     // "필드 검증 문구가 @field 와 example 두 곳에서 따로 노는" 어긋남을 컴파일 타임에 막는다.
     companion object {
-        const val ITEM_IDS_SIZE_MESSAGE = "아이템은 1~32개 사이로 선택해 주세요."
+        const val ITEM_IDS_SIZE_MESSAGE = "상품은 1~32개 사이로 선택해 주세요."
     }
 }

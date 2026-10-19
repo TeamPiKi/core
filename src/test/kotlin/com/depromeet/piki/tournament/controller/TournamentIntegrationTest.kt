@@ -2582,7 +2582,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .content("""{"url":"https://www.musinsa.com/products/4400001?utm_source=kakao"}"""),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("TOURNAMENT-009"))
-            .andExpect(jsonPath("$.detail").value("이미 담은 아이템이에요."))
+            .andExpect(jsonPath("$.detail").value("이미 담은 토너먼트 후보예요."))
     }
 
     @Test

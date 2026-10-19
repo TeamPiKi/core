@@ -20,7 +20,7 @@ enum class WishErrorCode(
     FORBIDDEN_WISH_ITEMS(
         "WISH-002",
         ErrorCategory.FORBIDDEN,
-        "내 위시 아이템만 볼 수 있어요.",
+        "내 위시만 볼 수 있어요.",
     ),
     INVALID_CURSOR(
         "WISH-003",
@@ -30,7 +30,7 @@ enum class WishErrorCode(
     NOT_FOUND(
         "WISH-004",
         ErrorCategory.NOT_FOUND,
-        "이미 삭제된 아이템이에요.",
+        "이미 삭제된 위시예요.",
     ),
     INVALID_IMAGE_COUNT(
         "WISH-005",

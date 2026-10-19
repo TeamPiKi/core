@@ -54,7 +54,7 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("### WISH"), md)
         assertTrue(md.contains("| WISH-001 | 403 | 위시리스트는 회원만 이용할 수 있어요. |"), md)
         assertTrue(md.contains("| WISH-003 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
-        assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 아이템이에요. |"), md)
+        assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 위시예요. |"), md)
         assertTrue(md.contains("| WISH-008 | 409 | 추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요. |"), md)
 
         // item 도메인 이관(#798) — 5개. 전부 FAILED 항목 사용자 입력(위시·토너먼트 아이템 공용 경로)에서 나온다.
