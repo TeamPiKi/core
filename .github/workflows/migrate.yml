@@ -230,7 +230,7 @@ jobs:
 
       # 구 계정 앱 박스 주소를 secret 으로 받지 않고 여기서 한 번 해소해 고정한다.
       #
-      # 값 자체는 "지금 도메인이 가리키는 IP" 라 DNS 가 정본이다(deploy.yml 의 EC2_HOST 검증도 같은
+      # 값 자체는 "지금 도메인이 가리키는 IP" 라 DNS 가 정본이다(deploy.yml 의 도메인 가드도 같은
       # 기준을 쓴다). secret 으로 두면 컷오버 후 누군가 신 계정 IP 로 갱신했을 때 only=cutover 재실행이
       # 신 DB 를 덤프해 자기 위에 덮어쓴다 — 재실행은 이 워크플로의 기본 복구 수단이라 실제로 밟는다.
       # job output 으로 굳히면 한 실행 안에서는 값이 흔들리지 않고, DNS 전환 뒤 재실행해도
@@ -1720,17 +1720,17 @@ jobs:
   # ── migrate-6b: 배포 배선 갱신. 컷오버가 끝난 env 의 GitHub 설정을 신 계정 값으로 돌린다. ──
   #
   # 이것을 자동화하지 않고 안내만 했더니, dev 컷오버 직후 평소 배포가 곧바로 깨졌다(실측).
-  #   EC2_HOST 가 구 계정 IP → deploy.yml 의 도메인↔호스트 가드가 배포를 중단
-  #   AWS_ECR_PUSH_ROLE_ARN 이 구 계정 → 이미지를 옛 계정 ECR 로 push
-  # prod 에서는 같은 공백이 운영 배포 실패로 직결되고, 컷오버 직후 누가 배포하면 그 창에 그대로 걸린다.
+  # 세 레포의 배포는 잡은 역할의 계정에서 Name 태그로 박스를 찾으므로(ssm-ssh) 역할 변수가 곧 배포 대상 계정이다.
+  # 구 계정 역할이 남으면 켜져 있는 구 계정 박스로 조용히 성공한다(#1174 실측: extractor 가 6일간 구 박스로 배포).
   #
-  # Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
+  # core 는 Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
   # 영향을 받지 않는다(dev 이관 시점에 prod 는 계속 구 계정 값을 써야 한다).
+  # extractor·renderer 는 Environment 없이 repo 수준 값으로 배포하고 박스가 전 환경 공용이라 prod 이관에서만 바꾼다.
   #
   # 코드에 박힌 것(migrate.yml 의 OLD_ACCOUNT_ID)은 여기서 손대지 않는다 — 커밋·리뷰를 거쳐야 하고,
   # 그 값은 "다음 이관의 출발점" 이라 사람이 보고 넘기는 편이 맞다. finalize 안내에 남는다.
   rewire:
-    needs: [guard, config, deploy_core, cutover]
+    needs: [guard, config, cutover]
     if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -1758,6 +1758,9 @@ jobs:
           {
             echo "ecr_role=$(terraform output -raw github_ecr_push_role_arn)"
             echo "db_role=$(terraform output -raw github_db_provision_role_arn)"
+            # 두 역할은 각 레포 terraform state 소관이라 infra_apps 가 쓰는 기본 name_prefix 로 IAM 에 묻는다.
+            echo "extractor_role=$(aws iam get-role --role-name piki-extractor-gha-ecr-push --query Role.Arn --output text 2>/dev/null || true)"
+            echo "renderer_role=$(aws iam get-role --role-name piki-headless-browser-gha-deploy --query Role.Arn --output text 2>/dev/null || true)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Environment 배선 갱신
@@ -1765,9 +1768,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
           ENV: ${{ inputs.env }}
-          APP_IP: ${{ needs.deploy_core.outputs.app_ip }}
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
+          EXTRACTOR_ROLE: ${{ steps.tf.outputs.extractor_role }}
+          RENDERER_ROLE: ${{ steps.tf.outputs.renderer_role }}
         run: |
           set -uo pipefail
           [ -n "${GH_TOKEN:-}" ] || {
@@ -1775,14 +1779,6 @@ jobs:
             echo "done=false" >> "$GITHUB_OUTPUT"; exit 0; }
 
           fail=0
-          # secret 은 gh 가 암호화까지 처리한다(직접 호출하면 libsodium 이 필요하다).
-          set_secret() {
-            if gh secret set "$1" --env "$ENV" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
-              echo "  secret  $1 (env=$ENV)"
-            else
-              echo "::warning::secret $1 갱신 실패 — 토큰 권한(Secrets: write) 확인"; fail=1
-            fi
-          }
           set_var() {
             local env="${3:-$ENV}"
             if gh variable set "$1" --env "$env" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
@@ -1791,11 +1787,16 @@ jobs:
               echo "::warning::variable $1 갱신 실패 — 토큰 권한(Variables: write) 확인"; fail=1
             fi
           }
+          set_repo_var() { # $1=repo $2=name $3=value
+            if gh variable set "$2" --body "$3" --repo "$1" 2>/dev/null; then
+              echo "  var     $2 = $3 ($1)"
+            else
+              echo "::warning::$1 의 variable $2 갱신 실패 — CROSS_REPO_TOKEN 에 그 레포 Variables 쓰기 권한 확인"; fail=1
+            fi
+          }
 
           # 값이 비면 덮어쓰지 않는다 — 빈 값으로 밀어 넣으면 배포가 조용히 엉뚱한 곳을 보거나
           # 가드에 걸려 멈춘다. 그 경우는 경고로 남기고 사람이 채운다.
-          [ -n "$APP_IP" ] && set_secret EC2_HOST "$APP_IP" \
-            || { echo "::warning::앱 IP 를 못 얻어 EC2_HOST 를 건드리지 않았다"; fail=1; }
           [ -n "$ECR_ROLE" ] && set_var AWS_ECR_PUSH_ROLE_ARN "$ECR_ROLE" \
             || { echo "::warning::ECR push 역할 ARN 을 못 얻었다"; fail=1; }
           # DB provision 역할은 prod-db Environment 에 쓴다. provision-db-observability.yml 이 그 Environment 로
@@ -1805,6 +1806,12 @@ jobs:
           if [ "$ENV" = prod ]; then
             [ -n "$DB_ROLE" ] && set_var AWS_DB_PROVISION_ROLE_ARN "$DB_ROLE" prod-db \
               || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }
+            [ -n "$EXTRACTOR_ROLE" ] && [ "$EXTRACTOR_ROLE" != None ] \
+              && set_repo_var TeamPiKi/extractor AWS_ECR_PUSH_ROLE_ARN "$EXTRACTOR_ROLE" \
+              || { echo "::warning::extractor 배포 역할을 못 찾았다(piki-extractor-gha-ecr-push)"; fail=1; }
+            [ -n "$RENDERER_ROLE" ] && [ "$RENDERER_ROLE" != None ] \
+              && set_repo_var TeamPiKi/renderer AWS_DEPLOY_ROLE_ARN "$RENDERER_ROLE" \
+              || { echo "::warning::renderer 배포 역할을 못 찾았다(piki-headless-browser-gha-deploy)"; fail=1; }
           fi
 
           if [ "$fail" -eq 0 ]; then
@@ -1823,7 +1830,7 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status == 'success' && 'success' || 'failure' }}
           title: "배포 배선 갱신 ${{ job.status }} (env=${{ inputs.env }})"
-          detail: "EC2_HOST · AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, AWS_DB_PROVISION_ROLE_ARN 은 prod-db Environment 에 신 계정 값으로 교체한다. 실패했다면 그 env 의 평소 배포가 아직 구 계정을 향한다."
+          detail: "AWS_ECR_PUSH_ROLE_ARN 을 Environment 수준에서, prod 면 AWS_DB_PROVISION_ROLE_ARN 을 prod-db Environment 에, extractor·renderer 레포의 배포 역할까지 신 계정 값으로 교체한다. 실패했다면 그 배포가 아직 구 계정을 향한다."
 
   # ── migrate-7: 서비스 실검증. "워크플로가 초록불인데 서비스는 죽어 있는" 상태를 막는 마지막 관문. ──
   #
@@ -1952,7 +1959,7 @@ jobs:
   finalize:
     needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
-    # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리 7건과 요약 보드가 나오지 않는다.
+    # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리와 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -1982,13 +1989,16 @@ jobs:
             echo
             echo "| 무엇 | 어디 | 바꿀 값 |"
             echo "|---|---|---|"
-            # EC2_HOST·두 역할 ARN 은 rewire job 이 Environment 수준에 자동으로 쓴다.
+            # 역할 ARN 들은 rewire job 이 자동으로 쓴다.
             # 그 job 이 실패했을 때만 손으로 할 목록에 되살린다 — 성공했는데도 안내에 남겨 두면
             # "아직 할 일이 있다" 는 잘못된 신호가 된다.
             if [ "$REWIRE" != "success" ]; then
-              echo "| \`EC2_HOST\` | Environment \`$ENV\` secret | 신 계정 EIP (rewire 실패) |"
               echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
-              [ "$ENV" = prod ] && echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
+              if [ "$ENV" = prod ]; then
+                echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
+                echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | extractor 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-extractor-gha-ecr-push\` (rewire 실패) |"
+                echo "| \`AWS_DEPLOY_ROLE_ARN\` | renderer 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-headless-browser-gha-deploy\` (rewire 실패) |"
+              fi
             fi
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
             echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
@@ -1998,7 +2008,8 @@ jobs:
             echo "역할 ARN 의 정확한 이름은 신 계정 terraform output 또는 IAM 콘솔에서 확인한다"
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::남은 수동 정리 5건 — EC2_HOST · AWS_ECR_PUSH_ROLE_ARN · AWS_DB_PROVISION_ROLE_ARN · OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제. 자세한 내용은 실행 Summary."
+          ROLES=""; [ "$REWIRE" = "success" ] || ROLES=" · 배포 역할 ARN(rewire 실패)"
+          echo "::warning::남은 수동 정리 — OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제${ROLES}. 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
         id: sum
