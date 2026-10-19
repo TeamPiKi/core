@@ -37,6 +37,7 @@ sealed interface ItemSlotFill {
     data class AlreadyHeld(
         val holder: ItemSlot,
         val owner: UUID,
+        val holderOwner: UUID,
     ) : ItemSlotFill
 }
 
@@ -57,7 +58,7 @@ class ItemSlots(
         val fill = portOf(slot).fill(slot.id, itemId)
         when (fill) {
             ItemSlotFill.Filled -> Unit
-            is ItemSlotFill.AlreadyHeld -> eventPublisher.publishEvent(ItemSlotMerged(slot, fill.holder, fill.owner))
+            is ItemSlotFill.AlreadyHeld -> eventPublisher.publishEvent(ItemSlotMerged(slot, fill.holder, fill.owner, fill.holderOwner, itemId))
         }
         return fill
     }

@@ -227,7 +227,8 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
         complete(second.slot, finalUrl)
 
-        assertEquals(listOf(ItemSlotMerged(second.slot, first.slot, user)), applicationEvents.stream(ItemSlotMerged::class.java).toList())
+        val itemId = assertNotNull(jdbcTemplate.wishItemIdOf(first.getId()))
+        assertEquals(listOf(ItemSlotMerged(second.slot, first.slot, user, user, itemId)), applicationEvents.stream(ItemSlotMerged::class.java).toList())
         assertEquals(listOf(first.slot), applicationEvents.stream(ItemParsingCompleted::class.java).map { it.slot }.toList())
     }
 

@@ -48,6 +48,7 @@ interface NotificationHistoryApi {
                 "| `TOURNAMENT_COMPLETED` | 멤버가 클론 완료 | `TOURNAMENT` | ROOT 토너먼트 id | {멤버}님이 회원님 토너먼트를 완료했어요 |\n" +
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
                 "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"토너먼트 후보가 등록됐어요\") |\n" +
+                "| `ITEM_PARSING_MERGED` | 같은 상품의 카드가 이미 있어 요청한 카드가 그쪽에 합쳐짐 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"기존 위시에 합쳐졌어요\" / 토너먼트 \"기존 토너먼트 후보에 합쳐졌어요\"). 좌표는 남은 카드 |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ITEM_REFRESH_COMPLETED` | 위시 새로고침(재추출) 성공 | `WISH`(+`wishId`) | itemId | {아이템 이름} (+ `body` = \"최신 상품 정보로 새로고침했어요\") |\n" +
                 "| `ITEM_REFRESH_FAILED` | 위시 새로고침(재추출) 실패 | `WISH`(+`wishId`) | itemId | 새로고침에 실패했어요 (+ `body` = \"기존 상품 정보는 그대로 남아 있어요\") |\n" +

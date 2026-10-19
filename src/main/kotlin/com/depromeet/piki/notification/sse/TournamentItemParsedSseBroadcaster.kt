@@ -6,7 +6,11 @@ import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
+import com.depromeet.piki.item.event.ItemSlotMerged
+import com.depromeet.piki.notification.controller.dto.SilentSyncPayload
+import com.depromeet.piki.notification.controller.dto.TournamentItemMerged
 import com.depromeet.piki.notification.controller.dto.TournamentItemParsed
+import com.depromeet.piki.notification.domain.NotificationRouting
 import com.depromeet.piki.notification.handler.ItemParsingRecipientResolver
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import org.slf4j.LoggerFactory
@@ -42,31 +46,43 @@ class TournamentItemParsedSseBroadcaster(
         broadcast(event.slot, ItemStatus.FAILED)
     }
 
-    // @Async 워커라 throw 를 삼키지 않으면 맥락 없는 스택트레이스만 남아 동기화 누락이 무음이 된다
+    @Async(AsyncConfig.NOTIFICATION_EXECUTOR)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    fun on(event: ItemSlotMerged) {
+        broadcastMerged(event)
+    }
+
     fun broadcast(
         slot: ItemSlot,
         status: ItemStatus,
     ) {
+        deliver(slot, "status=$status") { TournamentItemParsed(it.tournamentId, it.tournamentItemId, status) }
+    }
+
+    // 위시끼리 합쳐지면 토너먼트 좌표가 없어 보내지 않는다
+    fun broadcastMerged(merged: ItemSlotMerged) {
+        deliver(merged.holder, "merged=${merged.slot.id}") { TournamentItemMerged(it.tournamentId, merged.slot.id, it.tournamentItemId) }
+    }
+
+    // @Async 워커라 throw 를 삼키지 않으면 맥락 없는 스택트레이스만 남아 동기화 누락이 무음이 된다
+    private fun deliver(
+        slot: ItemSlot,
+        detail: String,
+        payloadOf: (NotificationRouting.Tournament) -> SilentSyncPayload,
+    ) {
         runCatching {
             val tournament = recipientResolver.tournamentRoutingOf(slot) ?: return
             val participants = tournamentUserRepository.findByTournamentId(tournament.tournamentId).map { it.userId }
-            localDelivery.deliverSilentSync(
-                participants,
-                TournamentItemParsed(
-                    tournamentId = tournament.tournamentId,
-                    tournamentItemId = tournament.tournamentItemId,
-                    status = status,
-                ),
-            )
+            localDelivery.deliverSilentSync(participants, payloadOf(tournament))
             log.info(
-                "토너먼트 아이템 파싱 동기화 전송 tournamentId={} tournamentItemId={} status={} 참여자={}명",
+                "토너먼트 아이템 파싱 동기화 전송 tournamentId={} tournamentItemId={} {} 참여자={}명",
                 tournament.tournamentId,
                 tournament.tournamentItemId,
-                status,
+                detail,
                 participants.size,
             )
         }.onFailure { e ->
-            log.warn("토너먼트 아이템 파싱 동기화 실패 slotType={} slotId={} status={}", slot.type, slot.id, status, e)
+            log.warn("토너먼트 아이템 파싱 동기화 실패 slotType={} slotId={} {}", slot.type, slot.id, detail, e)
         }
     }
 }

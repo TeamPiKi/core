@@ -2,6 +2,8 @@ package com.depromeet.piki.notification.sse
 
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.event.ItemSlotMerged
+import com.depromeet.piki.notification.controller.dto.TournamentItemMerged
 import com.depromeet.piki.notification.controller.dto.TournamentItemParsed
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -83,6 +85,29 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
             assertEquals(ItemStatus.FAILED, emitter.payloads().single().status)
         } finally {
             registry.removeAll(participant)
+        }
+    }
+
+    @Test
+    fun `후보가 같은 상품의 다른 후보에 합쳐지면 참여자 전원이 사라진 후보와 남은 후보 좌표를 받는다`() {
+        val tournamentId = 7006L
+        val adder = UUID.randomUUID()
+        val participant = UUID.randomUUID()
+        listOf(adder, participant).forEach { tournamentUserRepository.save(TournamentUser(tournamentId, it)) }
+        val holderId = tournamentItemRepository.save(TournamentItem(tournamentId, participant, itemId = null)).getId()
+        val mergedId = tournamentItemRepository.save(TournamentItem(tournamentId, adder, itemId = null)).getId()
+        val emitters = listOf(adder, participant).map { user -> ItemParsedRecordingEmitter().also { registry.register(SseConnection(user, it)) } }
+
+        try {
+            broadcaster.broadcastMerged(ItemSlotMerged(ItemSlot.tournamentItem(mergedId), ItemSlot.tournamentItem(holderId), adder, holderOwner = participant, itemId = 5006L))
+
+            emitters.forEach { emitter ->
+                val payload = emitter.sentData.filterIsInstance<TournamentItemMerged>().single()
+                assertEquals(TournamentItemMerged(tournamentId, tournamentItemId = mergedId, mergedIntoTournamentItemId = holderId), payload)
+                assertEquals("TOURNAMENT_ITEM_MERGED", objectMapper.readTree(objectMapper.writeValueAsString(payload)).get("type").asString())
+            }
+        } finally {
+            listOf(adder, participant).forEach { registry.removeAll(it) }
         }
     }
 

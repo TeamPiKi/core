@@ -31,7 +31,7 @@ class WishSlotPort(
             }
         wishMemoRepository.saveAll(wishMemoRepository.findAllByWishId(wish.getId()).map { it.copyTo(holder.getId()) })
         wish.delete()
-        return ItemSlotFill.AlreadyHeld(holder.slot, wish.userId)
+        return ItemSlotFill.AlreadyHeld(holder.slot, wish.userId, holder.userId)
     }
 
     private fun holderOf(

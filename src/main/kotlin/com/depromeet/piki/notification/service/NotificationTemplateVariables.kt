@@ -1,6 +1,8 @@
 package com.depromeet.piki.notification.service
 
 import com.depromeet.piki.notification.domain.NotificationType
+import com.depromeet.piki.notification.handler.ItemParsingCompletedHandler
+import com.depromeet.piki.notification.handler.ItemParsingMergedHandler
 
 // 타입별 사용 가능한 템플릿 변수 카탈로그. 백오피스(#250) 편집 화면의 "쓸 수 있는 변수" 표시 + 검증(선언 안 된
 // 변수 차단) + 미리보기 샘플값의 SSOT 다. 현재는 발송 dispatch 가 실제로 채우는 변수만 선언한다 —
@@ -43,7 +45,7 @@ object NotificationTemplateVariables {
             NotificationType.ITEM_PARSING_COMPLETED to
                 listOf(
                     ITEM_NAME,
-                    TemplateVariable("completionMessage", "위시 저장이 성공했어요"),
+                    TemplateVariable("completionMessage", ItemParsingCompletedHandler.WISH_COMPLETION_MESSAGE),
                 ),
             // 미완 알림도 title=${itemName} 이고 핸들러가 채운다(#944). 선언이 빠져 있어 어드민에서 이 템플릿을
             // 저장하면 "선언 안 된 변수" 검증에 걸려 저장 자체가 막혔다 — itemName 을 선언해 정합을 맞춘다.
@@ -54,6 +56,12 @@ object NotificationTemplateVariables {
             // 해소 통지(#1028)도 title=${itemName} 이고 핸들러가 같은 방식으로 채운다 — 다만 이름의 출처는
             // 방금 성공한 버전이라, 실패로 비어 있던 이름 대신 실제 상품명이 제목에 뜬다.
             NotificationType.ITEM_PARSING_RECOVERED to listOf(ITEM_NAME),
+            // mergedMessage 는 완료 문구처럼 출처별로 갈려 코드(ItemParsingMergedHandler)가 소유한다
+            NotificationType.ITEM_PARSING_MERGED to
+                listOf(
+                    ITEM_NAME,
+                    TemplateVariable("mergedMessage", ItemParsingMergedHandler.WISH_MERGED_MESSAGE),
+                ),
             // 새로고침 완료(#1036)도 title=${itemName} 이고 핸들러가 새 성공본의 이름으로 채운다.
             NotificationType.ITEM_REFRESH_COMPLETED to listOf(ITEM_NAME),
             // 새로고침 실패는 변수를 채우지 않는다 — 실패한 버전은 이름이 비어 itemName 이 늘 기본값이라 쓸모가 없고,

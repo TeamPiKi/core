@@ -15,6 +15,7 @@ sealed interface SilentSyncPayload {
 // silent-sync 갱신 사건의 종류. 클라가 화면 갱신 동작을 분기하는 키.
 enum class SilentSyncType {
     TOURNAMENT_ITEM_PARSED,
+    TOURNAMENT_ITEM_MERGED,
     UNREAD_COUNT_CHANGED,
 }
 
@@ -27,6 +28,15 @@ data class TournamentItemParsed(
     val status: ItemStatus,
 ) : SilentSyncPayload {
     override val type: SilentSyncType = SilentSyncType.TOURNAMENT_ITEM_PARSED
+}
+
+// 클라는 tournamentItemId 카드를 지우고 mergedIntoTournamentItemId 카드를 다시 읽는다
+data class TournamentItemMerged(
+    val tournamentId: Long,
+    val tournamentItemId: Long,
+    val mergedIntoTournamentItemId: Long,
+) : SilentSyncPayload {
+    override val type: SilentSyncType = SilentSyncType.TOURNAMENT_ITEM_MERGED
 }
 
 // 읽음 처리 후 갱신된 안읽음 수를 그 유저의 온라인(SSE 연결) 기기 인앱 배지에 즉시 반영하는 갱신 신호(#487 의 SSE 보강).

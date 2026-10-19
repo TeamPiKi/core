@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.handler
 
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.event.ItemParsingCompleted
+import com.depromeet.piki.item.event.ItemSlotMerged
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingService
@@ -73,6 +74,8 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     @Autowired private lateinit var parsingFailedHandler: ItemParsingFailedHandler
 
     @Autowired private lateinit var parsingRecoveredHandler: ItemParsingRecoveredHandler
+
+    @Autowired private lateinit var mergedHandler: ItemParsingMergedHandler
 
     @Autowired private lateinit var refreshCompletedHandler: ItemRefreshCompletedHandler
 
@@ -378,6 +381,46 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
+    fun `같은 상품의 위시에 합쳐진 위시의 주인은 남은 위시 좌표와 위시 합침 문구로 알림을 받는다`() {
+        val owner = UUID.randomUUID()
+        val finalUrl = newUrl()
+        val holder = registerWish(owner, "https://short.example.com/${UUID.randomUUID()}")
+        val merged = registerWish(owner, finalUrl)
+        itemParsingService.completeLatest(entityManager, holder.slot, landedOn(finalUrl, "옛 이름"))
+        itemParsingService.completeLatest(entityManager, merged.slot, landedOn(finalUrl, "새 이름"))
+
+        notificationDispatcher.dispatch(lastEvent<ItemSlotMerged>())
+
+        val saved = notificationRepository.findPage(owner, cursor = null, limit = 10).single { it.type == NotificationType.ITEM_PARSING_MERGED }
+        assertEquals("새 이름", saved.title)
+        assertEquals(ItemParsingMergedHandler.WISH_MERGED_MESSAGE, saved.body)
+        assertEquals(NotificationRouting.Wish(holder.getId()), saved.routing())
+    }
+
+    // 내가 입력한 값은 남이 올린 후보 카드에 안 보인다. 제목은 눌러서 가는 그 카드의 이름이어야 한다
+    @Test
+    fun `직접 입력한 후보가 남이 올린 후보에 합쳐지면 올린 사람만 남은 후보 좌표와 그 카드의 이름으로 알림을 받는다`() {
+        val host = UUID.randomUUID()
+        val adder = UUID.randomUUID()
+        val tournamentId = createRootWithOwner(host)
+        tournamentUserRepository.save(TournamentUser(tournamentId, adder))
+        val finalUrl = newUrl()
+        val holderId = addTournamentItem(host, tournamentId, "https://short.example.com/${UUID.randomUUID()}")
+        val mergedId = addTournamentItem(adder, tournamentId, finalUrl)
+        itemParsingService.completeLatest(entityManager, ItemSlot.tournamentItem(holderId), landedOn(finalUrl, "주최자 카드의 이름"))
+        itemParsingService.failLatest(entityManager, ItemSlot.tournamentItem(mergedId))
+
+        tournamentItemPersistenceService.applyUserInput(adder, tournamentId, mergedId, "직접 입력한 이름", 10_000, "https://img.example.com/u.png", "KRW")
+        val event = lastEvent<ItemSlotMerged>()
+
+        assertEquals(setOf(adder), mergedHandler.resolveRecipients(event))
+        assertEquals("주최자 카드의 이름", mergedHandler.resolveActorContext(event).variables["itemName"])
+        val context = mergedHandler.resolveRecipientContexts(event, setOf(adder)).getValue(adder)
+        assertEquals(NotificationRouting.Tournament(tournamentId, holderId), context.routing)
+        assertEquals(ItemParsingMergedHandler.TOURNAMENT_MERGED_MESSAGE, context.variables["mergedMessage"])
+    }
+
+    @Test
     fun `아이템이 있는 위시의 새로고침 완료는 새로고침 완료로만 가고 등록 완료와 배타적이다`() {
         val owner = UUID.randomUUID()
         val wish = registerWish(owner, newUrl())
@@ -568,6 +611,11 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         name: String,
         price: Int? = 99_000,
     ): ProductSnapshot = ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+
+    private fun landedOn(
+        finalUrl: String,
+        name: String,
+    ): ProductSnapshot = product(name).copy(finalUrl = ProductLink.parse(finalUrl))
 
     private inline fun <reified E : Any> lastEvent(): E = applicationEvents.stream(E::class.java).toList().last()
 

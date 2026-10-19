@@ -28,7 +28,7 @@ class TournamentItemSlotPort(
                 return ItemSlotFill.Filled
             }
         tournamentItem.softDelete()
-        return ItemSlotFill.AlreadyHeld(holder.slot, tournamentItem.userId)
+        return ItemSlotFill.AlreadyHeld(holder.slot, tournamentItem.userId, holder.userId)
     }
 
     private fun holderOf(
