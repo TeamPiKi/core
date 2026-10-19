@@ -173,7 +173,7 @@ class TournamentController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable sourceTournamentId: Long,
     ): ApiResponseBody<Long> {
-        // idempotent get-or-create: 신규 생성·기존 클론 반환 모두 200. 항상 "생성"이 아니므로 201 을 쓰지 않는다.
+        // idempotent get-or-create: 신규 참여·기존 참여 이어하기 모두 200. 항상 "생성"이 아니므로 201 을 쓰지 않는다.
         val tournamentId = tournamentService.createFromPlayLink(userId, sourceTournamentId)
         return ApiResponseBody.ok(tournamentId)
     }

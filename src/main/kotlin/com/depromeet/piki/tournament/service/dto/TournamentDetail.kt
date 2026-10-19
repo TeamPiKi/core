@@ -43,8 +43,7 @@ sealed class TournamentDetail {
         val isGroupTournament: Boolean,
         val isOwner: Boolean,
         val isRoot: Boolean,
-        // true: ROOT 소유자 또는 소셜 초대로 참여한 CLONE 소유자 — 결과 화면에서 아이템 담기 허용(위시/링크/이미지).
-        // false: 플레이링크 CLONE 소유자 — 소셜 초대 없이 진입한 사용자로, 아이템 담기 불가.
+        // 결과 화면의 아이템 담기(위시/링크/이미지) 허용 여부 — 이 토너먼트의 참여자면 true(#1027).
         val canAddItem: Boolean,
         val playLinkExpiresAt: java.time.LocalDateTime?,
         val sourceTournamentId: Long? = null,

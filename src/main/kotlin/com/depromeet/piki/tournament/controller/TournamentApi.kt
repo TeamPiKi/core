@@ -41,13 +41,13 @@ interface TournamentApi {
             status 파라미터로 상태 필터링 가능하며 여러 값을 중복 전달할 수 있다(예: ?status=PENDING&status=IN_PROGRESS).
             생략 시 전체 반환. status 값은 대문자(PENDING/IN_PROGRESS/COMPLETED)로 전달해야 한다.
             limit 파라미터로 최근순 상위 N개만 받을 수 있다(예: 홈 카드용 ?limit=3). 생략 시 전체.
-            ownedOnly=true 면 내가 owner 인 ROOT·CLONE 만 반환한다(참여만 한 것은 제외) — 홈 카드용. 생략 시 false 로 참여한 것까지 포함.
+            ownedOnly=true 면 내가 만든 토너먼트만 반환한다(참여만 한 것은 제외) — 홈 카드용. 생략 시 false 로 참여한 것까지 포함.
             ownedOnly 는 status 와 독립된 필터라 함께 보내면 AND 로 걸린다. 홈이 상태 무관인 것은 status 를 안 보내기 때문이다.
             playType 파라미터로 솔로/소셜을 나눠 볼 수 있다(SOLO · SOCIAL). 생략 시 전체이며 status 와 AND 로 걸린다
             (예: ?status=PENDING&status=IN_PROGRESS&playType=SOCIAL).
             playType 은 저장된 속성이 아니라 참가 결과로 파생된다 — 혼자면 SOLO, 참여자가 생기면 SOCIAL 이고
-            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 PENDING 에서만 가능하므로 값이 바뀔 수 있는 구간도
-            PENDING 하나이며, 그 사이 같은 토너먼트가 SOLO 목록에서 SOCIAL 목록으로 옮겨갈 수 있다.
+            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 초대 코드(PENDING)와 플레이 링크(COMPLETED)로 일어나므로,
+            그 사이 같은 토너먼트가 SOLO 목록에서 SOCIAL 목록으로 옮겨갈 수 있다.
             각 항목의 thumbnailUrls 는 카드 대표 썸네일 URL 배열이다 — 최근 등록 아이템 중 이미지가 준비된(READY) 것 최대 2장.
             이미지가 준비된 아이템이 없으면 빈 배열이며, limit 유무와 무관하게 항상 포함된다.
 
@@ -56,7 +56,7 @@ interface TournamentApi {
             - playedCount ("플레이한 N"): 플레이를 끝까지 마친 사람 수. 시작만 하고 이탈한 사람은 빠지며, 아무도 완주 안 했으면 0이다.
               전체 결과 영수증에 나오는 인원과 같은 기준이다.
 
-            CLONE(플레이 링크로 만든 내 사본)도 두 값은 원본(ROOT) 기준으로 내려간다. 같은 토너먼트를 보는 카드이기 때문이다.
+            플레이 링크로 참여한 토너먼트도 같은 토너먼트의 참여자로 세므로 두 값이 주최자 카드와 같다.
 
             **participantProfileImages 는 deprecated 다.** 위 두 숫자로 대체됐고, 클라이언트가 전환해 배포되면 서버에서 제거한다.
             그때까지는 옛 값 그대로 함께 내려가니 새로 참조하지 않는다.
@@ -108,7 +108,7 @@ interface TournamentApi {
         )
         playType: TournamentPlayType?,
         @Parameter(
-            description = "내가 생성한 것만 볼지 (true 면 내가 owner 인 ROOT·CLONE 만). 생략 시 false 로 참여한 것까지 포함. status 와는 AND 로 걸린다. 홈 카드용.",
+            description = "내가 생성한 것만 볼지 (true 면 내가 만든 토너먼트만). 생략 시 false 로 참여한 것까지 포함. status 와는 AND 로 걸린다. 홈 카드용.",
             example = "true",
         )
         ownedOnly: Boolean,
@@ -120,10 +120,10 @@ interface TournamentApi {
         summary = "토너먼트 단건 조회",
         description = """
             토너먼트 ID로 상태에 따른 상세 정보를 조회한다.
-            isOwner: 요청자가 해당 토너먼트 인스턴스(ROOT 또는 CLONE)의 소유자이면 true.
-            isRoot: 소셜 토너먼트 원본(ROOT)이면 true, 멤버·플레이링크용 복사본(CLONE)이면 false. 솔로 토너먼트는 항상 true.
-            sourceTournamentId: CLONE 토너먼트이면 원본 ROOT의 id, ROOT이면 null. 게스트는 이 id로 GET /tournaments/{sourceTournamentId}/group-result를 호출한다.
-            플레이 링크 공유는 isRoot && isOwner 일 때만 허용된다. isOwner 단독으로 분기하면 CLONE 소유자에게도 공유 버튼이 노출되어 시안 위반이다.
+            isOwner: 요청자가 이 토너먼트를 만든 주최자이면 true. 플레이 링크 공유는 isOwner 일 때 허용된다.
+            isRoot: **deprecated.** 항상 true 다. 플레이 링크 참여자에게 사본 토너먼트를 만들던 구조(CLONE)가 사라져(#1027)
+              모든 참여자가 같은 원본 토너먼트를 본다. 클라이언트가 참조를 끊으면 서버에서 제거한다.
+            sourceTournamentId: **deprecated.** 같은 이유로 항상 null 이라 응답에서 키가 생략된다. 그룹 결과는 응답의 tournamentId 로 호출한다.
             응답의 status 필드에 따라 포함되는 데이터가 달라진다.
             - PENDING: pending 필드 (아이템 목록, 참여자 목록)
               - 각 아이템에 status 포함 (READY / PENDING / PROCESSING / FAILED). PENDING·PROCESSING 이면 name·price·imageUrl 은 null 이라 응답에서 제외됨
@@ -152,7 +152,7 @@ interface TournamentApi {
               - result: 1위부터 최대 4위까지 순위 아이템 목록
               - isGroupTournament: 소셜(그룹) 토너먼트 여부. 참여자 2명 이상이면 true(완료 무관). 클라이언트는 이 값으로 "전체 결과 보기" 배너를 노출한다 - 첫 완주자가 누구든 새로고침 없이 배너가 보인다.
               - hasGroupResult: 그룹 결과 조회 가능 여부. 완료한 플레이어가 2명 이상이면 true. 클라이언트는 이 값으로 배너 활성/비활성(다른 사람 결과가 아직 없으면 empty state)을 가른다.
-              - canAddItem: 결과 화면에서 아이템 담기(위시/링크/이미지)가 가능하면 true. ROOT 소유자·소셜 초대 CLONE 소유자는 true, 플레이링크 CLONE 소유자는 false.
+              - canAddItem: 결과 화면에서 아이템 담기(위시/링크/이미지)가 가능하면 true. 이 토너먼트의 참여자(주최자·초대 멤버·플레이 링크 참여자)면 true.
             나머지 필드는 응답에 포함되지 않는다.
         """,
     )
@@ -301,7 +301,7 @@ interface TournamentApi {
         summary = "그룹 결과 조회",
         description = """
             완료된 토너먼트의 그룹 결과를 조회한다.
-            원본 토너먼트와 플레이 링크로 복제된 모든 토너먼트의 결과를 비교해,
+            이 토너먼트를 완주한 모든 참여자(주최자·초대 멤버·플레이 링크 참여자)의 결과를 비교해,
             각 순위의 아이템마다 동일한 결과를 선택한 참여자 정보를 반환한다.
 
             각 참여자에 isHost 가 포함된다 (이 토너먼트를 만든 주최자면 true). 클라이언트는 프로필 우측 하단에 HostBadge 를 그린다.
@@ -331,7 +331,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 플레이링크로 참여한 복제 토너먼트는 그룹 결과 조회 불가)",
+                description = "권한 없음 (토너먼트 참여자가 아님)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -356,7 +356,7 @@ interface TournamentApi {
         description = """
             이 토너먼트에서만 보이는 참여 닉네임(표시명)을 바꾼다. 유저 프로필 닉네임은 바뀌지 않는다.
             결과·진행 화면의 참여자 이름과 알림(SSE·FCM) 문구에 이 닉네임이 쓰인다.
-            요청자가 참여한 토너먼트여야 한다(멤버는 자기 루트 토너먼트 id, 플레이링크 게스트는 자기 복제 토너먼트 id 를 넘긴다).
+            요청자가 참여한 토너먼트여야 한다(주최자·멤버·플레이 링크 참여자 모두 그 토너먼트 id 를 넘긴다).
         """,
     )
     @ApiResponses(
@@ -522,7 +522,7 @@ interface TournamentApi {
                 description =
                     "상태 충돌 (PENDING이 아닌 토너먼트 · PROCESSING/FAILED 상품 포함 · " +
                         "값이 비어 있는 미완성 상품 포함 · 가격 정보 없는 상품 포함 · " +
-                        "주최자가 아직 시작하지 않음 · 이미 본인 클론이 있음 — 뒤 둘은 멤버 시작 경로)",
+                        "주최자가 아직 시작하지 않음 — 마지막은 멤버 시작 경로)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -696,7 +696,7 @@ interface TournamentApi {
             nextMatch 는 같은 라운드에 남은 다음 매치이며, 라운드가 끝났으면 생략된다 (두 필드가 다 비면 data 는 빈 객체다).
             이때 클라이언트는 GET /tournaments/{id} 를 다시 호출해 다음 라운드를 받는다.
             결승(currentRound=2) 결과 기록 시 completed 에 본인의 순위 결과(1위~최대 4위)가 즉시 담긴다.
-            소셜 토너먼트라도 각 인스턴스(ROOT·CLONE)는 해당 인스턴스의 결승이 완료되는 즉시 COMPLETED 로 전환된다.
+            소셜 토너먼트라도 진행 상태는 참여자마다 따로라, 내 결승을 기록하는 즉시 나에게는 COMPLETED 로 보인다.
             다른 참여자의 진행 여부와 무관하게 내 결과는 바로 확인할 수 있다. 소셜 토너먼트면 완주 즉시 isGroupTournament=true 로 "전체 결과 보기" 배너가 노출되고(새로고침 불필요), 전체 그룹 결과는 2명 이상이 완료한 뒤 hasGroupResult=true 로 활성화된다.
         """,
     )
@@ -774,8 +774,8 @@ interface TournamentApi {
         summary = "플레이 링크 생성 (멱등)",
         description = """
             완료된 토너먼트의 플레이 링크를 만들거나 갱신한다. 토너먼트 소유자만 호출 가능.
-            플레이 링크를 통해 친구들이 동일한 아이템 구성으로 각자 자기 토너먼트를 진행할 수 있다
-            (친구마다 원본을 복제한 새 토너먼트가 생긴다 - `POST /{sourceTournamentId}/from-play-link`).
+            플레이 링크를 통해 친구들이 같은 토너먼트에 참여해 각자 자기 판을 진행할 수 있다
+            (친구마다 이 토너먼트의 참여자가 하나씩 늘어난다 - `POST /{sourceTournamentId}/from-play-link`).
 
             **호출 시점의 링크 상태에 따라 동작이 갈리고, 항상 200을 반환한다.**
             - 아직 만든 적 없으면: 새로 만든다 (생성 시점 + 14일).
@@ -784,8 +784,7 @@ interface TournamentApi {
             - 만료된 링크가 있으면: 새 14일로 갱신한다.
 
             플레이 링크는 **토너먼트당 하나**이고 주소가 `tournamentId` 로 결정된다(별도 토큰 없음) - 같은
-            토너먼트에 여러 개를 만들 수 없다. 링크를 통해 들어오는 인원 제한은 없고, 들어온 사람마다 자기
-            클론이 하나씩 생긴다.
+            토너먼트에 여러 개를 만들 수 없다. 링크를 통해 들어오는 인원 제한은 없다.
 
             초대 코드(시작 전, 참여자로 합류)와는 다른 기능이며 동시에 열리는 구간이 없다 - 초대 코드는
             PENDING 상태에서만, 플레이 링크는 COMPLETED 상태에서만 쓸 수 있다.
@@ -805,7 +804,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 소유자가 아님 · 플레이 링크로 참여한 토너먼트는 플레이 링크 생성 불가)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 소유자가 아님)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
@@ -828,17 +827,18 @@ interface TournamentApi {
     @Operation(
         summary = "플레이 링크로 토너먼트 진행",
         description = """
-            플레이 링크가 유효한 토너먼트와 동일한 아이템 구성으로 새 토너먼트를 생성한다.
-            생성된 토너먼트는 PENDING 상태이며 아이템이 미리 복사되어 있어 바로 시작할 수 있다.
-            idempotent: 같은 사용자가 같은 원본의 플레이 링크를 다시 호출하면 새로 만들지 않고
-            기존 본인 클론의 tournamentId 를 그대로 반환한다 (원본 링크 만료와 무관하게 이어서 진행 가능).
+            플레이 링크가 유효한 토너먼트에 요청자를 참여자로 추가하고, 그 토너먼트 id 를 반환한다.
+            새 토너먼트를 만들지 않는다 - 반환 id 는 항상 경로의 원본 토너먼트 id 다.
+            참여는 아직 시작 전 상태라, 이어서 POST /tournaments/{id}/start 로 자기 판을 시작한다.
+            idempotent: 이미 참여 중이면(초대 멤버·재진입) 새로 추가하지 않고 같은 id 를 반환한다
+            (링크 만료와 무관하게 이어서 진행 가능).
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "복제 토너먼트 생성 또는 기존 본인 클론 반환 (tournamentId 반환)",
+                description = "참여 시작 또는 기존 참여 이어하기 (원본 tournamentId 반환)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
