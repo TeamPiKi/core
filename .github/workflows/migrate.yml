@@ -1734,6 +1734,9 @@ jobs:
     if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
+    outputs:
+      # 토큰이 없으면 job 은 success 로 끝나도 아무것도 안 바꾼다. finalize 는 결과가 아니라 이 값을 본다.
+      done: ${{ steps.rewire.outputs.done }}
     steps:
       - uses: actions/checkout@v4
 
@@ -1978,7 +1981,7 @@ jobs:
         env:
           ENV: ${{ inputs.env }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
-          REWIRE: ${{ needs.rewire.result }}
+          REWIRE_DONE: ${{ needs.rewire.outputs.done }}
         run: |
           set -euo pipefail
           {
@@ -1990,14 +1993,14 @@ jobs:
             echo "| 무엇 | 어디 | 바꿀 값 |"
             echo "|---|---|---|"
             # 역할 ARN 들은 rewire job 이 자동으로 쓴다.
-            # 그 job 이 실패했을 때만 손으로 할 목록에 되살린다 — 성공했는데도 안내에 남겨 두면
-            # "아직 할 일이 있다" 는 잘못된 신호가 된다.
-            if [ "$REWIRE" != "success" ]; then
-              echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 실패) |"
+            # 그 job 이 끝까지 바꾸지 못했을 때만(실패·건너뜀·토큰 없음) 손으로 할 목록에 되살린다 — 다 바꿨는데도
+            # 안내에 남겨 두면 "아직 할 일이 있다" 는 잘못된 신호가 된다.
+            if [ "$REWIRE_DONE" != "true" ]; then
+              echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | Environment \`$ENV\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-ecr-push\` (rewire 미완료) |"
               if [ "$ENV" = prod ]; then
-                echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 실패) |"
-                echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | extractor 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-extractor-gha-ecr-push\` (rewire 실패) |"
-                echo "| \`AWS_DEPLOY_ROLE_ARN\` | renderer 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-headless-browser-gha-deploy\` (rewire 실패) |"
+                echo "| \`AWS_DB_PROVISION_ROLE_ARN\` | Environment \`prod-db\` variable | \`arn:aws:iam::$NEW_ACCOUNT:role/…-gha-db-provision\` (rewire 미완료) |"
+                echo "| \`AWS_ECR_PUSH_ROLE_ARN\` | extractor 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-extractor-gha-ecr-push\` (rewire 미완료) |"
+                echo "| \`AWS_DEPLOY_ROLE_ARN\` | renderer 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-headless-browser-gha-deploy\` (rewire 미완료) |"
               fi
             fi
             echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
@@ -2008,7 +2011,7 @@ jobs:
             echo "역할 ARN 의 정확한 이름은 신 계정 terraform output 또는 IAM 콘솔에서 확인한다"
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
-          ROLES=""; [ "$REWIRE" = "success" ] || ROLES=" · 배포 역할 ARN(rewire 실패)"
+          ROLES=""; [ "$REWIRE_DONE" = "true" ] || ROLES=" · 배포 역할 ARN(rewire 미완료)"
           echo "::warning::남은 수동 정리 — OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제${ROLES}. 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
