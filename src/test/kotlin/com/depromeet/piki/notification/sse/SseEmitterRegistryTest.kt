@@ -22,7 +22,7 @@ class SseEmitterRegistryTest {
     fun `register 한 연결이 connectionsOf 로 조회된다`() {
         val userId = UUID.randomUUID()
 
-        val connection = registry.register(userId, SseEmitter())
+        val connection = registry.register(SseConnection(userId, SseEmitter()))
 
         assertEquals(listOf(connection), registry.connectionsOf(userId))
     }
@@ -31,8 +31,8 @@ class SseEmitterRegistryTest {
     fun `한 유저가 여러 탭으로 접속하면 연결이 모두 보관된다`() {
         val userId = UUID.randomUUID()
 
-        val first = registry.register(userId, SseEmitter())
-        val second = registry.register(userId, SseEmitter())
+        val first = registry.register(SseConnection(userId, SseEmitter()))
+        val second = registry.register(SseConnection(userId, SseEmitter()))
 
         assertEquals(listOf(first, second), registry.connectionsOf(userId))
     }
@@ -40,8 +40,8 @@ class SseEmitterRegistryTest {
     @Test
     fun `unregister 하면 해당 연결만 빠지고 나머지는 남는다`() {
         val userId = UUID.randomUUID()
-        val keep = registry.register(userId, SseEmitter())
-        val drop = registry.register(userId, SseEmitter())
+        val keep = registry.register(SseConnection(userId, SseEmitter()))
+        val drop = registry.register(SseConnection(userId, SseEmitter()))
 
         registry.unregister(drop)
 
@@ -51,7 +51,7 @@ class SseEmitterRegistryTest {
     @Test
     fun `마지막 연결을 unregister 하면 그 유저의 연결이 비워진다`() {
         val userId = UUID.randomUUID()
-        val connection = registry.register(userId, SseEmitter())
+        val connection = registry.register(SseConnection(userId, SseEmitter()))
 
         registry.unregister(connection)
 
@@ -69,7 +69,7 @@ class SseEmitterRegistryTest {
     @Test
     fun `없는 연결을 unregister 해도 예외 없이 무시된다`() {
         val userId = UUID.randomUUID()
-        registry.register(userId, SseEmitter())
+        registry.register(SseConnection(userId, SseEmitter()))
 
         registry.unregister(SseConnection(userId, SseEmitter()))
         registry.unregister(SseConnection(UUID.randomUUID(), SseEmitter()))
@@ -80,7 +80,7 @@ class SseEmitterRegistryTest {
     @Test
     fun `등록이 돌려준 번호로 touch 하면 그 연결의 최근 시각이 갱신된다`() {
         val userId = UUID.randomUUID()
-        val connection = registry.register(userId, SseEmitter())
+        val connection = registry.register(SseConnection(userId, SseEmitter()))
 
         val touched = registry.touch(userId, connection.id, t0)
 
@@ -91,17 +91,19 @@ class SseEmitterRegistryTest {
     @Test
     fun `모르는 번호나 다른 유저의 번호로 touch 하면 false 이고 시각도 바뀌지 않는다`() {
         val owner = UUID.randomUUID()
-        val connection = registry.register(owner, SseEmitter())
+        val connection = registry.register(SseConnection(owner, SseEmitter()))
+
+        val before = connection.lastHeartbeatAt
 
         assertFalse(registry.touch(owner, UUID.randomUUID(), t0))
         assertFalse(registry.touch(UUID.randomUUID(), connection.id, t0))
-        assertEquals(null, connection.lastHeartbeatAt)
+        assertEquals(before, connection.lastHeartbeatAt)
     }
 
     @Test
     fun `unregister 한 연결의 번호는 더 이상 touch 되지 않는다`() {
         val userId = UUID.randomUUID()
-        val connection = registry.register(userId, SseEmitter())
+        val connection = registry.register(SseConnection(userId, SseEmitter()))
 
         registry.unregister(connection)
 
@@ -111,25 +113,25 @@ class SseEmitterRegistryTest {
     @Test
     fun `removeStale 은 하트비트가 임계값 넘게 끊긴 연결만 떼어내 돌려준다`() {
         val userId = UUID.randomUUID()
-        val stale = registry.register(userId, SseEmitter())
-        val alive = registry.register(userId, SseEmitter())
-        val legacy = registry.register(userId, SseEmitter())
+        val stale = registry.register(SseConnection(userId, SseEmitter()))
+        val alive = registry.register(SseConnection(userId, SseEmitter()))
+        val fresh = registry.register(SseConnection(userId, SseEmitter(), openedAt = t0.plusSeconds(50)))
         registry.touch(userId, stale.id, t0)
         registry.touch(userId, alive.id, t0.plusSeconds(50))
 
         val removed = registry.removeStale(t0.plusSeconds(61), Duration.ofSeconds(60))
 
         assertEquals(listOf(stale), removed)
-        assertEquals(listOf(alive, legacy), registry.connectionsOf(userId))
+        assertEquals(listOf(alive, fresh), registry.connectionsOf(userId))
     }
 
     @Test
     fun `forEach 는 모든 유저의 모든 연결을 순회한다`() {
         val userA = UUID.randomUUID()
         val userB = UUID.randomUUID()
-        registry.register(userA, SseEmitter())
-        registry.register(userA, SseEmitter())
-        registry.register(userB, SseEmitter())
+        registry.register(SseConnection(userA, SseEmitter()))
+        registry.register(SseConnection(userA, SseEmitter()))
+        registry.register(SseConnection(userB, SseEmitter()))
 
         val visited = mutableListOf<UUID>()
         registry.forEach { connection -> visited.add(connection.userId) }
@@ -145,7 +147,7 @@ class SseEmitterRegistryTest {
         val count = 50
         val connections = arrayOfNulls<SseConnection>(count)
 
-        runConcurrently(count) { i -> connections[i] = registry.register(userId, SseEmitter()) }
+        runConcurrently(count) { i -> connections[i] = registry.register(SseConnection(userId, SseEmitter())) }
         assertEquals(count, registry.connectionsOf(userId).size)
 
         runConcurrently(count) { i -> registry.unregister(requireNotNull(connections[i])) }

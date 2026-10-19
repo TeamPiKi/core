@@ -5,6 +5,7 @@ plugins {
     id("org.springframework.boot") version "4.0.5"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.2"
+    id("com.google.protobuf") version "0.10.0"
 }
 
 ktlint {
@@ -30,6 +31,9 @@ repositories {
 val testcontainersVersion = "1.21.4"
 val awsSdkVersion = "2.44.11"
 
+// Spring Boot BOM 이 protobuf 를 관리하지 않아 명시한다. protoc 도 같은 버전으로 맞춘다(생성 코드와 런타임의 호환).
+val protobufVersion = "4.35.0"
+
 dependencyManagement {
     imports {
         mavenBom("org.testcontainers:testcontainers-bom:$testcontainersVersion")
@@ -44,6 +48,9 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("tools.jackson.module:jackson-module-kotlin")
 
+    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
+
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-mysql")
     runtimeOnly("com.mysql:mysql-connector-j")
@@ -53,10 +60,13 @@ dependencies {
 
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    // Lettuce 의 TCP_USER_TIMEOUT 은 epoll 에서만 걸린다(RedisConfig). 배포 서버는 arm64, CI 는 x86_64.
+    runtimeOnly("io.netty:netty-transport-native-epoll::linux-aarch_64")
+    runtimeOnly("io.netty:netty-transport-native-epoll::linux-x86_64")
 
     // admin 백오피스 세션을 톰캣 메모리가 아니라 Redis 에 둔다(#885). 인메모리면 blue-green 배포로 컨테이너가
     // 교체될 때마다 세션이 통째로 사라져, AdminAccessFilter 가 404 를 내고 배포마다 Discord grant 링크를 다시 받아야 했다.
-    // Redis 컨테이너는 앱 배포와 독립적으로 유지되므로(provision-runtime.sh 가 "있으면 skip") 세션이 배포를 견딘다.
+    // Redis 컨테이너는 앱 배포와 독립적으로 유지되므로 세션이 배포를 견딘다.
     // 세션에는 신원뿐 아니라 CSRF 토큰도 실려 있어(AdminCsrfPreloadInterceptor) 함께 영속된다.
     //
     // Spring Session 라이브러리(org.springframework.session:spring-session-data-redis)가 아니라 Boot 의 이 모듈을
@@ -139,20 +149,25 @@ kotlin {
     }
 }
 
+// 정본이 소스 트리 밖이라 경로가 규약이다. 로컬은 infra 의 install.sh 가, CI 는 checkout 이 같은 자리에 놓는다.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:$protobufVersion"
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir("shared-infra/contracts")
+        }
+    }
+}
+
 tasks.withType<Test> {
     useJUnitPlatform()
     // JDK 21+부터 동적 에이전트 로딩이 제한됨. Mockito(ByteBuddy)가 런타임에 에이전트를 붙이므로 명시적 허용 필요.
     jvmArgs("-XX:+EnableDynamicAgentLoading")
-
-    // 추출 실패 code 계약 카탈로그(ExtractionErrorCatalogTest 가 읽는다)는 소스 트리 밖의 설치본이라
-    // Gradle 이 입력으로 보지 못한다. 명시하지 않으면 카탈로그만 바뀐 상황에서 test 가 UP-TO-DATE 로 건너뛰어
-    // 어긋난 채 초록불이 된다(실측). optional 인 이유: 미설치 환경에서 파일 부재로 task 구성이 깨지지 않게 —
-    // 부재 자체는 그 테스트가 실패로 판정한다.
-    inputs
-        .files(layout.projectDirectory.file("shared-infra/contracts/extraction-error-codes.yaml"))
-        .withPropertyName("extractionErrorCatalog")
-        .withPathSensitivity(PathSensitivity.RELATIVE)
-        .optional()
 }
 
 // Spring Boot 플러그인은 실행 가능한 boot jar 와 라이브러리용 plain jar 를 함께 만든다. 이 앱은 라이브러리로

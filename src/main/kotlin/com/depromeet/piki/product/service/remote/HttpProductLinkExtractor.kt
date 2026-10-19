@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.contracts.extraction.v1.LinkExtractionRequest
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.routing.DomainAccessPolicy
@@ -10,7 +11,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
 // 원격 추출 서비스(extractor)의 링크 추출 클라이언트. 계약 정본은 TeamPiKi/infra 의
-// contracts/extraction-api.md 이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
+// contracts/extraction.proto(모양)·extraction-api.md(동작 규칙)이고, 호출·3갈래 번역(2xx / 422+code / 그 외)·2xx 계약 위반 가드는 이미지 클라이언트
 // (HttpImageSnapshotExtractor)와 공유하므로 RemoteExtractionContract 한 곳에 있다 — 여기는 링크 고유의 요청(URL)만 진다.
 //
 // 차단(BLOCKED)은 여기서 끝난다 — 요청을 아예 내보내지 않으므로 extractor·renderer 는 그 도메인의 존재조차
@@ -39,31 +40,21 @@ class HttpProductLinkExtractor(
         // 나가는 유일한 출구라, 이 한 곳을 막으면 어느 경로로 들어오든 두드리지 않는다.
         // "차단당했다고 판단한 곳에 매번 다시 요청하지 않는다"는 계약이라 성능 판단이 아니다.
         if (accessPolicy.blocked(link)) throw ProductLinkException.unsupportedPlatform()
+        val request =
+            LinkExtractionRequest
+                .newBuilder()
+                .setUrl(link.value.toString())
+                // 허락 판정의 원장은 core 다. extractor·renderer 는 이 값만큼 수단을 열 뿐,
+                // 무엇이 허락됐는지 스스로 알지 않는다(무상태).
+                .setAuthorized(accessPolicy.authorizedFor(link))
+        // 지정이 없으면 필드를 안 실어 extractor 의 기본 모델로 간다 — 없는 상태를 빈 값으로 바꿔 보내지 않는다.
+        modelSettings.modelOf(ExtractionTarget.LINK)?.let(request::setModel)
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
-            path = LINK_EXTRACTION_PATH,
-            request =
-                RemoteLinkExtractionRequest(
-                    url = link.value.toString(),
-                    // 허락 판정의 원장은 core 다. extractor·renderer 는 이 값만큼 수단을 열 뿐,
-                    // 무엇이 허락됐는지 스스로 알지 않는다(무상태).
-                    authorized = accessPolicy.authorizedFor(link),
-                    model = modelSettings.modelOf(ExtractionTarget.LINK),
-                ),
+            path = ExtractionEndpoints.LINK_EXTRACTION,
+            request = request.build(),
             link = link,
             target = "url=${link.safeLogString()}",
         )
     }
-
-    companion object {
-        private const val LINK_EXTRACTION_PATH = "/internal/extractions/link"
-    }
 }
-
-// wire 요청 모델 — 이 클라이언트 밖에서 쓰지 않는다(file-private). 응답은 이미지와 공유(RemoteExtractionResponse).
-// model 이 null 이면 extractor 가 자기 기본 모델을 쓴다(계약 §2) — 지정이 없는 상태를 그대로 흘려보낸다.
-private data class RemoteLinkExtractionRequest(
-    val url: String,
-    val authorized: Boolean,
-    val model: String?,
-)

@@ -28,6 +28,7 @@ class RemoteExtractionHttpClientConfig {
                     setReadTimeout(properties.readTimeoutMs)
                 },
             ).observationRegistry(observationRegistry)
+            .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
             .build()
     }
 }

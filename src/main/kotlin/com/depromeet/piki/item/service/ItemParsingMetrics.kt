@@ -26,8 +26,8 @@ object ItemParsingMetrics {
     // 성공.
     const val REASON_NONE = "none"
 
-    // 워커 확정 실패 5종 — "이 숫자가 늘면 누가 무엇을 하는가"로 나눈다(#936). 값은 계약 카탈로그
-    // (shared-infra/contracts/extraction-error-codes.yaml)의 bucket 과 같은 문자열이어야 한다: 원격 code 를
+    // 워커 확정 실패 5종 — "이 숫자가 늘면 누가 무엇을 하는가"로 나눈다(#936). 값은 계약 정본
+    // (shared-infra/contracts/extraction.proto)의 Bucket 이름을 소문자로 쓴 문자열이어야 한다: 원격 code 를
     // 우리 예외로 번역할 때 붙는 bucket 이 그대로 이 라벨이 되고, ExtractionErrorCatalogTest 가 셋을 대조한다.
 
     // 사용자가 상품 아닌 걸 넣음. 정상 트래픽이라 할 일이 없다.

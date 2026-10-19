@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -20,10 +21,14 @@ import kotlin.test.assertFailsWith
 // 메시지가 그대로 백오피스 화면의 거절 사유가 되므로, 사유별 문구까지 상수로 단언한다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpProductLinkExtractorTest 와 같은 방식).
 class HttpExtractionModelProbeTest {
-    private val probeUrl = "http://extractor.test${HttpExtractionModelProbe.PROBE_PATH}"
+    private val probeUrl = "http://extractor.test/internal/models/probe"
 
     private fun probeWith(server: (MockRestServiceServer) -> Unit): HttpExtractionModelProbe {
-        val builder = RestClient.builder().baseUrl("http://extractor.test")
+        val builder =
+            RestClient
+                .builder()
+                .baseUrl("http://extractor.test")
+                .configureMessageConverters { it.registerDefaults().addCustomConverter(RemoteExtractionContract.messageConverter()) }
         val mockServer = MockRestServiceServer.bindTo(builder).build()
         server(mockServer)
         return HttpExtractionModelProbe(builder.build())
@@ -63,7 +68,7 @@ class HttpExtractionModelProbeTest {
     fun `422 MODEL_NOT_FOUND 는 모델명을 확인하라는 사유로 거절한다`() {
         assertEquals(
             HttpExtractionModelProbe.MESSAGE_NOT_FOUND,
-            rejectionMessage("""{"code":"${HttpExtractionModelProbe.CODE_MODEL_NOT_FOUND}"}"""),
+            rejectionMessage("""{"code":"${ExtractionErrorCode.MODEL_NOT_FOUND.name}"}"""),
         )
     }
 
@@ -71,7 +76,7 @@ class HttpExtractionModelProbeTest {
     fun `422 MODEL_INCOMPATIBLE 은 다른 모델을 고르라는 사유로 거절한다`() {
         assertEquals(
             HttpExtractionModelProbe.MESSAGE_INCOMPATIBLE,
-            rejectionMessage("""{"code":"${HttpExtractionModelProbe.CODE_MODEL_INCOMPATIBLE}"}"""),
+            rejectionMessage("""{"code":"${ExtractionErrorCode.MODEL_INCOMPATIBLE.name}"}"""),
         )
     }
 

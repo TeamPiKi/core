@@ -22,5 +22,5 @@ COPY --from=extractor /workspace/application/ ./
 
 USER appuser
 
-EXPOSE 8080
+# 리슨 포트는 배포가 env PORT 로 넘긴다.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

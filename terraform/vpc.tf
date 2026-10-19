@@ -89,7 +89,11 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route_table_association" "private" {
-  count          = length(aws_subnet.private)
+  # length(aws_subnet.private) 대신 그 subnet 을 만드는 것과 같은 변수를 센다. 전자는 아직 만들어지지
+  # 않은 리소스를 참조해, apply 전 단계(terraform import 등)가 "count depends on resource attributes
+  # that cannot be determined until apply" 로 통째로 실패한다(빈 계정 이관에서 실측).
+  # 개수는 동일하다 — aws_subnet.private 자신이 count = length(var.private_subnet_cidrs) 다.
+  count          = length(var.private_subnet_cidrs)
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
 }

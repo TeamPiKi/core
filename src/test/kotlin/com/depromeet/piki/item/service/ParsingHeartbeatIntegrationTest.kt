@@ -13,7 +13,6 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.remote.ProductExtractorException
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
-import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubProductLinkExtractor
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
@@ -25,7 +24,6 @@ import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -46,7 +44,6 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var stubImageSnapshotExtractor: StubImageSnapshotExtractor
 
-    @Autowired private lateinit var stubImageStorage: StubImageStorage
 
     @Autowired private lateinit var itemRepository: ItemRepository
 
@@ -162,11 +159,10 @@ class ParsingHeartbeatIntegrationTest : IntegrationTestSupport() {
         try {
             asyncImageParsingWorker.parse(item.getId(), snapshotId, imageKey, 0)
 
-            // 좀비 폐기 로그가 유일한 완료 신호다(전이·회수를 둘 다 안 하므로 관측할 부수효과가 없다).
+            // 좀비 폐기 로그가 유일한 완료 신호다(전이를 안 하므로 관측할 부수효과가 없다).
             await().ignoreExceptions().atMost(Duration.ofSeconds(5)).until {
                 appender.list.any { it.formattedMessage.contains("item ${item.getId()} 이미지 좀비 결과") }
             }
-            assertFalse(imageKey in stubImageStorage.deletedKeys, "좀비 워커가 raw 를 지우면 재클레임된 새 시도가 재실행할 원본을 잃는다")
             assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(snapshotId)?.status, "좀비는 전이도 하지 않아야 한다")
         } finally {
             workerLogger.detachAppender(appender)

@@ -1,7 +1,6 @@
 package com.depromeet.piki.notification.sse
 
 import org.springframework.stereotype.Component
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -14,12 +13,8 @@ class SseEmitterRegistry {
     private val connectionsByUser = ConcurrentHashMap<UUID, CopyOnWriteArrayList<SseConnection>>()
 
     // computeIfAbsent 뒤 밖에서 add 하면 그 사이 unregister 가 빈 리스트를 키째 지워 새 연결이 고아가 된다.
-    fun register(
-        userId: UUID,
-        emitter: SseEmitter,
-    ): SseConnection {
-        val connection = SseConnection(userId, emitter)
-        connectionsByUser.compute(userId) { _, list ->
+    fun register(connection: SseConnection): SseConnection {
+        connectionsByUser.compute(connection.userId) { _, list ->
             (list ?: CopyOnWriteArrayList()).apply { add(connection) }
         }
         return connection
@@ -32,6 +27,8 @@ class SseEmitterRegistry {
     }
 
     fun connectionsOf(userId: UUID): List<SseConnection> = connectionsByUser[userId].orEmpty()
+
+    fun all(): List<SseConnection> = connectionsByUser.values.flatten()
 
     // 유저 파티션 안에서만 찾으므로 남의 번호는 모르는 번호와 같이 false 다.
     fun touch(

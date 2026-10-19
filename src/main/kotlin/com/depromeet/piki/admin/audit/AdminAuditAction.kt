@@ -18,6 +18,9 @@ enum class AdminAuditAction {
     // 배포 없이 바뀌므로, 값이 왜 이렇게 되어 있는지를 되짚을 유일한 기록이 이 로그다.
     ITEM_QUOTA_UPDATE,
 
+    // DEBUG 로그 스위치(#1109) — 누가 언제 켜고 껐는지. 켜 둔 채 잊으면 로그량이 Loki 한도를 건드린다.
+    DEBUG_LOG_UPDATE,
+
     // 공지 행위자 추적(#558) — 등록·예약·예약취소·발송을 각각 다른 코드로 남겨 audit 에서 action 별로 가른다.
     // (이전엔 예약·취소·발송이 ANNOUNCEMENT_SEND 한 코드로 뭉쳐 detail 문자열로만 구분됐다.)
     ANNOUNCEMENT_REGISTER,

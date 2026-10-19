@@ -7,6 +7,7 @@ import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.fcm.domain.UserDevice
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
+import com.depromeet.piki.notification.sse.SseConnection
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubFcmMessageSender
@@ -167,7 +168,7 @@ class NotificationBadgeSyncAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val target = saveNotification(userId)
             saveNotification(userId) // 안 읽을 1건 → 읽음 후 안읽음 = 1
-            val emitter = BadgeRecordingEmitter().also { registry.register(userId, it) }
+            val emitter = BadgeRecordingEmitter().also { registry.register(SseConnection(userId, it)) }
             try {
                 buildMockMvc()
                     .perform(

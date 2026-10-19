@@ -5,9 +5,11 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
+import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubOAuthClient
@@ -33,6 +35,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -74,6 +77,9 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var tournamentUserRepository: TournamentUserRepository
+
+    @Autowired
+    private lateinit var tournamentRepository: TournamentRepository
 
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
@@ -525,6 +531,25 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         return objectMapper.readTree(json).at("/data/tournamentId").asLong()
     }
 
+    // 게스트 오너 토너먼트는 회원 전용 게이트(#1161) 이전에 만들어진 레거시 행이라 API 로는 못 만든다. 저장소로 직접 만든다.
+    private fun createLegacyGuestTournament(
+        guestId: UUID,
+        name: String,
+    ): Long {
+        val tournament =
+            tournamentRepository.saveTournament(
+                Tournament(
+                    ownerTournamentUserId = 0L,
+                    name = name,
+                    inviteCode = UUID.randomUUID().toString().take(6),
+                    inviteExpiresAt = LocalDateTime.now().plusHours(1),
+                ),
+            )
+        val owner = tournamentUserRepository.save(TournamentUser(tournament.getId(), guestId))
+        tournament.assignOwner(owner.getId())
+        return tournament.getId()
+    }
+
     private fun loginWithGuestToken(
         guestAccessToken: String,
         body: String,
@@ -564,7 +589,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         // 2. 게스트로 토너먼트를 만들고(= 게스트 참여 행), 상품도 하나 담아 둔다(= 게스트가 주인인 출전 아이템).
         val guest = createGuest()
         val guestId = UUID.fromString(guest.userId)
-        val tournamentId = createTournament(guest.accessToken, "게스트가 만든 토너먼트")
+        val tournamentId = createLegacyGuestTournament(guestId, "게스트가 만든 토너먼트")
         val snapshotId =
             itemSnapshotRepository
                 .save(ItemSnapshot.pending(itemId = 9001L, requestedBy = guestId).apply { markProcessing() })
@@ -617,7 +642,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         // 게스트가 방을 만들고, 회원이 참여했다가 나간다(참여 행 soft-delete → 유니크 자리는 계속 점유).
         val guest = createGuest()
         val guestId = UUID.fromString(guest.userId)
-        val tournamentId = createTournament(guest.accessToken, "회원이 나간 방")
+        val tournamentId = createLegacyGuestTournament(guestId, "회원이 나간 방")
         tournamentUserRepository.save(TournamentUser(tournamentId = tournamentId, userId = memberId))
         tournamentUserRepository.softDeleteByTournamentIdAndUserId(tournamentId, memberId)
 
@@ -651,7 +676,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
         // 게스트가 방을 만들어 방장이 되고, 그 방에 회원도 참여한다 → 승계 시 충돌 방이 된다.
         val guest = createGuest()
-        val tournamentId = createTournament(guest.accessToken, "게스트가 방장인 방")
+        val tournamentId = createLegacyGuestTournament(UUID.fromString(guest.userId), "게스트가 방장인 방")
         mockMvc()
             .perform(
                 post("/api/v1/tournaments/$tournamentId/join")
@@ -718,7 +743,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
                 )
             }
         // 충돌과 무관한 게스트 전용 토너먼트도 하나 만든다.
-        val guestOnlyId = createTournament(guest.accessToken, "게스트만 있는 방")
+        val guestOnlyId = createLegacyGuestTournament(guestId, "게스트만 있는 방")
 
         val loginJson = loginWithGuestToken(guest.accessToken, body)
         val memberToken = objectMapper.readTree(loginJson).at("/data/accessToken").asString()

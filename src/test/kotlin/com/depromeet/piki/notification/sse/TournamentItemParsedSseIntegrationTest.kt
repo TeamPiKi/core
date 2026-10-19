@@ -49,9 +49,9 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         val tournamentItemId =
             tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, adder, snapshotId))).first().getId()
 
-        val adderEmitter = ItemParsedRecordingEmitter().also { registry.register(adder, it) }
-        val participantEmitter = ItemParsedRecordingEmitter().also { registry.register(participant, it) }
-        val outsiderEmitter = ItemParsedRecordingEmitter().also { registry.register(outsider, it) }
+        val adderEmitter = ItemParsedRecordingEmitter().also { registry.register(SseConnection(adder, it)) }
+        val participantEmitter = ItemParsedRecordingEmitter().also { registry.register(SseConnection(participant, it)) }
+        val outsiderEmitter = ItemParsedRecordingEmitter().also { registry.register(SseConnection(outsider, it)) }
 
         try {
             broadcaster.broadcast(snapshotId, ItemStatus.READY)
@@ -84,7 +84,7 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         tournamentUserRepository.save(TournamentUser(tournamentId, participant))
         val snapshotId = snapshotIdFor(itemId)
         tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentId, participant, snapshotId)))
-        val emitter = ItemParsedRecordingEmitter().also { registry.register(participant, it) }
+        val emitter = ItemParsedRecordingEmitter().also { registry.register(SseConnection(participant, it)) }
 
         try {
             broadcaster.broadcast(snapshotId, ItemStatus.FAILED)
@@ -101,7 +101,7 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         val itemId = 5003L
         val snapshotId = snapshotIdFor(itemId) // snapshot 만 있고 토너먼트엔 안 올림(위시 전용 상황 시뮬레이션)
         val someUser = UUID.randomUUID()
-        val emitter = ItemParsedRecordingEmitter().also { registry.register(someUser, it) }
+        val emitter = ItemParsedRecordingEmitter().also { registry.register(SseConnection(someUser, it)) }
 
         try {
             broadcaster.broadcast(snapshotId, ItemStatus.READY)
@@ -125,8 +125,8 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         // 같은 버전(snapshot)을 두 토너먼트가 pin 한다(공유 #825 의 세계) → 같은 사실이므로 두 좌표 모두 받는 것이 맞다.
         val itemIdA = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentA, userA, snapshotId))).first().getId()
         val itemIdB = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentB, userB, snapshotId))).first().getId()
-        val emitterA = ItemParsedRecordingEmitter().also { registry.register(userA, it) }
-        val emitterB = ItemParsedRecordingEmitter().also { registry.register(userB, it) }
+        val emitterA = ItemParsedRecordingEmitter().also { registry.register(SseConnection(userA, it)) }
+        val emitterB = ItemParsedRecordingEmitter().also { registry.register(SseConnection(userB, it)) }
 
         try {
             broadcaster.broadcast(snapshotId, ItemStatus.READY)
@@ -159,8 +159,8 @@ class TournamentItemParsedSseIntegrationTest : IntegrationTestSupport() {
         tournamentUserRepository.save(TournamentUser(tournamentB, userB))
         tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentA, userA, versionOne)))
         val cardB = tournamentItemRepository.saveAll(listOf(TournamentItem(tournamentB, userB, versionTwo))).first().getId()
-        val emitterA = ItemParsedRecordingEmitter().also { registry.register(userA, it) }
-        val emitterB = ItemParsedRecordingEmitter().also { registry.register(userB, it) }
+        val emitterA = ItemParsedRecordingEmitter().also { registry.register(SseConnection(userA, it)) }
+        val emitterB = ItemParsedRecordingEmitter().also { registry.register(SseConnection(userB, it)) }
 
         try {
             broadcaster.broadcast(versionTwo, ItemStatus.READY)

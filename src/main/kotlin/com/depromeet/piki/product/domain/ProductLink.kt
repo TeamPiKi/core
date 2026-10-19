@@ -35,9 +35,25 @@ class ProductLink private constructor(
     override fun hashCode(): Int = value.hashCode()
 
     companion object {
-        private val HTTP_SCHEMES = setOf("https")
+        private val ENTRY_SCHEMES = setOf("https")
 
-        fun parse(raw: String): ProductLink {
+        // 귀결점은 extractor 가 매 홉 http 도 따라가(내부 주소 판정은 scheme 과 무관하게 거기서 끝남) http 일 수 있다.
+        // 정체성은 CanonicalLink 가 https 로 다시 조립하므로 같은 host·path 의 http·https 가 하나로 모인다.
+        private val HOP_SCHEMES = setOf("http", "https")
+
+        fun parse(raw: String): ProductLink = parse(raw, ENTRY_SCHEMES)
+
+        // 파싱 귀결점(redirect·렌더가 도착한 주소) 전용. CanonicalLink 가 host 를 요구하므로 여기서 함께 거른다.
+        fun parseHop(raw: String): ProductLink {
+            val link = parse(raw, HOP_SCHEMES)
+            requireNotNull(link.value.host) { "host 없는 귀결점" }
+            return link
+        }
+
+        private fun parse(
+            raw: String,
+            schemes: Set<String>,
+        ): ProductLink {
             val trimmed = raw.trim()
             // 계약이 아니라 불변식이라 require 다 — 두 등록 DTO 의 @field:NotBlank 가 빈 값을 먼저 걸러
             // 멀쩡한 클라이언트는 여기 닿을 수 없다. 닿았다면 어느 입력 경계가 자기 검증을 빠뜨린 것이다.
@@ -52,7 +68,7 @@ class ProductLink private constructor(
                 }
             // URI.create 는 스킴 없는 "example.com/product" 도 relative URI 로 통과시키므로 명시 검증.
             // RFC 3986 은 scheme 을 case-insensitive 로 정의하므로 비교 전에 lowercase 정규화한다.
-            if (uri.scheme?.lowercase() !in HTTP_SCHEMES) throw ProductLinkException.unsupportedScheme()
+            if (uri.scheme?.lowercase() !in schemes) throw ProductLinkException.unsupportedScheme()
             return ProductLink(uri)
         }
     }

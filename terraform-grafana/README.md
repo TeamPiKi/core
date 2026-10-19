@@ -1,7 +1,7 @@
 # Grafana 구성 (Terraform)
 
 **Grafana Cloud(piki.grafana.net) 의 알림·대시보드 구성 정본은 이 디렉터리다** (#1008, #1011).
-알림 룰 그룹 4개 · contact point 3개 · 루트 알림 정책 · 알림 폴더 · 대시보드 5개를 관리한다.
+알림 룰 그룹 3개 · contact point 3개 · 루트 알림 정책 · 알림 폴더 · 대시보드 5개를 관리한다.
 UI 에서 고칠 수는 있지만(잠금 없음) 다음 `apply` 가 코드 형상으로 되돌린다 —
 UI 수정은 실험, 확정은 PR.
 
@@ -40,26 +40,57 @@ db 는 백업.
 | state | 같은 버킷, `terraform.tfstate` | 같은 버킷, `grafana.tfstate` |
 | 격리 | 서로의 apply 가 상대 state 를 건드리지 않는다 (루트 모듈·state 분리) | |
 
-`backend.hcl` 은 `terraform/` 것을 그대로 재사용한다 (버킷명에 계정번호가 있어 gitignore).
+`backend.hcl` 은 `terraform/` 과 같은 값이다. 버킷명에 계정번호가 있어 gitignore 하고, 자격증명에서 파생해 만든다.
 
 ## 일상 워크플로우
+
+AWS 자격은 state 버킷이 있는 계정으로 잡는다(준비는 `terraform/README.md`, 프로필을 쓰면 `AWS_PROFILE` 지정).
+웹훅 SSM 조회와 state 접근에 필요하다.
 
 ```bash
 cd terraform-grafana
 
-# 1) backend 설정 재사용 (terraform/ 에서 이미 만들었다면 복사만)
-cp ../terraform/backend.hcl .
+# 1) backend 설정. 버킷명이 계정번호 파생이라 자격증명에서 도출한다
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+echo "bucket = \"piki-tfstate-$ACCOUNT\"" > backend.hcl   # gitignore 됨, 커밋 금지
 
 # 2) Grafana 인증 토큰 주입 (서비스 계정 terraform, Editor)
-export GRAFANA_AUTH=$(aws-vault exec piki -- aws ssm get-parameter \
+export GRAFANA_AUTH=$(aws ssm get-parameter \
   --name /piki/observability/grafana-terraform-token \
   --with-decryption --query Parameter.Value --output text)
 
-# 3) init / plan / apply — AWS 자격은 웹훅 SSM 조회·state 접근에 필요하다
-aws-vault exec piki -- terraform init -backend-config=backend.hcl
-aws-vault exec piki -- terraform plan    # 드리프트 감지: 변경 없음이어야 정상
-aws-vault exec piki -- terraform apply
+# 3) init / plan / apply
+terraform init -backend-config=backend.hcl
+terraform plan    # 드리프트 감지: 변경 없음이어야 정상
+terraform apply
 ```
+
+plan 출력의 contact point 블록은 웹훅 URL 을 가린다. `terraform show -json` 결과에는 평문으로 들어 있어 공유하지 않는다.
+
+## state 와 import 블록
+
+state 는 AWS 계정의 버킷에 있고 Grafana 자원은 계정 밖에 있다. 계정 이관으로 버킷이 바뀌면 자원은
+그대로인데 state 만 빈다. 2차 이관에서 실제로 state 가 구 계정 버킷과 함께 사라졌다 (#1200).
+
+`restore/imports.tf` 가 자원 전부의 import 블록을 갖는다. 루트 모듈이 읽지 않는 폴더라 평소 plan 에는 끼지 않는다.
+루트에 상시 두면 아직 Grafana 에 없는 새 자원의 import 가 plan 을 실패시킨다.
+
+- **새 grafana 자원을 추가하면 `restore/imports.tf` 에 블록도 추가한다.** 자원과 블록이 1:1 이 아니면 이관 워크플로 정적 검증(migrate-lint)이 실패한다.
+- 이관 때는 `migrate.yml` 의 `infra_grafana` job 이 이 파일을 루트로 복사해 재구성한다. plan 에 생성·교체 대상이 나오면 apply 전에 멈춘다.
+  이 job 만 다시 돌리려면 `only=grafana`.
+- state 가 비었는데 이관이 아닌 경우(버킷 사고 등)는 로컬에서 같은 일을 한다. 위 1)·2) 뒤:
+
+```bash
+cp restore/imports.tf restore_imports.tf   # gitignore 됨
+terraform init -backend-config=backend.hcl
+terraform plan    # N to import, 0 to add, 0 to destroy 이어야 한다
+terraform apply
+rm restore_imports.tf
+terraform plan    # No changes
+```
+
+빈 state 에서 import 한 직후의 plan 은 변경 4건을 보인다. contact point 3개의 웹훅 URL(import 가 보안 필드를 비워 옴)과
+폴더의 `prevent_destroy_if_not_empty`(Grafana 에 저장되지 않는 provider 속성)다. apply 하면 수렴한다.
 
 ## 시크릿
 
@@ -75,7 +106,7 @@ aws-vault exec piki -- terraform apply
 
 ## 규율
 
-- **알림·대시보드 변경은 PR -> 리뷰 -> apply.** apply 는 수동(로컬)이다.
+- **알림·대시보드 변경은 PR -> 리뷰 -> apply.** 평소 apply 는 수동(로컬)이다. 계정 이관 때만 `infra_grafana` job 이 apply 한다.
 - **apply 전 `plan` 으로 드리프트를 확인한다.** 예상 밖 diff 는 누가 UI 에서 고쳤다는 뜻 —
   되돌릴지(그냥 apply) 코드에 흡수할지 PR 로 정한다.
 - **디스코드 메시지 규율**: 본문은 각 룰의 `summary` annotation 이 정본이고, summary 에

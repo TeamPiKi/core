@@ -7,6 +7,7 @@ import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.fcm.domain.UserDevice
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
+import com.depromeet.piki.notification.sse.SseConnection
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubFcmMessageSender
@@ -87,8 +88,8 @@ class NotificationCleanupSchedulerIntegrationTest : IntegrationTestSupport() {
             userDeviceRepository.save(UserDevice(userId = userA, deviceId = "dA", fcmToken = tokenA))
             userDeviceRepository.save(UserDevice(userId = userB, deviceId = "dB", fcmToken = tokenB))
 
-            val emitterA = CleanupBadgeRecordingEmitter().also { registry.register(userA, it) }
-            val emitterB = CleanupBadgeRecordingEmitter().also { registry.register(userB, it) }
+            val emitterA = CleanupBadgeRecordingEmitter().also { registry.register(SseConnection(userA, it)) }
+            val emitterB = CleanupBadgeRecordingEmitter().also { registry.register(SseConnection(userB, it)) }
             val fcmCalls = CopyOnWriteArrayList<Pair<List<String>, Int>>()
             stubFcmMessageSender.onSendBadgeSync = { tokens, badge ->
                 fcmCalls.add(tokens to badge)

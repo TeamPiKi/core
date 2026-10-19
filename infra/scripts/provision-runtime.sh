@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
-# (swap / redis / nginx default / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
+# (swap / redis(dev) / nginx default·exporter / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
 # swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
@@ -10,6 +10,56 @@ set -euo pipefail
 # 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
 # (alloy(4절)는 공용 블록 provision-alloy-ssm.sh 가 자기 핀으로 조회하므로 이 값을 쓰지 않는다.)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
+
+# --skip-alloy: 관측 수집기 설치를 생략한다. 이 스크립트는 alloy 공용 블록이 /tmp/piki-deploy/alloy/ 에
+# 미리 올라와 있다고 전제하는데(deploy.yml 의 Upload deploy files), 계정 이관처럼 그 블록을 올리지 않는
+# 경로에서는 파일이 없어 마지막에 죽는다. provision-db.sh 와 같은 플래그·같은 뜻.
+SKIP_ALLOY=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-alloy) SKIP_ALLOY=true ;;
+  esac
+done
+
+case "${ENVIRONMENT:-}" in
+  dev|prod) ;;
+  *) echo "ENVIRONMENT 는 dev 또는 prod 여야 한다 (받은 값: '${ENVIRONMENT:-}')" >&2; exit 2 ;;
+esac
+
+# 0) base 소프트웨어 — docker·nginx·certbot 이 없으면 깐다.
+#
+# 이 스크립트는 오랫동안 "박스에 docker 가 이미 있다" 를 전제했다. 그 전제는 terraform 의 user_data
+# (dev) 나 사람이 손으로 깐 기록(구 계정 prod)에 기대고 있었는데, 계정 이관으로 박스를 재생성하자
+# prod 쪽 전제가 통째로 사라져 2절 redis 에서 "docker: command not found" 로 죽었다(실측).
+#
+# user_data 에 기대지 않는 이유: 그것은 **첫 부팅에만** 실행된다. 이미 뜬 박스에 적용하려면 인스턴스를
+# 재생성해야 하고(terraform 은 user_data 변경을 in-place update 로 처리해 재생성하지도 않는다),
+# 그 재생성은 서비스 중인 박스에선 곧 다운타임이다. 여기서 보장하면 박스가 어떤 상태로 떠 있든
+# provision 한 번으로 준비된다 — 이 스크립트가 원래 표방하는 멱등과 같은 결이다.
+if command -v docker >/dev/null 2>&1 && command -v nginx >/dev/null 2>&1; then
+  echo "[base] docker·nginx 이미 설치됨 — skip"
+else
+  echo "[base] docker·nginx·certbot 설치"
+  export DEBIAN_FRONTEND=noninteractive
+  sudo -E apt-get update -qq
+  sudo -E apt-get install -y -qq ca-certificates curl nginx certbot python3-certbot-nginx
+  if ! command -v docker >/dev/null 2>&1; then
+    # Docker 공식 저장소 (arm64/t4g) — terraform 의 user_data 와 같은 절차.
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo -E apt-get update -qq
+    sudo -E apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    sudo usermod -aG docker ubuntu
+  fi
+  sudo systemctl enable --now docker
+  sudo systemctl enable --now nginx
+  # 이 셸은 usermod 이전에 열렸으므로 docker 그룹이 아직 안 붙었다. 아래 절들이 sudo 없이 docker 를
+  # 부르므로, 이번 실행에 한해 소켓 권한으로 메운다(다음 로그인부터는 그룹으로 해결된다).
+  sudo chmod 666 /var/run/docker.sock || true
+fi
 
 # 1) swap — 메모리 906Mi 라 1G swap 이 필수다. 없을 때만 생성하고 fstab 에 등록해 재부팅에도 유지되게 한다.
 if sudo swapon --show | grep -q '/swapfile'; then
@@ -50,10 +100,12 @@ else
 fi
 grep -q '^/swapfile2[[:space:]]' /etc/fstab || echo '/swapfile2 none swap sw 0 0' | sudo tee -a /etc/fstab
 
-# 2) redis — RefreshToken 저장소(RedisRefreshTokenStore). 없을 때만 named 볼륨(piki-redis-data)으로 기동.
+# 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 없을 때만 named 볼륨(piki-redis-data)으로 기동.
 #    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
 #    이후 컨테이너 재생성에도 refresh token 이 유지된다.
-if docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
+if [ "$ENVIRONMENT" = "prod" ]; then
+  echo "[redis] prod — DB 박스 Redis 사용, skip"
+elif docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
   echo "[redis] piki-redis 이미 존재 — skip"
 else
   echo "[redis] piki-redis named 볼륨으로 기동"
@@ -87,6 +139,15 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
   # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
   # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
   # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
+  # prod DB 박스와 같은 메모리 튜닝. 값의 근거는 infra/compose/db.yml.
+  MYSQL_ARGS=(--performance-schema=OFF --innodb-buffer-pool-size=64M --max-connections=60)
+  # 있으면 skip 이라 인자만 바꾸면 기존 컨테이너에 반영되지 않는다. 인자가 다를 때만 재생성한다(데이터는 볼륨에 남음).
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql' \
+    && [ "$(docker inspect -f '{{join .Config.Cmd " "}}' piki-mysql)" != "${MYSQL_ARGS[*]}" ]; then
+    echo "[mysql] piki-mysql 기동 인자가 다름 — 정상 종료 후 재생성"
+    docker stop -t 60 piki-mysql >/dev/null
+    docker rm piki-mysql >/dev/null
+  fi
   if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql'; then
     echo "[mysql] piki-mysql 이미 존재 — skip"
   else
@@ -100,7 +161,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
       -e MYSQL_USER="${DB_USERNAME}" \
       -e MYSQL_PASSWORD="${DB_PASSWORD}" \
       -e MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" \
-      mysql:8.4
+      mysql:8.4 "${MYSQL_ARGS[@]}"
   fi
 
   # MySQL readiness 대기 — docker run 직후엔 init(첫 기동 시 DB/user 생성 + 재시작) 중이라,
@@ -116,7 +177,7 @@ if [ "${ENVIRONMENT:-}" = "dev" ]; then
     [ "$i" -eq 30 ] && { echo "[mysql] readiness timeout (60s)"; exit 1; }
   done
 else
-  echo "[mysql] prod 환경 — skip (RDS 사용)"
+  echo "[mysql] prod 환경 — skip (DB 박스 사용)"
 fi
 
 # 4) nginx default 사이트 — 불필요한 stock catch-all 노출. 있으면 제거하고 reload.
@@ -126,6 +187,21 @@ if [ -e /etc/nginx/sites-enabled/default ]; then
   sudo nginx -t && sudo nginx -s reload
 else
   echo "[nginx] default 없음 — skip"
+fi
+
+# 4-1) nginx 연결 수 exporter — 127.0.0.1:9112 stub_status(infra/nginx/main/nginx.conf)를 읽어 Alloy 가 라벨로 수집한다.
+#    piki-core 가 아니라 piki-nginx 로 붙인다. 같은 job 이면 앱이 죽어도 up{job="piki-core"} 가 1 로 남는다.
+NGINX_EXPORTER_IMAGE="public.ecr.aws/nginx/nginx-prometheus-exporter:1.5.3"
+NGINX_EXPORTER_ARGS="--nginx.scrape-uri=http://127.0.0.1:9112/stub_status --web.listen-address=127.0.0.1:9113"
+if [ "$(docker inspect -f '{{.Config.Image}} {{join .Args " "}}' piki-nginx-exporter 2>/dev/null)" = "$NGINX_EXPORTER_IMAGE $NGINX_EXPORTER_ARGS" ]; then
+  echo "[nginx-exporter] 같은 이미지·인자로 실행 중 — skip"
+else
+  docker pull -q "$NGINX_EXPORTER_IMAGE"
+  docker rm -f piki-nginx-exporter >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086 # 인자 문자열을 낱말로 나눠 넘긴다
+  docker run -d --name piki-nginx-exporter --restart unless-stopped --network host --memory 32m \
+    --label piki.observe=true --label piki.service=piki-nginx --label piki.metrics.port=9113 \
+    "$NGINX_EXPORTER_IMAGE" $NGINX_EXPORTER_ARGS
 fi
 
 # 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
@@ -140,10 +216,14 @@ fi
 #    필수 5종(metrics·logs URL/USER, token) 실패는 즉시 중단, traces 2종은 빈 값 허용 — 블록이 판정한다.
 #    수집 대상은 컨테이너 label opt-in(piki.observe 등, contracts/observability.md) — 서비스 열거 regex 와
 #    cross-box scrape(EXTRACTOR_METRICS_TARGET)는 폐기됐다(extractor prod 박스는 자체 Alloy 가 수집).
-bash /tmp/piki-deploy/alloy/provision-alloy-ssm.sh \
-  --config /tmp/piki-deploy/alloy/config.alloy \
-  --name piki-alloy \
-  --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
-  --box piki-core
+if [ "$SKIP_ALLOY" = true ]; then
+  echo "[alloy] --skip-alloy — 관측 수집기 설치 생략"
+else
+  bash /tmp/piki-deploy/alloy/provision-alloy-ssm.sh \
+    --config /tmp/piki-deploy/alloy/config.alloy \
+    --name piki-alloy \
+    --environment "${ENVIRONMENT:?ENVIRONMENT 미주입 — deploy.yml envs 확인}" \
+    --box piki-core
+fi
 
 echo "런타임 프로비저닝 완료"

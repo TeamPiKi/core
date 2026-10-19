@@ -34,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import tools.jackson.databind.ObjectMapper
+import java.io.IOException
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -139,7 +140,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     fun `채널로 보내면 그 유저의 등록된 emitter 가 notification 이벤트 payload 를 받는다`() {
         val userId = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        registry.register(userId, emitter)
+        registry.register(SseConnection(userId, emitter))
         val notification =
             notificationRepository.save(
                 Notification(
@@ -174,7 +175,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         val otherUserId = UUID.randomUUID()
         val otherEmitter = RecordingSseEmitter()
-        registry.register(otherUserId, otherEmitter)
+        registry.register(SseConnection(otherUserId, otherEmitter))
         val notification =
             notificationRepository.save(
                 Notification(userId, NotificationType.ITEM_PARSING_COMPLETED, "제목", "본문", 1L),
@@ -190,26 +191,30 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `write 가 실패하는 죽은 emitter 는 전달 시 레지스트리에서 정리된다`() {
+    fun `IOException 으로 write 가 실패한 연결은 서버가 닫지 않고 전달 성공 수에서만 빠진다`() {
         val userId = UUID.randomUUID()
-        // 이미 complete 된 emitter 는 send 시 IllegalStateException 을 던져 "죽은 연결" 을 시뮬레이션한다.
-        val dead = SseEmitter().apply { complete() }
-        registry.register(userId, dead)
+        val broken = BrokenPipeSseEmitter()
+        registry.register(SseConnection(userId, broken))
         val notification =
             notificationRepository.save(
                 Notification(userId, NotificationType.ITEM_PARSING_FAILED, "제목", "본문", 1L),
             )
 
-        sseNotificationChannel.send(userId, notification)
+        try {
+            val delivered = sseNotificationChannel.send(userId, notification)
 
-        assertTrue(registry.connectionsOf(userId).isEmpty())
+            assertEquals(0, delivered)
+            assertFalse(broken.completed)
+        } finally {
+            registry.removeAll(userId)
+        }
     }
 
     @Test
     fun `토너먼트 파싱 알림은 채널 payload 에 kind·tournamentId·tournamentItemId 가 실린다`() {
         val userId = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        registry.register(userId, emitter)
+        registry.register(SseConnection(userId, emitter))
         val notification =
             notificationRepository.save(
                 Notification(
@@ -376,7 +381,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
         val owner = UUID.randomUUID()
         val other = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        val connection = registry.register(owner, emitter)
+        val connection = registry.register(SseConnection(owner, emitter))
         try {
             buildMockMvc()
                 .perform(
@@ -417,7 +422,7 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     fun `서버 ping 은 heartbeat 이벤트에 그 연결의 번호를 실어 보낸다`() {
         val userId = UUID.randomUUID()
         val emitter = RecordingSseEmitter()
-        val connection = registry.register(userId, emitter)
+        val connection = registry.register(SseConnection(userId, emitter))
         try {
             localDelivery.ping()
 
@@ -429,25 +434,25 @@ class NotificationSseIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `하트비트를 보내다 임계값 넘게 끊긴 연결만 서버가 닫고 한 번도 안 보낸 연결은 건드리지 않는다`() {
+    fun `하트비트가 임계값 넘게 끊긴 연결만 서버가 닫고 갓 등록된 연결은 건드리지 않는다`() {
         val userId = UUID.randomUUID()
         val now = Instant.parse("2026-09-08T00:00:00Z")
         val stale = RecordingSseEmitter()
         val alive = RecordingSseEmitter()
-        val legacy = RecordingSseEmitter()
-        val staleConnection = registry.register(userId, stale)
-        val aliveConnection = registry.register(userId, alive)
-        registry.register(userId, legacy)
+        val fresh = RecordingSseEmitter()
+        val staleConnection = registry.register(SseConnection(userId, stale))
+        val aliveConnection = registry.register(SseConnection(userId, alive))
+        registry.register(SseConnection(userId, fresh, openedAt = now.plusSeconds(50)))
         registry.touch(userId, staleConnection.id, now)
         registry.touch(userId, aliveConnection.id, now.plusSeconds(50))
         try {
             val evicted = localDelivery.evictStale(now.plusSeconds(61), Duration.ofSeconds(60))
 
             assertEquals(1, evicted)
-            assertEquals(listOf<SseEmitter>(alive, legacy), registry.connectionsOf(userId).map { it.emitter })
+            assertEquals(listOf<SseEmitter>(alive, fresh), registry.connectionsOf(userId).map { it.emitter })
             assertTrue(stale.completed)
             assertFalse(alive.completed)
-            assertFalse(legacy.completed)
+            assertFalse(fresh.completed)
         } finally {
             registry.removeAll(userId)
         }
@@ -474,6 +479,19 @@ private class RecordingSseEmitter : SseEmitter() {
     override fun send(builder: SseEmitter.SseEventBuilder) {
         builder.build().forEach { sentData.add(it.data) }
     }
+
+    override fun complete() {
+        completed = true
+        super.complete()
+    }
+}
+
+// 끊긴 소켓처럼 send 가 IOException 을 던진다.
+private class BrokenPipeSseEmitter : SseEmitter() {
+    @Volatile
+    var completed = false
+
+    override fun send(builder: SseEmitter.SseEventBuilder): Unit = throw IOException("Broken pipe")
 
     override fun complete() {
         completed = true

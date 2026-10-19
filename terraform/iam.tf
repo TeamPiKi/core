@@ -55,10 +55,16 @@ resource "aws_iam_instance_profile" "app" {
   role = aws_iam_role.app.name
 }
 
+# 서버 접속은 SSM 하나로 둔다(TeamPiKi/infra conventions/infra.md 5절). 이게 없으면 agent 가 등록하지 못한다.
+resource "aws_iam_role_policy_attachment" "app_ssm_core" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # -----------------------------------------------------------------------------
 # 앱 런타임 시크릿을 SSM Parameter Store(/piki-core/<env>/*, SecureString)에서 읽는 권한.
 #
-# GH secrets → SSM 단일화(배포 공통화 등급 C)로, deploy.yml 의 앱 컨테이너 기동부가 박스에서
+# GH secrets → SSM 단일화로, deploy.yml 의 앱 컨테이너 기동부가 박스에서
 # 이 경로를 직접 pull 해 -e 로 주입한다(get-parameters-by-path). 마이그레이션 워크플로
 # (migrate-secrets-to-ssm.yml)가 값을 심고, 이 정책이 읽기를 허가한다.
 #

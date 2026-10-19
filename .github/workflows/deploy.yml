@@ -15,6 +15,43 @@ on:
         description: "배포할 커밋(40자 hex). 비우면 --ref 가 가리키는 브랜치 끝. Promote 워크플로가 승격한 커밋을 채운다."
         required: false
         type: string
+      # ── 계정 이관 전용 (#1092) ─────────────────────────────────────────────
+      # 이관 중에는 "도메인이 가리키는 곳"과 "배포해야 할 곳"이 일부러 다르다. 신 계정 박스는
+      # DNS 가 넘어오기 전에 앱이 떠 있어야 하고(컷오버 스모크가 그걸 본다), 그 시점 도메인은
+      # 아직 구 계정을 가리킨다. 아래 가드는 정확히 그 불일치를 잡으라고 있는 것이라, 이관에서는
+      # 우회 경로를 따로 열어 준다 — 가드를 느슨하게 고치는 대신 "이관이라고 명시할 때만" 비킨다.
+      migration_host:
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드다 — 도메인 가드를 건너뛴다. 평소에는 비워 둘 것."
+        required: false
+        type: string
+      migration_role_arn:
+        description: "[이관 전용] ECR push 에 쓸 역할 ARN. 신 계정 이미지 푸시용. 비우면 vars.AWS_ECR_PUSH_ROLE_ARN."
+        required: false
+        type: string
+      migration_env:
+        description: "[이관 전용] dev|prod. 채우면 브랜치 대신 이 값으로 환경을 정한다. 이관은 항상 dev 브랜치에서 호출되므로 이것이 없으면 prod 이관이 dev 환경으로 잘못 배선된다."
+        required: false
+        type: string
+  # 계정 이관(migrate.yml)이 신 계정 박스로 이 배포를 돌리려고 호출한다. dispatch 와 같은 이관 입력을 받는다.
+  # 호출이라 migrate.yml 이 완료를 기다릴 수 있다(gh workflow run 의 fire-and-forget 과 다름).
+  workflow_call:
+    inputs:
+      sha:
+        description: "배포할 커밋(40자 hex). 비우면 브랜치 끝."
+        required: false
+        type: string
+      migration_host:
+        description: "[이관 전용] 신 계정 앱 박스 공인 IP. 채우면 이관 모드(도메인 가드 우회)."
+        required: false
+        type: string
+      migration_role_arn:
+        description: "[이관 전용] ECR push 에 쓸 역할 ARN(신 계정)."
+        required: false
+        type: string
+      migration_env:
+        description: "[이관 전용] dev|prod. 채우면 브랜치 대신 이 값으로 환경을 정한다."
+        required: false
+        type: string
 
 jobs:
   # 트리거 브랜치 → 배포 환경(dev/prod)·도메인·nginx conf 를 한 곳에서 결정한다.
@@ -25,8 +62,10 @@ jobs:
     # prod 배포 커밋 검증이 compare API 를 친다.
     permissions:
       contents: read
+    # workflow_call(계정 이관 호출)도 통과시킨다 — 빠뜨리면 호출돼도 resolve 가 skip 되어 deploy 까지 멈춘다.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     outputs:
       environment: ${{ steps.r.outputs.environment }}
@@ -60,7 +99,18 @@ jobs:
             REF=$(gh api "repos/$R/commits/$BRANCH" --jq '.sha') \
               || { echo "::error::$BRANCH 의 커밋을 해석하지 못했다."; exit 1; }
           fi
-          if [ "$BRANCH" = "main" ]; then
+          # 환경은 브랜치로 정한다 — main=prod, 그 외=dev. 다만 계정 이관은 워크플로 파일이 놓인
+          # 브랜치(dev)에서 호출되므로 그 규칙만으로는 prod 이관이 dev 환경으로 배선된다. 그러면
+          # environment 가 dev 가 되어 dev 의 EC2_SSH_KEY 로 prod 박스에 붙고, 실제로
+          # "ssh: unable to authenticate"(prod 박스는 prod 키로 생성)로 죽는다(실측).
+          # 그래서 이관이 넘긴 값이 있으면 그것을 우선한다.
+          MIG_ENV="${{ inputs.migration_env }}"
+          case "$MIG_ENV" in
+            dev|prod) ENVIRONMENT="$MIG_ENV" ;;
+            "")       [ "$BRANCH" = "main" ] && ENVIRONMENT=prod || ENVIRONMENT=dev ;;
+            *)        echo "::error::migration_env 는 dev 또는 prod 여야 한다 (받은 값: $MIG_ENV)"; exit 1 ;;
+          esac
+          if [ "$ENVIRONMENT" = "prod" ]; then
             echo "environment=prod" >> "$GITHUB_OUTPUT"
             echo "domain=api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=api.piki.day.conf" >> "$GITHUB_OUTPUT"
@@ -69,26 +119,19 @@ jobs:
             echo "domain=dev.api.piki.day" >> "$GITHUB_OUTPUT"
             echo "nginx_conf=dev.api.piki.day.conf" >> "$GITHUB_OUTPUT"
           fi
-          # 컨테이너 메모리(cgroup)·JVM 힙 한도는 박스 크기별로 다르다 — prod(#596)와 dev(#680 동거 대비 리사이즈)
-          # 둘 다 t4g.small(1.8G). blue-green overlap(전환 중 잠깐 2개 동시) 기준:
-          #   prod 2×768=1536 < 1.8G, dev 2×576 + (mysql·alloy·redis 약 160) ≈ 1.31G < 1.8G (동거 extractor 는 #862 로 폐지).
-          # dev 576m/288m 산정(2026-07-07 실측 2회): 캡 400m(Xmx256)·512m(Xmx320) 모두 anon 이 캡을 초과해 상시
-          #   swap-out 이었다. prod 실측(768m 캡에 실사용 720m, 힙 최대 512 제외 비힙 약 250m)으로 이 앱의 비힙을
-          #   약 250-300m 으로 확정 — 캡은 힙 + 300m 여유로 잡는다(576 = 288 + 288).
-          # 힙(-Xmx)은 컨테이너 RAM 안에 비힙(metaspace·thread stack·code cache·direct buffer) 여유를 남겨 잡는다.
-          # 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정한다.
-          # GC 는 -XX:+UseG1GC 를 명시한다(환경 공통). JVM 은 컨테이너 메모리 한도를 가용 메모리로 인식하는데, G1 자동
-          #   선택 기준(2 CPU + 1792MB)에 못 미쳐 Serial GC 로 떨어진다(prod 256m 실측 확인 — Copy + MarkSweepCompact).
-          #   Serial Full GC 는 단일 스레드 stop-the-world 라 힙이 클수록 1회 pause 가 길어져(prod 실측 평균 18s/회) 힙만
-          #   키우면 오히려 악화된다. G1 으로 병렬·증분 회수를 강제해 STW 를 짧게 가져간다.
-          if [ "$BRANCH" = "main" ]; then
+          [ -z "$MIG_ENV" ] || echo "::notice::이관 호출 — 브랜치($BRANCH) 대신 migration_env=$ENVIRONMENT 로 환경 결정"
+          # 한도는 Xmx 에 힙 밖(metaspace·코드 캐시·스레드·malloc) 실측 prod 약 375·dev 약 405MiB 와 여유를 더한 값이다(#1215).
+          #   한도가 이보다 작으면 한도에 닿을 때마다 커널이 컨테이너 메모리를 스왑으로 내보낸다.
+          # 배포 중 두 슬롯이 겹치는 약 35초 동안 넘치는 몫은 박스 스왑이 받는다.
+          # G1 을 명시하는 이유: 한도가 G1 자동 선택 기준(2 CPU + 1792MB)에 못 미쳐 Serial 로 떨어지고, Serial Full GC 가 prod 에서 평균 18초 멈췄다(#599).
+          if [ "$ENVIRONMENT" = "prod" ]; then
             echo "mem_limit=768m" >> "$GITHUB_OUTPUT"
             echo "mem_swap=1536m" >> "$GITHUB_OUTPUT"
-            echo "jvm_opts=-Xmx512m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
+            echo "jvm_opts=-Xmx352m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
           else
-            echo "mem_limit=576m" >> "$GITHUB_OUTPUT"
-            echo "mem_swap=1152m" >> "$GITHUB_OUTPUT"
-            echo "jvm_opts=-Xmx288m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
+            echo "mem_limit=704m" >> "$GITHUB_OUTPUT"
+            echo "mem_swap=1408m" >> "$GITHUB_OUTPUT"
+            echo "jvm_opts=-Xmx256m -Xms64m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" >> "$GITHUB_OUTPUT"
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
@@ -131,28 +174,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # 배포 대상(EC2_HOST)이 그 환경의 도메인이 가리키는 IP 와 다르면, 환경 secret override 가
-      # 잘못된 것(예: dev env EC2_HOST 누락 → repo prod 값으로 fallback). 하드코딩 IP 대신 DNS 를
-      # source of truth 로 동적 검증해, dev 코드가 엉뚱한(특히 prod) 서버로 나가는 걸 SSH/docker 전에 끊는다.
-      - name: Guard — 배포 대상이 환경 도메인 DNS 와 일치하는지
-        id: guard
-        env:
-          DOMAIN: ${{ needs.resolve.outputs.domain }}
-          TARGET: ${{ secrets.EC2_HOST }}
-          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
-        run: |
-          # 양쪽을 IP 로 정규화해 비교한다 — EC2_HOST 가 IP 든 hostname(EC2 public DNS 등)이든
-          # getent 가 IP 로 풀어주므로, 형식 차이로 인한 false-abort 없이 "같은 호스트냐"만 본다.
-          EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
-          ACTUAL=$(getent hosts "$TARGET"  | awk '{print $1}' | head -1)
-          echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED target=$TARGET targetIP=$ACTUAL"
-          if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
-            echo "reason=[$ENVIRONMENT] 배포 대상 EC2_HOST($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — 환경 secret 오설정(dev/prod 교차배선) 의심" >> "$GITHUB_OUTPUT"
-            echo "::error::배포 대상 EC2_HOST(${TARGET}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 환경 secret 오설정 의심, 중단."
-            exit 1
-          fi
-
       # (옛 러너측 'Discord admin secret 필수' 가드는 제거됐다 — 그 secret 들이 SSM 으로 옮겨가 러너의
       #  GH secrets 검사가 더는 성립하지 않기 때문. 같은 브릭 조건(admin secret 빈 값 → 도메인 잠금)은
       #  아래 Deploy 스텝의 box 측 가드가 SSM pull 직후 값으로 검사한다. 전 환경 공통이라 커버리지도 넓다.
@@ -176,51 +197,71 @@ jobs:
           path: shared-infra
           sparse-checkout: |
             blocks
+            contracts
           sparse-checkout-cone-mode: true
 
-      # 자동 배포(workflow_run): 이 배포를 트리거한 CI 실행이 이미 빌드·업로드한 JAR 을 그대로 받아
-      # 러너에서의 재빌드(약 47초)를 없앤다. run-id 로 그 CI 실행에 못박아, 배포 커밋과 다른 커밋의 JAR 을
-      # 집는 레이스를 차단한다(그냥 '최신' 아티팩트를 집으면 배포 도중 다른 push 로 커밋 불일치가 난다).
-      # 자동 경로는 러너에 JDK·Gradle 이 필요 없다 — 도커 빌드의 layertools extract 는 이미지 안에서 돈다.
-      - name: Download JAR from triggering CI run
-        id: fetch_jar
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: app-jar
-          path: build/libs
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # 수동 배포(workflow_dispatch): 트리거한 CI 실행이 없어 아티팩트가 없다. 이때만 러너에서 직접 빌드한다.
-      - name: Set up JDK 25 (manual dispatch fallback)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/setup-java@v4
+      # workflow_run 이면 트리거한 CI run 의 아티팩트, dispatch 면 러너 빌드. 자동 경로는 러너에 JDK 가 필요 없다.
+      - name: Resolve JAR
+        id: resolve_jar
+        uses: TeamPiKi/infra/.github/actions/app-jar-resolve@main
         with:
           java-version: '25'
-          distribution: 'temurin'
-
-      - name: Cache Gradle (manual dispatch fallback)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-${{ runner.os }}-
-
-      - name: Build JAR (manual dispatch fallback)
-        id: build
-        if: github.event_name == 'workflow_dispatch'
-        run: ./gradlew bootJar --no-daemon
 
       - name: Configure AWS credentials (OIDC)
         id: aws_credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          role-to-assume: ${{ inputs.migration_role_arn != '' && inputs.migration_role_arn || vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      # 서비스 포트와 extractor 주소는 infra 정본에서 매 배포 계산한다. 주소를 시크릿에 적어 두면 포트·박스가
+      # 바뀔 때 조용히 낡는다. 이관 때는 위 역할이 신 계정이라 신 계정 extractor 를 찾는다.
+      - name: Resolve service port and extractor address
+        id: addr
+        run: |
+          PORT=$(jq -er '.core.port' shared-infra/contracts/ports.json)
+          EXTRACTOR_URL=$(bash shared-infra/blocks/service_url.sh \
+            --ports-file shared-infra/contracts/ports.json --service extractor)
+          echo "service-port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "extractor-url=$EXTRACTOR_URL" >> "$GITHUB_OUTPUT"
+
+      # 배포 대상 박스에 SSM Session Manager 를 거쳐 SSH 한다(infra 의 ssm-ssh). 박스 SG 에 22 번이 없다(#1196).
+      # 박스는 이 job 이 잡은 역할의 계정에서 Name 태그로 찾는다. 이관 때는 그 역할이 신 계정이라 신 박스를 찾는다.
+      - name: Prepare SSH over SSM
+        id: box
+        uses: TeamPiKi/infra/.github/actions/ssm-ssh@main
+        with:
+          instance-name: ${{ (needs.resolve.outputs.environment == 'prod') && 'piki-prod-app' || 'piki-dev-app' }}
+          user: ${{ secrets.EC2_USER }}
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+
+      # 배포 대상 박스의 공인 IP 가 그 환경 도메인이 가리키는 IP 와 다르면 Name 태그나 환경 배선이 잘못된 것이다.
+      # 하드코딩 IP 대신 DNS 를 source of truth 로 비교해, dev 코드가 엉뚱한(특히 prod) 서버로 나가는 걸 빌드 전에 끊는다.
+      - name: Guard — 배포 대상이 환경 도메인 DNS 와 일치하는지
+        id: guard
+        env:
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
+          INSTANCE_ID: ${{ steps.box.outputs.instance-id }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          MIGRATION_HOST: ${{ inputs.migration_host }}
+        run: |
+          # 이관 중에는 도메인과 배포 대상이 일부러 다르다(위 입력 주석). 우회를 로그에 크게 남겨,
+          # 평소 배포에서 이 경로가 켜지면 바로 눈에 띄게 한다.
+          if [ -n "${MIGRATION_HOST:-}" ]; then
+            echo "::warning::[이관 모드] 도메인 가드 우회 — 신 계정 박스로 배포한다 ($DOMAIN 은 아직 구 계정을 가리킨다)"
+            exit 0
+          fi
+          EXPECTED=$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)
+          ACTUAL=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          [ "$ACTUAL" = "None" ] && ACTUAL=""
+          echo "environment=$ENVIRONMENT domain=$DOMAIN domainIP=$EXPECTED instance=$INSTANCE_ID instanceIP=$ACTUAL"
+          if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+            # 실패 사유를 step output 으로 남겨 요약·Discord 알림이 정확한 원인을 표시하게 한다(exit 전 기록).
+            echo "reason=[$ENVIRONMENT] 배포 대상 박스($ACTUAL) 가 $DOMAIN(→$EXPECTED) 와 다른 호스트 — Name 태그·환경 배선 오류 의심" >> "$GITHUB_OUTPUT"
+            echo "::error::배포 대상 박스(${INSTANCE_ID}→${ACTUAL}) 가 ${DOMAIN}(→${EXPECTED}) 와 다른 호스트 — 중단."
+            exit 1
+          fi
 
       - name: Login to Amazon ECR
         id: ecr_login
@@ -240,51 +281,53 @@ jobs:
           docker push "$IMAGE_LATEST"
           docker push "$IMAGE_SHA"
 
-      # 배포에 필요한 설정(nginx conf·provision 스크립트·alloy 공용 블록 3파일·healthcheck·슬롯 블록)을 SSH 연결
-      # 1회로 함께 올린다. 각각 scp 하면 핸드셰이크·액션 셋업이 반복돼 수십 초라 한 임시 집결 디렉토리
-      # (/tmp/piki-deploy)에 안착시킨다 — strip_components: 2 로 depth-3 소스는 파일명만 남고, alloy 블록
-      # (depth-4)은 alloy/ 하위(/tmp/piki-deploy/alloy/*)로 남아 provision-runtime.sh 가 그 경로로 호출한다(#743).
-      # 다운스트림(Apply nginx·Provision·Health check·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
+      # 배포에 필요한 설정(nginx conf·provision 스크립트·alloy 공용 블록 3파일·healthcheck·슬롯 블록)을 한 임시 집결
+      # 디렉토리(/tmp/piki-deploy)에 올린다. alloy 블록만 alloy/ 하위로 둔다 — provision-runtime.sh 가 그 경로로 호출한다(#743).
+      # 다운스트림(Apply nginx·Provision·Deploy·provision-runtime.sh)이 이 경로에서 각 파일을 읽는다.
       # source: infra/* 는 Checkout(서비스 전용), shared-infra/blocks/* 는 'Checkout infra blocks' 가 받아둔 공용 정본.
-      # 주의(줄끝 콤마는 오타 아님·필수): scp-action 은 source 를 콤마로만 쪼갠다(개행은 구분자 아님). 콤마 없이
-      # 개행만 두면 4줄이 한 경로로 합쳐져 glob 무매치 → 파일 0개 업로드되며 에러 없이 초록불로 넘어가 첫 배포가 깨진다.
       - name: Upload deploy files
         id: upload_files
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: |
-            infra/nginx/${{ needs.resolve.outputs.nginx_conf }},
-            infra/scripts/provision-runtime.sh,
-            shared-infra/blocks/alloy/config.alloy,
-            shared-infra/blocks/alloy/provision-alloy.sh,
-            shared-infra/blocks/alloy/provision-alloy-ssm.sh,
-            shared-infra/blocks/healthcheck.sh,
-            shared-infra/blocks/run_container.sh,
-            shared-infra/blocks/slot_decide.sh,
-            shared-infra/blocks/slot_switch.sh
-          target: "/tmp/piki-deploy"
-          strip_components: 2
+        timeout-minutes: 10
+        env:
+          HOST: ${{ steps.box.outputs.host }}
+          NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
+        run: |
+          ssh -n "$HOST" 'mkdir -p /tmp/piki-deploy/alloy'
+          scp "infra/nginx/$NGINX_CONF" \
+            infra/nginx/main/nginx.conf \
+            infra/scripts/provision-runtime.sh \
+            shared-infra/blocks/healthcheck.sh \
+            shared-infra/blocks/run_container.sh \
+            shared-infra/blocks/slot_decide.sh \
+            shared-infra/blocks/slot_switch.sh \
+            shared-infra/blocks/deploy_slot.sh \
+            shared-infra/blocks/ssm_env.sh \
+            "$HOST:/tmp/piki-deploy/"
+          scp shared-infra/blocks/alloy/config.alloy \
+            shared-infra/blocks/alloy/provision-alloy.sh \
+            shared-infra/blocks/alloy/provision-alloy-ssm.sh \
+            "$HOST:/tmp/piki-deploy/alloy/"
 
       # TLS 인증서 보장 — cert 가 없을 때만 발급(idempotent). dev 첫 배포에서만 동작하고,
       # prod 는 cert 가 이미 있어 통째로 skip(=nginx 안 멈춤, 다운타임 0).
       # certonly --standalone 은 nginx 와 무관하게 :80 을 잠깐 점유해 발급하므로, SSL 을 참조하는
       # nginx conf 적용(다음 스텝)보다 먼저여야 nginx -t 가 통과한다.
+      # 이관 세미 디플로이(migration_host)에서는 migrate.yml provision 이 구 박스 cert 를 미리 옮겨 둬 skip 된다.
+      # 그때 cert 가 없으면 발급하지 않고 멈춘다. DNS 가 아직 구 박스라 HTTP-01 이 원리적으로 실패한다.
       - name: Ensure TLS cert (certbot if missing)
         id: cert
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DOMAIN
-          script: |
-            if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+          MIGRATION_HOST: ${{ inputs.migration_host }}
+          SCRIPT: |
+            # live/ 는 root 만 읽는다(0700). sudo 없이 보면 cert 가 있어도 늘 "없음" 이다.
+            if sudo test -d "/etc/letsencrypt/live/$DOMAIN"; then
               echo "[certbot] $DOMAIN cert 이미 존재 — skip"
+            elif [ -n "$MIGRATION_HOST" ]; then
+              echo "::error::[이관 모드] 신 박스에 $DOMAIN cert 가 없다 — migrate.yml 의 provision 을 먼저 실행할 것"
+              exit 1
             else
               echo "[certbot] $DOMAIN cert 발급 (standalone)"
               # --pre-hook/--post-hook 는 발급 시점뿐 아니라 certbot 갱신 타이머가 쓰는 renewal 설정에도
@@ -305,25 +348,26 @@ jobs:
               SRC=$(find /usr -name ssl-dhparams.pem 2>/dev/null | head -1)
               [ -n "$SRC" ] && sudo cp "$SRC" /etc/letsencrypt/ssl-dhparams.pem && echo "[certbot] ssl-dhparams.pem 복사"
             fi
+        run: |
+          EXPORTS=$(for v in DOMAIN MIGRATION_HOST; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Apply nginx config
         id: nginx
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           NGINX_CONF: ${{ needs.resolve.outputs.nginx_conf }}
           DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: NGINX_CONF,DOMAIN
-          script: |
+          SERVICE_PORT: ${{ steps.addr.outputs.service-port }}
+          SCRIPT: |
             SRC="/tmp/piki-deploy/$NGINX_CONF"
             DST="/etc/nginx/sites-available/$DOMAIN"
             # api conf 가 include 하는 piki-upstream.conf 가 없으면(새 인스턴스) nginx -t 가 깨진다.
             # blue-green 전환 전이라도 include 대상이 존재하도록 초기화한다.
             # 실제 active 포트 전환은 blue-green(Health check)이 담당하므로 이미 있으면 건드리지 않는다.
-            [ -f /etc/nginx/piki-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
+            # 값은 자리 표시다. 서빙 슬롯은 deploy_slot 이 기록한다.
+            [ -f /etc/nginx/piki-upstream.conf ] || echo "server 127.0.0.1:$SERVICE_PORT;" | sudo tee /etc/nginx/piki-upstream.conf
             # 새 인스턴스(cloud-init nginx)는 stock default 사이트가 켜져 있어 catch-all 로 충돌 → 제거.
             sudo rm -f /etc/nginx/sites-enabled/default
             # 환경당 conf 는 $DOMAIN 하나만 enabled 여야 한다. 도메인 rename(#488 depromeet retire 등) 후
@@ -338,6 +382,8 @@ jobs:
               sudo rm -f "$old" "/etc/nginx/sites-available/$bn"
             done
             # 현재 설정 백업 후 교체. nginx -t 검증 실패 시 이전 설정으로 롤백하고 배포를 중단한다.
+            sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+            sudo cp /tmp/piki-deploy/nginx.conf /etc/nginx/nginx.conf
             sudo cp "$DST" "${DST}.bak" 2>/dev/null || true
             sudo cp "$SRC" "$DST"
             # 사이트 활성화(idempotent) — 새 dev 인스턴스는 symlink 가 없어 명시적으로 enable.
@@ -347,14 +393,19 @@ jobs:
               echo "nginx config 적용 + reload 완료"
             else
               echo "nginx -t 실패 — 이전 설정으로 롤백하고 중단"
+              sudo cp /etc/nginx/nginx.conf.bak /etc/nginx/nginx.conf
               sudo cp "${DST}.bak" "$DST" 2>/dev/null || true
               exit 1
             fi
+        run: |
+          EXPORTS=$(for v in NGINX_CONF DOMAIN SERVICE_PORT; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Provision runtime (swap·redis·mysql·nginx·alloy)
         id: provision
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           # 환경은 트리거 브랜치에서 derive — dev MySQL 기동/Alloy environment 라벨을 가른다.
           # MySQL 초기 자격증명은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM
           # (/piki-core/<env>/db-*)으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
@@ -364,19 +415,18 @@ jobs:
           # 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다).
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
           # extractor prod 박스는 자체 Alloy 가 수집한다 (dev 동거 extractor 는 #862 로 폐지 — 전 환경이 전용 박스 사용).
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENVIRONMENT
-          script: |
+          SCRIPT: |
             chmod +x /tmp/piki-deploy/provision-runtime.sh
             /tmp/piki-deploy/provision-runtime.sh
+        run: |
+          EXPORTS=$(for v in ENVIRONMENT; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Deploy to ${{ needs.resolve.outputs.environment }}
         id: deploy
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 15
         env:
+          HOST: ${{ steps.box.outputs.host }}
           # 앱 컨테이너 런타임 시크릿(DB·JWT·OAuth·Apple·S3·Firebase·Discord admin 등)은 더 이상 러너가
           # SSH 로 밀어넣지 않는다 — 박스가 아래 script 에서 SSM(/piki-core/<env>/*)을 직접 pull 한다
           # (GH secrets → SSM 단일화). 여기 남는 env 는 배포 시점 계산·조건값뿐이다 (ECR pull 자격증명은
@@ -400,31 +450,27 @@ jobs:
           SPRINGDOC_ENABLED: ${{ needs.resolve.outputs.environment == 'dev' && 'true' || 'false' }}
           IMAGE_TAG: ${{ needs.resolve.outputs.ref }}
           # 원격 추출(extractor) 주소 — 파싱(링크·이미지)의 유일 경로다 (이관 8단계에서 전환 스위치·embedded 삭제).
-          # 전 환경이 extractor 전용 박스 하나를 공유한다(secrets.EXTRACTOR_PROD_ADDRESS=host:port, 앱 SG→8090 인바운드 허용).
-          # dev 도 동거 컨테이너(host.docker.internal:8090)가 아니라 전용 박스를 본다(#862) — 동거는 어떤 워크플로도
-          # 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다(AWS 계정 이전 인시던트).
-          # 워크플로 밖 수동 관리 포인트를 없애 재발을 막는다.
-          # prod 박스 private IP 는 secret 으로 관리한다(public repo 라 코드에 내부 주소를 박지 않는다). host:port 에 http:// 를 씌운다.
-          EXTRACT_REMOTE_BASE_URL: ${{ format('http://{0}', secrets.EXTRACTOR_PROD_ADDRESS) }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          # 전 환경이 extractor 전용 박스 하나를 공유한다. dev 도 동거 컨테이너가 아니라 전용 박스를 본다(#862) —
+          # 동거는 어떤 워크플로도 배포하지 않는 수동 산출물이라 박스 재생성 때 조용히 사라져 dev 파싱이 전멸했다.
+          # 주소는 위 Resolve 스텝이 정본으로 계산한다(public repo 라 내부 주소를 코드에 박지 않는다).
+          EXTRACT_REMOTE_BASE_URL: ${{ steps.addr.outputs.extractor-url }}
+          SERVICE_PORT: ${{ steps.addr.outputs.service-port }}
+          JAVA_TOOL_OPTIONS: ${{ needs.resolve.outputs.jvm_opts }}
+          MEM_LIMIT: ${{ needs.resolve.outputs.mem_limit }}
+          MEM_SWAP: ${{ needs.resolve.outputs.mem_swap }}
+          # 전환 후 프론트 경유 검증의 Host 헤더
+          DOMAIN: ${{ needs.resolve.outputs.domain }}
           # 앱 시크릿은 박스가 SSM 에서 pull 하므로 여기로 넘기지 않는다 — 계산·조건값과 SSM 경로용 ENVIRONMENT 만 넘긴다.
-          envs: ENVIRONMENT,SPRING_PROFILES_ACTIVE,ADMIN_ENABLED,ENV_ACCESS_GATE,ADMIN_ENVIRONMENT,SPRINGDOC_ENABLED,IMAGE_TAG,EXTRACT_REMOTE_BASE_URL
-          script: |
+          SCRIPT: |
             # ── 앱 런타임 시크릿을 SSM Parameter Store 에서 pull 한다 (GH secrets → SSM 단일화) ──
-            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 UPPER_SNAKE env 로 복원하고 아래 docker run
-            # 에 -e 로 주입한다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는 공용 ECR 이미지로 실행
-            # (박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance role(IMDS) 자격증명에 닿는다
-            # (읽기 권한=terraform iam.tf 의 app_ssm_read). 값 운반은 base64 로 감싸 공백·따옴표·$·개행(APPLE_PRIVATE_KEY
-            # PEM)까지 바이트 그대로 옮기고, 임시 파일은 umask 600·즉시 삭제한다. 아래 가드가 이 값들을 검사하므로 순서상
-            # pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
+            # /piki-core/$ENVIRONMENT/<kebab-key>(SecureString) 전량을 받아 공용 블록(ssm_env.sh)이 KEY=VALUE 파일로
+            # 만들고 아래 docker run 에 --env-file 로 넘긴다. 값은 로그에 절대 남기지 않는다(set -x·echo 금지). aws-cli 는
+            # 공용 ECR 이미지로 실행(박스 설치 불필요·Docker Hub rate-limit 회피), --network host 로 박스 instance
+            # role(IMDS) 자격증명에 닿는다(읽기 권한=terraform iam.tf 의 app_ssm_read). 아래 가드가 이 값들을 검사하므로
+            # 순서상 pull 이 먼저다(옛 러너측 secret 가드를 대체 — 값이 SSM 으로 옮겨가 러너 GH secrets 검사가 성립 안 함).
             # 태그는 patch 로 고정한다 - latest 는 아래 image prune 과 겹쳐 매 배포가 그 시점 latest 를 새로
             # pull 하므로, 상류 변경이 이 repo 커밋 없이 배포를 깨뜨릴 수 있다. 갱신은 의도적 커밋으로만.
             AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
-            # 조회·파싱 실패를 각자 즉시 끊는다 - 안 끊으면 PARAM_COUNT 가 비어 아래 -eq 비교가 깨진 채
-            # 흘러갈 수 있다. (전역 set -e 는 이 스크립트의 의도된 fallback 경로들을 바꿔 쓰지 않는다.)
             if ! PARAMS_JSON="$(docker run --rm --network host "$AWSCLI_IMAGE" \
               ssm get-parameters-by-path \
               --path "/piki-core/$ENVIRONMENT/" --recursive --with-decryption \
@@ -432,62 +478,48 @@ jobs:
               echo "::error::SSM get-parameters-by-path 호출 실패 — IAM 권한(app_ssm_read apply 여부)·네트워크(공용 ECR pull) 확인"
               exit 1
             fi
-            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("Parameters",[])))')"; then
-              echo "::error::SSM 응답 JSON 파싱 실패 — aws-cli 출력 형식 변화 여부 확인"
-              exit 1
-            fi
-            if [ "$PARAM_COUNT" -eq 0 ]; then
-              echo "::error::SSM /piki-core/$ENVIRONMENT/ 에서 파라미터를 못 받았다 — 마이그레이션 워크플로 선행(값 심기) 또는 IAM 권한 확인"
-              exit 1
-            fi
-            # NAME<TAB>base64(VALUE) 로 뽑아 파일에 쓴 뒤(파이프 서브셸의 export 유실을 피하려 파일 리다이렉트로 루프),
-            # UPPER_SNAKE 로 복원해 export + '--env KEY' 플래그(RUN_ENV_FLAGS, run_container 블록의 passthrough)를
-            # 모은다. 플래그엔 값이 없어 값이 명령행·로그에 노출되지 않고, 개행 포함 PEM 도 환경 변수로만 전달된다.
+            # --reserve: 러너가 -e 로 따로 넘기는 배포 제어 값. SSM 키가 같은 이름이면 블록이 배포를 끊는다.
             umask 077
-            SSM_KV="$(mktemp)"
-            printf '%s' "$PARAMS_JSON" | python3 -c "import sys,json,base64;print('\n'.join(p['Name']+'\t'+base64.b64encode(p['Value'].encode()).decode() for p in json.load(sys.stdin).get('Parameters',[])))" > "$SSM_KV"
-            # 예약 변수 방어(denylist): SSM 키를 그대로 export 하므로, 배포 제어 값(ENVIRONMENT·IMAGE_TAG 등)이나
-            # 이 스크립트의 내부 변수와 이름이 겹치는 파라미터가 있으면 배포 동작이 덮인다. 그런 키는 즉시 실패시킨다.
-            # allowlist 가 아닌 denylist 인 이유: 시크릿 추가 시 워크플로 무변경이 이 전환의 핵심 이득이라, 목록 관리
-            # 대상을 "앱이 못 쓰는 예약 이름"으로 한정한다.
-            RESERVED=" ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED DOCKERHUB_USERNAME IMAGE_TAG IMAGE EXTRACT_REMOTE_BASE_URL JAVA_TOOL_OPTIONS LOGGING_STRUCTURED_FORMAT_CONSOLE TRACING_OTLP_ENABLED AWSCLI_IMAGE PARAMS_JSON PARAM_COUNT SSM_KV RUN_ENV_FLAGS TAB RESERVED ACTIVE ACTIVE_PORT INACTIVE INACTIVE_PORT PATH HOME IFS SHELL USER "
-            RUN_ENV_FLAGS=""
-            TAB="$(printf '\t')"
-            while IFS="$TAB" read -r P_NAME P_B64; do
-              [ -n "$P_NAME" ] || continue
-              E_KEY="$(basename "$P_NAME" | tr 'a-z-' 'A-Z_')"
-              case "$RESERVED" in *" $E_KEY "*)
-                echo "::error::SSM 파라미터 $P_NAME 가 예약 변수 $E_KEY 와 충돌 — 배포 제어·내부 변수 이름은 /piki-core/ 아래에 두지 않는다"
-                exit 1;;
-              esac
-              # 뒤쪽 개행 보존: 명령치환은 trailing newline 을 지우므로 sentinel(X)로 감싸 복원한다.
-              E_VAL="$(printf '%s' "$P_B64" | base64 -d; printf X)"; E_VAL="${E_VAL%X}"
-              export "$E_KEY=$E_VAL"
-              RUN_ENV_FLAGS="$RUN_ENV_FLAGS --env $E_KEY"
-            done < "$SSM_KV"
-            rm -f "$SSM_KV"
+            ENV_FILE="$(mktemp)"
+            trap 'rm -f "$ENV_FILE"' EXIT
+            if ! PARAM_COUNT="$(printf '%s' "$PARAMS_JSON" | bash /tmp/piki-deploy/ssm_env.sh --out "$ENV_FILE" \
+              --reserve ENVIRONMENT --reserve SPRING_PROFILES_ACTIVE --reserve ADMIN_ENABLED --reserve ENV_ACCESS_GATE \
+              --reserve ADMIN_ENVIRONMENT --reserve SPRINGDOC_ENABLED --reserve IMAGE_TAG --reserve EXTRACT_REMOTE_BASE_URL \
+              --reserve JAVA_TOOL_OPTIONS --reserve LOGGING_STRUCTURED_FORMAT_CONSOLE --reserve TRACING_OTLP_ENABLED)"; then
+              echo "::error::SSM 파라미터 -> env 파일 변환 실패 (파라미터 0개 · 다중행 값 · 예약 이름 충돌 — 블록 stderr 참조)"
+              exit 1
+            fi
             echo "SSM 에서 $PARAM_COUNT 개 파라미터 로드 (/piki-core/$ENVIRONMENT/)"
+            env_val() { grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2-; }
+
+            # 배포 제어·튜닝 값(비시크릿)도 같은 파일에 덧붙인다 - 컨테이너로 가는 통로를 --env-file 하나로.
+            # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs: 운영 로그를 ECS JSON 으로 내 Alloy 가 trace 를 Loki structured metadata
+            #   로 승격한다(#364). TRACING_OTLP_ENABLED + 아래 --add-host: span 을 박스 로컬 Alloy(4318)로 push 한다(#380).
+            {
+              printf '%s=%s\n' SPRING_PROFILES_ACTIVE "$SPRING_PROFILES_ACTIVE"
+              printf '%s=%s\n' ADMIN_ENABLED "$ADMIN_ENABLED"
+              printf '%s=%s\n' ENV_ACCESS_GATE "$ENV_ACCESS_GATE"
+              printf '%s=%s\n' ADMIN_ENVIRONMENT "$ADMIN_ENVIRONMENT"
+              printf '%s=%s\n' SPRINGDOC_ENABLED "$SPRINGDOC_ENABLED"
+              printf '%s=%s\n' EXTRACT_REMOTE_BASE_URL "$EXTRACT_REMOTE_BASE_URL"
+              printf '%s=%s\n' JAVA_TOOL_OPTIONS "$JAVA_TOOL_OPTIONS"
+              printf '%s=%s\n' LOGGING_STRUCTURED_FORMAT_CONSOLE ecs
+              printf '%s=%s\n' TRACING_OTLP_ENABLED true
+            } >> "$ENV_FILE"
 
             # ADMIN_ENABLED=true 인데 Discord admin secret 이 비면 /admin-access 진입이 전부 막혀 allowlist 를 열 수 없고
             # /admin 이 영구 차단된다. 배포가 성공해버리기 전에 fail-fast 로 막는다(#249).
-            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$DISCORD_PUBLIC_KEY" ] || [ -z "$DISCORD_ADMIN_USER_IDS" ] || [ -z "$DISCORD_ADMIN_CHANNEL_ID" ] || [ -z "$ADMIN_GRANT_SIGNING_KEY" ]; }; then
+            if [ "$ADMIN_ENABLED" = "true" ] && { [ -z "$(env_val DISCORD_PUBLIC_KEY)" ] || [ -z "$(env_val DISCORD_ADMIN_USER_IDS)" ] || [ -z "$(env_val DISCORD_ADMIN_CHANNEL_ID)" ] || [ -z "$(env_val ADMIN_GRANT_SIGNING_KEY)" ]; }; then
               echo "::error::admin secret(DISCORD_PUBLIC_KEY/DISCORD_ADMIN_USER_IDS/DISCORD_ADMIN_CHANNEL_ID/ADMIN_GRANT_SIGNING_KEY) empty while ADMIN_ENABLED=true"
               exit 1
             fi
             # APPLE_WEB_CALLBACK_URL 은 AppleProperties.webCallbackUrl(@NotBlank)로 필수다(#430). 비면 컨테이너 기동이
             # BindException 으로 죽어 배포가 늦게 실패하므로, 배포 전에 fail-fast 로 원인을 즉시 드러낸다.
-            if [ -z "$APPLE_WEB_CALLBACK_URL" ]; then
+            if [ -z "$(env_val APPLE_WEB_CALLBACK_URL)" ]; then
               echo "::error::APPLE_WEB_CALLBACK_URL is empty"
               exit 1
             fi
-            # 원격 추출은 파싱의 유일 경로다 — base-url 의 host 가 비면(EXTRACTOR_PROD_ADDRESS secret 미설정 →
-            # base-url 이 "http://" 로만 남음) RemoteExtractionHttpClientConfig 의 isNotBlank 검사는 통과해
-            # 배포는 성공하나 모든 파싱이 런타임에만 실패한다. 그 조용한 오설정을 배포 전에 fail-fast 로 막는다.
-            if [ "$EXTRACT_REMOTE_BASE_URL" = "http://" ] || [ "$EXTRACT_REMOTE_BASE_URL" = "https://" ]; then
-              echo "::error::EXTRACT_REMOTE_BASE_URL 의 host 가 비어 있음 (EXTRACTOR_PROD_ADDRESS secret 확인)"
-              exit 1
-            fi
-            # host 가 채워져 있어도 값이 낡았거나(SG·주소 변경) extractor 가 죽어 있으면 배포는 성공하고 모든 파싱만
+            # 주소가 맞아도 SG 가 막혔거나 extractor 가 죽어 있으면 배포는 성공하고 모든 파싱만
             # 런타임에 실패한다 — 계정 이전 때 dev 가 정확히 이 모양으로 전멸했다(#862). 앱 박스에서 extractor 헬스를
             # 배포 전에 실측해, 배선이 끊긴 채 배포가 성공으로 남는 것을 막는다(실패 시 기존 컨테이너 유지 = 안전).
             if ! curl -sf -m 5 "$EXTRACT_REMOTE_BASE_URL/actuator/health" > /dev/null; then
@@ -513,142 +545,31 @@ jobs:
 
             docker pull "$IMAGE"
 
-            # 슬롯 판정은 infra 공용 블록(slot_decide)에 위임 - 상태 파일이 source of truth 이고 값(슬롯
-            # 이름·포트)은 이 호출부가 소유한다. 상태 파일이 없으면 초기 상태(8080 서빙 가정)로 먼저
-            # 초기화한다 (Apply nginx config 의 부트스트랩과 같은 기본값 - 종전 인라인 판정과 동작 등가).
-            # "할당 후 eval" 2단계는 블록 헤더가 정한 소비 계약이다 (치환 실패 은폐 방지).
-            [ -f /etc/nginx/piki-upstream.conf ] || echo "server localhost:8080;" | sudo tee /etc/nginx/piki-upstream.conf
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
-              --slot-a blue:8080 --slot-b green:8081)
-            eval "$DECIDED"
-            echo "================================================"
-            echo "  CURRENT : $ACTIVE (port $ACTIVE_PORT) [serving traffic]"
-            echo "  DEPLOY  : $INACTIVE (port $INACTIVE_PORT) [new version]"
-            echo "================================================"
+            # 상태 파일이 없으면 자리 표시로 먼저 초기화한다 (Apply nginx config 의 부트스트랩과 같은 값).
+            [ -f /etc/nginx/piki-upstream.conf ] || echo "server 127.0.0.1:$SERVICE_PORT;" | sudo tee /etc/nginx/piki-upstream.conf
 
-            # 로그 백업 후 비활성 슬롯 정리
-            mkdir -p /var/log/piki
-            docker logs "piki-core-$INACTIVE" > /var/log/piki/piki-core-$INACTIVE-$(date +%Y%m%d-%H%M%S).log 2>&1 || true
-            find /var/log/piki -name "*.log" -mtime +7 -delete || true
-            # 직전 배포의 구버전 teardown 이 timeout 으로 끊겨 이 슬롯 컨테이너가 살아있을 수 있다.
-            # 아래 docker run 의 name/port 충돌을 막으려 force 로 지우고, 데몬 지연에 대비해 timeout 으로 상한을 건다.
-            timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-            timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-
-            # 새 버전 비활성 포트에 기동.
-            # -p 를 127.0.0.1 에 바인딩해 호스트 공인 IP(EIP)로의 직접 접근을 막는다. nginx(호스트 프로세스)와
-            # health check 는 localhost 로 접근하므로 영향 없고, actuator/prometheus 가 SG ingress 설정과 무관하게
-            # 외부에서 직접 scrape 되는 우회 경로를 구조적으로 차단한다 (nginx /actuator 차단의 보강).
-            # 주의: 별도 PR 의 Grafana Alloy 는 같은 호스트의 컨테이너이므로 --network host 로 띄워 localhost 를 scrape 해야 한다
-            #       (redis 가 쓰는 172.17.0.1 bridge 바인딩 방식으로는 127.0.0.1 바인딩 포트에 닿지 못한다).
-            # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs: 운영 로그를 ECS JSON 으로 출력해 Alloy 가 trace 를 Loki
-            # structured metadata 로 승격하게 한다(#364). Spring 표준 env 라 application.yml 배선 없이 property 로
-            # 직접 바인딩된다(extractor 와 동일 이름, #783). 값 고정 평문이라 Secrets 불필요. 로컬은 이 변수
-            # 미설정이라 application.yml 의 평문 콘솔 패턴(#361)을 그대로 쓴다.
-            # TRACING_OTLP_ENABLED=true + --add-host: span 을 OTLP 로 Alloy(otelcol.receiver.otlp)에 push 한다(#380).
-            # 앱 컨테이너는 bridge 네트워크라 컨테이너 안 localhost 가 --network host 인 Alloy 에 안 닿으므로,
-            # --add-host=host.docker.internal:host-gateway 로 호스트 게이트웨이를 잡고 application.yml 의 OTLP
-            # endpoint(host.docker.internal:4318)로 보낸다. 값 고정 평문이라 Secrets 불필요(로컬 미설정 → export off).
-            # --memory: 컨테이너 메모리 한도(cgroup). 906Mi 박스라 한도가 없으면 OOM 시 커널 전역
-            # OOM-killer 가 임의 프로세스를 죽이고 박스 전체가 thrash 로 무응답이 된다(2026-06-06 사고).
-            # 한도를 주면 초과 시 이 컨테이너만 cgroup-OOM 으로 죽고 --restart 로 재기동 — host·다른
-            # 컨테이너는 멀쩡. blue-green overlap 중 사고의 폭발 반경을 앱 한 개로 가둔다.
-            # --restart unless-stopped: redis/mysql/alloy 와 동일 정책. cgroup-OOM·박스 재부팅 후 자가 복구.
-            #   (teardown 은 docker stop + rm -f 라 정책과 충돌하지 않는다.)
-            # RAM·힙 한도는 resolve job 이 박스 크기별로 정한다(environment 분기) — dev 는 576m/1152m·힙288m,
-            #   prod t4g.small(1.8G, #596)은 768m/1536m·힙512m. blue+green overlap(전환 중 잠깐 2개 동시)이 RAM 안에 들어가
-            #   swap thrash 를 막는다(dev 2×576=1152<1.8G, prod 2×768=1536<1.8G). 앱 hot working set 만 RAM 에서 빠르게 돌고
-            #   식은 페이지는 swap 에 남는다. memory-swap 은 부팅 스파이크가 RAM 을 잠깐 넘어도 cgroup-OOM 대신 swap 으로
-            #   흘려 배포가 안 깨지게 하는 쿠션이다. 값은 시작점 — 검증 배포에서 부팅 피크·overlap RAM 을 실측해 확정.
-            #   ExitOnOutOfMemoryError: 힙 OOM 시 즉시 종료→재시작.
-            # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md) — 박스 Alloy 가
-            #   이 라벨로 수집 대상을 인식한다(로그=observe+service, 메트릭=+port). piki.metrics.port 는
-            #   호스트 127.0.0.1 에서 닿는 published 포트라 슬롯 포트($INACTIVE_PORT)를 준다.
-            # 기동은 공용 블록(run_container.sh, extractor·renderer 와 동일)에 위임한다. 블록이 기동 직후
-            #   "Running + 재시작 0회" 검증까지 책임져 즉사 크래시가 헬스 폴링 전에 조기 검출된다.
-            #   env 는 전부 '--env KEY' passthrough - 위에서 export 한 값을 docker 가 직접 읽어
-            #   argv·로그 노출이 없고 다중행 PEM 도 전달된다. 슬롯 계산·graceful stop·로그 덤프는
-            #   blue-green 정책이라 이 호출부가 소유한다(블록은 값·정책 무소유).
-            export JAVA_TOOL_OPTIONS="${{ needs.resolve.outputs.jvm_opts }}"
-            export LOGGING_STRUCTURED_FORMAT_CONSOLE="ecs"
-            export TRACING_OTLP_ENABLED="true"
-            bash /tmp/piki-deploy/run_container.sh \
-              --name "piki-core-$INACTIVE" \
-              --image "$IMAGE" \
-              --restart unless-stopped \
-              --publish "127.0.0.1:$INACTIVE_PORT:8080" \
-              --label piki.observe=true \
-              --label piki.service=piki-core \
-              --label "piki.metrics.port=$INACTIVE_PORT" \
-              --label piki.metrics.path=/actuator/prometheus \
+            # ── blue-green 배포: 공용 블록(deploy_slot)이 결정·로그 덤프·잔재 정리·기동·슬롯 헬스·전환·구 슬롯 종료를 맡는다.
+            # 실패 시 새 슬롯을 정리하고 exit 1, 그동안 트래픽은 구 슬롯이 서빙한다. 값은 전부 여기서 준다.
+            # --publish 127.0.0.1 바인딩(nginx 경유로만 노출, actuator 직접 scrape 우회 차단)·metrics 포트 라벨·PORT env 는 블록이 채운다.
+            # 슬롯 헬스 60×5s: 콜드 JVM + Flyway 에 blue+green 공존 swap 압박이 겹치면 부팅이 120초를 넘겨 120초 상한에서
+            #   간헐 롤백됐다(#628). 200 이면 즉시 통과라 정상 속도엔 영향 없다.
+            # verify-cmd: 전환 직후 소비자 경로(443 → nginx → 새 슬롯)를 통째로 검증한다. /health 는 conf 가 127.0.0.1 에만
+            #   열어 둔 내부 검증 경로라 -k 와 Host 헤더가 필요하다.
+            # --memory/--memory-swap/JAVA_TOOL_OPTIONS 는 resolve job 이 박스 크기별로 정한다(그쪽 주석이 산정 근거).
+            # --label piki.*: 관측 opt-in 라벨(TeamPiKi/infra contracts/observability.md).
+            bash /tmp/piki-deploy/deploy_slot.sh \
+              --state-file /etc/nginx/piki-upstream.conf \
+              --service-port "$SERVICE_PORT" --name-prefix piki-core \
+              --log-dir /var/log/piki \
+              --health-path /health --health-interval 5 --health-attempts 60 \
+              --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN" \
+              -- --image "$IMAGE" --restart unless-stopped --env-file "$ENV_FILE" \
+              --memory "$MEM_LIMIT" --memory-swap "$MEM_SWAP" \
               --add-host host.docker.internal:host-gateway \
-              --memory "${{ needs.resolve.outputs.mem_limit }}" \
-              --memory-swap "${{ needs.resolve.outputs.mem_swap }}" \
-              --env JAVA_TOOL_OPTIONS --env LOGGING_STRUCTURED_FORMAT_CONSOLE --env TRACING_OTLP_ENABLED \
-              --env SPRING_PROFILES_ACTIVE --env EXTRACT_REMOTE_BASE_URL \
-              --env ADMIN_ENABLED --env ENV_ACCESS_GATE --env ADMIN_ENVIRONMENT --env SPRINGDOC_ENABLED \
-              $RUN_ENV_FLAGS
-
-      - name: Health check and switch
-        id: health
-        uses: appleboy/ssh-action@v1
-        env:
-          DOMAIN: ${{ needs.resolve.outputs.domain }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DOMAIN
-          script: |
-            # 슬롯 재판정 - 배포 스텝과 같은 공용 블록·같은 값으로 읽는다 (상태 파일이 source of truth)
-            DECIDED=$(bash /tmp/piki-deploy/slot_decide.sh --state-file /etc/nginx/piki-upstream.conf \
-              --slot-a blue:8080 --slot-b green:8081)
-            eval "$DECIDED"
-
-            # 새로 뜬 컨테이너(INACTIVE) 헬스체크는 infra 공용 블록(blocks/healthcheck.sh)에 위임한다.
-            # 간격·횟수는 호출부가 소유한다 (블록은 값을 갖지 않는다). 왜 300초(60×5s)인가:
-            #   콜드 JVM + 빈 DB Flyway 에 더해 blue+green 공존 시 swap 압박으로 부팅이 76초에서 120초+ 까지 늘어
-            #   기존 120초(24×5s)를 간헐 초과해 롤백됐다(이슈 #628). 60×5s 로 늘려 swap 쓰는 느린 부팅도 끝까지 기다린다.
-            #   ssh-action command_timeout(기본 10m) 안에서 이후 switch·docker stop 여유까지 포함해 안전하고,
-            #   블록은 200 을 받으면 즉시 통과(exit 0)하므로 정상 배포 속도엔 영향 없다.
-            if bash /tmp/piki-deploy/healthcheck.sh --url "http://localhost:$INACTIVE_PORT/health" --interval 5 --attempts 60; then
-              echo "================================================"
-              echo "  HEALTH CHECK PASSED on $INACTIVE"
-              echo "================================================"
-              # 전환은 infra 공용 블록(slot_switch)에 위임 - 갱신·nginx -t·reload(정지 시 restart 폴백)와
-              # 실패 시 이전 upstream 원복까지 블록의 원복 경계 안에서 돈다. 종전 인라인(tee + reload)에는
-              # 원복이 없어 전환 실패 시 상태 파일과 실제 서빙이 어긋난 채 남았고, 그 괴리는 다음 배포가
-              # 서빙 중인 슬롯을 비활성으로 오판·제거하게 만들었다 (infra#37 에서 실사고로 실증된 결함의 해소).
-              # verify-cmd: 전환 직후 소비자 경로(프론트 443 → nginx → 새 슬롯)를 통째로 검증한다 - 앱만
-              # 살아있고 배달 경로가 끊긴 부류(extractor 이행 배포의 Host/444 사고가 그 실례)를 원복 경계
-              # 안에서 잡는다. /health 는 conf 가 127.0.0.1 에만 열어 둔 내부 검증 전용 경로이고, 검증 배선
-              # (폴링·재시도·TLS 우회 -k·Host 헤더)은 extractor 와 같은 공용 블록(healthcheck.sh)이 진다 -
-              # 값(URL·간격·도메인)만 여기서 준다. 짧은 재시도(2s x 5)는 reload 직후 워커 교체 흔들림 흡수.
-              if ! bash /tmp/piki-deploy/slot_switch.sh \
-                --state-file /etc/nginx/piki-upstream.conf --server "localhost:$INACTIVE_PORT" \
-                --verify-cmd "bash /tmp/piki-deploy/healthcheck.sh --url https://127.0.0.1/health --interval 2 --attempts 5 --insecure --host-header $DOMAIN"; then
-                echo "슬롯 전환 실패(이전 upstream 원복됨) - 새 슬롯 정리 후 중단"
-                timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-                timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-                exit 1
-              fi
-              echo "  SWITCHED : Nginx now → $INACTIVE (port $INACTIVE_PORT)"
-              # 구버전 종료 — switch 는 이미 끝났으므로 best-effort.
-              # blue+green 동시 기동 직후라 메모리 압박으로 Docker 데몬이 느려지면 docker stop 이 멈출 수 있다.
-              # 상한이 없으면 이미 성공한 switch 가 ssh-action 기본 command_timeout(10m)에 걸려 배포가 통째로 실패한다.
-              # timeout 으로 클라이언트 호출에 상한을 걸어, 데몬이 느려도 switch 성공을 막지 못하게 한다.
-              timeout 60 docker stop -t 30 "piki-core-$ACTIVE" 2>/dev/null || true
-              timeout 30 docker rm -f "piki-core-$ACTIVE" 2>/dev/null || true
-              echo "  STOPPED  : $ACTIVE (port $ACTIVE_PORT)"
-              echo "================================================"
-              exit 0
-            else
-              echo "Health check failed — rolling back"
-              # 실패 경로도 같은 데몬 지연에 멈출 수 있어 상한을 건다 (롤백이 10분 hang 뒤에야 보고되는 것 방지).
-              timeout 40 docker stop -t 30 "piki-core-$INACTIVE" 2>/dev/null || true
-              timeout 30 docker rm -f "piki-core-$INACTIVE" 2>/dev/null || true
-              exit 1
-            fi
+              --label piki.observe=true --label piki.service=piki-core --label piki.metrics.path=/actuator/prometheus
+        run: |
+          EXPORTS=$(for v in ENVIRONMENT SPRING_PROFILES_ACTIVE ADMIN_ENABLED ENV_ACCESS_GATE ADMIN_ENVIRONMENT SPRINGDOC_ENABLED IMAGE_TAG EXTRACT_REMOTE_BASE_URL SERVICE_PORT JAVA_TOOL_OPTIONS MEM_LIMIT MEM_SWAP DOMAIN; do printf 'export %s=%q; ' "$v" "${!v}"; done)
+          ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
       - name: Write deployment summary
         if: always()
@@ -659,28 +580,28 @@ jobs:
           SHORT_SHA="${SHORT_SHA:0:7}"
           COMMIT_URL="https://github.com/${{ github.repository }}/commit/${{ needs.resolve.outputs.ref }}"
 
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key && chmod 600 /tmp/ec2_key
-          ACTIVE_PORT=$(ssh -i /tmp/ec2_key -o StrictHostKeyChecking=no \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'grep -oP "\\d+" /etc/nginx/piki-upstream.conf 2>/dev/null | head -1' 2>/dev/null || echo "")
-          rm -f /tmp/ec2_key
+          ACTIVE_SLOT=""
+          if [ -n "${{ steps.box.outputs.host }}" ]; then
+            ACTIVE_SLOT=$(ssh -n "${{ steps.box.outputs.host }}" \
+              'docker ps --filter "name=^piki-core-" --format "{{.Names}}" 2>/dev/null | head -1' 2>/dev/null || echo "")
+          fi
 
-          if [ "$ACTIVE_PORT" = "8080" ]; then
-            NOW="🔵 blue (8080)"
-          elif [ "$ACTIVE_PORT" = "8081" ]; then
-            NOW="🟢 green (8081)"
+          if [ "$ACTIVE_SLOT" = "piki-core-blue" ]; then
+            NOW="🔵 blue"
+          elif [ "$ACTIVE_SLOT" = "piki-core-green" ]; then
+            NOW="🟢 green"
           else
             NOW="알 수 없음"
           fi
 
-          if [ "${{ steps.health.outcome }}" = "success" ]; then
+          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
             STATUS="✅ 성공"
           elif [ "${{ steps.guard.outcome }}" = "failure" ]; then
             STATUS="❌ 중단 (환경↔호스트 불일치 가드)"
-          elif [ "${{ steps.health.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (헬스체크)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (EC2 배포)"
+            STATUS="❌ 실패 (EC2 배포 - 기동·헬스·전환 중 하나, 스텝 로그의 [deploy_slot] 단계 참조)"
+          elif [ "${{ steps.box.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (SSM 접속 준비)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (Docker 푸시)"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
@@ -691,10 +612,8 @@ jobs:
             STATUS="❌ 실패 (nginx 설정 적용)"
           elif [ "${{ steps.provision.outcome }}" = "failure" ]; then
             STATUS="❌ 실패 (런타임 프로비저닝)"
-          elif [ "${{ steps.build.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (Gradle 빌드)"
-          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
-            STATUS="❌ 실패 (CI 아티팩트 다운로드)"
+          elif [ "${{ steps.resolve_jar.outcome }}" = "failure" ]; then
+            STATUS="❌ 실패 (JAR 준비)"
           else
             STATUS="⚠️ 알 수 없음"
           fi
@@ -709,10 +628,9 @@ jobs:
             echo "| 환경 | ${{ needs.resolve.outputs.environment }} |"
             echo "| 커밋 | [\`$SHORT_SHA\`]($COMMIT_URL) |"
             echo "| 현재 활성 슬롯 | $NOW |"
-            echo "| JAR 준비 | ${{ github.event_name == 'workflow_run' && steps.fetch_jar.outcome || steps.build.outcome }} |"
+            echo "| JAR 준비 | ${{ steps.resolve_jar.outcome }} |"
             echo "| Docker 푸시 | ${{ steps.docker_push.outcome }} |"
-            echo "| EC2 배포 | ${{ steps.deploy.outcome }} |"
-            echo "| 헬스체크 & 전환 | ${{ steps.health.outcome }} |"
+            echo "| EC2 배포 (기동·헬스·전환) | ${{ steps.deploy.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Notify Discord on success
@@ -787,17 +705,17 @@ jobs:
 
           if [ "${{ steps.guard.outcome }}" = "failure" ]; then
             CAUSE="${{ steps.guard.outputs.reason }}"
-            CAUSE="${CAUSE:-환경 도메인↔EC2_HOST 불일치 (secret 오설정 — dev/prod 교차배선)}"
-          elif [ "${{ steps.build.outcome }}" = "failure" ]; then
-            CAUSE="Gradle 빌드 실패 (Build JAR)"
-          elif [ "${{ steps.fetch_jar.outcome }}" = "failure" ]; then
-            CAUSE="CI 아티팩트(JAR) 다운로드 실패 (트리거 CI 의 app-jar 누락/만료 · actions:read 권한)"
+            CAUSE="${CAUSE:-환경 도메인과 배포 대상 박스 불일치 (Name 태그·환경 배선 오류)}"
+          elif [ "${{ steps.resolve_jar.outcome }}" = "failure" ]; then
+            CAUSE="JAR 준비 실패 (workflow_run 이면 CI 아티팩트 다운로드 — app-jar 누락/만료 · actions:read 권한, dispatch 면 Gradle 빌드)"
           elif [ "${{ steps.aws_credentials.outcome }}" = "failure" ] || [ "${{ steps.ecr_login.outcome }}" = "failure" ]; then
             CAUSE="ECR 인증 실패 (OIDC assume-role 또는 ECR 로그인 — 신뢰조건·IAM 권한 확인)"
+          elif [ "${{ steps.box.outcome }}" = "failure" ]; then
+            CAUSE="SSM 접속 준비 실패 (Name 태그 인스턴스 1개·SSM 등록·ssm:StartSession 권한 확인)"
           elif [ "${{ steps.docker_push.outcome }}" = "failure" ]; then
             CAUSE="Docker 이미지 빌드/푸시 실패"
           elif [ "${{ steps.upload_files.outcome }}" = "failure" ]; then
-            CAUSE="EC2 파일 업로드 실패 (SSH/scp 연결 — EC2_HOST/SSH_KEY 확인)"
+            CAUSE="EC2 파일 업로드 실패 (SSM 경유 scp — 세션 채널 권한·SSH_KEY 확인)"
           elif [ "${{ steps.cert.outcome }}" = "failure" ]; then
             CAUSE="TLS 인증서 발급 실패 (certbot — DNS 미전파 / 80포트 / Let's Encrypt rate limit)"
           elif [ "${{ steps.nginx.outcome }}" = "failure" ]; then
@@ -805,9 +723,7 @@ jobs:
           elif [ "${{ steps.provision.outcome }}" = "failure" ]; then
             CAUSE="런타임 프로비저닝 실패 (swap / redis / MySQL readiness / alloy)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
-            CAUSE="EC2 배포 실패 (docker pull/run · blue-green)"
-          elif [ "${{ steps.health.outcome }}" = "failure" ]; then
-            CAUSE="헬스체크 실패 (서버 미응답 — 앱 부팅/DB 연결 확인)"
+            CAUSE="EC2 배포 실패 (SSM env · docker pull · 기동 · 헬스체크 · 슬롯 전환 중 하나 — 스텝 로그의 [deploy_slot] 단계 참조)"
           else
             CAUSE="알 수 없음 (환경 설정 단계)"
           fi
