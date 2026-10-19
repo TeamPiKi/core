@@ -75,6 +75,7 @@ class WishPersistenceService(
         return WishResult(wish = wish, item = null, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
+    // 요청 시점에 같은 상품인지 모르면 받고, 확정 때 합친다(ItemSlotPort.fill)
     private fun rejectIfRegistered(
         userId: UUID,
         link: ProductLink,

@@ -14,7 +14,8 @@ interface ItemSlotPort {
     // soft delete 된 슬롯도 Present 다. 슬롯이 지워져도 파싱 결과는 아이템에 남는다
     fun find(id: Long): ItemSlotState
 
-    // 같은 범위의 살아 있는 슬롯이 이미 그 아이템을 가지면 이 슬롯을 그쪽에 합친다. 지운 슬롯과 아이템이 있는 슬롯은 합치지 않는다
+    // 같은 상품임을 요청 시점에 알면 등록 경로가 409 로 막고, 아이템이 확정될 때에야 알면 여기서 남은 슬롯에 합친다
+    // 지운 슬롯과 이미 아이템이 있는 슬롯은 합치지 않는다
     fun fill(
         id: Long,
         itemId: Long,

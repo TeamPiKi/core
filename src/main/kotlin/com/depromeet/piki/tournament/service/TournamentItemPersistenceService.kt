@@ -55,6 +55,7 @@ class TournamentItemPersistenceService(
         return tournamentItemId
     }
 
+    // 요청 시점에 같은 상품인지 모르면 받고, 확정 때 합친다(ItemSlotPort.fill)
     private fun rejectIfAdded(
         tournamentId: Long,
         link: ProductLink,
