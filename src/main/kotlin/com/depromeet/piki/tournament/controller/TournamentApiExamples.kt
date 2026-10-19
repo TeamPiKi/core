@@ -247,9 +247,8 @@ class TournamentApiExamples(
                         add(TournamentException.itemNotReadyToStart(), name = "아직 준비 중인 상품 포함")
                         add(TournamentException.itemIncompleteToStart(), name = "정보가 일부만 채워진(INCOMPLETE) 상품 포함")
                         add(TournamentException.itemPriceRequired(), name = "가격 정보 없는 상품 포함")
-                        // 아래 둘은 멤버 시작 경로(startAsMember) — 주최자가 ROOT 를 시작해야 멤버가 본인 클론을 만들 수 있다.
+                        // 멤버 시작 경로(startAsMember) — 주최자가 시작해야 멤버가 자기 판을 시작할 수 있다.
                         add(TournamentException.notInProgressTournament(), name = "주최자가 아직 시작하지 않음 (멤버 시작)")
-                        add(TournamentException.alreadyCloned(), name = "이미 본인 클론이 있음 (멤버 시작)")
                     }
 
                 handlerMethod.binds(TournamentController::recordMatch) ->
@@ -469,16 +468,16 @@ class TournamentApiExamples(
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "IN_PROGRESS - 진행 중 복원 (CLONE)",
+                            name = "IN_PROGRESS - 진행 중 복원 (참여자)",
                             payload =
                                 ApiResponseBody.ok(
                                     TournamentDetailResponse(
-                                        tournamentId = 2,
+                                        tournamentId = 1,
                                         name = "내 토너먼트",
                                         status = TournamentStatus.IN_PROGRESS,
                                         isOwner = false,
-                                        isRoot = false,
-                                        sourceTournamentId = 1,
+                                        isRoot = true,
+                                        sourceTournamentId = null,
                                         pending = null,
                                         inProgress =
                                             TournamentDetailResponse.InProgressData(
@@ -681,10 +680,6 @@ class TournamentApiExamples(
                         )
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "권한 없음 (참여자 아님 · 소유자 아님)")
-                        add(
-                            TournamentException.clonedTournamentCannotSharePlayLink(),
-                            name = "플레이 링크로 참여한 토너먼트 (재공유 불가)",
-                        )
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트")
                     }
@@ -713,7 +708,7 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "참여 생성 또는 기존 참여 반환",
+                            name = "참여 시작 또는 기존 참여 이어하기 (항상 원본 토너먼트 id)",
                             payload = ApiResponseBody.ok(42L),
                         )
                         unauthorized()
@@ -728,7 +723,8 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "참여 생성 또는 기존 참여 반환",
+                            // 링크 경로와 같은 일을 하고 주소만 다르므로 예시 이름도 나란히 둔다.
+                            name = "참여 시작 또는 기존 참여 이어하기 (항상 원본 토너먼트 id)",
                             payload = ApiResponseBody.ok(42L),
                         )
                         add(
@@ -750,10 +746,6 @@ class TournamentApiExamples(
 
                 handlerMethod.binds(TournamentController::getGroupResult) ->
                     operation.examples(openApiObjectMapper.delegate) {
-                        add(
-                            TournamentException.clonedTournamentCannotViewGroupResult(),
-                            name = "플레이링크 복제 토너먼트에서 그룹 결과 조회 불가",
-                        )
                         add(
                             status = HttpStatus.OK,
                             name = "그룹 결과 조회 성공 (회원)",
