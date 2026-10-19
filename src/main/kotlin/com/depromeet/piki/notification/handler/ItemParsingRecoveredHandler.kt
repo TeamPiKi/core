@@ -26,6 +26,7 @@ class ItemParsingRecoveredHandler(
         recipients: Set<UUID>,
     ): Map<UUID, RecipientContext> {
         val routings = routingsOf(event)
+        // 수신자를 고른 뒤 다시 계산하는 사이에 카드가 지워지면 좌표가 없다. 좌표 없는 파싱 알림은 어차피 위시 종류다(NotificationKind.of)
         return recipients.associateWith { RecipientContext(routing = routings[it] ?: NotificationRouting.Wish(null)) }
     }
 

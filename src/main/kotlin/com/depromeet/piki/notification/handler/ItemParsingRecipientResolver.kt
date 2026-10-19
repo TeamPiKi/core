@@ -20,17 +20,15 @@ class ItemParsingRecipientResolver(
     fun routingOf(slot: ItemSlot): NotificationRouting =
         when (slot.type) {
             ItemSlotType.WISH -> NotificationRouting.Wish(slot.id)
-            ItemSlotType.TOURNAMENT_ITEM -> tournamentRoutingOf(slot) ?: NotificationRouting.Wish(null)
+            ItemSlotType.TOURNAMENT_ITEM -> tournamentRoutingOf(slot)
         }
 
-    fun tournamentRoutingOf(slot: ItemSlot): NotificationRouting.Tournament? =
-        when (slot.type) {
-            ItemSlotType.WISH -> null
-            ItemSlotType.TOURNAMENT_ITEM ->
-                tournamentItemRepository.findByIdIncludingDeleted(slot.id)?.let {
-                    NotificationRouting.Tournament(it.tournamentId, it.getId())
-                }
-        }
+    // 토너먼트 아이템 행은 하드 삭제하지 않아 지운 행까지 보면 늘 있다
+    fun tournamentRoutingOf(slot: ItemSlot): NotificationRouting.Tournament {
+        require(slot.type == ItemSlotType.TOURNAMENT_ITEM) { "$slot 는 토너먼트 아이템이 아니다" }
+        val tournamentItem = tournamentItemRepository.findByIdIncludingDeleted(slot.id) ?: error("토너먼트 아이템 ${slot.id} 이 없다")
+        return NotificationRouting.Tournament(tournamentItem.tournamentId, tournamentItem.getId())
+    }
 
     // 해소 통지(#1028). 이 버전 직전엔 미완이던 카드가 이 버전으로 채워지면 그 주인에게 간다. 요청한 카드는 완료 알림을 받아 뺀다
     fun resolveRecoveredRoutings(

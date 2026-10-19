@@ -2,6 +2,7 @@ package com.depromeet.piki.notification.sse
 
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ItemSlotType
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
@@ -70,8 +71,9 @@ class TournamentItemParsedSseBroadcaster(
         detail: String,
         payloadOf: (NotificationRouting.Tournament) -> SilentSyncPayload,
     ) {
+        if (slot.type != ItemSlotType.TOURNAMENT_ITEM) return
         runCatching {
-            val tournament = recipientResolver.tournamentRoutingOf(slot) ?: return
+            val tournament = recipientResolver.tournamentRoutingOf(slot)
             val participants = tournamentUserRepository.findByTournamentId(tournament.tournamentId).map { it.userId }
             localDelivery.deliverSilentSync(participants, payloadOf(tournament))
             log.info(
