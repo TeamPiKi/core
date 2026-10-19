@@ -17,6 +17,12 @@ class ItemSnapshotRepositoryImpl(
             ?.let { itemSnapshotJpaRepository.findByItemIdInAndDeletedAtIsNullOrderByIdAsc(it) }
             .orEmpty()
 
+    override fun findAllByItemIdsForShare(itemIds: Collection<Long>): List<ItemSnapshot> =
+        itemIds
+            .takeIf { it.isNotEmpty() }
+            ?.let { itemSnapshotJpaRepository.findByItemIdsForShare(it) }
+            .orEmpty()
+
     override fun findAllByItemIdsAsOf(
         itemIds: Collection<Long>,
         at: LocalDateTime,

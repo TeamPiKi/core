@@ -1,5 +1,6 @@
 package com.depromeet.piki.tournament.service
 
+import com.depromeet.piki.item.domain.CardQuery
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.service.ItemCard
@@ -266,7 +267,8 @@ class TournamentService(
         // 아이템 행을 잠가 버전 생성과 직렬화한다. 이 뒤로 생기는 버전은 시작 시각보다 늦다
         val itemIds = tournamentItems.mapNotNull { it.itemId }
         if (itemRepository.findByIdsForUpdate(itemIds).size != itemIds.distinct().size) throw TournamentException.notFoundItems()
-        val cardById = cardsOf(tournament, tournamentItems)
+        // 잠금을 기다리는 동안 커밋된 버전도 시작 시각 기준 값에 들어가므로 판정도 그 버전까지 본다
+        val cardById = lockedCardsOf(tournament, tournamentItems)
         requireEntryEligible(
             cardById.values,
             TournamentException::itemIncompleteToStart,
@@ -1275,13 +1277,19 @@ class TournamentService(
         tournamentItems: Collection<TournamentItem>,
     ): Map<Long, ItemCard> = cardsOf(tournamentItems) { tournament }
 
+    private fun lockedCardsOf(
+        tournament: Tournament,
+        tournamentItems: Collection<TournamentItem>,
+    ): Map<Long, ItemCard> = cardsOf(tournamentItems, itemCardService::lockedCardsOf) { tournament }
+
     // 키는 tournament_item id. 시작 전엔 지금 보이는 값, 시작 후엔 시작 시각 기준 값이다
     private fun cardsOf(
         tournamentItems: Collection<TournamentItem>,
+        load: (Collection<CardQuery>) -> Map<CardQuery, ItemCard> = itemCardService::cardsOf,
         tournamentOf: (TournamentItem) -> Tournament,
     ): Map<Long, ItemCard> {
         val queryById = tournamentItems.associate { it.getId() to it.cardQuery(tournamentOf(it)) }
-        val cards = itemCardService.cardsOf(queryById.values)
+        val cards = load(queryById.values)
         return queryById.mapValues { (_, query) -> cards.getValue(query) }
     }
 

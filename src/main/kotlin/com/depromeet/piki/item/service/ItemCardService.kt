@@ -17,10 +17,19 @@ class ItemCardService(
 ) {
     fun cardOf(query: CardQuery): ItemCard = cardsOf(listOf(query)).getValue(query)
 
-    fun cardsOf(queries: Collection<CardQuery>): Map<CardQuery, ItemCard> {
+    fun cardsOf(queries: Collection<CardQuery>): Map<CardQuery, ItemCard> = cardsOf(queries, itemSnapshotRepository::findAllByItemIds)
+
+    // 일반 읽기는 트랜잭션 첫 읽기 때 고정된 스냅샷이라 아이템 잠금을 기다리는 동안 커밋된 버전을 못 본다
+    fun lockedCardsOf(queries: Collection<CardQuery>): Map<CardQuery, ItemCard> =
+        cardsOf(queries, itemSnapshotRepository::findAllByItemIdsForShare)
+
+    private fun cardsOf(
+        queries: Collection<CardQuery>,
+        currentVersionsOf: (Collection<Long>) -> List<ItemSnapshot>,
+    ): Map<CardQuery, ItemCard> {
         if (queries.isEmpty()) return emptyMap()
         val latestRequests = latestRequestsOf(queries.map { it.slot })
-        val versionsByScope = versionsByScope(queries)
+        val versionsByScope = versionsByScope(queries, currentVersionsOf)
         return queries.associateWith { query -> cardFor(query, latestRequests, versionsByScope) }
     }
 
@@ -64,13 +73,16 @@ class ItemCardService(
     }
 
     // 시작한 토너먼트는 시작 시각까지의 버전만 읽는다. 그 뒤 버전은 메모리에도 오지 않는다
-    private fun versionsByScope(queries: Collection<CardQuery>): Map<VersionScope, ItemVersions> =
+    private fun versionsByScope(
+        queries: Collection<CardQuery>,
+        currentVersionsOf: (Collection<Long>) -> List<ItemSnapshot>,
+    ): Map<VersionScope, ItemVersions> =
         queries
             .mapNotNull { query -> query.itemId?.let { VersionScope(it, query.asOf) } }
             .distinct()
             .groupBy({ it.asOf }, { it.itemId })
             .flatMap { (asOf, itemIds) ->
-                snapshotsOf(itemIds, asOf)
+                snapshotsOf(itemIds, asOf, currentVersionsOf)
                     .groupBy { it.itemId }
                     .map { (itemId, versions) -> VersionScope(itemId, asOf) to ItemVersions.of(versions) }
             }.toMap()
@@ -78,8 +90,9 @@ class ItemCardService(
     private fun snapshotsOf(
         itemIds: List<Long>,
         asOf: LocalDateTime?,
+        currentVersionsOf: (Collection<Long>) -> List<ItemSnapshot>,
     ): List<ItemSnapshot> {
-        asOf ?: return itemSnapshotRepository.findAllByItemIds(itemIds)
+        asOf ?: return currentVersionsOf(itemIds)
         return itemSnapshotRepository.findAllByItemIdsAsOf(itemIds, asOf)
     }
 

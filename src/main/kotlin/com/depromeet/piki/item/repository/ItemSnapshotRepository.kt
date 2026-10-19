@@ -8,6 +8,8 @@ interface ItemSnapshotRepository {
 
     fun findAllByItemIds(itemIds: Collection<Long>): List<ItemSnapshot>
 
+    fun findAllByItemIdsForShare(itemIds: Collection<Long>): List<ItemSnapshot>
+
     // 시작한 토너먼트의 출전 값. 시작과 버전 생성이 같은 아이템 행 잠금을 거쳐 created_at 순서가 커밋 순서와 같다
     fun findAllByItemIdsAsOf(
         itemIds: Collection<Long>,
