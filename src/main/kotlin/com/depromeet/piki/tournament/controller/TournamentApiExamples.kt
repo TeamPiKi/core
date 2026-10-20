@@ -232,7 +232,7 @@ class TournamentApiExamples(
                                                     name = "살로몬 XT-6",
                                                     price = 279_000,
                                                     currency = "USD",
-                                                    imageUrl = null,
+                                                    imageUrl = "https://cdn.example.com/items/4.jpg",
                                                 ),
                                             ),
                                     ),
@@ -317,7 +317,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "USD",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
@@ -508,7 +508,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "KRW",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                             status = ItemStatus.READY,
                                                         ),
                                                     ),
@@ -570,7 +570,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "KRW",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
@@ -638,6 +638,7 @@ class TournamentApiExamples(
                                 ),
                         )
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(TournamentException.inviteExpired(), name = "초대 링크 만료")
                     }
 
@@ -657,7 +658,10 @@ class TournamentApiExamples(
                             ),
                         )
                         add(TournamentException.invalidInviteCode(), name = "코드에 해당하는 토너먼트 없음")
+                        add(TournamentException.playLinkNotCreated(), name = "완주했지만 공유 링크 없음")
+                        add(TournamentException.notPendingTournament(), name = "시작했지만 주최자가 아직 완주하지 않음")
                         add(TournamentException.inviteExpired(), name = "초대 링크 만료")
+                        add(TournamentException.playLinkExpired(), name = "완주한 토너먼트의 공유 링크 만료")
                     }
 
                 handlerMethod.binds(TournamentController::createPlayLink) ->
@@ -939,7 +943,7 @@ class TournamentApiExamples(
                         name = "살로몬 XT-6",
                         price = 279_000,
                         currency = "KRW",
-                        imageUrl = null,
+                        imageUrl = "https://cdn.example.com/items/4.jpg",
                         status = ItemStatus.READY,
                     ),
             )

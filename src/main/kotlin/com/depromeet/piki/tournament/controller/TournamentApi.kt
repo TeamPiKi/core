@@ -47,7 +47,7 @@ interface TournamentApi {
             playType 파라미터로 솔로/소셜을 나눠 볼 수 있다(SOLO · SOCIAL). 생략 시 전체이며 status 와 AND 로 걸린다
             (예: ?status=PENDING&status=IN_PROGRESS&playType=SOCIAL).
             playType 은 저장된 속성이 아니라 참가 결과로 파생된다 — 혼자면 SOLO, 참여자가 생기면 SOCIAL 이고
-            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 초대 코드(PENDING)와 플레이 링크(COMPLETED)로 일어나므로,
+            남의 토너먼트에 참여한 항목은 항상 SOCIAL 이다. 참여는 초대 코드(PENDING)와 플레이 링크(주최자가 자기 플레이를 완주한 뒤)로 일어나므로,
             그 사이 같은 토너먼트가 SOLO 목록에서 SOCIAL 목록으로 옮겨갈 수 있다.
             각 항목의 thumbnailUrls 는 카드 대표 썸네일 URL 배열이다 — 최근 등록 아이템 중 이미지가 준비된(READY) 것 최대 2장.
             이미지가 준비된 아이템이 없으면 빈 배열이며, limit 유무와 무관하게 항상 포함된다.
@@ -245,6 +245,8 @@ interface TournamentApi {
             코드가 유효하면 tournamentId·이름·아이템 수·참여자 수와 현재 유저의 참여 여부(joined)를 반환한다.
             인증은 선택 — 토큰이 있으면 그 유저 기준 joined 를 계산하고, 없으면 joined=false 로 내린다.
             이후 /join 또는 /join/guest 호출 시 응답의 tournamentId를 사용하면 된다.
+            코드는 토너먼트 상태에 따라 다른 문을 연다. 대기실(PENDING)이면 합류 미리보기이고, 주최자가 자기 플레이를
+            완주했으면 플레이 생성(`POST /from-play-code`) 미리보기다. 완주한 토너먼트는 공유 링크가 유효해야 보인다.
         """,
     )
     @ApiResponses(
@@ -260,8 +262,13 @@ interface TournamentApi {
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(
+                responseCode = "404",
+                description = "주최자가 완주했지만 공유 링크를 만들지 않음 — code: TOURNAMENT-026",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
+            ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (PENDING이 아닌 토너먼트 · 초대 링크 만료)",
+                description = "상태 충돌 (시작했지만 주최자가 아직 완주하지 않음 · 초대 링크 만료 · 완주한 토너먼트의 공유 링크 만료)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],
@@ -464,7 +471,11 @@ interface TournamentApi {
 
     @Operation(
         summary = "토너먼트 시작",
-        description = "PENDING 상태의 토너먼트를 IN_PROGRESS 상태로 전환하고, 참여 아이템 목록을 가격 오름차순으로 정렬해 반환한다.",
+        description = """
+            참여 아이템 목록을 가격 오름차순으로 정렬해 반환한다. 부르는 사람에 따라 두 경로로 갈린다.
+            - 주최자: PENDING 토너먼트를 IN_PROGRESS 로 전환하고 자기 플레이를 시작한다.
+            - 멤버·게스트: 주최자가 시작한 뒤에만 자기 참여 행을 플레이 시작으로 전환한다. 다시 불러도 같은 결과를 돌려준다(멱등).
+        """,
     )
     @ApiResponses(
         value = [
@@ -500,7 +511,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 토너먼트 소유자가 아님)",
+                description = "권한 없음 (토너먼트 참여자가 아님)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -690,7 +701,7 @@ interface TournamentApi {
             검증하지 않으므로, 뒤집혀 오거나 순서가 달라도 통과한다.
 
             같은 조합을 같은 승자로 다시 보내면 멱등 성공(중복 기록 없이 200)이고, 다른 승자로 보내면 409 (TOURNAMENT-035) 다.
-            결승 매치도 마찬가지다 - 결승을 기록하면 토너먼트가 COMPLETED 로 바뀌지만, 같은 결승 매치를 재전송하면
+            결승 매치도 마찬가지다 - 결승을 기록하면 내 참여가 COMPLETED 로 바뀌지만, 같은 결승 매치를 재전송하면
             409 가 아니라 최초 응답과 같은 completed(순위 결과)를 다시 받는다. 응답을 못 받고 재전송하는 경우가 결승에서 가장 흔하다.
 
             응답의 nullable 필드는 `null` 로 내려가지 않고 **키 자체가 생략**된다 (이 API 공통 규약).
@@ -785,10 +796,10 @@ interface TournamentApi {
             - 만료된 링크가 있으면: 새 14일로 갱신한다.
 
             플레이 링크는 **토너먼트당 하나**이고 주소가 `tournamentId` 로 결정된다(별도 토큰 없음) - 같은
-            토너먼트에 여러 개를 만들 수 없다. 링크를 통해 들어오는 인원 제한은 없다.
+            토너먼트에 여러 개를 만들 수 없다. 링크로 들어오는 인원도 초대·코드와 같은 정원 제한을 받는다.
 
             초대 코드(시작 전, 참여자로 합류)와는 다른 기능이며 동시에 열리는 구간이 없다 - 초대 코드는
-            PENDING 상태에서만, 플레이 링크는 COMPLETED 상태에서만 쓸 수 있다.
+            PENDING 상태에서만, 플레이 링크는 주최자가 자기 플레이를 완주한 뒤에만 쓸 수 있다. 토너먼트 상태(status)는 주최자 완주 뒤에도 IN_PROGRESS 일 수 있어 상태가 아니라 주최자 참여 행으로 판정한다.
         """,
     )
     @ApiResponses(
@@ -815,7 +826,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (COMPLETED가 아닌 토너먼트)",
+                description = "상태 충돌 (주최자가 아직 자기 플레이를 완주하지 않음)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],
@@ -870,12 +881,13 @@ interface TournamentApi {
             "완료된 토너먼트의 6자리 코드로 입장해 내 플레이를 만든다. `from-play-link` 와 같은 일을 하고 **주소만 다르다** " +
                 "- 링크를 열 수 없는 자리(오프라인에서 코드를 불러주는 등)를 위한 경로다.\n\n" +
                 "**코드는 초대 코드와 같은 값이다.** 토너먼트 생성 시점에 발급돼 바뀌지 않으며, 상태에 따라 다른 문을 연다.\n\n" +
-                "| 대상 상태 | 이 API | 게이트 |\n" +
+                "| 대상 | 이 API | 게이트 |\n" +
                 "|---|---|---|\n" +
                 "| PENDING | **409** (`TOURNAMENT-023`) — `POST /{id}/join` 을 쓴다 | - |\n" +
-                "| COMPLETED | 플레이 생성 | 공유 링크가 유효해야 한다 (14일) |\n\n" +
+                "| 시작했지만 주최자가 아직 완주하지 않음 | **409** (`TOURNAMENT-023`) | - |\n" +
+                "| 주최자가 완주함 | 플레이 생성 | 공유 링크가 유효해야 한다 (14일) |\n\n" +
                 "**공유를 켜지 않은 토너먼트는 코드로도 열리지 않는다** - 주최자가 공유 링크를 만들지 않았으면 404(`TOURNAMENT-026`). " +
-                "주최자가 나가 링크가 무효화된 경우도 같은 게이트에 걸린다. 만료 후 재발급하면 코드도 함께 살아난다.\n\n" +
+                "주최자가 나가 링크가 무효화되면 만료와 같이 409(`TOURNAMENT-027`)다. 만료 후 재발급하면 코드도 함께 살아난다.\n\n" +
                 "**멱등하다.** 이미 참여 중이면 기존 토너먼트 id 를 그대로 200 으로 돌려준다(링크 만료와 무관). " +
                 "그래서 201 이 아니라 200 이다.\n\n" +
                 "**정원은 8명이다**(주최자 포함, 참여 행 기준). 초대·링크·코드가 같은 제한을 공유한다.",
@@ -962,7 +974,12 @@ interface TournamentApi {
 
     @Operation(
         summary = "토너먼트 삭제",
-        description = "토너먼트를 소유자 목록에서 제거한다. 소유자만 호출 가능하며, IN_PROGRESS 상태에서는 불가. 토너먼트 데이터(아이템·히스토리)는 유지되어 다른 참여자들은 계속 접근할 수 있다.",
+        description = """
+            소유자만 호출 가능하다. 주최자 본인의 플레이 진행에 따라 갈린다.
+            - 아직 플레이 전: 토너먼트·아이템·참여 행을 모두 지운다.
+            - 플레이 중: 삭제할 수 없다(409).
+            - 플레이 완주 뒤: 주최자만 목록에서 빠지고 플레이 링크가 무효화된다. 토너먼트 데이터(아이템·히스토리)는 유지되어 다른 참여자들은 계속 접근할 수 있다.
+        """,
     )
     @ApiResponses(
         value = [
@@ -1008,7 +1025,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (IN_PROGRESS 토너먼트는 삭제 불가)",
+                description = "상태 충돌 (주최자 본인 플레이가 진행 중)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
