@@ -12,6 +12,8 @@ import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.domain.UserInput
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.linkItem
 import org.junit.jupiter.api.Test
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -35,7 +37,7 @@ class ItemCardTest {
                 UserInput(name = null, price = null, imageUrl = null, currency = null),
                 UserInput(name = " ", price = null, imageUrl = null, currency = ""),
             )
-        val cards = listOf(ItemCard.Resolved(display = version(), refreshing = false), ItemCard.Unresolved(failedRequest()))
+        val cards = listOf(ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false), ItemCard.Unresolved(failedRequest()))
 
         for (card in cards) {
             for (empty in empties) {
@@ -66,7 +68,7 @@ class ItemCardTest {
 
     @Test
     fun `값이 다 있는 카드는 보내지 않은 필드를 지금 보이는 값으로 채운다`() {
-        val card = ItemCard.Resolved(display = version(), refreshing = false)
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false)
 
         val values = card.userInputValues(UserInput(name = null, price = 79_000, imageUrl = null, currency = null))
 
@@ -78,7 +80,7 @@ class ItemCardTest {
 
     @Test
     fun `미완성 카드는 비어 있는 필드를 보내지 않으면 거부한다`() {
-        val card = ItemCard.Resolved(display = version(price = null), refreshing = false)
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(price = null), refreshing = false)
 
         assertEquals(ItemStatus.INCOMPLETE, card.status)
         val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "이름만", price = null, imageUrl = null, currency = null)) }
@@ -87,14 +89,14 @@ class ItemCardTest {
 
     @Test
     fun `미완성 카드는 비어 있는 필드만 보내도 나머지를 지금 값으로 채운다`() {
-        val card = ItemCard.Resolved(display = version(price = null), refreshing = false)
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(price = null), refreshing = false)
 
         assertEquals(10_000, card.userInputValues(UserInput(name = null, price = 10_000, imageUrl = null, currency = null)).price)
     }
 
     @Test
     fun `새로고침 중인 카드는 값이 있어도 사용자 입력을 거부한다`() {
-        val card = ItemCard.Resolved(display = version(), refreshing = true)
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = true)
 
         assertEquals(ItemStatus.READY, card.status)
         val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "바꾼 이름", price = null, imageUrl = null, currency = null)) }
@@ -102,12 +104,17 @@ class ItemCardTest {
     }
 
     @Test
-    fun `요청 링크는 아이템이 없는 링크 요청 카드에만 있다`() {
-        val link = ProductLink.parse("https://shop.example.com/products/1")
+    fun `출처 링크는 상품이 정해지기 전엔 요청한 링크이고 정해진 뒤엔 상품 주소다`() {
+        val requested = ProductLink.parse("https://short.example.net/abc")
 
-        assertEquals(link, ItemCard.Unresolved(request(ParseInput.Link(link))).pendingLink)
-        assertNull(ItemCard.Unresolved(request(ParseInput.Image(ProductImageKey.newRaw("png")))).pendingLink)
-        assertNull(ItemCard.Resolved(display = version(), refreshing = false).pendingLink)
+        assertEquals(requested, ItemCard.Unresolved(request(ParseInput.Link(requested))).sourceLink)
+        assertEquals(ProductLink.parse(ITEM_URL), ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false).sourceLink)
+    }
+
+    @Test
+    fun `이미지로 등록한 카드는 상품이 정해지기 전후 모두 출처 링크가 없다`() {
+        assertNull(ItemCard.Unresolved(request(ParseInput.Image(ProductImageKey.newRaw("png")))).sourceLink)
+        assertNull(ItemCard.Resolved(item = imageItem(), display = version(), refreshing = false).sourceLink)
     }
 
     private fun request(input: ParseInput = ParseInput.Link(ProductLink.parse("https://shop.example.com/products/1"))): ItemParseOutbox =
@@ -132,4 +139,8 @@ class ItemCardTest {
             userInput = false,
             createdBy = UUID.randomUUID(),
         )
+
+    companion object {
+        private const val ITEM_URL = "https://shop.example.com/products/1"
+    }
 }

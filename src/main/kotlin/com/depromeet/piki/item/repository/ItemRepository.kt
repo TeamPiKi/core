@@ -8,6 +8,8 @@ interface ItemRepository {
 
     fun findByIds(ids: List<Long>): List<Item>
 
+    fun findByIdsForShare(ids: Collection<Long>): List<Item>
+
     fun findById(id: Long): Item?
 
     fun findByCanonical(canonical: CanonicalInput): Item?

@@ -8,14 +8,18 @@ import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.completeLatest
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishRepository
+import jakarta.persistence.EntityManager
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -43,6 +47,10 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var itemParseOutboxRepository: ItemParseOutboxRepository
 
     @Autowired private lateinit var wishRepository: WishRepository
+
+    @Autowired private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired private lateinit var entityManager: EntityManager
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -198,6 +206,46 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data[0].item.status").value("INCOMPLETE"))
             .andExpect(jsonPath("$.data[0].item.name").value("일부만"))
             .andExpect(jsonPath("$.data[0].item.price").doesNotExist())
+    }
+
+    @Test
+    fun `단축 링크로 담은 위시는 파싱 전엔 등록 링크로, 성공 뒤엔 최종 상품 주소로 출처 주소와 몰 이름을 함께 바꾼다`() {
+        val mockMvc = buildMockMvc()
+        val userA = UUID.randomUUID()
+        insertMember(userA)
+        val shortUrl = "https://link.shorty.io/display-9"
+        val finalUrl = "https://shop.example.com/products/display-9"
+        val wish = wishRepository.save(Wish(userId = userA, itemId = null))
+        itemParseOutboxRepository.save(ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(shortUrl))))
+
+        expectSource(mockMvc, userA, wish.getId(), shortUrl, "shorty")
+
+        itemParsingService.completeLatest(
+            entityManager,
+            wish.slot,
+            ProductSnapshot(name = "상품", price = 10_000, currency = "KRW", imageUrl = "https://cdn.example.com/p/9.jpg", finalUrl = ProductLink.parse(finalUrl)),
+        )
+
+        expectSource(mockMvc, userA, wish.getId(), finalUrl, "example")
+    }
+
+    private fun expectSource(
+        mockMvc: MockMvc,
+        userId: UUID,
+        wishId: Long,
+        sourceUrl: String,
+        sourcePlatform: String,
+    ) {
+        mockMvc
+            .perform(get("/api/v1/wishlists").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data[0].item.sourceUrl").value(sourceUrl))
+            .andExpect(jsonPath("$.data[0].item.sourcePlatform").value(sourcePlatform))
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.sourceUrl").value(sourceUrl))
+            .andExpect(jsonPath("$.data.item.sourcePlatform").value(sourcePlatform))
     }
 
     private fun saveItem(url: String): Long = itemRepository.save(linkItem(url)).getId()

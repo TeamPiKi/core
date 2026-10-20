@@ -73,7 +73,7 @@ class WishPersistenceService(
     ): WishResult {
         val wish = wishRepository.save(Wish(userId = userId, itemId = null))
         parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REGISTER, input)
-        return WishResult(wish = wish, item = null, card = itemCardService.cardOf(wish.cardQuery()))
+        return WishResult(wish = wish, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     // 요청 시점에 같은 상품인지 모르면 받고, 확정 때 합친다(ItemSlotPort.fill)
@@ -107,10 +107,10 @@ class WishPersistenceService(
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
         val values = itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput)
-        val recorded = userInputRecorder.record(wish.slot, wish.itemId, values, createdBy = command.userId)
-        val survivor = survivorOf(wish, recorded.fill)
+        val fill = userInputRecorder.record(wish.slot, wish.itemId, values, createdBy = command.userId)
+        val survivor = survivorOf(wish, fill)
         command.memo?.let { writeMemo(survivor, it) }
-        return WishResult(wish = survivor, item = recorded.item, card = itemCardService.cardOf(survivor.cardQuery()))
+        return WishResult(wish = survivor, card = itemCardService.cardOf(survivor.cardQuery()))
     }
 
     // 이미지를 올리기 전에 거절해 S3 에 고아 객체가 남지 않게 한다. 최종 판정은 applyUserInput 이 락 안에서 다시 한다
@@ -127,7 +127,7 @@ class WishPersistenceService(
         val wish = wishRepository.findByIdForUpdate(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
         writeMemo(wish, command.memo)
-        return WishResult(wish = wish, item = wish.itemId?.let(itemRepository::findById), card = itemCardService.cardOf(wish.cardQuery()))
+        return WishResult(wish = wish, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     // 아이템이 없는 위시는 같은 입력으로 다시 돌려도 실패하므로 사용자 입력으로 보내려고 409 로 막는다
@@ -137,10 +137,10 @@ class WishPersistenceService(
         wish.verifyOwnedBy(command.userId)
         val item = wish.itemId?.let(itemRepository::findById)
         val card = itemCardService.cardOf(wish.cardQuery())
-        if (card.isParsing()) return WishResult(wish = wish, item = item, card = card)
+        if (card.isParsing()) return WishResult(wish = wish, card = card)
         item ?: throw WishException.failedNotRefreshable()
         parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REFRESH, item.refreshInput())
-        return WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()))
+        return WishResult(wish = wish, card = itemCardService.cardOf(wish.cardQuery()))
     }
 
     private fun writeMemo(

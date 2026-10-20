@@ -5,7 +5,6 @@ import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.service.ImagePresignService
 import com.depromeet.piki.image.service.dto.PresignedRawUpload
 import com.depromeet.piki.item.domain.ItemErrorCode
-import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemRegistrar
@@ -41,7 +40,6 @@ class WishlistService(
     private val imagePresignService: ImagePresignService,
     private val wishRepository: WishRepository,
     private val wishMemoRepository: WishMemoRepository,
-    private val itemRepository: ItemRepository,
     private val itemSnapshotRepository: ItemSnapshotRepository,
     private val itemCardService: ItemCardService,
     private val itemQuotaGuard: ItemQuotaGuard,
@@ -49,7 +47,7 @@ class WishlistService(
     private val sourcePlatformResolver: SourcePlatformResolver,
     private val tournamentWinnerReader: TournamentWinnerReader,
 ) {
-    private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink))
+    private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(card.sourceLink))
 
     // TODO AOP
     private fun requireMember(userId: UUID) {
@@ -87,14 +85,12 @@ class WishlistService(
         val pageWishes = fetched.take(size)
 
         val cardByQuery = itemCardService.cardsOf(pageWishes.map { it.cardQuery() })
-        val itemsById = itemRepository.findByIds(pageWishes.mapNotNull { it.itemId }).associateBy { it.getId() }
         // 우승 칩(#1236) — 이 페이지에 보이는 상품만 한 번에 물어 N+1 을 만들지 않는다
         val winnersByItem = tournamentWinnerReader.findWinnerTournamentIdsByItem(query.userId, pageWishes.mapNotNull { it.itemId })
         val entries =
             pageWishes.map { wish ->
                 WishResult(
                     wish = wish,
-                    item = wish.itemId?.let { itemsById[it] ?: error("wish ${wish.getId()} 의 item $it 가 없다") },
                     card = cardByQuery.getValue(wish.cardQuery()),
                     winnerTournamentIds = wish.itemId?.let { winnersByItem[it] }.orEmpty(),
                 ).withSourcePlatform()
@@ -114,14 +110,14 @@ class WishlistService(
         requireMember(query.userId)
         val wish = wishRepository.findById(query.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(query.userId)
-        val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
-        val winnerTournamentIds = item?.let { tournamentWinnerReader.findWinnerTournamentIdsByItem(query.userId, listOf(it.getId()))[it.getId()] }.orEmpty()
+        val itemId = wish.itemId
+        val winnerTournamentIds = itemId?.let { tournamentWinnerReader.findWinnerTournamentIdsByItem(query.userId, listOf(it))[it] }.orEmpty()
         return WishDetailResult(
             wishResult =
-                WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()), winnerTournamentIds = winnerTournamentIds)
+                WishResult(wish = wish, card = itemCardService.cardOf(wish.cardQuery()), winnerTournamentIds = winnerTournamentIds)
                     .withSourcePlatform(),
             memo = wishMemoRepository.findCurrentByWishId(wish.getId())?.content,
-            history = item?.let { itemSnapshotRepository.findPriceHistoryByItemId(it.getId(), PRICE_HISTORY_LIMIT) }.orEmpty(),
+            history = itemId?.let { itemSnapshotRepository.findPriceHistoryByItemId(it, PRICE_HISTORY_LIMIT) }.orEmpty(),
         )
     }
 

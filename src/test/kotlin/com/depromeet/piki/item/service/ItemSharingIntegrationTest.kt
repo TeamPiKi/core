@@ -78,7 +78,6 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
         val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(user, ProductLink.parse("https://www.musinsa.com/products/8100001")))
 
-        assertNull(result.item)
         assertNull(result.wish.itemId)
         assertEquals(ItemStatus.PARSING, result.card.status)
         assertEquals(1, outboxCountOf(result.wish.slot))
@@ -91,7 +90,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         val first = wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse(url)))
         val second = wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse(url)))
 
-        assertNull(second.item)
+        assertNull(second.wish.itemId)
         assertEquals(1, outboxCountOf(first.wish.slot))
         assertEquals(1, outboxCountOf(second.wish.slot))
     }

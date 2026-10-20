@@ -12,6 +12,9 @@ class ItemRepositoryImpl(
 
     override fun findByIds(ids: List<Long>): List<Item> = itemJpaRepository.findAllById(ids)
 
+    override fun findByIdsForShare(ids: Collection<Long>): List<Item> =
+        if (ids.isEmpty()) emptyList() else itemJpaRepository.findByIdsForShare(ids)
+
     override fun findById(id: Long): Item? = itemJpaRepository.findById(id).orElse(null)
 
     override fun findByCanonical(canonical: CanonicalInput): Item? = itemJpaRepository.findByCanonicalUrlAndDeletedAtIsNull(canonical)

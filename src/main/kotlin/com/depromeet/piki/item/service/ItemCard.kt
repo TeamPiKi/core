@@ -1,5 +1,6 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
@@ -13,7 +14,7 @@ sealed interface ItemCard {
     val status: ItemStatus
     val display: ItemSnapshot?
     val refreshing: Boolean
-    val pendingLink: ProductLink?
+    val sourceLink: ProductLink?
 
     val itemId: Long? get() = display?.itemId
 
@@ -39,14 +40,15 @@ sealed interface ItemCard {
         override val status: ItemStatus get() = if (latestRequest.isFailed()) ItemStatus.FAILED else ItemStatus.PARSING
         override val display: ItemSnapshot? get() = null
         override val refreshing: Boolean get() = false
-        override val pendingLink: ProductLink? get() = (latestRequest.input as? ParseInput.Link)?.link
+        override val sourceLink: ProductLink? get() = (latestRequest.input as? ParseInput.Link)?.link
     }
 
     data class Resolved(
+        private val item: Item,
         override val display: ItemSnapshot,
         override val refreshing: Boolean,
     ) : ItemCard {
         override val status: ItemStatus get() = if (display.isReady()) ItemStatus.READY else ItemStatus.INCOMPLETE
-        override val pendingLink: ProductLink? get() = null
+        override val sourceLink: ProductLink? get() = item.sourceLink()
     }
 }

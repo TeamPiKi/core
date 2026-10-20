@@ -23,4 +23,10 @@ interface ItemJpaRepository : JpaRepository<Item, Long> {
     fun findByIdsForUpdate(
         @Param("ids") ids: Collection<Long>,
     ): List<Item>
+
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select i from Item i where i.id in :ids order by i.id")
+    fun findByIdsForShare(
+        @Param("ids") ids: Collection<Long>,
+    ): List<Item>
 }

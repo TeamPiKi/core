@@ -1,6 +1,5 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.UserInputValues
@@ -27,12 +26,11 @@ class UserInputRecorder(
         itemId: Long?,
         values: UserInputValues,
         createdBy: UUID,
-    ): RecordedUserInput {
+    ): ItemSlotFill {
         val resolvedId = itemId ?: requestedItemIdOf(slot)
         val item = itemRepository.findByIdForUpdate(resolvedId) ?: error("item $resolvedId 가 없다")
         itemSnapshotRepository.save(ItemSnapshot.userInput(item.getId(), values, createdBy))
-        val fill = itemSlots.fill(slot, item.getId())
-        return RecordedUserInput(item, fill)
+        return itemSlots.fill(slot, item.getId())
     }
 
     private fun requestedItemIdOf(slot: ItemSlot): Long {
@@ -40,8 +38,3 @@ class UserInputRecorder(
         return itemResolver.resolve(latest.input, finalUrl = null).getId()
     }
 }
-
-data class RecordedUserInput(
-    val item: Item,
-    val fill: ItemSlotFill,
-)

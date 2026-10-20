@@ -524,19 +524,17 @@ class TournamentService(
                 ?: throw TournamentException.notFoundTournamentItem()
         if (tournamentItem.tournamentId != tournament.getId()) throw TournamentException.notFoundTournamentItem()
         val card = itemCardService.cardOf(tournamentItem.cardQuery(tournament))
-        val item = tournamentItem.itemId?.let { itemRepository.findById(it) }
-        val pendingLink = card.pendingLink
-        val memo = item?.let { wishMemoOf(it.getId(), userId) }
+        val itemId = tournamentItem.itemId
         return TournamentItemDetail(
             tournamentItemId = tournamentItem.getId(),
-            itemId = item?.getId(),
-            sourceUrl = (item?.sourceLink() ?: pendingLink)?.toString(),
+            itemId = itemId,
+            sourceUrl = card.sourceLink?.toString(),
             name = card.display?.name,
             imageUrl = card.display?.imageUrl,
             price = card.display?.price,
             currency = card.display?.currency,
             status = card.status,
-            memo = memo,
+            memo = itemId?.let { wishMemoOf(it, userId) },
         )
     }
 

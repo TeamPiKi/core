@@ -108,7 +108,7 @@ data class WishItemResponse(
         companion object {
             fun from(result: WishResult): ItemView =
                 ItemView(
-                    id = result.item?.getId(),
+                    id = result.wish.itemId,
                     status = result.card.status,
                     refreshing = result.card.refreshing,
                     method = result.card.display?.method,
@@ -117,7 +117,7 @@ data class WishItemResponse(
                     price = result.card.display?.price,
                     currency = result.card.display?.currency,
                     imageUrl = result.card.display?.imageUrl,
-                    sourceUrl = (result.item?.sourceLink() ?: result.card.pendingLink)?.toString(),
+                    sourceUrl = result.card.sourceLink?.toString(),
                     sourcePlatform = result.sourcePlatform,
                 )
         }

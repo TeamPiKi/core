@@ -56,7 +56,7 @@ class ItemCardIntegrationTest : IntegrationTestSupport() {
         assertNull(card.itemId)
         assertNull(card.display)
         assertFalse(card.refreshing)
-        assertEquals(ProductLink.parse(url), card.pendingLink)
+        assertEquals(ProductLink.parse(url), card.sourceLink)
     }
 
     @Test
