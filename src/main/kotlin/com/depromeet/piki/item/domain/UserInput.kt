@@ -6,6 +6,10 @@ data class UserInput(
     val imageUrl: String?,
     val currency: String?,
 ) {
+    fun isEmpty(): Boolean =
+        listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl?.takeIf { it.isNotBlank() }, currency?.takeIf { it.isNotBlank() })
+            .isEmpty()
+
     fun filledFrom(base: ItemSnapshot): UserInput =
         UserInput(
             name = name ?: base.name,

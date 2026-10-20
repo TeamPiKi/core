@@ -350,7 +350,7 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "400",
                 description =
-                    "잘못된 요청 (합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
+                    "잘못된 요청 (바꿀 값이 하나도 없음(메모도 없음) — code: ITEM-009 · 합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
                         "합친 뒤에도 이미지 없음 — code: ITEM-005 · price 음수 · name/currency/memo 길이 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 Content-Type 없음 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",

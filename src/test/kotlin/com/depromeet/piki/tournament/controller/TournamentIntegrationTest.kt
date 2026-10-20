@@ -2473,6 +2473,25 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH tournaments-id-items-itemId 에 바꿀 값이 하나도 없으면 400 이고 버전이 쌓이지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val readyItemId = saveWishItem()
+        addItemsToTournament(mockMvc, tournamentId, userId, readyItemId)
+        val tournamentItemId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        val versionBefore = latestVersionOf(readyItemId).getId()
+
+        mockMvc
+            .perform(
+                multipart(HttpMethod.PATCH, "/api/v1/tournaments/$tournamentId/items/$tournamentItemId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("ITEM-009"))
+
+        assertEquals(versionBefore, latestVersionOf(readyItemId).getId())
+    }
+
+    @Test
     fun `PATCH tournaments-id-items-itemId 에서 파싱 중인 아이템은 값을 다 채워도 409 이고 아이템이 확정되지 않는다`() {
         val mockMvc = buildMockMvc()
         val tournamentId = createTournament(mockMvc)

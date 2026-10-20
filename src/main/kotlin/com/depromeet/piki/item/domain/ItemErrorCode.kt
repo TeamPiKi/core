@@ -14,4 +14,5 @@ enum class ItemErrorCode(
     QUOTA_EXCEEDED("ITEM-006", ErrorCategory.TOO_MANY_REQUESTS, "지금은 추가할 수 없어요. 잠시 후 다시 시도해 주세요."),
     NOT_REFRESHABLE("ITEM-007", ErrorCategory.INVALID_INPUT, "링크로 등록한 상품만 새로고침할 수 있어요."),
     PARSING_IN_PROGRESS("ITEM-008", ErrorCategory.CONFLICT, "아직 정보를 가져오는 중인 상품이에요. 끝난 뒤 다시 입력해 주세요."),
+    EMPTY_USER_INPUT("ITEM-009", ErrorCategory.INVALID_INPUT, "바꿀 정보를 입력해 주세요."),
 }

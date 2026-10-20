@@ -27,5 +27,7 @@ class ItemException private constructor(
         fun notRefreshable(): ItemException = ItemException(ItemErrorCode.NOT_REFRESHABLE)
 
         fun parsingInProgress(): ItemException = ItemException(ItemErrorCode.PARSING_IN_PROGRESS)
+
+        fun emptyUserInput(): ItemException = ItemException(ItemErrorCode.EMPTY_USER_INPUT)
     }
 }

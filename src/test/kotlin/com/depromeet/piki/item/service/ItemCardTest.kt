@@ -29,6 +29,23 @@ class ItemCardTest {
     }
 
     @Test
+    fun `바꿀 값이 하나도 없는 입력은 카드 상태와 무관하게 거부한다`() {
+        val empties =
+            listOf(
+                UserInput(name = null, price = null, imageUrl = null, currency = null),
+                UserInput(name = " ", price = null, imageUrl = null, currency = ""),
+            )
+        val cards = listOf(ItemCard.Resolved(display = version(), refreshing = false), ItemCard.Unresolved(failedRequest()))
+
+        for (card in cards) {
+            for (empty in empties) {
+                val e = assertFailsWith<ItemException> { card.userInputValues(empty) }
+                assertEquals(ItemErrorCode.EMPTY_USER_INPUT, e.errorCode, "${card.status} 카드, $empty")
+            }
+        }
+    }
+
+    @Test
     fun `실패한 요청만 있는 카드는 보낸 값을 그대로 쓴다`() {
         val card = ItemCard.Unresolved(failedRequest())
 

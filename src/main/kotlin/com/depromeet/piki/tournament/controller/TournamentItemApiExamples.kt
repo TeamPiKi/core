@@ -157,6 +157,7 @@ class TournamentItemApiExamples(
                             name = "사용자 입력 성공 (새 버전이 표시값이 됨)",
                             payload = ApiResponseBody.ok<Unit>(),
                         )
+                        add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
                         add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
                         add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
                         add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")

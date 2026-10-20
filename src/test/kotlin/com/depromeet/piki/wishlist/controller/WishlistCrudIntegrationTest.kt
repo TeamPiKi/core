@@ -513,6 +513,28 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `바꿀 값 없이 보낸 사용자 입력은 400 으로 거부되고 버전이 쌓이지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/empty-patch", name = "그대로인 이름")
+        val versionsBefore = itemSnapshotRepository.findAllByItemIds(listOf(itemIdOf(wishId))).size
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.EMPTY_USER_INPUT.code))
+            .andExpect(jsonPath("$.detail").value(ItemErrorCode.EMPTY_USER_INPUT.message))
+        assertEquals(versionsBefore, itemSnapshotRepository.findAllByItemIds(listOf(itemIdOf(wishId))).size)
+    }
+
+    @Test
     fun `파싱 중인 위시는 상품 정보 입력이 업로드 전에 409 로 거부되고 메모만 바꾸는 것은 된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()

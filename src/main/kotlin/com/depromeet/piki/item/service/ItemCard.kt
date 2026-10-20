@@ -24,6 +24,8 @@ sealed interface ItemCard {
     fun isParsing(): Boolean = status == ItemStatus.PARSING || refreshing
 
     fun userInputValues(input: UserInput): UserInputValues {
+        // 빈 입력을 받으면 지금 보이는 값을 복제한 사용자 입력 버전이 쌓여 가격 이력과 출처 표시가 바뀐다
+        if (input.isEmpty()) throw ItemException.emptyUserInput()
         if (isParsing()) throw ItemException.parsingInProgress()
         return when (this) {
             is Unresolved -> UserInputValues.of(input)

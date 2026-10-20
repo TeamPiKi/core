@@ -153,6 +153,7 @@ class WishlistApiExamples(
                                 detail = WishlistUpdateRequest.MEMO_MAX_MESSAGE,
                             ),
                     )
+                    add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
                     add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
                     add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
                     add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
