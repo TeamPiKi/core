@@ -47,7 +47,6 @@ enum class TournamentErrorCode(
     PLAY_LINK_NOT_CREATED("TOURNAMENT-026", ErrorCategory.NOT_FOUND, "아직 플레이 링크가 만들어지지 않은 토너먼트예요."),
     PLAY_LINK_EXPIRED("TOURNAMENT-027", ErrorCategory.CONFLICT, "플레이 링크가 만료됐어요."),
     GROUP_RESULT_NOT_AVAILABLE("TOURNAMENT-028", ErrorCategory.CONFLICT, "완료된 토너먼트에서만 결과를 볼 수 있어요."),
-    ALREADY_CLONED("TOURNAMENT-029", ErrorCategory.CONFLICT, "이미 이 플레이 링크로 만든 토너먼트가 있어요."),
     PARTICIPANT_LIMIT_EXCEEDED("TOURNAMENT-030", ErrorCategory.CONFLICT, "참여 인원이 가득 찼어요."),
     CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT("TOURNAMENT-031", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트에서는 친구 결과를 볼 수 없어요."),
     CLONED_TOURNAMENT_CANNOT_ADD_ITEMS("TOURNAMENT-032", ErrorCategory.FORBIDDEN, "플레이 링크로 만든 토너먼트에는 후보를 추가할 수 없어요."),

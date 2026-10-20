@@ -522,7 +522,7 @@ interface TournamentApi {
                 description =
                     "상태 충돌 (PENDING이 아닌 토너먼트 · PARSING/FAILED 상품 포함 · " +
                         "값이 비어 있는 미완성 상품 포함 · 가격 정보 없는 상품 포함 · " +
-                        "주최자가 아직 시작하지 않음 · 이미 본인 클론이 있음 — 뒤 둘은 멤버 시작 경로)",
+                        "주최자가 아직 시작하지 않음 — 마지막은 멤버 시작 경로)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

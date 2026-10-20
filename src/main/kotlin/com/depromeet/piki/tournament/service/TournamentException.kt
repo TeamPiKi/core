@@ -88,8 +88,6 @@ class TournamentException private constructor(
 
         fun groupResultNotAvailable(): TournamentException = TournamentException(TournamentErrorCode.GROUP_RESULT_NOT_AVAILABLE)
 
-        fun alreadyCloned(): TournamentException = TournamentException(TournamentErrorCode.ALREADY_CLONED)
-
         fun participantLimitExceeded(): TournamentException = TournamentException(TournamentErrorCode.PARTICIPANT_LIMIT_EXCEEDED)
 
         fun clonedTournamentCannotViewGroupResult(): TournamentException =
