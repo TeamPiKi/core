@@ -12,8 +12,8 @@ data class RemoteExtractionProperties(
     val connectTimeoutMs: Int = 2_000,
     // 회수(#1176 4단계)의 stale 판정보다 작아야 함. 크면 살아 있는 호출의 행을 회수가 다시 집어 중복 발주함
     // read 마다의 상한이라 조금씩 오는 응답은 넘을 수 있음. extractor 가 무상태라 대가는 LLM 1회
-    // 이미지 경로도 같은 값. extractor 처리 시간 예산은 extractor repo docs/api-contract.md §3
-    val readTimeoutMs: Int = 55_000,
+    // 기본값 정본은 계약(extraction.proto 의 caller_read_timeout_seconds). 이미지 경로도 같은 값
+    val readTimeoutMs: Int = ExtractionEndpoints.CALLER_READ_TIMEOUT_MS,
 ) {
     init {
         // 파싱의 유일 경로라 base-url 없인 모든 파싱이 연결 실패로 위장된다 — 부팅에서 즉시 드러낸다.

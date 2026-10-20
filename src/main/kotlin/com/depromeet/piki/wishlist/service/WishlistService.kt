@@ -12,6 +12,7 @@ import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.tournament.service.TournamentWinnerReader
 import com.depromeet.piki.item.service.ItemDisplayService
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.product.domain.ProductLink
@@ -45,6 +46,7 @@ class WishlistService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
     private val sourcePlatformResolver: SourcePlatformResolver,
+    private val tournamentWinnerReader: TournamentWinnerReader,
 ) {
 
     private fun WishWithItem.withSourcePlatform(): WishWithItem = copy(sourcePlatform = sourcePlatformResolver.resolve(item.link))
@@ -107,6 +109,8 @@ class WishlistService(
         // 위시는 상품(itemId)을 직접 참조하므로 상품과 표시값을 그 키로 끌어온다.
         val displayByCard = itemDisplayService.resolveDisplay(pageWishes.map { it.displayCard() })
         val itemsById = itemRepository.findByIds(pageWishes.map { it.itemId }).associateBy { it.getId() }
+        // 우승 칩(#1236) — 이 페이지에 보이는 상품만 한 번에 물어 N+1 을 만들지 않는다(표시값·상품 조회와 같은 결).
+        val winnersByItem = tournamentWinnerReader.findWinnerTournamentIdsByItem(userId, pageWishes.map { it.itemId })
         val entries =
             pageWishes.map { wish ->
                 // item 은 wish 와 함께 영속화되며 병합 시 함께 옮겨진다(WishItemMergeListener). 없으면 영속화 경로가 깨진 코드 버그다.
@@ -115,6 +119,7 @@ class WishlistService(
                     wish = wish,
                     item = item,
                     snapshot = displayByCard.getValue(wish.displayCard()),
+                    winnerTournamentIds = winnersByItem[wish.itemId].orEmpty(),
                 ).withSourcePlatform()
             }
 
@@ -145,12 +150,15 @@ class WishlistService(
         val item = itemRepository.findById(wish.itemId) ?: error("wish ${wish.getId()} 의 item ${wish.itemId} 가 없다")
         // 표시값 파생(#857·#1051) — 목록(getWishlist)과 같은 규칙.
         val history = itemSnapshotRepository.findPriceHistoryByItemId(wish.itemId, PRICE_HISTORY_LIMIT)
+        // 우승 칩(#1236) — 목록과 같은 규칙으로 판정한다. 상세는 상품이 하나라 그 하나만 묻는다.
+        val winners = tournamentWinnerReader.findWinnerTournamentIdsByItem(userId, listOf(wish.itemId))
         return WishDetail(
             wish = wish,
             item = item,
             snapshot = itemDisplayService.resolveDisplay(wish.displayCard()),
             history = history,
             sourcePlatform = sourcePlatformResolver.resolve(item.link),
+            winnerTournamentIds = winners[wish.itemId].orEmpty(),
         )
     }
 

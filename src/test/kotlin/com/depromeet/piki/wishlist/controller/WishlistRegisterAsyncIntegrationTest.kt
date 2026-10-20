@@ -348,40 +348,19 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지 파싱이 READY 로 끝나면 등록 시 durable 적재한 raw 원본을 회수한다`() {
+    fun `URL 파싱이 우리 방어 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 internal_error 로 센다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", price = 1_000, currency = "KRW", imageUrl = "https://img.example.com/p.png")
-            }
-            val itemId = registerImageAndGetItemId(mockMvc, userId)
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-
-            // 파싱이 끝나면 등록 시 올린 raw 원본(items/raw/...)을 S3 에서 회수한다(누수 방지, best-effort 라 회수까지 await).
-            // 자기 item 의 sourceImageKey 로 특정해 단언하므로 공유 stub 의 다른 테스트 회수와 섞이지 않는다.
-            val rawKey = itemRepository.findById(itemId)?.sourceImageKey ?: error("item $itemId 의 sourceImageKey 가 없다")
-            await().atMost(Duration.ofSeconds(2)).until { stubImageStorage.deletedKeys.contains(rawKey) }
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `URL 파싱이 대상 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 blocked 로 센다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedByTarget() }
-            val blockedBefore = parseCount("failed", "blocked")
+            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.permanentFailure() }
+            val internalErrorBefore = parseCount("failed", "internal_error")
             val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
 
             itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
-            // 결과 메트릭(#506·#936): 대상이 막아 확정 실패한 건은 result=failed,reason=blocked 로 +1.
-            // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf), 이 단언이 파서에서 메트릭까지 배선을 함께 고정한다.
-            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }
+            // 결과 메트릭(#506·#936): 우리 방어(SSRF 가드)로 확정 실패한 건은 result=failed,reason=internal_error 로 +1.
+            // reason 이 예외에서 파생되므로, 이 단언이 파서에서 메트릭까지 배선을 함께 고정한다.
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
             val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
             assertEquals(ItemStatus.FAILED, snapshot.status)

@@ -26,7 +26,7 @@ import java.util.UUID
 // 참여자는 자기가 처음 담는 경우에도 429 를 받을 수 있다. 클라이언트가 그 상황을 오해하지 않게 명시한다.
 // (응답 문구 자체는 오너의 사용량을 드러내지 않는다 — 남의 사용량은 요청자에게 알릴 정보가 아니다.)
 private const val TOURNAMENT_RATE_LIMIT_DESCRIPTION =
-    "아이템 등록 한도 초과 (code: TOURNAMENT-037). 한도는 요청자가 아니라 토너먼트 오너의 몫에서 차감되므로 " +
+    "아이템 등록 한도 초과 (code: ITEM-006). 한도는 요청자가 아니라 토너먼트 오너의 몫에서 차감되므로 " +
         "참여자가 처음 담는 경우에도 받을 수 있다. 그 몫은 토너먼트 전용이 아니라 오너 계정 하나의 몫이라 " +
         "오너의 위시 등록과도 공유된다. 요청 수가 아니라 등록하는 item 수로 세며(이미지 5장 = 5), " +
         "남은 몫이 있으면 그보다 큰 요청도 통과하므로 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
@@ -113,7 +113,6 @@ interface TournamentItemApi {
         summary = "위시에서 토너먼트 아이템 추가",
         description = """
             PENDING 상태의 토너먼트에 위시리스트에 있는 아이템을 추가한다. 토너먼트 참여자(회원)만 호출 가능.
-            플레이 링크로 생성된 복제 토너먼트에는 추가 불가.
             itemIds 중 하나라도 조건에 맞지 않으면 요청 전체가 실패한다(부분 성공 없음).
             응답의 tournamentItemIds 는 요청 itemIds 와 동일한 순서로 대응된다.
         """,
@@ -152,7 +151,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 위시리스트에 없는 아이템 포함 · 플레이 링크로 생성된 복제 토너먼트)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 위시리스트에 없는 아이템 포함 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -194,7 +193,7 @@ interface TournamentItemApi {
         summary = "URL 링크로 토너먼트 아이템 추가",
         description = """
             PENDING 상태의 토너먼트에 URL 링크를 통해 아이템을 추가한다.
-            플레이 링크로 생성된 복제 토너먼트에는 추가 불가. 토너먼트 참여자만 추가할 수 있다.
+            토너먼트 참여자만 추가할 수 있다.
             아이템이 PENDING 상태로 즉시 생성되어 tournamentItemId 가 반환된다.
             파싱은 비동기로 진행되며, PENDING 에서 READY·INCOMPLETE·FAILED 상태로 전환된다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
@@ -237,7 +236,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 플레이 링크로 생성된 복제 토너먼트)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -314,7 +313,7 @@ interface TournamentItemApi {
         description = """
             이미지 등록의 1단계. 올릴 이미지들의 content-type·바이트 수(1~5개)를 받아, 클라가 S3 에 직접 PUT 할 presigned URL 을 발급한다.
             원본 바이트가 서버를 경유하지 않아 서버 대역·메모리를 쓰지 않는다.
-            참여자·PENDING·비복제 권한을 사전 검증하며, 정원(최대 32개) 최종 판정은 저장이 일어나는 2단계(/images/confirm)로 미룬다.
+            참여자·PENDING 권한을 사전 검증하며, 정원(최대 32개) 최종 판정은 저장이 일어나는 2단계(/images/confirm)로 미룬다.
             content-type 과 contentLength 는 서명에 묶인다 — 클라는 각 uploadUrl 로 같은 Content-Type·Content-Length 로만 PUT 할 수 있고(S3 가 강제),
             imageKey 들을 confirm 으로 되돌려준다. 한 장의 상한은 5MB 다.
         """,
@@ -356,7 +355,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 플레이 링크로 생성된 복제 토너먼트)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -480,7 +479,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 플레이 링크로 생성된 복제 토너먼트)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -555,7 +554,8 @@ interface TournamentItemApi {
                     "잘못된 요청 (이름 없이 수정 시도 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
                         "이미지 없이 READY 전환 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
-                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
+                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003 · " +
+                        "요청 값 형식 검증 실패 — COMMON-INVALID-INPUT)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -575,7 +575,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님 · 플레이 링크로 만든 클론 토너먼트에서는 아이템 수정 불가)",
+                description = "권한 없음 (토너먼트 참여자가 아님 · 아이템을 등록한 본인이 아님 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -597,20 +597,6 @@ interface TournamentItemApi {
                 responseCode = "409",
                 description =
                     "상태 충돌 (PENDING이 아닌 토너먼트)",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
-            ApiResponse(
-                responseCode = "400",
-                description =
-                    "잘못된 요청 (빈 이미지 파일 — code: PRODUCTIMAGE-001 · " +
-                        "이미지 형식 확인 불가 — PRODUCTIMAGE-002 · " +
-                        "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif 만) — PRODUCTIMAGE-003 · " +
-                        "요청 값 형식 검증 실패 — COMMON-INVALID-INPUT)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -665,7 +651,7 @@ interface TournamentItemApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님 · 플레이 링크로 만든 클론 토너먼트에서는 아이템 삭제 불가)",
+                description = "권한 없음 (아이템을 추가한 본인도 아니고 토너먼트 소유자도 아님 · 옛 클론 토너먼트 id 로 요청)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

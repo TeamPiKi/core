@@ -8,6 +8,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.auth.infrastructure.oauth.google.dto.GoogleTokenResponse
 import com.depromeet.piki.auth.infrastructure.oauth.google.dto.GoogleUserInfoResponse
 import com.depromeet.piki.auth.infrastructure.oauth.logOAuthProviderError
+import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -20,13 +21,14 @@ import java.nio.charset.StandardCharsets
 
 class GoogleOAuthClient(
     private val googleProperties: GoogleProperties,
+    observationRegistry: ObservationRegistry,
 ) : OAuthClient {
     override val provider = OAuthProvider.GOOGLE
 
     private val log = LoggerFactory.getLogger(javaClass)
 
-    private val tokenClient = OAuthRestClient.create(TOKEN_BASE_URL)
-    private val userInfoClient = OAuthRestClient.create(USER_INFO_BASE_URL)
+    private val tokenClient = OAuthRestClient.create(TOKEN_BASE_URL, observationRegistry)
+    private val userInfoClient = OAuthRestClient.create(USER_INFO_BASE_URL, observationRegistry)
 
     override fun buildAuthUrl(state: String, redirectUri: String?): String =
         UriComponentsBuilder

@@ -229,7 +229,7 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.skipped == 'false' }}
     runs-on: ubuntu-latest
-    # prod environment 에는 보호규칙이 없어 승인 없이 돈다. 시크릿(EC2_HOST)·변수(역할 ARN)를 신 계정 값으로 받는 자리다.
+    # prod environment 에는 보호규칙이 없어 승인 없이 돈다. 시크릿(SSH 키)·변수(역할 ARN)를 신 계정 값으로 받는 자리다.
     environment: prod
     permissions:
       contents: read
@@ -246,29 +246,15 @@ jobs:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # 신 계정 앱 SG 는 22번이 닫혀 있어 이 job 러너의 IP 를 열어야 SSH 가 된다(deploy.yml 과 같은 순서).
-      - name: SSH 게이트 개방 (러너 IP 만·프리플라이트 구간 한정)
-        uses: ./.github/actions/ssh-gate
-        with:
-          action: open
-          instance-name: piki-prod-app
-
       - name: 프리플라이트
         id: pf
         uses: ./.github/actions/preflight-migration
         with:
-          host: ${{ secrets.EC2_HOST }}
+          instance-name: piki-prod-app
           user: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           environment: prod
           domain: api.piki.day
-
-      - name: SSH 게이트 회수
-        if: ${{ always() }}
-        uses: ./.github/actions/ssh-gate
-        with:
-          action: close
-          instance-name: piki-prod-app
 
       # 승인 대기 알림은 여기서 보낸다 — notify job 은 워크플로가 끝나야 도는데 승인 대기는 그 앞이라,
       # 거기서 보내면 이미 승인이 끝난 뒤에 도착한다. 실패 알림은 그대로 notify 가 맡는다(그때는 promote 가
@@ -356,28 +342,15 @@ jobs:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: SSH 게이트 개방 (러너 IP 만·프리플라이트 구간 한정)
-        uses: ./.github/actions/ssh-gate
-        with:
-          action: open
-          instance-name: piki-prod-app
-
       - name: 프리플라이트 재확인 (승인 후)
         uses: ./.github/actions/preflight-migration
         with:
-          host: ${{ secrets.EC2_HOST }}
+          instance-name: piki-prod-app
           user: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           environment: prod
           domain: api.piki.day
           label: 승인 후 재확인
-
-      - name: SSH 게이트 회수
-        if: ${{ always() }}
-        uses: ./.github/actions/ssh-gate
-        with:
-          action: close
-          instance-name: piki-prod-app
 
   # --- 3단계: 진행 -----------------------------------------------------------
   promote:

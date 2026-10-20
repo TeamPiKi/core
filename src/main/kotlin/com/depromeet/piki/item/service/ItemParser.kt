@@ -1,7 +1,6 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
-import com.depromeet.piki.common.storage.ImageStorage
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLink
@@ -19,7 +18,6 @@ import java.util.function.Supplier
 class ItemParser(
     private val linkSnapshotExtractor: LinkSnapshotExtractor,
     private val imageSnapshotExtractor: ImageSnapshotExtractor,
-    private val imageStorage: ImageStorage,
     private val itemIdentityRecorder: ItemIdentityRecorder,
     private val itemParsingService: ItemParsingService,
     private val meterRegistry: MeterRegistry,
@@ -57,8 +55,7 @@ class ItemParser(
         itemParseOutboxId: Long,
         imageKey: String,
     ) {
-        val outcome = extractAndSettle(itemId, itemParseOutboxId, "type=image key=$imageKey") { imageSnapshotExtractor.extract(imageKey) }
-        if (outcome.isApplied()) deleteRaw(imageKey)
+        extractAndSettle(itemId, itemParseOutboxId, "type=image key=$imageKey") { imageSnapshotExtractor.extract(imageKey) }
     }
 
     private fun extractAndSettle(
@@ -192,11 +189,6 @@ class ItemParser(
     ) {
         runCatchingException { itemIdentityRecorder.recordParsingIdentity(itemId, finalUrl) }
             .onFailure { e -> log.warn("item.identity.error item={} 정체성 기록 실패", itemId, e) }
-    }
-
-    private fun deleteRaw(imageKey: String) {
-        runCatchingException { imageStorage.delete(imageKey) }
-            .onFailure { e -> log.warn("raw 이미지 {} 회수 실패: {}", imageKey, e.message) }
     }
 
     companion object {

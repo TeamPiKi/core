@@ -57,7 +57,8 @@ services:
       - --max-connections=60
 
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      # 인증 없이 ping 하면 매번 Access denied 로 Aborted_connects 가 오른다(10초마다). ping 은 인증 실패에도 0 이라 판정은 같다.
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u \"$$MYSQL_USER\" --silent"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -98,6 +99,60 @@ services:
       mysql:
         condition: service_healthy
 
+  # 앱 박스에 상태를 남기지 않으려고 Redis 를 데이터 박스에 둔다.
+  redis:
+    container_name: piki-prod-redis
+    image: redis:7.4-alpine
+    restart: unless-stopped
+
+    # 노출 범위는 보안그룹과 비밀번호가 맡는다. EC2 는 공인 IP 가 NIC 에 없어 바인딩 주소로는 좁혀지지 않는다.
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis-data:/data
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
+
+    # 가득 차면 축출한다. 기본값 noeviction 은 모든 쓰기를 실패시켜 전원 로그인 불능이 된다.
+    # 인덱스 키(refresh:idx)가 축출되면 전 기기 무효화가 세션을 놓친다. 이 위험은 축출 알림으로만 지킨다(#1205).
+    # RDB 저장 실패에는 쓰기를 막지 않는다. 잃는 것은 재시작 뒤 재로그인뿐이라 로그인 불능보다 가볍다.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy allkeys-lru --stop-writes-on-bgsave-error no"]
+
+    mem_limit: 128m
+
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # 축출 알림(terraform-grafana/rule_groups.tf)이 이 지표를 읽는다. 구성은 mysqld-exporter 와 같다.
+  redis-exporter:
+    container_name: piki-redis-exporter
+    image: oliver006/redis_exporter:v1.93.0
+    restart: unless-stopped
+    network_mode: host
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
+
+    command:
+      - --redis.addr=redis://127.0.0.1:6379
+      - --web.listen-address=127.0.0.1:9121
+
+    labels:
+      piki.observe: "true"
+      piki.service: "piki-db"
+      piki.metrics.port: "9121"
+
+    mem_limit: 32m
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   # external 이 핵심이다. 이 선언이 없으면 compose 가 프로젝트명을 앞에 붙인 새 볼륨
   # (<project>_mysql-data)을 만들어, 기존 데이터가 아니라 빈 DB 로 뜬다.
@@ -105,3 +160,6 @@ volumes:
   mysql-data:
     external: true
     name: piki-prod-mysql-data
+
+  redis-data:
+    name: piki-prod-redis-data

@@ -21,13 +21,9 @@ class ProductExtractorException private constructor(
         fun transientFailure(cause: Throwable?): ProductExtractorException =
             ProductExtractorException(ProductExtractorErrorCode.TRANSIENT_FAILURE, cause)
 
-        // 원격이 422(확정 실패)로 답했고, 우리 방어가 발동했거나(호스트 차단·리다이렉트 이상) 이 바이너리가
+        // 원격이 422(확정 실패)로 답했고, 우리 방어가 발동했거나(사설망 호스트 차단) 이 바이너리가
         // 모르는 code 인 경우. tolerant reader — 모르는 code 라도 422 면 확정 실패다(extractor 계약 §1).
         // 재시도 무의미이므로 비 RETRYABLE.
         fun permanentFailure(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.PERMANENT_FAILURE)
-
-        // 원격이 422 로 답했고, 그 사유가 "대상이 우리를 막았다"인 경우(4xx 접근 거부·영구 upstream 거절).
-        // 재시도 무의미인 건 같고, 메트릭에서 blocked 로 따로 세어 정책(BLOCKED) 판단의 입력이 된다.
-        fun blockedByTarget(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.BLOCKED_BY_TARGET)
     }
 }

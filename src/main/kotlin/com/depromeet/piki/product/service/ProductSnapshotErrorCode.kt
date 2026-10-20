@@ -11,7 +11,7 @@ enum class ProductSnapshotErrorCode(
     override val message: String,
     override val bucket: ExtractionFailureBucket,
 ) : ExtractionFailureCode {
-    // LLM 이 "상품 페이지가 아님"으로 판정. 링크 재등록·재시도 모두 무의미.
+    // 형식 위반·없는 host 라 상품 링크가 될 수 없음. 링크 재등록·재시도 모두 무의미.
     NOT_PRODUCT_PAGE(
         "SNAPSHOT-001",
         ErrorCategory.INVALID_INPUT,
@@ -30,14 +30,5 @@ enum class ProductSnapshotErrorCode(
         ExtractionFailureBucket.EXTRACT_QUALITY,
     ),
 
-    // 우리가 그 페이지에서 읽어낼 본문을 얻지 못함(데이터 없는 CSR 셸·가시 텍스트 부재). 상품이 아닌 게 아니라
-    // **지금 우리 구성으로 못 읽는** 것이라 도메인 허가 후보를 찾는 신호다.
-    // message 는 UNTRUSTWORTHY_VALUE 와 같다 — 사용자가 취할 행동(직접 입력)이 같고, 구분은 detail 이 아니라
-    // bucket·로그가 진다(CLAUDE.md 메시지 톤).
-    NO_EXTRACTABLE_CONTENT(
-        "SNAPSHOT-003",
-        ErrorCategory.INVALID_INPUT,
-        "상품 정보를 확인하지 못했어요. 직접 입력해 주세요.",
-        ExtractionFailureBucket.UNREADABLE,
-    ),
+    // SNAPSHOT-003 은 결번 — 받은 페이지 기반 판정(읽을 내용 없음)이 일시 실패로 바뀌며 소멸(infra#145).
 }

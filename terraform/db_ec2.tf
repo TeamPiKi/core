@@ -18,16 +18,16 @@
 # -----------------------------------------------------------------------------
 # DB 박스 Security Group
 #
-# 3306 은 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
-# 인터넷에 직접 노출하지 않는다. SSH 는 EC2 Instance Connect·팀원 접속을 위해 열되
-# var.ssh_ingress_cidr 로 좁힌다.
+# 3306(MySQL)·6379(Redis) 는 prod 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
+# 인터넷에 직접 노출하지 않는다. SSH 는 SSM 경유라 22 번이 없다(#1196).
 #
 # egress 는 열어 둔다. RDS 와 달리 이 박스는 스스로 바깥에 나가야 한다 — SSM 에서 DB 자격증명을
 # 읽고, 백업을 S3 에 올리고, docker 이미지를 받는다. 사설 서브넷 + NAT Gateway 로 가리는 선택지는
 # NAT 만 월 $40 이 넘어 이 이관의 절감액을 통째로 삼킨다.
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "db_ec2" {
-  name        = "piki-prod-db-sg"
+  name = "piki-prod-db-sg"
+  # description 은 바꾸면 SG 가 새로 만들어져 옛 문구 그대로 둔다.
   description = "Allow MySQL from app EC2 SG only, SSH from team CIDR"
   vpc_id      = aws_vpc.main.id
 
@@ -40,11 +40,11 @@ resource "aws_security_group" "db_ec2" {
   }
 
   ingress {
-    description = "SSH (EC2 Instance Connect / team)"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_ingress_cidr]
+    description     = "Redis from app EC2"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2.id]
   }
 
   egress {
@@ -97,6 +97,12 @@ data "aws_iam_policy_document" "db_instance" {
     sid       = "ReadAlertWebhook"
     actions   = ["ssm:GetParameter"]
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/discord-alert-webhook-url"]
+  }
+
+  statement {
+    sid       = "ReadRedisPassword"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki-core/prod/redis-password"]
   }
 
   # 관측 수집기(alloy)가 쓰는 Grafana Cloud 자격 공유 경로 (#771).
@@ -160,9 +166,6 @@ resource "aws_iam_role_policy" "db_instance" {
 # ssm:UpdateInstanceInformation 등이 필요하고, 그 묶음이 이 AWS 관리형 정책이다. 이게 없으면
 # describe-instance-information 에 인스턴스가 뜨지 않고 SendCommand 가 InvalidInstanceId 로
 # 실패한다(2026-08-16 실측 - agent 는 깔려 있는데 이 권한이 없어 db 박스만 미등록이었다).
-#
-# 앱 박스 role 에는 같은 정책이 콘솔에서 수동으로 붙어 있어 terraform 코드에 흔적이 없다.
-# 여기서는 코드로 명시해, 인스턴스를 재생성해도 SSM 관리가 따라오게 한다.
 resource "aws_iam_role_policy_attachment" "db_ssm_core" {
   role       = aws_iam_role.db.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"

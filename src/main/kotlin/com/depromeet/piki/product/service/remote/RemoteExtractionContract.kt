@@ -1,6 +1,7 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
+import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
 import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.contracts.extraction.v1.ExtractionResult
@@ -34,34 +35,25 @@ internal object RemoteExtractionContract {
             JsonFormat.printer().alwaysPrintFieldsWithNoPresence(),
         ).apply { supportedMediaTypes = listOf(MediaType.APPLICATION_JSON) }
 
-    // 확정 실패(422) code 전수 → 우리 예외. 계약 카탈로그(shared-infra/contracts/extraction-error-codes.yaml)의
+    // 확정 실패(422) code 전수 → 우리 예외. 계약 정본(shared-infra/contracts/extraction.proto)의
     // permanent code 를 빠짐없이 여기에 명시한다 — 표에 없는 code 는 아래 fallback 으로 떨어져 internal_error 로
     // 세지므로, 매핑 누락이 "우리가 이름을 아는 실패"인 척 묻히지 않는다.
-    // 표를 when 대신 값으로 둔 이유: 카탈로그와의 전수 대조(ExtractionErrorCatalogTest)가 이 키 집합을 직접 읽는다.
+    // 표를 when 대신 값으로 둔 이유: 계약과의 전수 대조(ExtractionErrorCatalogTest)가 이 키 집합을 직접 읽는다.
     // when 분기는 밖에서 열거할 수 없어 "누락이 else 로 조용히 흡수됐는지"를 기계가 가릴 수 없다.
     //
     // 어느 예외로 보내는지가 곧 메트릭 reason 이다 — 예외의 errorCode 가 bucket 을 들고 있고(ExtractionFailureCode),
     // ItemParsingMetrics.reasonOf 가 그 bucket 을 라벨로 옮긴다. 문구는 여기서 갈리지 않는다(고정 사용자 문구).
-    internal val PERMANENT_TRANSLATIONS: Map<String, () -> BaseException> =
+    //
+    // 확정은 링크 자체의 사실과 우리 쪽 차단뿐이다. 받은 페이지를 보고 내린 판정(상품 아님·빈 셸·4xx·값 불신)은
+    // 계약이 일시로 두므로 여기 오지 않는다 — 그 건은 attempt 소진으로 닫히고 code 별 관측은 extractor 메트릭이 진다.
+    internal val PERMANENT_TRANSLATIONS: Map<ExtractionErrorCode, () -> BaseException> =
         mapOf(
-            // 사용자가 상품 아닌 걸 넣었다 — 정상 트래픽.
-            "NOT_PRODUCT_PAGE" to { ProductSnapshotException.notProductPage() },
-            "INVALID_URL" to { ProductSnapshotException.notProductPage() },
-            // 우리 구성으로 못 읽었다 — 도메인 허가 후보 신호.
-            "EMPTY_SHELL" to { ProductSnapshotException.noExtractableContent() },
-            "NO_EXTRACTABLE_CONTENT" to { ProductSnapshotException.noExtractableContent() },
-            // 대상이 우리를 막았다 — BLOCKED 정책 후보.
-            "FETCH_CLIENT_ERROR" to { ProductExtractorException.blockedByTarget() },
-            "PERMANENT_UPSTREAM" to { ProductExtractorException.blockedByTarget() },
-            // 추출은 됐는데 값을 믿을 수 없다 — 모델·프롬프트·검증 규칙 소관.
-            // IMAGE_UNSUPPORTED(이미지 경로 전용)도 "받은 결과를 상품 정보로 쓸 수 없다"는 같은 성격이다.
-            "UNTRUSTWORTHY_VALUE" to { ProductSnapshotException.untrustworthyValue() },
-            "LLM_INVALID_RESPONSE" to { ProductSnapshotException.untrustworthyValue() },
-            "IMAGE_UNSUPPORTED" to { ProductSnapshotException.untrustworthyValue() },
-            // 우리 방어가 발동했다 — 정상 흐름이면 애초에 우리 경계(SSRF 가드·리다이렉트 제한)가 먼저 걸렀어야 한다.
-            "BLOCKED_HOST" to { ProductExtractorException.permanentFailure() },
-            "TOO_MANY_REDIRECTS" to { ProductExtractorException.permanentFailure() },
-            "MALFORMED_REDIRECT" to { ProductExtractorException.permanentFailure() },
+            // 형식 위반·없는 host — 사용자가 상품 링크가 아닌 걸 넣었다.
+            ExtractionErrorCode.INVALID_URL to { ProductSnapshotException.notProductPage() },
+            // 이미지 경로 전용 — 받은 파일을 상품 정보로 쓸 수 없다.
+            ExtractionErrorCode.IMAGE_UNSUPPORTED to { ProductSnapshotException.untrustworthyValue() },
+            // 우리 방어(SSRF 가드)가 발동했다 — 정상 흐름이면 우리 경계가 먼저 걸렀어야 한다.
+            ExtractionErrorCode.BLOCKED_HOST to { ProductExtractorException.permanentFailure() },
         )
 
     // 원격 추출 호출 한 건의 전부 — POST 부터 3갈래(2xx 매핑 / 422+code 확정 / 그 외 일시)가 이 함수 안에서 끝난다.
@@ -94,7 +86,7 @@ internal object RemoteExtractionContract {
     }
 
     // 2xx 응답 → ProductSnapshot. extractor 는 2xx 로 name·imageUrl·currentPrice 중 **하나 이상**을 보장한다
-    // (자기 쪽 ExtractionResponse.from 이 하나도 못 건졌을 때만 422 UNTRUSTWORTHY_VALUE 로 닫는다, extractor#37).
+    // (자기 쪽 응답 경계가 하나도 못 건졌을 때만 422 UNTRUSTWORTHY_VALUE 로 닫는다, extractor#37).
     // 그래서 부분값 2xx 는 계약 위반이 아니라 정상 결과이고, 그것을 READY/INCOMPLETE/FAILED 로 가르는 판정은
     // 경계가 아니라 도메인(ItemSnapshot.markExtracted, #944)이 쥔다 — 여기서 세 필드를 다 요구하면 부분값이
     // INCOMPLETE 로 가는 길 자체가 닫혀 재시도 후 FAILED 로 끝난다(#950 이 고친 것이 정확히 그 상태다).
@@ -149,9 +141,9 @@ internal object RemoteExtractionContract {
             log.warn("remote extract transient status={} {}", e.statusCode.value(), target)
             return ProductExtractorException.transientFailure(e)
         }
-        // 모르는 code 문자열은 파서가 무시해 UNSPECIFIED 로 읽힌다 — 그 이름은 표에 없으니 아래 fallback 으로 간다.
+        // 모르는 code 문자열은 파서가 무시해 UNSPECIFIED 로 읽힌다 — 표에 없으니 아래 fallback 으로 간다.
         val code =
-            runCatching { e.getResponseBodyAs(ExtractionFailure::class.java)?.code?.name }
+            runCatching { e.getResponseBodyAs(ExtractionFailure::class.java)?.code }
                 .getOrNull()
         // code 는 관측·디버깅용(계약 §1) — 응답엔 노출되지 않고 로그로만 남긴다. 확정 실패는 계약상 정상 결과라 info.
         // 원문 code 는 이 줄에만 남는다: 메트릭은 bucket 단위라(카디널리티) 개별 code 추적은 로그가 진다.
