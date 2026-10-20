@@ -49,12 +49,15 @@ interface NotificationHistoryApi {
                 "| `TOURNAMENT_RESULT_READY` | 주최자가 ROOT 완료 | `TOURNAMENT` | ROOT 토너먼트 id | 참여하신 {주최자}님의 토너먼트 결과가 나왔어요 |\n" +
                 "| `ITEM_PARSING_COMPLETED` | 상품 추출 성공 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"위시 저장이 성공했어요\" / 토너먼트 \"토너먼트 후보가 등록됐어요\") |\n" +
                 "| `ITEM_PARSING_MERGED` | 같은 상품의 카드가 이미 있어 요청한 카드가 그쪽에 합쳐짐 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"기존 위시에 합쳐졌어요\" / 토너먼트 \"기존 토너먼트 후보에 합쳐졌어요\"). 좌표는 남은 카드 |\n" +
-                "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH` 또는 `TOURNAMENT` | itemId | 상품 정보를 가져오지 못했어요 |\n" +
+                "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | 요청한 카드 id (wishId 또는 tournamentItemId) | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ITEM_REFRESH_COMPLETED` | 위시 새로고침(재추출) 성공 | `WISH`(+`wishId`) | itemId | {아이템 이름} (+ `body` = \"최신 상품 정보로 새로고침했어요\") |\n" +
-                "| `ITEM_REFRESH_FAILED` | 위시 새로고침(재추출) 실패 | `WISH`(+`wishId`) | itemId | 새로고침에 실패했어요 (+ `body` = \"기존 상품 정보는 그대로 남아 있어요\") |\n" +
+                "| `ITEM_REFRESH_FAILED` | 위시 새로고침(재추출) 실패 | `WISH`(+`wishId`) | 요청한 위시 id (wishId) | 새로고침에 실패했어요 (+ `body` = \"기존 상품 정보는 그대로 남아 있어요\") |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
                 "> `ITEM_PARSING_COMPLETED` 의 `body` 는 **등록 출처로 갈린다** — 위시에 담은 사람은 \"위시 저장이 성공했어요\", " +
                 "토너먼트에 올린 사람은 \"토너먼트 후보가 등록됐어요\" 를 받는다. 화면 분기는 `body` 문구가 아니라 `type`·`kind` 로 한다.\n\n" +
+                "> **실패 알림(`ITEM_PARSING_FAILED`·`ITEM_REFRESH_FAILED`)의 `refId` 는 상품 id 가 아니라 요청한 카드 id 다.** " +
+                "파싱에 실패한 카드는 확정된 상품이 없을 수 있어서다. 이동은 다른 파싱 알림처럼 `wishId` 또는 토너먼트 좌표로 한다. " +
+                "이 계약 이전에 발송된 실패 알림에는 itemId 가 실려 있다.\n\n" +
                 "> 파싱 알림(`ITEM_PARSING_*`)만 `kind` 가 발행 출처(위시 등록 / 토너먼트 추가)에 따라 갈린다 — 같은 `type` 이 두 플로우에서 발행되기 때문. " +
                 "나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> **등록과 새로고침은 `type` 으로 갈린다(#1036).** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 " +
@@ -62,7 +65,7 @@ interface NotificationHistoryApi {
                 "`wishId` 가 실린다. 일부 필드만 채워진 결과는 갈리지 않는다 — 새로고침이든 등록이든 `ITEM_PARSING_INCOMPLETE` 로 온다(일부만 빈 상태로 사용자 입력을 기다린다). " +
                 "새로고침 실패 뒤에도 카드는 옛 성공본을 그대로 보이므로(표시값 파생) 클라가 값을 지우지 않는다.\n\n" +
                 "> **딥링크 좌표는 `kind` 별로 다른 키를 쓴다.** `kind`=WISH 인 파싱 알림은 `wishId` 로 위시 상세(`GET /api/v1/wishlists/{wishId}`)로 간다 — " +
-                "`refId`(itemId)로는 그 화면에 갈 수 없으므로 `wishId` 가 있으면 그것을 쓴다. `wishId` 는 **수신자별로 다르고**, 컬럼 도입(#933) 이전에 발송된 " +
+                "`refId` 는 대개 itemId 라 그 화면에 갈 수 없으므로 `wishId` 가 있으면 그것을 쓴다. `wishId` 는 **수신자별로 다르고**, 컬럼 도입(#933) 이전에 발송된 " +
                 "과거 알림에는 값이 없다. 값이 없을 때만 종전처럼 `refId` 로 역추적한다. " +
                 "값 없음의 모양은 채널마다 다르다 — 이 API 와 SSE payload 는 `wishId` 키를 남기고 `null` 로 내리고, FCM data 는 그 키를 아예 생략한다. " +
                 "클라는 **키 없음과 `null` 을 모두 폴백으로** 처리한다.\n\n" +
