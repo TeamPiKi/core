@@ -14,13 +14,24 @@ SET i.canonical_url = SUBSTRING_INDEX(SUBSTRING_INDEX(s.image_url, '.amazonaws.c
 WHERE i.canonical_url IS NULL AND i.source_url IS NULL;
 
 -- 2. 같은 등록 원문으로 여러 번 만들어진 아이템은 첫 아이템으로 합친다
+-- 그 원문을 이미 정체로 가진 아이템이 있으면 그쪽에 합친다. 파싱 중 경합으로 생긴 빈 아이템에 원문을 채우면 정체 유니크에 걸린다
+-- 정체 주인은 따로 뽑아 id 로 붙인다. 원문(대소문자 무시)과 정체(바이트) 비교를 한 조인에 이으면 옵티마이저가 조건을 옮겨 묶음마다 결과가 갈린다
+CREATE TEMPORARY TABLE canonical_holders AS
+SELECT b.id AS item_id, c.id AS holder
+FROM items b
+JOIN items c ON c.canonical_url = b.source_url
+WHERE b.canonical_url IS NULL;
+
 CREATE TEMPORARY TABLE merged AS
-SELECT a.id AS loser, MIN(b.id) AS winner
+SELECT a.id AS loser, COALESCE(MIN(h.holder), MIN(b.id)) AS winner
 FROM items a
 JOIN items b ON b.source_url = a.source_url AND b.canonical_url IS NULL
+LEFT JOIN canonical_holders h ON h.item_id = b.id
 WHERE a.canonical_url IS NULL AND a.source_url IS NOT NULL
 GROUP BY a.id
 HAVING loser <> winner;
+
+DROP TEMPORARY TABLE canonical_holders;
 
 UPDATE wishes w JOIN merged m ON m.loser = w.item_id SET w.item_id = m.winner;
 UPDATE tournament_items t JOIN merged m ON m.loser = t.item_id SET t.item_id = m.winner;
@@ -42,10 +53,10 @@ WHERE w.deleted_at IS NULL;
 DELETE i FROM items i JOIN merged m ON m.loser = i.id;
 DROP TEMPORARY TABLE merged;
 
--- 3. 등록 원문이 정체
-UPDATE items SET canonical_url = source_url WHERE canonical_url IS NULL AND source_url IS NOT NULL;
+-- 3. 등록 원문이 정체. 정체 칸(768자)에 들어가지 않는 원문은 지금의 등록 상한도 넘어 4단계로 보낸다
+UPDATE items SET canonical_url = source_url WHERE canonical_url IS NULL AND source_url IS NOT NULL AND CHAR_LENGTH(source_url) <= 768;
 
--- 4. 남은 행은 이미지 키 칸이 생기기 전 이미지 등록 중 결과 이미지도 남지 않은 것. 정체를 만들 재료가 없어 흔적째 지운다
+-- 4. 남은 행은 정체를 만들 재료가 없어 흔적째 지운다. 이미지 키 칸이 생기기 전 이미지 등록 중 결과 이미지도 남지 않은 것과 768자를 넘는 원문
 CREATE TEMPORARY TABLE doomed_items AS SELECT id FROM items WHERE canonical_url IS NULL;
 CREATE TEMPORARY TABLE doomed_wishes AS SELECT w.id FROM wishes w JOIN doomed_items d ON d.id = w.item_id;
 CREATE TEMPORARY TABLE doomed_entries AS SELECT t.id, t.tournament_id FROM tournament_items t JOIN doomed_items d ON d.id = t.item_id;
