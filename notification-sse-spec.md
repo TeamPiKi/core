@@ -94,7 +94,7 @@ data: 3f1c2b0e-7d4a-4c8b-9e2f-1a2b3c4d5e6f
 | `type` | enum | 알림 종류. 화면 분기 키 (6절) |
 | `kind` | enum | `WISH` \| `TOURNAMENT` \| `SYSTEM`. 전 알림 공통. 카드 라벨·아이콘용 |
 | `title` | string | 표시용 제목 (변수 치환 완료본) |
-| `body` | string | 표시용 본문. 현재 대부분 `""` |
+| `body` | string | 표시용 본문. `type` 에 따라 빈 문자열 `""` 일 수 있다 |
 | `refId` | long | 딥링크 대상 식별자. `type` 마다 대상이 다르다 (6절) |
 | `isRead` | boolean | 읽음 여부 |
 | `createdAt` | string | ISO-8601 LocalDateTime, 오프셋 없음. 예 `2026-06-06T14:32:10` |
@@ -109,10 +109,11 @@ data: 3f1c2b0e-7d4a-4c8b-9e2f-1a2b3c4d5e6f
 
 | `type` | 필드 | 클라 동작 |
 |---|---|---|
-| `TOURNAMENT_ITEM_PARSED` | `tournamentId`, `tournamentItemId`, `status` (`READY` \| `FAILED`) | 그 출전 카드를 찾아 `status` 반영. 수신자는 그 토너먼트 참여자 전원이고, 한 아이템이 여러 토너먼트에 있으면 각 토너먼트 좌표로 각자 받는다 |
+| `TOURNAMENT_ITEM_PARSED` | `tournamentId`, `tournamentItemId`, `status` (`READY` \| `INCOMPLETE` \| `FAILED`) | 그 출전 카드를 찾아 `status` 반영. 수신자는 파싱을 요청한 출전 카드가 속한 토너먼트의 참여자 전원 |
+| `TOURNAMENT_ITEM_MERGED` | `tournamentId`, `tournamentItemId`, `mergedIntoTournamentItemId` | 같은 상품의 출전 카드가 이미 있어 합쳐짐. `tournamentItemId` 카드를 지우고 `mergedIntoTournamentItemId` 카드를 다시 읽는다. 수신자는 그 토너먼트 참여자 전원 |
 | `UNREAD_COUNT_CHANGED` | `unreadCount` | 읽음 처리 후 다른 기기의 인앱 배지를 그 값으로 미러링(+1/-1 산수 없이). 읽은 기기도 받지만 응답과 같은 값이라 멱등 |
 
-위시로만 담긴 아이템의 파싱 결과는 `silent-sync` 가 아니라 `notification`(`ITEM_PARSING_*`)으로 온다.
+위시 카드의 파싱 결과와 합침은 `silent-sync` 없이 `notification`(`ITEM_PARSING_*`)으로만 온다.
 
 ## 6. `type` 별 분기표
 
@@ -123,14 +124,18 @@ data: 3f1c2b0e-7d4a-4c8b-9e2f-1a2b3c4d5e6f
 | `TOURNAMENT_ITEM_DELETED` | `TOURNAMENT` | 아이템 삭제 | tournamentId | **있음** | 참여자 (행위자 제외) |
 | `TOURNAMENT_STARTED` | `TOURNAMENT` | 토너먼트 시작 | tournamentId | 없음 | 참여자 (주최자 제외) |
 | `TOURNAMENT_PLAYED_FROM_LINK` | `TOURNAMENT` | 플레이링크로 플레이 시작 | ROOT tournamentId | 없음 | ROOT 주최자 |
-| `TOURNAMENT_COMPLETED` | `TOURNAMENT` | 클론 완료 | ROOT tournamentId | 없음 | ROOT 주최자 |
-| `TOURNAMENT_RESULT_READY` | `TOURNAMENT` | ROOT 결과 나옴 | ROOT tournamentId | 없음 | 참여자 (주최자 제외) |
-| `ITEM_PARSING_COMPLETED` / `FAILED` / `INCOMPLETE` | `WISH` \| `TOURNAMENT` (출처) | 내 상품 추출 결과 | itemId | `TOURNAMENT` 출처면 있음, `WISH` 출처면 `wishId` | 본인 |
-| `ITEM_REFRESH_COMPLETED` / `FAILED` | `WISH` | 위시 새로고침 결과 | itemId | 없음 (`wishId` 있음) | 본인 |
+| `TOURNAMENT_COMPLETED` | `TOURNAMENT` | 참여자가 플레이 완료 | ROOT tournamentId | 없음 | ROOT 주최자 |
+| `TOURNAMENT_RESULT_READY` | `TOURNAMENT` | 주최자가 플레이 완료 (결과 나옴) | ROOT tournamentId | 없음 | 참여자 (주최자 제외) |
+| `ITEM_PARSING_COMPLETED` / `INCOMPLETE` | `WISH` \| `TOURNAMENT` (출처) | 내 상품 추출 결과 | itemId | `TOURNAMENT` 출처면 있음, `WISH` 출처면 `wishId` | 본인 |
+| `ITEM_PARSING_FAILED` | `WISH` \| `TOURNAMENT` (출처) | 내 상품 추출 실패 | 요청한 카드 id (wishId 또는 tournamentItemId) | `TOURNAMENT` 출처면 있음, `WISH` 출처면 `wishId` | 본인 |
+| `ITEM_PARSING_RECOVERED` | `WISH` \| `TOURNAMENT` (받는 사람 카드) | 미완이던 내 카드가 같은 상품의 다른 추출 성공으로 채워짐 | itemId | 받는 사람의 카드 | 같은 상품의 미완 카드 주인 (요청한 카드 제외) |
+| `ITEM_PARSING_MERGED` | `WISH` \| `TOURNAMENT` (출처) | 요청한 카드가 같은 상품의 기존 카드에 합쳐짐 | itemId | 남은 카드 | 본인 |
+| `ITEM_REFRESH_COMPLETED` | `WISH` | 위시 새로고침 성공 | itemId | 없음 (`wishId` 있음) | 본인 |
+| `ITEM_REFRESH_FAILED` | `WISH` | 위시 새로고침 실패 | 요청한 위시 id (wishId) | 없음 (`wishId` 있음) | 본인 |
 | `ANNOUNCEMENT` | `SYSTEM` | 전체 공지 | 공지 id | 없음 | 전 유저 |
 
 - `title` 문구는 서버 템플릿이라 바뀔 수 있다. **문구가 아니라 `type` 으로 분기**한다.
-- **파싱 알림(`ITEM_PARSING_*`)만 `kind` 로 출처를 가른다.** `WISH` 면 `wishId` 로 위시 상세(값이 `null` 이면 `/archive/wish`), `TOURNAMENT` 면 `tournamentId` 로 입장해 `tournamentItemId` 를 지목한다. 이 분기는 그 `type` 안에서만 쓴다.
+- **파싱 알림(`ITEM_PARSING_*`)만 `kind` 로 출처를 가른다.** `RECOVERED` 는 받는 사람 자신의 카드 출처다. `WISH` 면 `wishId` 로 위시 상세(값이 `null` 이면 `/archive/wish`), `TOURNAMENT` 면 `tournamentId` 로 입장해 `tournamentItemId` 를 지목한다. 이 분기는 그 `type` 안에서만 쓴다.
 - 새로고침(`ITEM_REFRESH_*`)은 항상 `WISH` 이고 `wishId` 로 위시 상세에 간다. 실패해도 카드의 옛 값은 유지한다.
 
 ## 7. 연결 수명
@@ -184,6 +189,8 @@ es.addEventListener("notification", (e) => {
     case "ITEM_PARSING_COMPLETED":
     case "ITEM_PARSING_FAILED":
     case "ITEM_PARSING_INCOMPLETE":
+    case "ITEM_PARSING_RECOVERED":
+    case "ITEM_PARSING_MERGED": // 좌표는 남은 카드
       if (n.kind === "TOURNAMENT") goToTournamentItem(n.tournamentId, n.tournamentItemId);
       else goToWishDetail(n.wishId); // null 이면 /archive/wish
       break;
@@ -200,6 +207,10 @@ es.addEventListener("notification", (e) => {
 es.addEventListener("silent-sync", (e) => {
   const s = JSON.parse(e.data);
   if (s.type === "TOURNAMENT_ITEM_PARSED") updateTournamentItemCard(s.tournamentId, s.tournamentItemId, s.status);
+  if (s.type === "TOURNAMENT_ITEM_MERGED") {
+    removeTournamentItemCard(s.tournamentId, s.tournamentItemId);
+    reloadTournamentItemCard(s.tournamentId, s.mergedIntoTournamentItemId);
+  }
   if (s.type === "UNREAD_COUNT_CHANGED") setBadge(s.unreadCount);
 });
 ```
@@ -234,7 +245,7 @@ fun openSse() {
 ## 9. 요약
 
 - `type` 으로 분기한다. 문구로 분기하지 않는다
-- `refId` 의 의미는 `type` 마다 다르다 (tournamentId / itemId)
+- `refId` 의 의미는 `type` 마다 다르다 (tournamentId / itemId / 실패 알림은 요청한 카드 id)
 - 좌표 유무는 `type` 이 가른다. `kind` 만 보고 좌표를 읽지 않는다
 - 파싱 알림 안에서만 `kind` 로 출처를 가른다
 - `silent-sync` 는 토스트·알림센터 없이 화면만 갱신한다
