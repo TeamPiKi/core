@@ -10,14 +10,9 @@ data class RemoteExtractionProperties(
     // 비면 부팅에서 즉시 실패한다(RemoteExtractionHttpClientConfig — env 누락의 침묵 창 차단).
     val baseUrl: String = "",
     val connectTimeoutMs: Int = 2_000,
-    // 호출자 stale 판정(ItemParsingScheduler.STALE_TIMEOUT_SECONDS=60L)보다 항상 작아야 한다. heartbeat 도입 후 산 워커는
-    // 박동이 stale 을 막아 주지만, 이 제약은 그와 별개로 **read 가 stale 창을 넘겨 무한정 늘어지지 않는다**는 상한을 준다 —
-    // 넘기면 마감(3분) 예산을 한 번의 read 가 통째로 먹고, 반납(release)으로 다음 실행을 앞당길 기회도 사라진다.
-    // 기본값의 정본은 계약(extraction.proto 의 caller_read_timeout_seconds)이다. 전 경로가 같은 클라이언트·같은 값을
-    // 쓰고, extractor 는 자기 내부 예산이 이 값 미만인지 테스트로 대조한다.
-    // 한계: SimpleClientHttpRequestFactory 의 read timeout 은 per-read 소켓 타임아웃이라 총 소요시간의 상한은 아니다 —
-    // slow-drip 응답(read 마다 55s 미만 간격)은 이 가드를 지나 stale 을 넘길 수 있다. 그 경우에도 extractor 가
-    // 무상태라 중복 발주의 대가는 LLM 비용 1회로 바운드된다(상태 오염 없음).
+    // 회수(#1176 4단계)의 stale 판정보다 작아야 함. 크면 살아 있는 호출의 행을 회수가 다시 집어 중복 발주함
+    // read 마다의 상한이라 조금씩 오는 응답은 넘을 수 있음. extractor 가 무상태라 대가는 LLM 1회
+    // 기본값 정본은 계약(extraction.proto 의 caller_read_timeout_seconds). 이미지 경로도 같은 값
     val readTimeoutMs: Int = ExtractionEndpoints.CALLER_READ_TIMEOUT_MS,
 ) {
     init {

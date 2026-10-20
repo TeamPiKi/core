@@ -16,6 +16,7 @@ import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -31,6 +32,7 @@ class TournamentItemPersistenceService(
     private val itemCardService: ItemCardService,
     private val userInputRecorder: UserInputRecorder,
     private val parsingEnqueuer: ParsingEnqueuer,
+    private val meterRegistry: MeterRegistry,
 ) {
     // 이미 담긴 링크면 한도를 깎기 전에 409 로 끊는다(#973). 최종 판정은 persistLinkItem 이 트랜잭션 안에서 다시 한다
     @Transactional(readOnly = true)
@@ -157,7 +159,7 @@ class TournamentItemPersistenceService(
         tournamentId: Long,
     ): Tournament {
         val tournament = tournamentRepository.findTournamentById(tournamentId) ?: throw TournamentException.notFoundTournament()
-        tournament.checkItemsModifiable()
+        tournament.checkItemsModifiable(meterRegistry)
         requireParticipant(tournamentId, userId)
         return tournament
     }
@@ -193,7 +195,7 @@ class TournamentItemPersistenceService(
         userId: UUID,
         tournamentId: Long,
     ) {
-        tournament.checkItemsAddable()
+        tournament.checkItemsAddable(meterRegistry)
         requireParticipant(tournamentId, userId)
     }
 

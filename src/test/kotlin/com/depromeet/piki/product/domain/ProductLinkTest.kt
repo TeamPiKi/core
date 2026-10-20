@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProductLinkTest {
@@ -37,6 +38,19 @@ class ProductLinkTest {
                     ProductLink.parse(raw)
                 }
             assertEquals("https 링크만 등록할 수 있어요.", ex.message)
+        }
+    }
+
+    @Test
+    fun `귀결점은 http 와 https 를 받는다`() {
+        assertEquals("http", ProductLink.parseHopOrNull("http://shop.example.com/items/42")?.value?.scheme)
+        assertEquals("https", ProductLink.parseHopOrNull("https://shop.example.com/items/42")?.value?.scheme)
+    }
+
+    @Test
+    fun `귀결점도 http·https 가 아닌 scheme 과 host 없는 주소는 없는 것으로 본다`() {
+        listOf("ftp://example.com", "file:///etc/passwd", "javascript:alert(1)", "http:///p", "https:p").forEach { raw ->
+            assertNull(ProductLink.parseHopOrNull(raw), "$raw 는 거부되어야 함")
         }
     }
 

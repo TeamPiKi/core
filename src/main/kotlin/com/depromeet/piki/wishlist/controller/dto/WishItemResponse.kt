@@ -13,6 +13,14 @@ data class WishItemResponse(
     val wish: WishView,
     @field:Schema(description = "상품")
     val item: ItemView,
+    @field:Schema(
+        description =
+            "이 상품이 우승한 내 토너먼트들 — 최신 우승 순이고, 비어 있으면 우승 이력이 없다(위시 카드의 우승 칩). " +
+                "기준은 그룹 합산 순위가 아니라 내가 플레이한 결과라, 같은 소셜 토너먼트라도 참여자마다 다르다. " +
+                "한 상품이 여러 판에서 이길 수 있어 배열이며, 그 토너먼트를 삭제하면 해당 id 가 빠진다.",
+        example = "[1402, 1397]",
+    )
+    val winnerTournamentIds: List<Long> = emptyList(),
 ) {
     companion object {
         fun from(
@@ -21,6 +29,7 @@ data class WishItemResponse(
             WishItemResponse(
                 wish = WishView.from(result.wish),
                 item = ItemView.from(result),
+                winnerTournamentIds = result.winnerTournamentIds,
             )
     }
 

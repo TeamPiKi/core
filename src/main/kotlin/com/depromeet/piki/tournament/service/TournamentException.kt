@@ -79,9 +79,6 @@ class TournamentException private constructor(
 
         fun notCompletedTournament(): TournamentException = TournamentException(TournamentErrorCode.NOT_COMPLETED_TOURNAMENT)
 
-        fun clonedTournamentCannotSharePlayLink(): TournamentException =
-            TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK)
-
         fun playLinkNotCreated(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_NOT_CREATED)
 
         fun playLinkExpired(): TournamentException = TournamentException(TournamentErrorCode.PLAY_LINK_EXPIRED)
@@ -89,9 +86,6 @@ class TournamentException private constructor(
         fun groupResultNotAvailable(): TournamentException = TournamentException(TournamentErrorCode.GROUP_RESULT_NOT_AVAILABLE)
 
         fun participantLimitExceeded(): TournamentException = TournamentException(TournamentErrorCode.PARTICIPANT_LIMIT_EXCEEDED)
-
-        fun clonedTournamentCannotViewGroupResult(): TournamentException =
-            TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT)
 
         fun clonedTournamentCannotAddItems(): TournamentException =
             TournamentException(TournamentErrorCode.CLONED_TOURNAMENT_CANNOT_ADD_ITEMS)

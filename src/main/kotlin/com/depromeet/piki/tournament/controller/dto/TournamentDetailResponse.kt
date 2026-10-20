@@ -13,11 +13,10 @@ data class TournamentDetailResponse(
     val name: String,
     val status: TournamentStatus,
     val isOwner: Boolean,
-    // ROOT(소셜 토너먼트 원본) 이면 true, CLONE(멤버·플레이링크용 복사본) 이면 false.
-    // 플레이 링크 공유는 isRoot && isOwner 일 때만 허용된다.
+    // deprecated(#1027) — CLONE 이 사라져 항상 true. 옛 클라가 공유 버튼을 isRoot && isOwner 로 갈라 계약으로 남긴다.
+    // 클라가 참조를 끊으면 제거한다.
     val isRoot: Boolean,
-    // CLONE 토너먼트이면 원본 ROOT id, ROOT 토너먼트이면 null.
-    // 게스트 클라이언트는 이 id 로 GET /tournaments/{sourceTournamentId}/group-result 를 호출한다.
+    // deprecated(#1027) — 같은 이유로 항상 null 이라 NON_NULL 로 키가 생략된다. 클라가 참조를 끊으면 제거한다.
     val sourceTournamentId: Long?,
     val pending: PendingData?,
     val inProgress: InProgressData?,
@@ -113,8 +112,7 @@ data class TournamentDetailResponse(
         // 소셜(그룹) 토너먼트 여부 — 참여자 수가 2명 이상이면 true(완료 무관). 클라는 이 값으로 "전체 결과 보기" 배너
         // 노출을 가른다 — 첫 완주자가 누구든 새로고침 없이 배너를 본다(#975).
         val isGroupTournament: Boolean,
-        // true: ROOT 소유자 또는 소셜 초대 CLONE 소유자 — 아이템 담기 허용(위시/링크/이미지).
-        // false: 플레이링크 CLONE 소유자 — 아이템 담기 불가.
+        // 결과 화면의 아이템 담기(위시/링크/이미지) 허용 여부 — 이 토너먼트의 참여자면 true.
         val canAddItem: Boolean,
         val playLinkExpiresAt: LocalDateTime?,
     ) {

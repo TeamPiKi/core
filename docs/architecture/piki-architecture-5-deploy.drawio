@@ -168,7 +168,7 @@
         <mxCell id="dbbox" value="DB 박스" style="rounded=1;arcSize=14;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#1E293B;fontSize=12;fontStyle=1;html=1;verticalAlign=middle;" vertex="1" parent="grp-aws">
           <mxGeometry x="40" y="300" width="240" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="dbbox-s" value="키페어가 없어 SSH 불가 · SSM Run Command" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-aws">
+        <mxCell id="dbbox-s" value="MySQL · Redis · SSM Run Command 로만 접속" style="text;html=1;align=left;verticalAlign=middle;fontSize=10.5;fontColor=#94A3B8;" vertex="1" parent="grp-aws">
           <mxGeometry x="40" y="342" width="290" height="16" as="geometry"/>
         </mxCell>
         <mxCell id="d7" value="22번 개방" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=blockThin;endFill=1;html=1;fontSize=11;strokeColor=#CBD5E1;strokeWidth=1.5;dashed=1;fontColor=#94A3B8;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.1;entryDx=0;entryDy=0;" edge="1" parent="1" source="open" target="grp-aws">

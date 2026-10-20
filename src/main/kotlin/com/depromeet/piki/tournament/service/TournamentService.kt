@@ -44,6 +44,7 @@ import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.DefaultProfileImages
 import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -62,6 +63,7 @@ class TournamentService(
     private val wishMemoRepository: WishMemoRepository,
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
+    private val meterRegistry: MeterRegistry,
 ) {
     // 게스트 차단은 아이템 등록 한도(ItemQuotaGuard)가 오너 계정 키라, 무한 발급되는 게스트가 오너면 계정 갈아타기로 리셋되기 때문(#904).
     // 탈퇴 차단은 anonymize 가 행을 남겨 토큰 무효화 부분 실패 창에서 죽은 계정이 생성할 수 있기 때문(#691).
@@ -109,25 +111,32 @@ class TournamentService(
     private fun nicknameOf(userId: UUID): String? = userRepository.findById(userId)?.nickname
 
     // 리다이렉트 shim(#1027 Phase 3) — 클론 id 로 온 요청을 ROOT 로 해소한다. Phase 2 백필로 모든 플레이가 ROOT
-    // 참여 행으로 평탄화됐고, 클론 행은 Phase 4 제거 전까지 리다이렉트 껍데기로만 남는다. 클라이언트가 공유·이전
+    // 참여 행으로 평탄화됐고, 클론 행은 4-2단계 제거 전까지 리다이렉트 껍데기로만 남는다. 클라이언트가 공유·이전
     // 세션 URL 로 클론 id 를 보내도 ROOT 로 이어지게 한다. sourceTournamentId 가 없으면(ROOT) 자기 자신이다.
+    // 해소할 때마다 CloneRedirectMetrics 를 올린다(#1188) — 이 값이 0 으로 머물러야 shim 을 지울 수 있다.
     private fun rootOf(tournament: Tournament): Tournament =
         tournament.sourceTournamentId
-            ?.let { tournamentRepository.findTournamentById(it) ?: throw TournamentException.notFoundTournament() }
+            ?.let {
+                recordCloneResolved()
+                tournamentRepository.findTournamentById(it) ?: throw TournamentException.notFoundTournament()
+            }
             ?: tournament
 
     // rootOf 의 for-update 판(상태 전이 경로용). ROOT 행에 락을 잡는다.
     private fun rootForUpdate(tournament: Tournament): Tournament =
         tournament.sourceTournamentId
             ?.let {
+                recordCloneResolved()
                 tournamentRepository.findTournamentByIdForUpdate(it)
                     ?: throw TournamentException.notFoundTournament()
             }
             ?: tournament
 
+    private fun recordCloneResolved() = CloneRedirectMetrics.record(meterRegistry, CloneRedirectMetrics.KIND_RESOLVED)
+
     // 이 토너먼트에서 쓸 참여 닉네임만 바꾼다(#1018) — 유저 프로필(users.nickname)은 건드리지 않는다.
     // 요청자가 참여한 토너먼트여야 한다(그 tournamentId 의 TU 소유자). 아니면 접근 불가(403).
-    // (게스트/멤버 공통: 각자 자기 TU — 멤버는 루트 TU, 플레이링크 게스트는 자기 클론 TU — 를 tournamentId 로 가리켜 부른다.)
+    // 주최자·멤버·플레이 링크 참여자 모두 그 토너먼트의 참여 행을 가지므로 같은 tournamentId 로 부른다(#1027).
     @Transactional
     fun updateNickname(
         userId: UUID,
@@ -138,7 +147,11 @@ class TournamentService(
         // 바꾸면 ROOT 참여자여도 못 찾는다. 존재하는 토너먼트의 sourceTournamentId 로만 해소해 미존재는 기존대로
         // forbidden(403) 을 유지한다(신규 404 계약을 만들지 않음).
         val effectiveTournamentId =
-            tournamentRepository.findTournamentById(tournamentId)?.sourceTournamentId ?: tournamentId
+            tournamentRepository
+                .findTournamentById(tournamentId)
+                ?.sourceTournamentId
+                ?.also { recordCloneResolved() }
+                ?: tournamentId
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(effectiveTournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
@@ -196,7 +209,7 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentByIdForUpdate(command.tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        tournament.checkItemsAddable()
+        tournament.checkItemsAddable(meterRegistry)
         tournamentUserRepository.findByTournamentIdAndUserId(command.tournamentId, userId)
             ?: throw TournamentException.forbiddenTournament()
         val existingTournamentItems = tournamentItemRepository.findAllByTournamentId(command.tournamentId)
@@ -260,7 +273,7 @@ class TournamentService(
         tournamentId: Long,
     ): StartResult {
         if (!tournament.isPending()) throw TournamentException.notPendingTournament()
-        val tournamentItems = getEffectiveTournamentItems(tournament)
+        val tournamentItems = tournamentItemsOf(tournament)
         if (tournamentItems.size !in TOURNAMENT_MIN_ITEM_COUNT..TOURNAMENT_MAX_ITEM_COUNT) {
             throw TournamentException.invalidItemCount()
         }
@@ -295,7 +308,7 @@ class TournamentService(
         // 주최자가 구성을 잠그고 시작한(PENDING 아님) 뒤에만 멤버가 자기 플레이를 시작할 수 있다.
         if (root.isPending()) throw TournamentException.notInProgressTournament()
 
-        val effectiveItems = getEffectiveTournamentItems(root)
+        val effectiveItems = tournamentItemsOf(root)
         require(effectiveItems.isNotEmpty()) { "ROOT 토너먼트에 아이템 없음 — tournamentId=${root.getId()}" }
 
         // 아직 시작 전(PENDING)이면 플레이 시작으로 전이한다. 이미 시작·완료했으면(재호출) 그대로 두고 아이템만
@@ -377,7 +390,7 @@ class TournamentService(
         ownerStarted: Boolean,
         viewerId: UUID,
     ): TournamentDetail.Pending {
-        val tournamentItems = getEffectiveTournamentItems(tournament)
+        val tournamentItems = tournamentItemsOf(tournament)
         val cardById = cardsOf(tournament, tournamentItems)
         val tournamentUsers = tournamentUserRepository.findByTournamentId(tournament.getId())
         val itemCountByUserId = tournamentItems.groupingBy { it.userId }.eachCount()
@@ -456,7 +469,7 @@ class TournamentService(
             histories
                 .maxByOrNull { it.getId() }
                 ?.let { TournamentDetail.HistoryEntry.from(it) }
-        val allTournamentItems = getEffectiveTournamentItems(tournament)
+        val allTournamentItems = tournamentItemsOf(tournament)
         val currentRound = computeExpectedRound(allTournamentItems.size, histories)
         // 브래킷 파생이 라운드 시작 시점 집합(= remainingItems 의 상위집합)을 쓰므로 전체 아이템의 값을 잡는다.
         val cardById = cardsOf(tournament, allTournamentItems)
@@ -537,8 +550,8 @@ class TournamentService(
     ): List<TournamentSummary> {
         limit?.let { if (it < 1) throw TournamentException.invalidLimit() }
 
-        // 가시성 필터·playType·최근순·limit 을 쿼리가 끝낸다. 가시성은 per-user effective status 로 판정한다(#882):
-        // owner(내가 만든 ROOT·내 CLONE)는 전역 status 그대로, 참여자(클론 없는 ROOT)는 완료돼도 나에겐 IN_PROGRESS 로 캡한다.
+        // 가시성 필터·playType·최근순·limit 을 쿼리가 끝낸다. 가시성·상태는 전역 status 가 아니라 내 참여 행 status 로
+        // 판정한다(#882·#1027) — 방장이 완료해도 아직 안 끝낸 참여자에게는 진행중으로 보인다.
         // ownedOnly=true(홈)는 참여 갈래를 꺼 "내가 owner 인 것" 만 노출한다. status 와는 AND 로 걸린다.
         // playType 은 파생 상태라 앱에서 거르면 limit 이 먼저 걸려 요구한 개수보다 적게 나온다 (쿼리에서 함께 판정).
         // 참가자·썸네일은 남은 토너먼트에 대해서만 읽는다 (홈 카드 limit=3 이 내 전체 이력을 선로드하지 않게).
@@ -642,7 +655,7 @@ class TournamentService(
             throw TournamentException.invalidWinner()
         }
 
-        val allTournamentItems = getEffectiveTournamentItems(tournament)
+        val allTournamentItems = tournamentItemsOf(tournament)
         val tournamentItemIds = allTournamentItems.map { it.getId() }.toSet()
         if (command.firstTournamentItemId !in tournamentItemIds ||
             command.secondTournamentItemId !in tournamentItemIds
@@ -923,7 +936,17 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentByInviteCode(code)
                 ?: throw TournamentException.invalidInviteCode()
-        tournament.checkJoinable(null)
+        // 코드 하나가 상태에 따라 다른 문을 연다(#1013). 대기실이면 합류, 주최자가 완주했으면 플레이
+        // 생성이다. 그래서 미리보기도 상태별로 게이트가 갈린다 - 예전엔 checkJoinable(null) 하나라
+        // 완주한 토너먼트가 409 로 막혀, 코드로 들어온 사람이 무엇을 보게 될지 미리 볼 수 없었다.
+        //
+        // 입장 게이트(createFromPlayCode)와 같은 조건을 써야 "보이는데 못 들어가는" 어긋남이 안 생긴다.
+        if (isOwnerCompleted(tournament)) {
+            tournament.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
+            if (!tournament.isPlayLinkValid()) throw TournamentException.playLinkExpired()
+        } else {
+            tournament.checkJoinable(null)
+        }
         val itemCount = tournamentItemRepository.countByTournamentId(tournament.getId())
         val participantCount = tournamentUserRepository.countByTournamentId(tournament.getId())
         val joined =
@@ -1006,11 +1029,76 @@ class TournamentService(
         root.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
         if (!root.isPlayLinkValid()) throw TournamentException.playLinkExpired()
 
+        return joinAsPlayer(root.getId(), userId)
+    }
+
+    // 완료된 토너먼트에 **코드로** 입장한다(#1013).
+    //
+    // 링크 경로(createFromPlayLink)와 같은 일을 하고 주소만 다르다. 코드는 생성 시점에 발급돼
+    // 바뀌지 않으므로 새 컬럼도 새 발급도 필요 없고, uk_tournaments_active_invite_code 가 활성
+    // 토너먼트 전체에서 코드 유일성을 보장하므로 "코드 하나가 토너먼트 하나를 가리킨다" 가 이미
+    // 성립한다(삭제행은 generated 컬럼이 NULL 이라 코드가 재활용된다).
+    //
+    // create 와 달리 회원 게이트를 두지 않는다 - 여기서 만들어지는 것은 참여 행이고, 참여자는
+    // 아이템 추가가 막혀 있어 추출·LLM 비용을 만들 수 없다(링크 경로와 같은 판단).
+    @Transactional
+    fun createFromPlayCode(
+        userId: UUID,
+        code: String,
+    ): Long {
+        val tournament =
+            tournamentRepository.findTournamentByInviteCode(code)
+                ?: throw TournamentException.invalidInviteCode()
+        val root = tournamentRepository.findTournamentByIdForUpdate(tournament.getId())
+            ?: throw TournamentException.notFoundTournament()
+
+        // 이미 참여 행이 있으면 그대로 이어서 진행한다. 링크 경로와 같은 재진입 동작이다.
+        tournamentUserRepository.findByTournamentIdAndUserId(root.getId(), userId)?.let { return root.getId() }
+
+        // 상태가 게이트를 정한다. 아직 공유할 단계가 아니면 초대 합류 경로(join)를 쓰라는 뜻으로
+        // 막는다 - 그쪽은 정원·중복 검사와 발행 이벤트가 다르다.
+        //
+        // **"완료" 는 전역 status 가 아니라 주최자 참여 행으로 판정한다(#1027 Phase 3).** 진행 상태가
+        // 참여 행으로 옮겨져 tournaments.status 는 더 이상 주최자의 완주를 뜻하지 않는다.
+        // createPlayLink 가 공유 가능 여부를 판정하는 기준과 같아야, "링크는 만들어졌는데 코드로는
+        // 아직 못 들어가는" 어긋남이 안 생긴다.
+        if (!isOwnerCompleted(root)) throw TournamentException.notCompletedTournament()
+        root.playLinkExpiresAt ?: throw TournamentException.playLinkNotCreated()
+        if (!root.isPlayLinkValid()) throw TournamentException.playLinkExpired()
+
+        return joinAsPlayer(root.getId(), userId)
+    }
+
+    // 주최자가 자기 판을 완주했는지 — 곧 "공유 가능한 상태인지" 다.
+    //
+    // **전역 status 로 판정하지 않는다(#1027 Phase 3).** 진행 상태가 참여 행으로 옮겨져
+    // tournaments.status 는 더 이상 주최자의 완주를 뜻하지 않는다. createPlayLink 가 쓰는 기준과
+    // 같은 것을 써야 "링크는 만들어졌는데 코드로는 못 들어가는" 어긋남이 안 생긴다.
+    private fun isOwnerCompleted(tournament: Tournament): Boolean =
+        tournamentUserRepository
+            .findByIds(setOf(tournament.ownerTournamentUserId))
+            .firstOrNull()
+            ?.isCompleted() ?: false
+
+    // 링크·코드가 공유하는 참여 행 생성. 두 경로가 같은 일을 하므로 정원 검사와 알림도 같아야 한다.
+    //
+    // **정원을 링크 경로에도 건다(#1013).** 예전엔 초대 합류만 8명 제한이고 플레이 링크는 무제한이라,
+    // 코드 경로만 막으면 "코드로는 막히는데 링크를 달라고 하면 들어가지는" 상태가 되어 제한이 이름뿐이
+    // 된다. 같은 동작이므로 주소와 무관하게 같은 제한을 건다.
+    //
+    // 실측상 기존 사용은 깨지지 않는다 - 공유된 토너먼트 37개의 입장자가 최대 4명이었다.
+    private fun joinAsPlayer(
+        rootId: Long,
+        userId: UUID,
+    ): Long {
+        if (tournamentUserRepository.countByTournamentId(rootId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
+            throw TournamentException.participantLimitExceeded()
+        }
         // 참여 행은 PENDING 으로 붙인다 — 이후 start(startAsMember)가 플레이 시작으로 전이한다.
-        tournamentUserRepository.save(TournamentUser(root.getId(), userId, nicknameOf(userId)))
-        // 플레이링크로 새로 참여해 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). 신규 생성 분기에서만 발행한다.
-        eventPublisher.publishEvent(TournamentPlayedFromLink(rootTournamentId = root.getId(), actorId = userId))
-        return root.getId()
+        tournamentUserRepository.save(TournamentUser(rootId, userId, nicknameOf(userId)))
+        // 새로 참여해 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). 신규 생성 분기에서만 발행한다.
+        eventPublisher.publishEvent(TournamentPlayedFromLink(rootTournamentId = rootId, actorId = userId))
+        return rootId
     }
 
     @Transactional(readOnly = true)
@@ -1142,7 +1230,7 @@ class TournamentService(
         val tournament =
             tournamentRepository.findTournamentById(tournamentId)
                 ?: throw TournamentException.notFoundTournament()
-        tournament.checkItemsModifiable()
+        tournament.checkItemsModifiable(meterRegistry)
         val tournamentItem =
             tournamentItemRepository.findById(tournamentItemId)
                 ?: throw TournamentException.notFoundTournamentItem()
@@ -1253,9 +1341,10 @@ class TournamentService(
         return TournamentDetail.MatchDetail(first = detailOf(pair.first), second = detailOf(pair.second))
     }
 
-    // CLONE 토너먼트는 DB 에 아이템 행이 없고, ROOT 의 아이템을 sourceTournamentId 로 공유한다.
-    private fun getEffectiveTournamentItems(tournament: Tournament): List<TournamentItem> =
-        tournamentItemRepository.findAllByTournamentId(tournament.sourceTournamentId ?: tournament.getId())
+    // 호출부는 전부 rootOf·rootForUpdate 로 ROOT 를 해소한 뒤 넘기므로, 아이템은 언제나 그 토너먼트 자신의 것이다.
+    // (CLONE 이 있던 시절엔 sourceTournamentId 로 ROOT 아이템을 빌려 왔다 — #1188 에서 그 분기를 걷어냈다.)
+    private fun tournamentItemsOf(tournament: Tournament): List<TournamentItem> =
+        tournamentItemRepository.findAllByTournamentId(tournament.getId())
 
     /**
      * 출전 가능 판정의 단일 출처. 담기와 시작이 같은 질문("이 아이템들로 겨룰 수 있나")에 답하므로 한 벌만 둔다.
@@ -1397,13 +1486,19 @@ internal fun Tournament.checkJoinable(inviteCode: String?) {
     inviteCode?.let { if (this.inviteCode != it) throw TournamentException.invalidInviteCode() }
 }
 
-internal fun Tournament.checkItemsAddable() {
+// 옛 클론 id 가 아직 오는지 재려고 클론 가드에 걸린 요청을 센다(CloneRedirectMetrics)
+internal fun Tournament.checkItemsAddable(meterRegistry: MeterRegistry) {
     if (!isPending()) throw TournamentException.notPendingTournament()
-    if (!isRoot()) throw TournamentException.clonedTournamentCannotAddItems()
+    if (isRoot()) return
+    CloneRedirectMetrics.record(meterRegistry, CloneRedirectMetrics.KIND_ITEM_GUARD)
+    throw TournamentException.clonedTournamentCannotAddItems()
 }
 
 // 클론은 원본 아이템을 이어받을 뿐 소유 행이 없어 수정·삭제가 원본을 건드린다(#977)
-internal fun Tournament.checkItemsModifiable() {
-    if (!isRoot()) throw TournamentException.clonedTournamentCannotModifyItems()
+internal fun Tournament.checkItemsModifiable(meterRegistry: MeterRegistry) {
+    if (!isRoot()) {
+        CloneRedirectMetrics.record(meterRegistry, CloneRedirectMetrics.KIND_ITEM_GUARD)
+        throw TournamentException.clonedTournamentCannotModifyItems()
+    }
     if (!isPending()) throw TournamentException.notPendingTournament()
 }

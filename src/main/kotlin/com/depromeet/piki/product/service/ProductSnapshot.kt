@@ -32,7 +32,7 @@ data class ProductSnapshot(
                 price = price,
                 currency = CurrencyCode.normalizeOrNull(currency),
                 // 귀결점이 상품 주소 규칙에 안 맞으면 등록 입력이 정체가 된다
-                finalUrl = finalUrl?.let(ProductLink::parseOrNull),
+                finalUrl = finalUrl?.let(ProductLink::parseHopOrNull),
                 // 계약 밖의 값은 기록하지 않는다
                 method = method?.takeUnless { it == ExtractionMethod.EXTRACTION_METHOD_UNSPECIFIED || it == ExtractionMethod.UNRECOGNIZED },
             )

@@ -2,7 +2,6 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.HttpMappable
-import com.depromeet.piki.product.service.ExtractionFailureBucket
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ProductExtractorException
 import kotlin.test.Test
@@ -12,13 +11,11 @@ import kotlin.test.assertEquals
 // bucket 배정이 바뀌면 여기가 먼저 깨져야 한다. (계약과의 대조는 ExtractionErrorCatalogTest 가 따로 진다 —
 // 여기는 "우리 예외가 어떤 라벨이 되나", 저기는 "그 라벨이 계약의 bucket 과 같나"를 본다.)
 class ItemParsingMetricsTest {
-    // 확정 실패 예외 전량과 기대 라벨. bucket 5종을 하나씩 대표한다.
+    // 확정 실패 예외 전량과 기대 라벨. 부여 code 가 남은 bucket 3종을 하나씩 대표한다.
     private val classified: List<Pair<BaseException, String>> =
         listOf(
             ProductSnapshotException.notProductPage() to ItemParsingMetrics.REASON_NOT_PRODUCT,
-            ProductSnapshotException.noExtractableContent() to ItemParsingMetrics.REASON_UNREADABLE,
             ProductSnapshotException.untrustworthyValue() to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
-            ProductExtractorException.blockedByTarget() to ItemParsingMetrics.REASON_BLOCKED,
             ProductExtractorException.permanentFailure() to ItemParsingMetrics.REASON_INTERNAL_ERROR,
         )
 
@@ -31,11 +28,11 @@ class ItemParsingMetricsTest {
     }
 
     @Test
-    fun `bucket 5종이 서로 다른 reason 으로 빠짐없이 나뉜다`() {
+    fun `부여 code 가 남은 bucket 은 서로 다른 reason 으로 나뉜다`() {
         // 두 bucket 이 같은 라벨로 뭉치면 "늘면 무엇을 하는가"가 다시 섞인다(#936 이 permanent_error 에서 겪은 문제).
         val reasons = classified.map { (e, _) -> ItemParsingMetrics.failureReasonOf(e).metricLabel }.toSet()
 
-        assertEquals(ExtractionFailureBucket.entries.size, reasons.size, "bucket 수와 reason 라벨 수가 다르다: $reasons")
+        assertEquals(classified.size, reasons.size, "예외 수와 reason 라벨 수가 다르다: $reasons")
     }
 
     @Test

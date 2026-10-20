@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DB 박스 런타임 프로비저닝 — 멱등(idempotent). (#898)
 #
-# terraform 의 user_data 는 docker·swap 까지만 깔고 끝난다. MySQL 기동과 백업 cron 설치는
+# terraform 의 user_data 는 docker·swap 까지만 깔고 끝난다. MySQL·Redis 기동과 백업 cron 설치는
 # 여기가 맡는다 — user_data 는 첫 부팅에만 실행돼 스크립트를 고쳐도 반영되지 않고, 반영하려면
 # 인스턴스 교체가 필요한데 이 박스에서 교체는 곧 데이터 손실이기 때문이다.
 #
@@ -84,6 +84,8 @@ case "$DB_EXPORTER_PASSWORD" in
     exit 1 ;;
 esac
 
+REDIS_PASSWORD="$(ssm_param redis-password)" || { echo "[redis] SSM redis-password 조회 실패 — IAM(ReadRedisPassword)·파라미터 존재 확인"; exit 1; }
+
 # 컨테이너 기동은 compose 에 맡긴다. "이미 있으면 skip" 을 손으로 짜지 않아도 되고, 정의가
 # 스크립트가 아니라 파일 하나에 모여 무엇이 떠 있어야 하는지 한눈에 드러난다.
 #
@@ -117,6 +119,7 @@ fi
 echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
 DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
 DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
+REDIS_PASSWORD="$REDIS_PASSWORD" \
   docker compose --project-name "$COMPOSE_PROJECT" --file "$COMPOSE_FILE" up -d --wait \
   || { echo "[mysql] compose up 실패"; exit 1; }
 echo "[mysql] compose up 완료"
@@ -235,6 +238,22 @@ for i in $(seq 1 15); do
   fi
 done
 
+# 축출 알림이 읽는 계열이다. 수집이 끊기면 그 알림은 NoData 로만 울린다.
+REDIS_EXPORTER_CONTAINER="piki-redis-exporter"
+for i in $(seq 1 15); do
+  body="$(curl -fsS --max-time 10 http://127.0.0.1:9121/metrics 2>/dev/null)" || body=""
+  if grep -q '^redis_up 1$' <<< "$body" && grep -q '^redis_evicted_keys_total ' <<< "$body"; then
+    echo "[redis-exporter] 수집 확인 (redis_up=1 + redis_evicted_keys_total, attempt $i)"
+    break
+  fi
+  sleep 2
+  if [ "$i" -eq 15 ]; then
+    echo "[redis-exporter] 수집이 확인되지 않는다. REDIS_PASSWORD·접속 경로 확인"
+    docker logs "$REDIS_EXPORTER_CONTAINER" --tail 10 2>&1 | sed 's/^/[redis-exporter] /'
+    exit 1
+  fi
+done
+
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
 # repo 의 스크립트와 박스의 것이 어긋나지 않게 한다.
@@ -252,9 +271,8 @@ sudo mkdir -p /var/lib/node_exporter/textfile
 sudo chmod 755 /var/lib/node_exporter/textfile
 echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
 
-# 15:00 UTC = 00:00 KST(자정). 처음엔 04:00 KST 였는데, 그 시각을 고를 이유가 사실상
-# 없었다 - 데이터가 2.1MB 라 백업이 2초에 끝나고 --single-transaction 이라 락도 안 건다.
-# 반대로 새벽에 실패하면 아침까지 방치되므로, 사람이 알림을 볼 수 있는 시간으로 옮긴다.
+# 매시 정각. 하루 1회면 서버를 잃었을 때 최대 24시간을 잃는데, 데이터가 작아 덤프가 2초에 끝나고
+# --single-transaction 이라 락도 거의 없어 주기를 줄이는 비용이 없다(#1230).
 # 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
 # cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
 #
@@ -262,13 +280,13 @@ echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
 # 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
 # 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
 # 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
-CRON_LINE='0 15 * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
+CRON_LINE='0 * * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
 # 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
 #
 # `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
 # set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
 # 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
-echo "[backup] cron 등록·갱신 (매일 15:00 UTC = 00:00 KST)"
+echo "[backup] cron 등록·갱신 (매시 정각)"
 { sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
 
 # ── 3) 관측 수집기(alloy) ───────────────────────────────────────────────────

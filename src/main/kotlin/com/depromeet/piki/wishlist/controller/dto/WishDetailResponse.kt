@@ -33,6 +33,11 @@ data class WishDetailResponse(
             "이름·가격·이미지가 모두 있는 버전만 기록으로 친다. 그런 버전이 하나도 없으면 빈 배열이다(PARSING·FAILED 는 늘 빈 배열).",
     )
     val priceHistory: List<PriceHistoryEntry>,
+    @field:Schema(
+        description = "이 상품이 우승한 내 토너먼트들 — 목록 응답의 같은 필드와 같은 규칙·순서로 내려간다.",
+        example = "[1402, 1397]",
+    )
+    val winnerTournamentIds: List<Long> = emptyList(),
 ) {
     companion object {
         fun from(
@@ -44,6 +49,7 @@ data class WishDetailResponse(
                 memo = detail.memo,
                 item = WishItemResponse.ItemView.from(detail.wishResult),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
+                winnerTournamentIds = detail.wishResult.winnerTournamentIds,
             )
     }
 

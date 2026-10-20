@@ -11,6 +11,10 @@ import com.depromeet.piki.common.exception.ErrorCode
 // 검증이 추가돼 append 로 붙였다(소스 선언 위치는 003 뒤지만 번호 안정성 위해 뒤에 부여).
 // 이 도메인 이관으로 409(CONFLICT) 응답이 처음으로 도메인 code(TOURNAMENT-0xx)를 싣게 된다 —
 // #744 는 CONFLICT 에 공통 code 를 두지 않아 그동안 code=null 이었다.
+//
+// **결번**: 024(CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK)·029(ALREADY_CLONED)·031(CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT)
+// 은 CLONE 제거(#1027)로 던지는 곳이 사라져 #1188 에서 폐기했다. 셋 다 클론 id 로만 닿던 사유이고, 1-3단계 이후
+// 서비스가 클론 id 를 ROOT 로 해소하므로 도달할 수 없다. 번호는 재사용하지 않는다.
 enum class TournamentErrorCode(
     override val code: String,
     override val category: ErrorCategory,
@@ -39,7 +43,6 @@ enum class TournamentErrorCode(
     INVITE_EXPIRED("TOURNAMENT-021", ErrorCategory.CONFLICT, "초대 링크가 만료됐어요."),
     ALREADY_PARTICIPANT("TOURNAMENT-022", ErrorCategory.CONFLICT, "이미 참여 중인 토너먼트예요."),
     NOT_COMPLETED_TOURNAMENT("TOURNAMENT-023", ErrorCategory.CONFLICT, "완료된 토너먼트에서만 할 수 있어요."),
-    CLONED_TOURNAMENT_CANNOT_SHARE_PLAY_LINK("TOURNAMENT-024", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트는 공유 링크를 만들 수 없어요."),
     // 025 는 #980 에서 발생을 멈췄다. createPlayLink 가 멱등해지며(유효하면 기존 값 반환, 만료됐으면 재발급)
     // "이미 있으면 무조건 거부" 하던 이 사유가 사라졌다 — 그 거부가 만료 후 영구 재발급 불가로 이어졌었다.
     // 번호는 재사용하지 않고 결번으로 남긴다(코드가 클라 계약). GUEST_CANNOT_CREATE_TOURNAMENT(036)와 같은 결.
@@ -48,7 +51,6 @@ enum class TournamentErrorCode(
     PLAY_LINK_EXPIRED("TOURNAMENT-027", ErrorCategory.CONFLICT, "플레이 링크가 만료됐어요."),
     GROUP_RESULT_NOT_AVAILABLE("TOURNAMENT-028", ErrorCategory.CONFLICT, "완료된 토너먼트에서만 결과를 볼 수 있어요."),
     PARTICIPANT_LIMIT_EXCEEDED("TOURNAMENT-030", ErrorCategory.CONFLICT, "참여 인원이 가득 찼어요."),
-    CLONED_TOURNAMENT_CANNOT_VIEW_GROUP_RESULT("TOURNAMENT-031", ErrorCategory.FORBIDDEN, "플레이 링크로 참여한 토너먼트에서는 친구 결과를 볼 수 없어요."),
     CLONED_TOURNAMENT_CANNOT_ADD_ITEMS("TOURNAMENT-032", ErrorCategory.FORBIDDEN, "플레이 링크로 만든 토너먼트에는 후보를 추가할 수 없어요."),
     INVALID_LIMIT("TOURNAMENT-033", ErrorCategory.INVALID_INPUT, "조회 개수는 1 이상이어야 해요."),
 

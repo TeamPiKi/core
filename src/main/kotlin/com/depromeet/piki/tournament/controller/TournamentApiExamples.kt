@@ -232,7 +232,7 @@ class TournamentApiExamples(
                                                     name = "살로몬 XT-6",
                                                     price = 279_000,
                                                     currency = "USD",
-                                                    imageUrl = null,
+                                                    imageUrl = "https://cdn.example.com/items/4.jpg",
                                                 ),
                                             ),
                                     ),
@@ -316,7 +316,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "USD",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
@@ -467,16 +467,16 @@ class TournamentApiExamples(
                         )
                         add(
                             status = HttpStatus.OK,
-                            name = "IN_PROGRESS - 진행 중 복원 (CLONE)",
+                            name = "IN_PROGRESS - 진행 중 복원 (참여자)",
                             payload =
                                 ApiResponseBody.ok(
                                     TournamentDetailResponse(
-                                        tournamentId = 2,
+                                        tournamentId = 1,
                                         name = "내 토너먼트",
                                         status = TournamentStatus.IN_PROGRESS,
                                         isOwner = false,
-                                        isRoot = false,
-                                        sourceTournamentId = 1,
+                                        isRoot = true,
+                                        sourceTournamentId = null,
                                         pending = null,
                                         inProgress =
                                             TournamentDetailResponse.InProgressData(
@@ -507,7 +507,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "KRW",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                             status = ItemStatus.READY,
                                                         ),
                                                     ),
@@ -569,7 +569,7 @@ class TournamentApiExamples(
                                                             name = "살로몬 XT-6",
                                                             price = 279_000,
                                                             currency = "KRW",
-                                                            imageUrl = null,
+                                                            imageUrl = "https://cdn.example.com/items/4.jpg",
                                                         ),
                                                     ),
                                                 hasGroupResult = true,
@@ -637,6 +637,7 @@ class TournamentApiExamples(
                                 ),
                         )
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
+                        add(TournamentException.notPendingTournament(), name = "PENDING 상태 아님")
                         add(TournamentException.inviteExpired(), name = "초대 링크 만료")
                     }
 
@@ -656,7 +657,10 @@ class TournamentApiExamples(
                             ),
                         )
                         add(TournamentException.invalidInviteCode(), name = "코드에 해당하는 토너먼트 없음")
+                        add(TournamentException.playLinkNotCreated(), name = "완주했지만 공유 링크 없음")
+                        add(TournamentException.notPendingTournament(), name = "시작했지만 주최자가 아직 완주하지 않음")
                         add(TournamentException.inviteExpired(), name = "초대 링크 만료")
+                        add(TournamentException.playLinkExpired(), name = "완주한 토너먼트의 공유 링크 만료")
                     }
 
                 handlerMethod.binds(TournamentController::createPlayLink) ->
@@ -679,10 +683,6 @@ class TournamentApiExamples(
                         )
                         unauthorized()
                         add(TournamentException.forbiddenTournament(), name = "권한 없음 (참여자 아님 · 소유자 아님)")
-                        add(
-                            TournamentException.clonedTournamentCannotSharePlayLink(),
-                            name = "플레이 링크로 참여한 토너먼트 (재공유 불가)",
-                        )
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트")
                     }
@@ -711,21 +711,44 @@ class TournamentApiExamples(
                     operation.examples(openApiObjectMapper.delegate) {
                         add(
                             status = HttpStatus.OK,
-                            name = "복제 토너먼트 생성 또는 기존 본인 클론 반환",
+                            name = "참여 시작 또는 기존 참여 이어하기 (항상 원본 토너먼트 id)",
                             payload = ApiResponseBody.ok(42L),
                         )
                         unauthorized()
                         add(TournamentException.notFoundTournament(), name = "토너먼트를 찾을 수 없음")
                         add(TournamentException.playLinkNotCreated(), name = "플레이 링크가 생성되지 않은 토너먼트")
                         add(TournamentException.playLinkExpired(), name = "플레이 링크 만료")
+                        // 정원을 링크 경로에도 걸었다(#1013) — 코드 경로만 막으면 제한이 이름뿐이 된다.
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과")
+                    }
+
+                handlerMethod.binds(TournamentController::createFromPlayCode) ->
+                    operation.examples(openApiObjectMapper.delegate) {
+                        add(
+                            status = HttpStatus.OK,
+                            // 링크 경로와 같은 일을 하고 주소만 다르므로 예시 이름도 나란히 둔다.
+                            name = "참여 시작 또는 기존 참여 이어하기 (항상 원본 토너먼트 id)",
+                            payload = ApiResponseBody.ok(42L),
+                        )
+                        add(
+                            status = HttpStatus.BAD_REQUEST,
+                            name = "코드 형식 오류",
+                            payload =
+                                ApiResponseBody.fail<Unit>(
+                                    CommonErrorCode.INVALID_INPUT,
+                                    detail = JoinTournamentAsGuestRequest.INVITE_CODE_PATTERN_MESSAGE,
+                                ),
+                        )
+                        add(TournamentException.invalidInviteCode(), name = "해당 코드의 토너먼트 없음")
+                        unauthorized()
+                        add(TournamentException.notCompletedTournament(), name = "완료되지 않은 토너먼트 (대기실은 join 을 쓴다)")
+                        add(TournamentException.playLinkNotCreated(), name = "공유를 켜지 않은 토너먼트")
+                        add(TournamentException.playLinkExpired(), name = "공유 링크 만료")
+                        add(TournamentException.participantLimitExceeded(), name = "참여 인원 초과")
                     }
 
                 handlerMethod.binds(TournamentController::getGroupResult) ->
                     operation.examples(openApiObjectMapper.delegate) {
-                        add(
-                            TournamentException.clonedTournamentCannotViewGroupResult(),
-                            name = "플레이링크 복제 토너먼트에서 그룹 결과 조회 불가",
-                        )
                         add(
                             status = HttpStatus.OK,
                             name = "그룹 결과 조회 성공 (회원)",
@@ -919,7 +942,7 @@ class TournamentApiExamples(
                         name = "살로몬 XT-6",
                         price = 279_000,
                         currency = "KRW",
-                        imageUrl = null,
+                        imageUrl = "https://cdn.example.com/items/4.jpg",
                         status = ItemStatus.READY,
                     ),
             )

@@ -1,5 +1,6 @@
 package com.depromeet.piki.product.service.remote
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
 import com.depromeet.piki.product.domain.ParseInputType
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
@@ -68,7 +69,7 @@ class HttpExtractionModelProbeTest {
     fun `422 MODEL_NOT_FOUND 는 모델명을 확인하라는 사유로 거절한다`() {
         assertEquals(
             HttpExtractionModelProbe.MESSAGE_NOT_FOUND,
-            rejectionMessage("""{"code":"${HttpExtractionModelProbe.CODE_MODEL_NOT_FOUND}"}"""),
+            rejectionMessage("""{"code":"${ExtractionErrorCode.MODEL_NOT_FOUND.name}"}"""),
         )
     }
 
@@ -76,7 +77,7 @@ class HttpExtractionModelProbeTest {
     fun `422 MODEL_INCOMPATIBLE 은 다른 모델을 고르라는 사유로 거절한다`() {
         assertEquals(
             HttpExtractionModelProbe.MESSAGE_INCOMPATIBLE,
-            rejectionMessage("""{"code":"${HttpExtractionModelProbe.CODE_MODEL_INCOMPATIBLE}"}"""),
+            rejectionMessage("""{"code":"${ExtractionErrorCode.MODEL_INCOMPATIBLE.name}"}"""),
         )
     }
 

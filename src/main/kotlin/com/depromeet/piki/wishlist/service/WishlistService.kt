@@ -11,6 +11,7 @@ import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemRegistrar
 import com.depromeet.piki.item.service.UniqueConflictRetry
 import com.depromeet.piki.product.source.SourcePlatformResolver
+import com.depromeet.piki.tournament.service.TournamentWinnerReader
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishException
@@ -46,6 +47,7 @@ class WishlistService(
     private val itemQuotaGuard: ItemQuotaGuard,
     private val userService: UserService,
     private val sourcePlatformResolver: SourcePlatformResolver,
+    private val tournamentWinnerReader: TournamentWinnerReader,
 ) {
     private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(item?.sourceLink() ?: card.pendingLink))
 
@@ -86,12 +88,15 @@ class WishlistService(
 
         val cardByQuery = itemCardService.cardsOf(pageWishes.map { it.cardQuery() })
         val itemsById = itemRepository.findByIds(pageWishes.mapNotNull { it.itemId }).associateBy { it.getId() }
+        // 우승 칩(#1236) — 이 페이지에 보이는 상품만 한 번에 물어 N+1 을 만들지 않는다
+        val winnersByItem = tournamentWinnerReader.findWinnerTournamentIdsByItem(query.userId, pageWishes.mapNotNull { it.itemId })
         val entries =
             pageWishes.map { wish ->
                 WishResult(
                     wish = wish,
                     item = wish.itemId?.let { itemsById[it] ?: error("wish ${wish.getId()} 의 item $it 가 없다") },
                     card = cardByQuery.getValue(wish.cardQuery()),
+                    winnerTournamentIds = wish.itemId?.let { winnersByItem[it] }.orEmpty(),
                 ).withSourcePlatform()
             }
 
@@ -110,8 +115,11 @@ class WishlistService(
         val wish = wishRepository.findById(query.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(query.userId)
         val item = wish.itemId?.let { itemRepository.findById(it) ?: error("wish ${wish.getId()} 의 item $it 가 없다") }
+        val winnerTournamentIds = item?.let { tournamentWinnerReader.findWinnerTournamentIdsByItem(query.userId, listOf(it.getId()))[it.getId()] }.orEmpty()
         return WishDetailResult(
-            wishResult = WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery())).withSourcePlatform(),
+            wishResult =
+                WishResult(wish = wish, item = item, card = itemCardService.cardOf(wish.cardQuery()), winnerTournamentIds = winnerTournamentIds)
+                    .withSourcePlatform(),
             memo = wishMemoRepository.findCurrentByWishId(wish.getId())?.content,
             history = item?.let { itemSnapshotRepository.findPriceHistoryByItemId(it.getId(), PRICE_HISTORY_LIMIT) }.orEmpty(),
         )

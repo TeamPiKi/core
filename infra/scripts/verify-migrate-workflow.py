@@ -9,6 +9,7 @@
  5) run 블록 bash -n + shellcheck SC2154(미할당 참조)                 ('names: unbound variable')
  6) terraform variables.tf 의 validation 을 config 출력값에 실제 적용  ('image_bucket_name 형식')
  7) 모든 job 이름이 jobs 에 존재하는가
+ 8) terraform-grafana 자원과 restore/imports.tf 블록이 1:1 인가       (이관 때 Grafana state 재구성)
 """
 import yaml, re, subprocess, tempfile, os, sys, json
 
@@ -116,6 +117,35 @@ if os.path.exists(tfvars):
                 if sample2 != sample and not re.search(pattern, sample2):
                     errs.append(f"[terraform] TF_VAR_{vname} <- config.{out} = '{sample2}' 가 "
                                 f"validation /{pattern}/ 을 통과하지 못함")
+
+# ---- 8) terraform-grafana 자원과 restore/imports.tf 의 import 블록 1:1 ----
+# infra_grafana job 은 빈 state 에서 생성 대상이 나오면 멈추고, 대상 없는 블록은 plan 을 깨뜨린다. 이관 실행 전에 잡는다.
+gdir = 'terraform-grafana'
+restore = os.path.join(gdir, 'restore', 'imports.tf')
+
+def hcl_code(path):
+    # 주석 안의 resource·to 를 세지 않는다. 줄 주석을 먼저 지워야 주석 속 'dashboards/*.json' 이 블록 주석으로 읽히지 않는다.
+    s = re.sub(r'(#|//).*', '', open(path).read())
+    return re.sub(r'/\*.*?\*/', '', s, flags=re.S)
+
+if os.path.isdir(gdir):
+    resources, imported = set(), set()
+    for fn in sorted(os.listdir(gdir)):
+        if fn.endswith('.tf') and fn != 'restore_imports.tf':
+            src = hcl_code(os.path.join(gdir, fn))
+            resources |= set(re.findall(r'^resource\s+"(\w+)"\s+"([\w-]+)"', src, re.M))
+            if re.search(r'^\s*(count|for_each)\s*=', src, re.M):
+                errs.append(f"[terraform-grafana] {fn}: count·for_each 는 인스턴스별 import 블록을 이 검사가 셀 수 없음")
+    if os.path.exists(restore):
+        src = hcl_code(restore)
+        for m in re.finditer(r'\bimport\s*\{', src):
+            to = re.compile(r'\bto\s*=\s*(\w+)\.([\w-]+)').search(src, m.end())
+            if to:
+                imported.add(to.groups())
+    for t, n in sorted(resources - imported):
+        errs.append(f"[terraform-grafana] {t}.{n} 에 import 블록 없음 ({restore})")
+    for t, n in sorted(imported - resources):
+        errs.append(f"[terraform-grafana] {restore} 의 {t}.{n} 블록에 대상 자원 없음")
 
 print(f"job {len(jobs)}개 검사")
 if warns:

@@ -379,18 +379,18 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `URL 파싱이 대상 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 blocked 로 센다`() {
+    fun `URL 파싱이 우리 방어 차단으로 확정 실패하면 즉시 FAILED 로 종결하고 internal_error 로 센다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedByTarget() }
-            val blockedBefore = parseCount("failed", "blocked")
+            stubLinkSnapshotExtractor.build = { throw ProductExtractorException.permanentFailure() }
+            val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/blocked")
 
             itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
-            // reason 이 예외에서 파생되므로(ItemParsingMetrics.reasonOf) 파서에서 메트릭까지 배선을 함께 고정한다
-            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "blocked") - blockedBefore >= 1.0 }
+            // reason 이 예외에서 파생되므로 파서에서 메트릭까지 배선을 함께 고정한다
+            await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {

@@ -26,10 +26,12 @@ class Tournament(
     @Enumerated(value = EnumType.STRING)
     @Column(columnDefinition = "varchar(50)")
     var status: TournamentStatus = TournamentStatus.PENDING,
-
+    // CLONE 제거(#1027) 뒤 새로 채워지지 않는다. 남은 값은 옛 클론 행(리다이렉트 껍데기)이 원본을 가리키는 것뿐이다.
+    // 옛 클론 id 요청이 끊긴 것을 CloneRedirectMetrics 로 확인한 뒤 매핑을 걷어내고(4-2단계) 컬럼을 드롭한다(4-3단계).
     @Column(name = "source_tournament_id")
     val sourceTournamentId: Long? = null,
 ) : LongBaseEntity() {
+    // 방장은 userId 가 아니라 참여 행 id 로 가리킨다 — 이유는 TournamentUser 상단 주석.
     @Column(nullable = false)
     var ownerTournamentUserId: Long = ownerTournamentUserId
         protected set

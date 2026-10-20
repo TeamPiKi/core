@@ -14,7 +14,7 @@ data class PresignedImageUpload(
     )
     val imageKey: String,
     @field:Schema(
-        description = "클라가 이미지를 직접 PUT 할 presigned URL (만료 5분)",
+        description = "클라가 이미지를 직접 PUT 할 presigned URL (짧게 만료되므로 발급 직후 업로드)",
         example = "https://piki-images.s3.ap-northeast-2.amazonaws.com/items/raw/550e8400-e29b-41d4-a716-446655440000.png?X-Amz-Signature=...",
     )
     val uploadUrl: String,

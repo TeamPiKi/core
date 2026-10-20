@@ -69,12 +69,16 @@ class ProductSnapshotTest {
     }
 
     @Test
-    fun `finalUrl 은 상품 주소 규칙에 맞을 때만 링크로 들고 아니면 null 이다`() {
+    fun `finalUrl 은 귀결점 규칙(http·https·host)에 맞을 때만 링크로 들고 아니면 null 이다`() {
         assertEquals(
             ProductLink.parse("https://www.musinsa.com/products/1"),
             ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "https://www.musinsa.com/products/1").finalUrl,
         )
+        assertEquals(
+            "http://shop.example.com/p/1",
+            ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "http://shop.example.com/p/1").finalUrl?.toString(),
+        )
         assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "not a url").finalUrl)
-        assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "http://insecure.example.com/p/1").finalUrl)
+        assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", finalUrl = "ftp://shop.example.com/p/1").finalUrl)
     }
 }

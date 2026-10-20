@@ -78,7 +78,8 @@ class WishlistApiExamples(
                         name = "조회 성공 (다음 페이지 있음)",
                         payload =
                             ApiResponseBody.ok(
-                                data = listOf(sampleEntry),
+                                // 우승 칩이 붙은 항목과 아닌 항목을 함께 둔다 — 항목마다 갈리는 값임을 드러낸다.
+                                data = listOf(winnerSampleEntry, sampleEntry),
                                 pageResponse = PageResponse(nextCursor = "1024", hasNext = true),
                             ),
                     )
@@ -226,6 +227,7 @@ class WishlistApiExamples(
                         payload = ApiResponseBody.ok(presignedUploadsSample),
                     )
                     add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
+                    add(ProductImageException.unknownType(), name = "content-type 미지정")
                     add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                     add(ImageUploadException.tooLarge(), name = "contentLength 5MB 초과")
                     add(ImageUploadException.invalidSize(), name = "contentLength 미지정 또는 0 이하")
@@ -426,6 +428,9 @@ class WishlistApiExamples(
         )
 
     private val refreshingSampleEntry = sampleEntry.copy(item = sampleEntry.item.copy(refreshing = true))
+
+    // 우승 칩이 붙는 항목(#1236) — 두 판에서 이긴 상품이라 최신 우승이 앞에 온다. 그 토너먼트를 지우면 id 가 빠진다.
+    private val winnerSampleEntry = sampleEntry.copy(winnerTournamentIds = listOf(1402, 1397))
 
     private val userInputEntry = sampleEntry.copy(item = sampleEntry.item.copy(method = null, userInput = true))
 

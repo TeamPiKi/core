@@ -1,6 +1,7 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.BaseException
+import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
 import com.depromeet.piki.contracts.extraction.v1.ExtractionFailure
 import com.depromeet.piki.contracts.extraction.v1.ExtractionResult
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -25,21 +26,13 @@ internal object RemoteExtractionContract {
             JsonFormat.printer().alwaysPrintFieldsWithNoPresence(),
         ).apply { supportedMediaTypes = listOf(MediaType.APPLICATION_JSON) }
 
-    // when 이 아니라 Map 인 이유: ExtractionErrorCatalogTest 가 키 집합을 열거해 계약 카탈로그와 대조한다. 표에 없는 code 는 internal_error 로 센다
-    internal val PERMANENT_TRANSLATIONS: Map<String, () -> BaseException> =
+    // when 이 아니라 Map 인 이유: ExtractionErrorCatalogTest 가 키 집합을 열거해 계약과 대조한다. 표에 없는 code 는 internal_error 로 센다
+    // 받은 페이지를 보고 내린 판정(상품 아님·빈 셸·4xx·값 불신)은 계약이 일시로 두어 여기 오지 않는다
+    internal val PERMANENT_TRANSLATIONS: Map<ExtractionErrorCode, () -> BaseException> =
         mapOf(
-            "NOT_PRODUCT_PAGE" to { ProductSnapshotException.notProductPage() },
-            "INVALID_URL" to { ProductSnapshotException.notProductPage() },
-            "EMPTY_SHELL" to { ProductSnapshotException.noExtractableContent() },
-            "NO_EXTRACTABLE_CONTENT" to { ProductSnapshotException.noExtractableContent() },
-            "FETCH_CLIENT_ERROR" to { ProductExtractorException.blockedByTarget() },
-            "PERMANENT_UPSTREAM" to { ProductExtractorException.blockedByTarget() },
-            "UNTRUSTWORTHY_VALUE" to { ProductSnapshotException.untrustworthyValue() },
-            "LLM_INVALID_RESPONSE" to { ProductSnapshotException.untrustworthyValue() },
-            "IMAGE_UNSUPPORTED" to { ProductSnapshotException.untrustworthyValue() },
-            "BLOCKED_HOST" to { ProductExtractorException.permanentFailure() },
-            "TOO_MANY_REDIRECTS" to { ProductExtractorException.permanentFailure() },
-            "MALFORMED_REDIRECT" to { ProductExtractorException.permanentFailure() },
+            ExtractionErrorCode.INVALID_URL to { ProductSnapshotException.notProductPage() },
+            ExtractionErrorCode.IMAGE_UNSUPPORTED to { ProductSnapshotException.untrustworthyValue() },
+            ExtractionErrorCode.BLOCKED_HOST to { ProductExtractorException.permanentFailure() },
         )
 
     // target 에 URL 을 실을 때는 호출자가 따옴표로 감싼다(logfmt)
@@ -105,7 +98,7 @@ internal object RemoteExtractionContract {
         }
         // 모르는 code 문자열은 파서가 UNSPECIFIED 로 읽어 표에서 빠진다
         val code =
-            runCatching { e.getResponseBodyAs(ExtractionFailure::class.java)?.code?.name }
+            runCatching { e.getResponseBodyAs(ExtractionFailure::class.java)?.code }
                 .getOrNull()
         log.info("remote extract permanent code={} {}", code, target)
         val translation = PERMANENT_TRANSLATIONS[code] ?: return ProductExtractorException.permanentFailure()
