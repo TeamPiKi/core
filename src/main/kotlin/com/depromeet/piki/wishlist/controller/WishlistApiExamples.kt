@@ -53,7 +53,7 @@ class WishlistApiExamples(
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
                     add(
                         AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, EXAMPLE_WISH_ID),
-                        name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)",
+                        name = "이미 위시리스트에 등록된 상품",
                     )
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")

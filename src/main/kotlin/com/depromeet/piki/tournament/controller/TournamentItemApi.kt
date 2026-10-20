@@ -196,16 +196,18 @@ interface TournamentItemApi {
         description = """
             PENDING 상태의 토너먼트에 URL 링크를 통해 아이템을 추가한다.
             플레이 링크로 생성된 복제 토너먼트에는 추가 불가. 토너먼트 참여자만 추가할 수 있다.
-            아이템이 PARSING 상태로 즉시 생성되어 tournamentItemId 가 반환된다.
+            토너먼트 후보가 파싱 중 카드로 즉시 생성되어 tournamentItemId 가 반환된다. 상품은 파싱 성공이나 사용자 입력으로 확정된다.
             파싱은 비동기로 진행되며, PARSING 에서 READY·INCOMPLETE·FAILED 상태로 전환된다.
-            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
+            확정된 상품을 같은 토너먼트의 다른 후보가 이미 갖고 있으면 이 후보는 그 후보에 합쳐져 사라지고(ITEM_PARSING_MERGED 알림,
+            참여자에게 TOURNAMENT_ITEM_MERGED 신호), 이 tournamentItemId 로 조회하면 404 다.
+            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 결과를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "아이템 추가 성공 (item.status=PARSING, 파싱은 백그라운드)",
+                description = "토너먼트 후보 추가 성공 (파싱은 백그라운드)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -440,16 +442,17 @@ interface TournamentItemApi {
     @Operation(
         summary = "이미지로 토너먼트 아이템 추가 v2 - 업로드 확정",
         description = """
-            이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 PARSING 아이템으로 즉시 추가하고 tournamentItemIds 를 반환한다.
-            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 링크 추가와 같은 작업 큐에 적재하며, 이후 파싱·전이(READY/INCOMPLETE/FAILED) 흐름도 같다.
-            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 완료·실패를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
+            이미지 등록의 2단계. presigned 로 업로드를 마친 imageKey(1~5개)를 받아, 각 이미지를 파싱 중인 토너먼트 후보로 즉시 추가하고 tournamentItemIds 를 반환한다.
+            key 형식·실제 업로드 여부(S3 존재)를 검증한 뒤 링크 추가와 같은 작업 큐에 적재하며, 이후 파싱·전이(READY/INCOMPLETE/FAILED)와 합침 흐름도 같다.
+            이 토너먼트에 남아 있는 후보로 이미 확정한 imageKey 는 다시 추가하지 않고 응답에서도 빠진다. 그래서 요청보다 적은 id 나 빈 배열이 올 수 있다.
+            클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 파싱 결과를 통보받고, tournamentItemId 로 GET /tournaments/{id}/items/{tournamentItemId} 를 조회해 결과를 확인한다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "아이템 추가 성공 (item.status=PARSING, 파싱은 백그라운드)",
+                description = "토너먼트 후보 추가 성공 (파싱은 백그라운드)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

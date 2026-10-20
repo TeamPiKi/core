@@ -7,7 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 // 거치지 않고 열린 SSE 연결로만 흐른다(NotificationSsePayload 와 별개 경로). 클라는 type 으로 갱신 사건을 분기한다.
 //
 // notification 봉투가 sealed + type 으로 여러 알림 셰입을 묶듯, silent-sync 도 sealed + type 으로 여러 갱신 사건을 묶는다.
-// 첫 사건은 토너먼트 출전 아이템 파싱 완료/실패(TournamentItemParsed). 갱신 사건이 늘면 SilentSyncType + 구현체를 더한다.
+// 갱신 사건이 늘면 SilentSyncType + 구현체를 더한다.
 sealed interface SilentSyncPayload {
     val type: SilentSyncType
 }

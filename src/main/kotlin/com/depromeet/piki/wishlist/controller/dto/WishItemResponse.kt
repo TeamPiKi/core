@@ -42,7 +42,7 @@ data class WishItemResponse(
 
     @Schema(description = "상품")
     data class ItemView(
-        @field:Schema(description = "상품 ID. 파싱이 성공해 상품이 확정되기 전에는 null", example = "512", nullable = true)
+        @field:Schema(description = "상품 ID. 파싱 성공이나 사용자 입력으로 상품이 정해지기 전에는 null", example = "512", nullable = true)
         val id: Long?,
         @field:Schema(
             description = "상태 — PARSING(상품 확정 전 파싱 중)/FAILED(상품을 확정하지 못하고 파싱 실패)/" +
@@ -81,14 +81,16 @@ data class WishItemResponse(
         )
         val imageUrl: String?,
         @field:Schema(
-            description = "원본 상품 페이지 URL (이미지 등록 항목은 URL 이 없어 null)",
+            description = "상품 페이지 URL. 상품이 정해지기 전에는 등록한 URL 그대로이고, 정해진 뒤에는 정규화된 상품 주소라 " +
+                "값이 바뀔 수 있다. 이미지 등록 항목은 URL 이 없어 null",
             example = "https://www.example-shop.com/products/12345",
             nullable = true,
         )
         val sourceUrl: String?,
         @field:Schema(
             description = "출처 커머스몰 표시명 — 백오피스 등록값이 있으면 그 표기(예: 29CM), 없으면 URL host 에서 " +
-                "유도한 임시값(예: 29cm). 표시 텍스트로만 취급한다(안정 식별자 아님). 이미지 등록 항목은 URL 이 없어 null.",
+                "유도한 임시값(예: 29cm). 표시 텍스트로만 취급한다(안정 식별자 아님). sourceUrl 이 바뀌면 함께 바뀔 수 있다. " +
+                "이미지 등록 항목은 URL 이 없어 null.",
             example = "29CM",
             nullable = true,
         )

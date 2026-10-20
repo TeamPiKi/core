@@ -30,7 +30,7 @@ data class WishDetailResponse(
             "구분해 보여주기를 권한다. " +
             "item 과는 별개의 축이다 — item 은 맥락 스코프(내 입력 존중, 타인 입력 무시)를 거친 표시값이고 이력은 그 필터를 " +
             "타지 않으므로, 첫 항목이 지금 보이는 값과 다를 수 있다. " +
-            "가격 기록이 하나도 없으면 빈 배열이다(그때는 item.status 로 대기와 실패를 가른다).",
+            "이름·가격·이미지가 모두 있는 버전만 기록으로 친다. 그런 버전이 하나도 없으면 빈 배열이다(PARSING·FAILED 는 늘 빈 배열).",
     )
     val priceHistory: List<PriceHistoryEntry>,
 ) {
