@@ -26,7 +26,7 @@ import java.util.UUID
 // 세는 단위가 요청 수가 아니라 item 수라는 점, 그리고 몫이 위시 전용이 아니라 계정 전체 몫이라는 점이
 // 클라이언트 계약의 핵심이라 명시한다.
 private const val RATE_LIMIT_DESCRIPTION =
-    "아이템 등록 한도 초과 (code: WISH-010). 몫은 위시 전용이 아니라 계정 하나의 몫이라, 이 사용자가 소유한 " +
+    "아이템 등록 한도 초과 (code: ITEM-006). 몫은 위시 전용이 아니라 계정 하나의 몫이라, 이 사용자가 소유한 " +
         "토너먼트에 아이템이 추가된 양(참여 게스트가 넣은 것 포함)도 같은 몫에서 빠진다. 한도는 요청 수가 아니라 " +
         "등록하는 item 수로 센다 — 이미지 5장 등록은 5 를 소모하고, 새로고침도 파싱이 다시 돌므로 1 을 소모한다. " +
         "남은 몫이 있으면 그보다 큰 요청도 통과하므로(마지막 한 번은 성공) 이 응답은 몫을 이미 다 쓴 뒤부터 나온다. " +
@@ -347,7 +347,7 @@ interface WishlistApi {
                 description =
                     "잘못된 요청 (보정 후에도 상품명 없음 — code: ITEM-003 · 가격 없이 READY 전환 — code: ITEM-004 · " +
                         "이미지 없이 READY 전환 — code: ITEM-005 · price 음수 · name/currency/memo 길이 초과 · " +
-                        "빈 이미지 — code: PRODUCTIMAGE-001 · " +
+                        "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 Content-Type 없음 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
                     Content(

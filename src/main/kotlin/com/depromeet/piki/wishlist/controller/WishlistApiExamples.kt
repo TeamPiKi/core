@@ -231,6 +231,7 @@ class WishlistApiExamples(
                         payload = ApiResponseBody.ok(presignedUploadsSample),
                     )
                     add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
+                    add(ProductImageException.unknownType(), name = "content-type 미지정")
                     add(ProductImageException.unsupportedType(), name = "지원하지 않는 이미지 형식")
                     add(ImageUploadException.tooLarge(), name = "contentLength 5MB 초과")
                     add(ImageUploadException.invalidSize(), name = "contentLength 미지정 또는 0 이하")
