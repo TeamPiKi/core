@@ -7,10 +7,9 @@ import kotlin.test.fail
 /**
  * item 스냅샷 원본 접근을 기계로 동결하는 메타 테스트.
  *
- * 같은 item 에 값이 둘이다 — 포인터(위시·출전이 가리키는 버전)와 표시값(ItemDisplayService, 최신 기계 READY
- * 우선 파생). 사용자가 화면에서 보고 행동한 결과에 관여하는 읽기(출전 판정·수기 수정 base·새로고침 판정)는
- * 표시값을 거쳐야 하고, 원본이 정당한 갈래는 넷뿐이다 — 쓰기 / 정체성(itemId만) / 버전 자체가 대상(알림·이력) /
- * 표시값 파생의 입력. 이 구분은 타입이 같아 컴파일러가 못 잡고, 단일 사용자 테스트에선 둘이 같아 테스트도 못
+ * 같은 item 에 버전이 여럿이고 화면 값은 카드(ItemCardService)가 그중 하나를 골라 계산한다. 사용자가 화면에서 보고
+ * 행동한 결과에 관여하는 읽기(출전 판정·사용자 입력 base·새로고침 판정)는 카드를 거쳐야 하고, 원본이 정당한 갈래는
+ * 넷뿐이다 — 쓰기 / 정체성(itemId만) / 버전 자체가 대상(알림·이력) / 카드 계산의 입력. 이 구분은 타입이 같아 컴파일러가 못 잡고, 단일 사용자 테스트에선 둘이 같아 테스트도 못
  * 잡는다(#1006 담기 게이트가 실제로 밟은 함정). 그래서 소비자 집합을 여기 동결한다 — 새 소비 클래스는 이 목록에
  * 자기 갈래를 적어야 하고, 그 순간 위 규칙을 읽게 된다. 갈래 판정 자체는 사람 리뷰 몫이다(오탐 없는 기계 판정 불가).
  */
@@ -19,20 +18,13 @@ class SnapshotAccessConventionTest {
     private val allowedRawConsumers =
         mapOf(
             "notification/handler/ItemParsingCompletedHandler.kt" to "버전 자체 — 방금 전이된 그 버전의 이름으로 알림 문구를 만든다",
-            "notification/handler/ItemParsingFailedHandler.kt" to "버전 자체 — 위와 동일",
-            "notification/handler/ItemParsingIncompleteHandler.kt" to "버전 자체 — 위와 동일",
+            "notification/handler/ItemParsingIncompleteHandler.kt" to "버전 자체 — 방금 일부만 채운 그 버전의 이름",
             "notification/handler/ItemParsingRecoveredHandler.kt" to
                 "버전 자체 — 방금 성공한 그 버전의 이름. 수신자의 표시값이 곧 이 버전이라(최신 기계 READY) 파생과 결과가 같다",
             "notification/handler/ItemRefreshCompletedHandler.kt" to
-                "버전 자체 — 새로고침으로 방금 성공한 그 버전의 이름. 수신자의 포인터가 곧 이 버전이라 파생과 결과가 같다",
+                "버전 자체 — 새로고침으로 방금 성공한 그 버전의 이름",
             "notification/handler/TournamentItemDeletedHandler.kt" to "버전 자체 — 삭제된 출전 카드가 보던 버전의 이름",
-            "tournament/service/TournamentService.kt" to
-                "정체성(itemId 추출)·표시값 입력. 출전 판정은 requireEntryEligible(표시값)이 진다",
-            "tournament/service/TournamentItemPersistenceService.kt" to
-                "쓰기(PENDING·MANUAL 적재)·정체성. 수정 base 는 표시값(editBasisOf)",
             "wishlist/service/WishlistService.kt" to "가격 이력(버전 자체)·표시값 입력",
-            "wishlist/service/WishPersistenceService.kt" to
-                "쓰기(PENDING·MANUAL 적재)·진행 중 합류 조회. 수정 base·새로고침 판정은 표시값",
         )
 
     @Test
@@ -44,7 +36,7 @@ class SnapshotAccessConventionTest {
         if (offenders.isNotEmpty()) {
             fail(
                 "ItemSnapshotRepository 를 직접 쓰는 새 클래스가 있다. 사용자 화면 행동에 관여하는 읽기면 " +
-                    "ItemDisplayService(표시값)를 거치고, 원본이 정당한 갈래(쓰기·정체성·버전 자체·표시값 입력)면 " +
+                    "ItemCardService(카드 값)를 거치고, 원본이 정당한 갈래(쓰기·정체성·버전 자체·카드 계산의 입력)면 " +
                     "이 테스트의 allowedRawConsumers 에 갈래를 적고 등록하라:\n" +
                     offenders.joinToString("\n") { it.path },
             )

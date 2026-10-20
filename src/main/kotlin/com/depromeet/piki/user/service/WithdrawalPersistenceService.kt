@@ -5,6 +5,7 @@ import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.repository.UserRepository
+import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -20,6 +21,7 @@ class WithdrawalPersistenceService(
     private val userDetailRepository: UserDetailRepository,
     private val userDeviceRepository: UserDeviceRepository,
     private val wishRepository: WishRepository,
+    private val wishMemoRepository: WishMemoRepository,
     private val notificationRepository: NotificationRepository,
     private val defaultProfileImages: DefaultProfileImages,
 ) {
@@ -60,6 +62,7 @@ class WithdrawalPersistenceService(
 
         // 4. wishes 하드삭제 — 개인 데이터 즉시 파기(PIPA "지체없이 파기"). 위시는 다른 데이터가 참조하지 않아
         //    즉시 지워도 무결성 문제가 없다(공유 참조 보존은 tombstone users 행이 담당).
+        wishMemoRepository.hardDeleteAllByUserId(userId)
         val wishes = wishRepository.hardDeleteAllByUserId(userId)
 
         // 5. notifications 하드삭제 — 수신자 알림 즉시 파기.

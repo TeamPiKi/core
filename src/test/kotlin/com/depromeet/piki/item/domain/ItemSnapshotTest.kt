@@ -1,322 +1,221 @@
 package com.depromeet.piki.item.domain
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.product.service.ProductSnapshot
-import java.time.LocalDateTime
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import java.util.UUID
 
 class ItemSnapshotTest {
     @Test
-    fun `추출 필드가 모두 채워진 READY 스냅샷을 생성한다`() {
-        val snapshot = ItemSnapshot(
-            itemId = 1L,
-            name = "나이키 에어포스",
-            imageUrl = "https://img.example.com/a.png",
-            price = 99_000,
-            currency = "KRW",
-            status = ItemStatus.READY,
-            extractedAt = LocalDateTime.of(2026, 6, 3, 12, 0),
-        )
-        assertEquals(1L, snapshot.itemId)
-        assertEquals("나이키 에어포스", snapshot.name)
-        assertEquals(99_000, snapshot.price)
-        assertEquals(ItemStatus.READY, snapshot.status)
-    }
-
-    @Test
-    fun `추출 전 스냅샷은 status 기본값 PENDING 이고 추출 필드가 비어 있어도 생성된다`() {
-        val snapshot = ItemSnapshot(itemId = 1L)
-        assertEquals(ItemStatus.PENDING, snapshot.status)
-        assertNull(snapshot.name)
-        assertNull(snapshot.price)
-        assertNull(snapshot.imageUrl)
-        assertNull(snapshot.currency)
-        assertNull(snapshot.extractedAt)
-    }
-
-    @Test
     fun `price 가 음수면 생성에 실패한다`() {
-        assertFailsWith<IllegalArgumentException> {
-            ItemSnapshot(itemId = 1L, price = -1)
-        }
+        assertFailsWith<IllegalArgumentException> { version(price = -1) }
     }
 
     @Test
     fun `name 이 512자를 초과하면 생성에 실패한다`() {
-        assertFailsWith<IllegalArgumentException> {
-            ItemSnapshot(itemId = 1L, name = "가".repeat(513))
-        }
+        assertFailsWith<IllegalArgumentException> { version(name = "가".repeat(513)) }
     }
 
     @Test
     fun `imageUrl 이 2048자를 초과하면 생성에 실패한다`() {
-        assertFailsWith<IllegalArgumentException> {
-            ItemSnapshot(itemId = 1L, imageUrl = "h".repeat(2049))
-        }
+        assertFailsWith<IllegalArgumentException> { version(imageUrl = "h".repeat(2049)) }
     }
 
     @Test
     fun `currency 가 8자를 초과하면 생성에 실패한다`() {
-        assertFailsWith<IllegalArgumentException> {
-            ItemSnapshot(itemId = 1L, currency = "123456789")
-        }
+        assertFailsWith<IllegalArgumentException> { version(currency = "123456789") }
     }
 
     @Test
-    fun `경계값 — name 512자·currency 8자·price 0 은 허용된다`() {
-        val snapshot = ItemSnapshot(
-            itemId = 1L,
-            name = "가".repeat(512),
-            currency = "12345678",
-            price = 0,
-        )
+    fun `name 512자 currency 8자 price 0 은 경계값이라 허용된다`() {
+        val snapshot = version(name = "가".repeat(512), currency = "12345678", price = 0)
+
         assertEquals(512, snapshot.name?.length)
         assertEquals(8, snapshot.currency?.length)
         assertEquals(0, snapshot.price)
     }
 
     @Test
-    fun `PENDING 스냅샷을 markExtracted 하면 추출 결과로 채워지고 READY 와 extractedAt 이 설정된다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        val status =
-            snapshot.markExtracted(
-                ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, currency = "KRW"),
+    fun `이름 가격 이미지가 모두 있으면 READY 다`() {
+        val snapshot = version()
+
+        assertTrue(snapshot.isReady())
+        assertFalse(snapshot.isIncomplete())
+    }
+
+    @Test
+    fun `이름 가격 이미지 중 하나라도 없으면 INCOMPLETE 다`() {
+        listOf(
+            version(name = null),
+            version(price = null),
+            version(imageUrl = null),
+        ).forEach { snapshot ->
+            assertFalse(snapshot.isReady())
+            assertTrue(snapshot.isIncomplete())
+        }
+    }
+
+    @Test
+    fun `blank name 은 값으로 세지 않는다`() {
+        assertTrue(version(name = "   ").isIncomplete())
+    }
+
+    @Test
+    fun `통화가 없어도 이름 가격 이미지가 있으면 READY 다`() {
+        assertTrue(version(currency = null).isReady())
+    }
+
+    @Test
+    fun `extracted 는 추출값과 요청자로 버전을 만든다`() {
+        val slot = UUID.randomUUID()
+
+        val snapshot =
+            ItemSnapshot.extracted(
+                itemId = 1L,
+                extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, currency = "KRW"),
+                createdBy = slot,
             )
-        assertEquals(ItemStatus.READY, status)
-        assertEquals(ItemStatus.READY, snapshot.status)
+
+        assertEquals(1L, snapshot.itemId)
         assertEquals("나이키", snapshot.name)
         assertEquals(99_000, snapshot.price)
-        assertNotNull(snapshot.extractedAt)
+        assertEquals("KRW", snapshot.currency)
+        assertEquals(slot, snapshot.createdBy)
+        assertTrue(snapshot.isReady())
     }
 
     @Test
-    fun `markExtracted 는 추출 경로를 출처로 번역해 기록한다 - 구버전 응답은 미기록`() {
-        val fromParser = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        fromParser.markExtracted(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = "STRUCTURED"),
-        )
-        assertEquals(ItemSnapshotSource.SERVER, fromParser.source)
-
-        val fromLlm = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        fromLlm.markExtracted(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, extractionMethod = "LLM"),
-        )
-        assertEquals(ItemSnapshotSource.SERVER_LLM, fromLlm.source)
-
-        val legacy = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        legacy.markExtracted(
-            ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000),
-        )
-        assertNull(legacy.source)
+    fun `extracted 는 추출 경로를 그대로 들고 사용자 입력이 아니다`() {
+        listOf(ExtractionMethod.STRUCTURED, ExtractionMethod.LLM, null).forEach { method ->
+            val snapshot =
+                ItemSnapshot.extracted(
+                    itemId = 1L,
+                    extracted = ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png", price = 99_000, method = method),
+                    createdBy = UUID.randomUUID(),
+                )
+            assertEquals(method, snapshot.method)
+            assertFalse(snapshot.userInput)
+        }
     }
 
     @Test
-    fun `markExtracted 시 name 이 없으면 INCOMPLETE 로 전이하고 얻은 값은 채워진다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        val status = snapshot.markExtracted(ProductSnapshot(price = 1_000, imageUrl = "https://img.example.com/a.png"))
-        assertEquals(ItemStatus.INCOMPLETE, status)
-        assertEquals(ItemStatus.INCOMPLETE, snapshot.status)
-        assertEquals(1_000, snapshot.price)
-        assertEquals("https://img.example.com/a.png", snapshot.imageUrl)
-        assertNull(snapshot.name)
-        assertNotNull(snapshot.extractedAt)
-    }
+    fun `extracted 는 일부 값만 있어도 INCOMPLETE 버전을 만든다`() {
+        val snapshot =
+            ItemSnapshot.extracted(
+                itemId = 1L,
+                extracted = ProductSnapshot(price = 1_000, imageUrl = "https://img.example.com/a.png"),
+                createdBy = UUID.randomUUID(),
+            )
 
-    @Test
-    fun `markExtracted 시 price 가 없으면 INCOMPLETE 로 전이한다 - 사진에 가격이 없는 정상 입력이다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        val status = snapshot.markExtracted(ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png"))
-        assertEquals(ItemStatus.INCOMPLETE, status)
-        assertEquals("나이키", snapshot.name)
-        assertNull(snapshot.price)
-    }
-
-    @Test
-    fun `markExtracted 시 imageUrl 이 없으면 INCOMPLETE 로 전이한다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        val status = snapshot.markExtracted(ProductSnapshot(name = "나이키", price = 99_000))
-        assertEquals(ItemStatus.INCOMPLETE, status)
-        assertNull(snapshot.imageUrl)
-    }
-
-    @Test
-    fun `markExtracted 가 값을 하나도 못 얻으면 FAILED 로 전이하고 extractedAt 도 남기지 않는다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        val status = snapshot.markExtracted(ProductSnapshot(currency = "KRW"))
-        assertEquals(ItemStatus.FAILED, status)
-        assertEquals(ItemStatus.FAILED, snapshot.status)
-        assertNull(snapshot.extractedAt)
-    }
-
-    @Test
-    fun `markExtracted 는 blank name 을 값으로 세지 않아 나머지가 없으면 FAILED 다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        assertEquals(ItemStatus.FAILED, snapshot.markExtracted(ProductSnapshot(name = "   ")))
-    }
-
-    @Test
-    fun `INCOMPLETE 는 READY 취급을 받지 못한다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        snapshot.markExtracted(ProductSnapshot(name = "나이키", imageUrl = "https://img.example.com/a.png"))
-        assertFalse(snapshot.isReady())
         assertTrue(snapshot.isIncomplete())
-        assertFalse(snapshot.isFailed())
-        assertFalse(snapshot.isInProgress())
+        assertNull(snapshot.name)
+        assertEquals(1_000, snapshot.price)
     }
 
     @Test
-    fun `PENDING 스냅샷을 markFailed 하면 FAILED 가 된다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        snapshot.markFailed()
-        assertEquals(ItemStatus.FAILED, snapshot.status)
-    }
-
-
-    @Test
-    fun `PENDING 이 아닌 스냅샷을 markExtracted 하면 IllegalStateException`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        snapshot.markFailed()
-        assertFailsWith<IllegalStateException> {
-            snapshot.markExtracted(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png"))
-        }
-    }
-
-    @Test
-    fun `manual 은 base 값 위에 입력을 병합한 READY 새 버전을 만들고 base 는 그대로다`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        base.markExtracted(ProductSnapshot(name = "나이키", price = 99_000, imageUrl = "https://img.example.com/a.png", currency = "KRW"))
-        val editor = java.util.UUID.randomUUID()
-
-        val manual = ItemSnapshot.manual(base = base, name = null, price = 79_000, imageUrl = null, currency = null, createdBy = editor)
-
-        assertEquals(ItemStatus.READY, manual.status)
-        assertEquals("나이키", manual.name)
-        assertEquals(79_000, manual.price)
-        assertEquals("https://img.example.com/a.png", manual.imageUrl)
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
-        assertEquals(editor, manual.createdBy)
-        assertNotNull(manual.extractedAt)
-        // 기계 버전 불변 — 이력 보존의 핵심.
-        assertEquals(99_000, base.price)
-        assertEquals(ItemStatus.READY, base.status)
-    }
-
-    // INCOMPLETE 의 완성 경로 — 추출이 못 채운 필드를 사용자가 채우면 READY 가 된다(#944). 이 시나리오가 곧
-    // "채울 수 있는 만큼 채워 내려주고 나머지는 사용자가" 의 계약이라, 전이와 수기 수정이 맞물리는 지점을 고정한다.
-    @Test
-    fun `INCOMPLETE 를 base 로 빈 필드를 채우면 READY 새 버전이 되고 base 는 그대로다`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        base.markExtracted(ProductSnapshot(name = "몬치치 인형", imageUrl = "https://img.example.com/a.png"))
-        assertEquals(ItemStatus.INCOMPLETE, base.status)
-
-        val manual =
-            ItemSnapshot.manual(
-                base = base,
-                name = null,
-                price = 25_000,
-                imageUrl = null,
-                currency = "KRW",
-                createdBy = java.util.UUID.randomUUID(),
-            )
-
-        assertEquals(ItemStatus.READY, manual.status)
-        assertEquals("몬치치 인형", manual.name, "추출이 건진 값은 사용자가 다시 입력하지 않아도 병합된다")
-        assertEquals(25_000, manual.price)
-        assertEquals(ItemSnapshotSource.MANUAL, manual.source)
-        assertEquals(ItemStatus.INCOMPLETE, base.status, "기계 버전은 불변 — 이력으로 남는다")
-    }
-
-    @Test
-    fun `INCOMPLETE base 에 채워도 여전히 빈 필드가 남으면 ItemException(400)`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        base.markExtracted(ProductSnapshot(imageUrl = "https://img.example.com/a.png"))
-        assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = "몬치치", price = null, imageUrl = null, currency = null, createdBy = java.util.UUID.randomUUID())
-        }
-    }
-
-    @Test
-    fun `manual 은 상태 제한이 없다 - PENDING·FAILED base 로도 새 버전을 만든다`() {
-        val editor = java.util.UUID.randomUUID()
+    fun `칸 길이를 넘는 추출 결과로는 버전을 만들 수 없다`() {
         listOf(
-            ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()),
-            ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() },
-        ).forEach { base ->
-            val manual = ItemSnapshot.manual(
-                base = base,
-                name = "수기 입력",
-                price = 5_000,
-                imageUrl = "https://img.example.com/m.png",
-                currency = "KRW",
-                createdBy = editor,
+            ProductSnapshot(name = "가".repeat(ItemSnapshot.NAME_MAX_LENGTH + 1), price = 1_000),
+            ProductSnapshot(name = "상품", imageUrl = "https://cdn.example.com/" + "a".repeat(ItemSnapshot.IMAGE_URL_MAX_LENGTH)),
+        ).forEach { extracted ->
+            assertFalse(ItemSnapshot.accepts(extracted))
+            assertFailsWith<IllegalArgumentException> {
+                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, createdBy = UUID.randomUUID())
+            }
+        }
+    }
+
+    @Test
+    fun `값이 하나도 없는 추출 결과로는 버전을 만들 수 없다`() {
+        listOf(ProductSnapshot(currency = "KRW"), ProductSnapshot(name = "   ")).forEach { extracted ->
+            assertFalse(ItemSnapshot.accepts(extracted))
+            assertFailsWith<IllegalArgumentException> {
+                ItemSnapshot.extracted(itemId = 1L, extracted = extracted, createdBy = UUID.randomUUID())
+            }
+        }
+    }
+
+    @Test
+    fun `userInput 은 base 값 위에 입력을 합친 READY 새 버전을 만들고 base 는 그대로다`() {
+        val base = version(name = "나이키", price = 99_000, currency = "KRW")
+        val editor = UUID.randomUUID()
+
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 79_000, imageUrl = null, currency = null).filledFrom(base)), createdBy = editor)
+
+        assertTrue(userVersion.isReady())
+        assertEquals("나이키", userVersion.name)
+        assertEquals(79_000, userVersion.price)
+        assertEquals(base.imageUrl, userVersion.imageUrl)
+        assertEquals("KRW", userVersion.currency)
+        assertTrue(userVersion.userInput)
+        assertNull(userVersion.method)
+        assertEquals(editor, userVersion.createdBy)
+        assertEquals(99_000, base.price)
+    }
+
+    // 추출이 못 채운 필드를 사용자가 채우면 READY 가 된다는 INCOMPLETE 의 완성 경로(#944)
+    @Test
+    fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 합친 READY 버전이 된다`() {
+        val base = version(name = "몬치치 인형", price = null)
+
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 25_000, imageUrl = null, currency = "KRW").filledFrom(base)), createdBy = UUID.randomUUID())
+
+        assertTrue(userVersion.isReady())
+        assertEquals("몬치치 인형", userVersion.name)
+        assertEquals(25_000, userVersion.price)
+        assertTrue(base.isIncomplete())
+    }
+
+    @Test
+    fun `base 가 없으면 입력만으로 READY 버전을 만든다`() {
+        val userVersion =
+            ItemSnapshot.userInput(
+                1L,
+                UserInputValues.of(UserInput(name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW")),
+                createdBy = UUID.randomUUID(),
             )
-            assertEquals(ItemStatus.READY, manual.status)
-            assertEquals(ItemSnapshotSource.MANUAL, manual.source)
+
+        assertTrue(userVersion.isReady())
+        assertTrue(userVersion.userInput)
+    }
+
+    @Test
+    fun `사용자 입력을 합친 뒤에도 이름 가격 이미지 중 하나가 비면 ItemException 이다`() {
+        val inputs =
+            listOf(
+                Triple(null, 1_000, "https://img.example.com/a.png"),
+                Triple("수기", null, "https://img.example.com/a.png"),
+                Triple("수기", 5_000, null),
+            )
+
+        inputs.forEach { (name, price, imageUrl) ->
+            assertFailsWith<ItemException> {
+                UserInputValues.of(UserInput(name = name, price = price, imageUrl = imageUrl, currency = "KRW"))
+            }
         }
     }
 
-    @Test
-    fun `manual 병합 후에도 name 이 비면 ItemException(400)`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }
-        assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = null, price = 1_000, imageUrl = "https://img.example.com/a.png", currency = "KRW", createdBy = java.util.UUID.randomUUID())
-        }
-    }
-
-    @Test
-    fun `manual 병합 후에도 price 가 없으면 ItemException(400)`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }
-        assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = "수기", price = null, imageUrl = "https://img.example.com/a.png", currency = "KRW", createdBy = java.util.UUID.randomUUID())
-        }
-    }
-
-    @Test
-    fun `manual 병합 후에도 imageUrl 이 없으면 ItemException(400)`() {
-        val base = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }
-        assertFailsWith<ItemException> {
-            ItemSnapshot.manual(base = base, name = "수기", price = 5_000, imageUrl = null, currency = "KRW", createdBy = java.util.UUID.randomUUID())
-        }
-    }
-
-    @Test
-    fun `pending 팩토리는 PENDING 스냅샷을 만들고 isReady 는 false 다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-        assertEquals(ItemStatus.PENDING, snapshot.status)
-        assertFalse(snapshot.isReady())
-    }
-
-    @Test
-    fun `isInProgress 는 PENDING 에서 true, READY·FAILED 에서 false 다`() {
-        // 수동 새로고침(5단계) 멱등 가드용 — 이미 진행 중이면 새 추출 버전을 만들지 않는다.
-        assertTrue(ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).isInProgress())
-        assertFalse(
-            ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID())
-                .apply { markExtracted(ProductSnapshot(name = "x", price = 1_000, imageUrl = "https://img.example.com/a.png")) }
-                .isInProgress(),
+    private fun version(
+        name: String? = "나이키 에어포스",
+        price: Int? = 99_000,
+        imageUrl: String? = "https://img.example.com/a.png",
+        currency: String? = "KRW",
+        userInput: Boolean = false,
+        method: ExtractionMethod? = ExtractionMethod.STRUCTURED.takeUnless { userInput },
+    ): ItemSnapshot =
+        ItemSnapshot(
+            itemId = 1L,
+            name = name,
+            imageUrl = imageUrl,
+            price = price,
+            currency = currency,
+            method = method,
+            userInput = userInput,
+            createdBy = UUID.randomUUID(),
         )
-        assertFalse(ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }.isInProgress())
-    }
-
-    @Test
-    fun `예전 큐가 남긴 PROCESSING 버전도 실패로 닫을 수 있다`() {
-        val snapshot = ItemSnapshot(itemId = 1L, status = ItemStatus.PROCESSING)
-
-        snapshot.markFailed()
-
-        assertEquals(ItemStatus.FAILED, snapshot.status)
-    }
-
-    @Test
-    fun `끝난 버전은 다시 실패로 닫을 수 없다`() {
-        val snapshot = ItemSnapshot.pending(itemId = 1L, requestedBy = UUID.randomUUID()).apply { markFailed() }
-
-        assertFailsWith<IllegalStateException> { snapshot.markFailed() }
-    }
 }

@@ -5,7 +5,7 @@ package com.depromeet.piki.tournament.service
 object TournamentThumbnails {
     const val MAX = 2
 
-    // recency 가 클수록 최근 등록. imageUrl 은 아직 파싱 안 됐거나(PENDING/PROCESSING) 실패한(FAILED) 스냅샷이면 null.
+    // recency 가 클수록 최근 등록. imageUrl 은 READY 가 아닌 카드면 null.
     data class Candidate(
         val recency: Long,
         val imageUrl: String?,

@@ -2,11 +2,13 @@ package com.depromeet.piki.image.service.remote
 
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.common.storage.S3Properties
+import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.service.ItemParsingMetrics
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ExtractionModelSettings
-import com.depromeet.piki.product.service.remote.ExtractionTarget
 import com.depromeet.piki.product.service.remote.ProductExtractorException
+import com.depromeet.piki.product.service.remote.RemoteExtractionContract
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -19,7 +21,6 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.request
 import org.springframework.test.web.client.response.MockRestResponseCreators.withServerError
 import org.springframework.test.web.client.response.MockRestResponseCreators.withStatus
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
-import com.depromeet.piki.product.service.remote.RemoteExtractionContract
 import org.springframework.web.client.RestClient
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -31,15 +32,15 @@ import kotlin.test.assertNull
 // 쓰는 HttpLinkSnapshotExtractorTest 가 이미 고정하므로 여기서 반복하지 않는다.
 // 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다.
 class HttpImageSnapshotExtractorTest {
-    private val imageKey = "items/raw/0f8a1c2e.png"
+    private val imageKey = ProductImageKey.parse("items/raw/550e8400-e29b-41d4-a716-446655440000.png")
 
     // 지정한 축에만 값을 준다 — 이미지 추출기가 LINK 축을 읽는 회귀를 이 Fake 가 잡아야 한다
     // (HttpLinkSnapshotExtractorTest 의 같은 Fake 와 대칭이다).
     private class FakeModelSettings(
-        private val axis: ExtractionTarget,
+        private val axis: ParseInputType,
         private val model: String?,
     ) : ExtractionModelSettings {
-        override fun modelOf(target: ExtractionTarget): String? = model?.takeIf { target == axis }
+        override fun modelOverrideOf(target: ParseInputType): String? = model?.takeIf { target == axis }
     }
 
     private fun extractorWith(
@@ -56,7 +57,7 @@ class HttpImageSnapshotExtractorTest {
         return HttpImageSnapshotExtractor(
             builder.build(),
             S3Properties(bucket = "test-piki-images", publicBaseUrl = "https://img.test"),
-            FakeModelSettings(ExtractionTarget.IMAGE, model),
+            FakeModelSettings(ParseInputType.IMAGE, model),
         )
     }
 
@@ -69,7 +70,7 @@ class HttpImageSnapshotExtractorTest {
                     .andExpect(method(HttpMethod.POST))
                     .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                     .andExpect(jsonPath("$.bucket").value("test-piki-images"))
-                    .andExpect(jsonPath("$.key").value(imageKey))
+                    .andExpect(jsonPath("$.key").value(imageKey.value))
                     .andRespond(
                         withSuccess(
                             """{"name":"나이키 에어포스","imageUrl":"https://img.test/items/out.png","currentPrice":129000,"currency":"KRW"}""",
@@ -80,7 +81,6 @@ class HttpImageSnapshotExtractorTest {
 
         val snapshot = extractor.extract(imageKey)
 
-        assertNull(snapshot.link, "이미지 추출엔 원본 URL 이 없다 (계약 §2 image)")
         assertEquals("나이키 에어포스", snapshot.name)
         assertEquals("https://img.test/items/out.png", snapshot.imageUrl)
         assertEquals(129_000, snapshot.price)
@@ -104,7 +104,6 @@ class HttpImageSnapshotExtractorTest {
 
         val snapshot = extractor.extract(imageKey)
 
-        assertNull(snapshot.link)
         assertNull(snapshot.price, "사진에 가격이 없으면 사용자가 채운다 (INCOMPLETE)")
         assertEquals("핸드 워시", snapshot.name)
     }

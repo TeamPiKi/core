@@ -4,11 +4,11 @@ import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentHistory
 import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
-import java.time.LocalDateTime
-import java.util.UUID
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
+import java.util.UUID
 
 @Repository
 class TournamentRepositoryImpl(

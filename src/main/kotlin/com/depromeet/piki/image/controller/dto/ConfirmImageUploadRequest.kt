@@ -1,5 +1,6 @@
 package com.depromeet.piki.image.controller.dto
 
+import com.depromeet.piki.image.domain.ProductImageKey
 import io.swagger.v3.oas.annotations.media.Schema
 
 // 이미지 등록 v2 확정 요청 — presigned 로 업로드를 마친 이미지 key 목록(발급 응답의 imageKey, 1~5개).
@@ -12,4 +13,6 @@ data class ConfirmImageUploadRequest(
         requiredMode = Schema.RequiredMode.REQUIRED,
     )
     val imageKeys: List<String>,
-)
+) {
+    fun toImageKeys(): List<ProductImageKey> = imageKeys.map(ProductImageKey::parse)
+}

@@ -3,6 +3,7 @@ package com.depromeet.piki.product.service.remote
 import com.depromeet.piki.common.exception.BaseException
 import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.item.service.ItemParsingMetrics
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.routing.DomainAccess
@@ -45,10 +46,10 @@ class HttpLinkSnapshotExtractorTest {
     // 지정한 축에만 값을 준다 — target 을 무시하고 늘 같은 값을 돌려주면, 링크 추출기가 IMAGE 축을 읽는
     // 회귀가 그대로 통과한다. 축 분리가 이 기능의 전제라 Fake 가 그 전제를 지켜야 한다.
     private class FakeModelSettings(
-        private val axis: ExtractionTarget,
+        private val axis: ParseInputType,
         private val model: String?,
     ) : ExtractionModelSettings {
-        override fun modelOf(target: ExtractionTarget): String? = model?.takeIf { target == axis }
+        override fun modelOverrideOf(target: ParseInputType): String? = model?.takeIf { target == axis }
     }
 
     private fun extractorWith(
@@ -66,7 +67,7 @@ class HttpLinkSnapshotExtractorTest {
         return HttpLinkSnapshotExtractor(
             builder.build(),
             FakeAccessPolicy(access),
-            FakeModelSettings(ExtractionTarget.LINK, model),
+            FakeModelSettings(ParseInputType.LINK, model),
         )
     }
 
@@ -90,7 +91,6 @@ class HttpLinkSnapshotExtractorTest {
 
         val snapshot = extractor.extract(link)
 
-        assertEquals(link, snapshot.link)
         assertEquals("나이키", snapshot.name)
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
         assertEquals(99_000, snapshot.price)
@@ -137,7 +137,6 @@ class HttpLinkSnapshotExtractorTest {
         extractor.extract(link)
     }
 
-
     @Test
     fun `허락받은 도메인은 authorized=true 를 실어 보낸다 - 원장은 이쪽에 있다`() {
         // 허가 원장(domain_access_policies.access)의 단일 진실은 이쪽 DB 이고, 무상태인 extractor 는
@@ -168,7 +167,6 @@ class HttpLinkSnapshotExtractorTest {
 
         assertFailsWith<ProductLinkException> { extractor.extract(link) }
     }
-
 
     @Test
     fun `200 이어도 경계 정규화를 거친다 - non-https imageUrl 은 null 로, 소문자 currency 는 ISO 정규형으로`() {

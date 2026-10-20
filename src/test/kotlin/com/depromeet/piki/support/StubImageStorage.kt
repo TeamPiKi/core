@@ -19,6 +19,8 @@ class StubImageStorage : ImageStorage {
         return url
     }
 
+    override fun urlOf(key: String): String = "$BASE_URL/$key"
+
     val deletedPrefixes = mutableListOf<String>()
 
     override fun deleteByPrefix(prefix: String) {

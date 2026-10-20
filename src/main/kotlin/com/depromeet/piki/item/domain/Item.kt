@@ -1,72 +1,42 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.common.domain.LongBaseEntity
-import com.depromeet.piki.product.domain.CanonicalLink
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.domain.ProductLinkConverter
 import jakarta.persistence.Column
-import jakarta.persistence.Convert
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
 
-// 상품의 정체성. 외부 입력(link=URL 또는 sourceImageKey=S3 raw 이미지 key)으로 식별되며, 추출값(name·price·image·currency)·상태·
-// 이력은 전적으로 ItemSnapshot(버전)이 보유한다 — item 자신은 추출 데이터를 들지 않는 안정적 식별 단위다(4a 에서 추출 필드를 분리).
-//
-// 정체성의 확정 표식은 canonical(정규화된 귀결점, #825)이다. URL 등록 시점엔 입력 URL 이 임시 정체성 노릇을 하고
-// (같은 문자열 재등록은 item_links 별칭으로 이 행에 붙는다), 파싱이 finalUrl 을 돌려주면 claimCanonical 로 확정된다.
-// canonical_hash unique 덕에 같은 귀결점의 item 은 하나만 존재한다 — 확정 시도가 충돌하면 이 행이 임시였다는 뜻이라
-// 기존 item 으로 병합(snapshot 재부모화)된다.
-//
-// 입력은 link XOR sourceImageKey 다 — URL 추출 경로는 link 를, 이미지 추출 경로는 sourceImageKey 를 채운다(두 경로가 같은 item 을 만든다).
-// 입력은 바뀌면 사실상 다른 상품이라 재등록 영역으로 보고 불변(val).
 @Entity
 @Table(name = "items")
 class Item(
-    @Convert(converter = ProductLinkConverter::class)
-    @Column(name = "source_url", nullable = true, length = 2048)
-    val link: ProductLink? = null,
-    // 바이트 대신 S3 key 를 들어 파싱을 다시 돌려도 원본을 읽을 수 있음
-    @Column(nullable = true, length = 255, unique = true)
-    val sourceImageKey: String? = null,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    val sourceType: ParseInputType,
+
+    // 귀결점을 정규화한 값. 링크는 정체 URL, 이미지는 이미지 키
+    @Column(nullable = false, unique = true, length = ProductLink.MAX_LENGTH)
+    val canonicalUrl: CanonicalInput,
+
 ) : LongBaseEntity() {
-    // 정규화된 귀결점(#825 정체성 키). 파싱 성공 시점에 claimCanonical 로 확정되므로 그 전(PENDING·FAILED)엔 null 이다.
-    // 이미지 등록 item(link 없음)과 기존 행(forward-only 소급 제외)도 null 로 남는다.
-    @Column(length = 2048)
-    var canonicalUrl: String? = null
-        protected set
-
-    // canonical_url 의 SHA-256 hex — unique 인덱스용 고정 길이 대리키 (utf8mb4 인덱스 상한이 2048자 직접 unique 를 막는다).
-    @Column(length = 64)
-    var canonicalHash: String? = null
-        protected set
-
-    // 둘 다 채워지면 링크가 우선돼 이미지 키가 조용히 무시됨. 둘 다 비는 것은 테스트 픽스처라 허용
-    init {
-        require(listOfNotNull(link, sourceImageKey).size <= 1) {
-            "Item 은 link 와 sourceImageKey 중 하나만 가질 수 있다"
-        }
+    // 출처 표시용. 이미지 아이템은 쇼핑몰 주소가 없다
+    fun sourceLink(): ProductLink? {
+        if (sourceType != ParseInputType.LINK) return null
+        return canonicalUrl.toLink()
     }
 
-
-    // 파싱이 알아낸 귀결점으로 정체성을 확정한다. 정체성은 불변이 원칙이라 재확정은 코드 버그다(check 500) —
-    // 재추출(갱신)은 이미 canonical 이 확정된 item 의 새 버전을 만들 뿐 이 메서드를 다시 타지 않는다.
-    // 같은 값 재확정은 멱등 허용: 병합 경합에서 진 쪽이 재시도할 때 같은 귀결점이면 무해하다.
-    //
-    // 동시성 주의: 이 검사는 로드된 인스턴스의 인메모리 값만 본다 — 같은 item 을 두 트랜잭션이 동시에 확정하는
-    // 경합(둘 다 null 로 읽고 각자 다른 값 커밋)은 여기서 못 막고, 영속 계층의 조건부 claim
-    // (UPDATE ... WHERE canonical_hash IS NULL, 기록 단계 PR에서 도입)이 직렬화를 진다.
-    // 여기는 단일 트랜잭션 안의 오사용을 잡는 최후 보루다.
-    fun claimCanonical(canonical: CanonicalLink) {
-        val current = canonicalHash
-        current?.let {
-            check(it == canonical.hash) { "이미 canonical 이 확정된 item 의 정체성은 바꿀 수 없다" }
-            return
-        }
-        canonicalUrl = canonical.url
-        canonicalHash = canonical.hash
+    fun refreshInput(): ParseInput {
+        if (sourceType != ParseInputType.LINK) throw ItemException.notRefreshable()
+        return canonicalUrl.toParseInput(sourceType)
     }
 
     companion object {
-        const val SOURCE_IMAGE_KEY_UNIQUE = "uk_items_source_image_key"
+        fun of(
+            sourceType: ParseInputType,
+            canonical: CanonicalInput,
+        ): Item = Item(sourceType, canonical)
     }
 }

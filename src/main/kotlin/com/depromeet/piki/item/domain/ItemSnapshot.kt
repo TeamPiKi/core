@@ -1,129 +1,59 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.common.domain.LongBaseEntity
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.product.service.ProductSnapshot
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Table
-import java.time.LocalDateTime
 import java.util.UUID
 
+// 파싱 성공·사용자 입력 때만 생기고 바뀌지 않는다
 @Entity
 @Table(name = "item_snapshots")
 class ItemSnapshot(
+
     @Column(nullable = false, updatable = false)
     val itemId: Long,
-    name: String? = null,
-    imageUrl: String? = null,
-    price: Int? = null,
-    currency: String? = null,
-    status: ItemStatus = ItemStatus.PENDING,
-    extractedAt: LocalDateTime? = null,
-    source: ItemSnapshotSource? = null,
-    createdBy: UUID? = null,
-) : LongBaseEntity() {
-    @Column(columnDefinition = "BINARY(16)")
-    var createdBy: UUID? = createdBy
-        protected set
+
+    @Column(length = NAME_MAX_LENGTH)
+    val name: String?,
+
+    @Column(length = IMAGE_URL_MAX_LENGTH)
+    val imageUrl: String?,
+
+    @Column
+    val price: Int?,
+
+    @Column(length = CURRENCY_MAX_LENGTH)
+    val currency: String?,
 
     @Enumerated(EnumType.STRING)
     @Column(length = 16)
-    var source: ItemSnapshotSource? = source
-        protected set
+    val method: ExtractionMethod?,
 
-    @Column(length = 512)
-    var name: String? = name
-        protected set
+    @Column(nullable = false)
+    val userInput: Boolean,
 
-    @Column(length = 2048)
-    var imageUrl: String? = imageUrl
-        protected set
+    @Column(nullable = false, columnDefinition = "BINARY(16)")
+    val createdBy: UUID,
 
-    var price: Int? = price
-        protected set
-
-    @Column(length = 8)
-    var currency: String? = currency
-        protected set
-
-    // TODO: #1176 2단계에서 삭제 예정. 진행 상태는 ItemParseOutboxStatus 가 정본이고 버전은 성공 시에만 생김
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
-    var status: ItemStatus = status
-        protected set
-
-    var extractedAt: LocalDateTime? = extractedAt
-        protected set
-
-    // JPA 가 빈 인스턴스로 이 블록을 먼저 실행하므로 필수값·상태 의존 검사는 둘 수 없다.
+) : LongBaseEntity() {
     init {
-        validate(name, price, imageUrl, currency)
+        require(filledFieldCount(name, price, imageUrl) > 0) { "값이 하나도 없는 버전은 만들 수 없다" }
+        require(fitsColumns(name, imageUrl, currency)) { "칸 길이를 넘는 값이다" }
+        require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
     }
 
-    fun markExtracted(extracted: ProductSnapshot): ItemStatus {
-        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 추출 결과로 전이할 수 없다" }
-        fillValues(extracted)
-        source = ItemSnapshotSource.fromWireMethod(extracted.extractionMethod)
-        status = extractedStatus()
-        if (hasValue()) extractedAt = LocalDateTime.now()
-        return status
-    }
+    fun isReady(): Boolean = filledFieldCount() == READY_FIELD_COUNT
 
-    fun markFailed() {
-        check(isInProgress()) { "진행 중이 아닌 snapshot(status=$status)은 FAILED 로 전이할 수 없다" }
-        status = ItemStatus.FAILED
-    }
-
-    fun isReady(): Boolean = status == ItemStatus.READY
-
-    fun isIncomplete(): Boolean = status == ItemStatus.INCOMPLETE
-
-    fun isFailed(): Boolean = status == ItemStatus.FAILED
-
-    fun isInProgress(): Boolean = status == ItemStatus.PENDING || status == ItemStatus.PROCESSING
-
-    fun hasValue(): Boolean = isReady() || isIncomplete()
-
-    fun isUnresolved(): Boolean = isFailed() || isIncomplete()
-
-    fun isManual(): Boolean = source == ItemSnapshotSource.MANUAL
+    fun isIncomplete(): Boolean = !isReady()
 
     fun isOwnedBy(user: UUID): Boolean = createdBy == user
 
-    // 출처를 모르는 옛 행도 공유값이다. 만든 사람으로 가르면 추정 백필된 옛 값이 카드에서 사라진다.
-    fun isSharedValue(): Boolean = isReady() && !isManual()
-
-    private fun extractedStatus(): ItemStatus =
-        when (extractedFields().size) {
-            0 -> ItemStatus.FAILED
-            READY_FIELD_COUNT -> ItemStatus.READY
-            else -> ItemStatus.INCOMPLETE
-        }
-
-    // 통화는 단독으로 카드 값이 되지 못해 세지 않는다.
-    private fun extractedFields(): List<Any> = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl)
-
-    private fun fillValues(extracted: ProductSnapshot) {
-        validate(extracted.name, extracted.price, extracted.imageUrl, extracted.currency)
-        name = extracted.name
-        price = extracted.price
-        imageUrl = extracted.imageUrl
-        currency = extracted.currency
-    }
-
-    private fun validate(
-        name: String?,
-        price: Int?,
-        imageUrl: String?,
-        currency: String?,
-    ) {
-        require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
-        require((name?.length ?: 0) <= NAME_MAX_LENGTH) { "name 길이가 ${NAME_MAX_LENGTH}자를 초과했다" }
-        require((imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH) { "imageUrl 길이가 ${IMAGE_URL_MAX_LENGTH}자를 초과했다" }
-        require((currency?.length ?: 0) <= CURRENCY_MAX_LENGTH) { "currency 길이가 ${CURRENCY_MAX_LENGTH}자를 초과했다" }
-    }
+    private fun filledFieldCount(): Int = filledFieldCount(name, price, imageUrl)
 
     companion object {
         const val NAME_MAX_LENGTH = 512
@@ -131,36 +61,57 @@ class ItemSnapshot(
         const val CURRENCY_MAX_LENGTH = 8
         private const val READY_FIELD_COUNT = 3
 
-        fun pending(
-            itemId: Long,
-            requestedBy: UUID,
-        ): ItemSnapshot = ItemSnapshot(itemId = itemId, createdBy = requestedBy)
+        // 추출 결과가 버전이 될 수 있는지. 외부 계약 케이스라 예외가 아니라 판정으로 걸러 호출부가 파싱 실패로 닫는다
+        fun accepts(extracted: ProductSnapshot): Boolean =
+            filledFieldCount(extracted.name, extracted.price, extracted.imageUrl) > 0 &&
+                fitsColumns(extracted.name, extracted.imageUrl, extracted.currency)
 
-        fun manual(
-            base: ItemSnapshot,
+        // 통화는 단독으로 카드 값이 되지 못해 세지 않는다
+        private fun filledFieldCount(
             name: String?,
             price: Int?,
             imageUrl: String?,
+        ): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size
+
+        private fun fitsColumns(
+            name: String?,
+            imageUrl: String?,
             currency: String?,
+        ): Boolean =
+            (name?.length ?: 0) <= NAME_MAX_LENGTH &&
+                (imageUrl?.length ?: 0) <= IMAGE_URL_MAX_LENGTH &&
+                (currency?.length ?: 0) <= CURRENCY_MAX_LENGTH
+
+        fun extracted(
+            itemId: Long,
+            extracted: ProductSnapshot,
             createdBy: UUID,
-        ): ItemSnapshot {
-            val mergedName = name ?: base.name
-            val mergedPrice = price ?: base.price
-            val mergedImage = imageUrl ?: base.imageUrl
-            if (mergedName.isNullOrBlank()) throw ItemException.nameRequiredForReady()
-            mergedPrice ?: throw ItemException.priceRequiredForReady()
-            mergedImage ?: throw ItemException.imageRequiredForReady()
-            return ItemSnapshot(
-                itemId = base.itemId,
-                name = mergedName,
-                imageUrl = mergedImage,
-                price = mergedPrice,
-                currency = currency ?: base.currency,
-                status = ItemStatus.READY,
-                extractedAt = LocalDateTime.now(),
-                source = ItemSnapshotSource.MANUAL,
+        ): ItemSnapshot =
+            ItemSnapshot(
+                itemId = itemId,
+                name = extracted.name,
+                imageUrl = extracted.imageUrl,
+                price = extracted.price,
+                currency = extracted.currency,
+                method = extracted.method,
+                userInput = false,
                 createdBy = createdBy,
             )
-        }
+
+        fun userInput(
+            itemId: Long,
+            values: UserInputValues,
+            createdBy: UUID,
+        ): ItemSnapshot =
+            ItemSnapshot(
+                itemId = itemId,
+                name = values.name,
+                imageUrl = values.imageUrl,
+                price = values.price,
+                currency = values.currency,
+                method = null,
+                userInput = true,
+                createdBy = createdBy,
+            )
     }
 }

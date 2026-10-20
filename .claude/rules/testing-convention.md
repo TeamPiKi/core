@@ -40,7 +40,7 @@ fun `같은 guest 가 같은 URL 을 두 번 등록하면 409 CONFLICT 가 반�
 "기본 동작을 throw 로 둔다" 는 원칙의 Kotlin 구현:
 
 ```kotlin
-class StubProductLinkExtractor : ProductLinkExtractor {
+class StubLinkSnapshotExtractor : LinkSnapshotExtractor {
     // 동작 가능한 기본값을 두면 명시 세팅을 빠뜨려도 통과해버린다. 그래서 기본을 throw 로 둔다.
     var build: (ProductLink) -> ProductSnapshot = {
         error("stub.build 를 테스트 본문에서 명시 세팅해야 한다.")
@@ -49,7 +49,7 @@ class StubProductLinkExtractor : ProductLinkExtractor {
 }
 
 // 테스트 본문
-stubProductLinkExtractor.build = { link -> ProductSnapshot(link = link, name = "나이키", price = 99_000) }
+stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "나이키", price = 99_000) }
 ```
 
 ## DB 바인딩 (이 repo 는 MySQL 을 쓴다)

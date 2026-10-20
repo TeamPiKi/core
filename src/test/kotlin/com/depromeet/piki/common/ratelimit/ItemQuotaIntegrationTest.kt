@@ -6,14 +6,13 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.exception.CommonErrorCode
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -39,7 +38,6 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -352,8 +350,7 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val ownerId = UUID.randomUUID()
         insertUser(ownerId, IdentityType.MEMBER)
-        // 등록 API 를 태우지 않고 READY 위시를 바로 만든다 — 등록분 차감을 섞지 않아야 "이동이 0" 인지가 선명하다.
-        // (출전은 활성 snapshot 이 READY 인 item 만 허용하므로 PENDING 인 갓 등록분으로는 이 경로를 탈 수 없다.)
+        // 등록분 차감을 섞지 않아야 이동이 0 인지가 선명하다
         val itemId = insertReadyWish(ownerId)
         val (tournamentId, _) = createTournament(mockMvc, ownerId)
 
@@ -543,22 +540,11 @@ class ItemQuotaIntegrationTest : IntegrationTestSupport() {
     private fun currentCount(userId: UUID): Long? =
         redisTemplate.opsForValue().get(RedisItemQuotaStore.USER_KEY_PREFIX + userId)?.toLong()
 
-    // 파싱이 끝난(READY) 위시 항목을 등록 API 없이 바로 만든다 — 토너먼트 출전은 활성 snapshot 이 READY 인
-    // item 만 허용하므로, 등록 API 로 만든 PENDING 항목으로는 이동 경로를 탈 수 없다. itemId 를 돌려준다.
+    // 등록 API 를 거치지 않고 READY 위시를 만든다. 출전은 READY 아이템만 허용해 파싱 중인 갓 등록분으로는 이동 경로를 탈 수 없다
     private fun insertReadyWish(userId: UUID): Long {
-        val item = itemJpaRepository.save(Item())
-        val snapshot =
-            itemSnapshotJpaRepository.save(
-                ItemSnapshot(
-                    itemId = item.getId(),
-                    name = "한도 테스트 아이템",
-                    price = 10_000,
-                    currency = "KRW",
-                    status = ItemStatus.READY,
-                    extractedAt = LocalDateTime.now(),
-                ),
-            )
-        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(itemVersion(itemId = item.getId(), name = "한도 테스트 아이템", createdBy = userId))
+        wishJpaRepository.save(Wish(userId = userId, itemId = item.getId()))
         return item.getId()
     }
 

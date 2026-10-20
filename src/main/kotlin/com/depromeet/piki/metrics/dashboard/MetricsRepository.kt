@@ -86,7 +86,7 @@ class MetricsRepository(
         exclude: Boolean,
     ): Long = count("SELECT COUNT(*) FROM wishes WHERE created_at >= ? AND created_at < ?${notInternal(exclude, "user_id")}", ts(from), ts(to))
 
-    // source_url IS NULL = 이미지 등록, NOT NULL = URL 등록. wish 는 item 을 직접 참조한다(#1051, wishes.item_id).
+    // 출처는 그 위시의 요청 입력으로 가른다. 확정된 아이템에 바로 붙은 위시는 요청이 없고 늘 URL 등록이다
     fun countWishesBySource(
         from: LocalDateTime,
         to: LocalDateTime,
@@ -95,9 +95,8 @@ class MetricsRepository(
         val byImage =
             keyCounts(
                 """
-                SELECT i.source_url IS NULL AS is_image, COUNT(*)
+                SELECT $IS_IMAGE_WISH AS is_image, COUNT(*)
                 FROM wishes w
-                JOIN items i ON i.id = w.item_id
                 WHERE w.created_at >= ? AND w.created_at < ?${notInternal(exclude, "w.user_id")} GROUP BY is_image
                 """.trimIndent(),
                 ts(from),
@@ -114,24 +113,16 @@ class MetricsRepository(
         val byImage =
             keyCounts(
                 """
-                SELECT i.source_url IS NULL AS is_image, COUNT(*)
+                SELECT $IS_IMAGE_WISH AS is_image, COUNT(*)
                 FROM wishes w
-                JOIN items i ON i.id = w.item_id
                 WHERE w.deleted_at IS NULL${notInternal(exclude, "w.user_id")} GROUP BY is_image
                 """.trimIndent(),
             )
         return (byImage["0"] ?: 0L) to (byImage["1"] ?: 0L)
     }
 
-    // 파싱(item_snapshots READY/FAILED)을 출처별로 나눈다 — 아이템이 위시로 참조되면 '위시 파싱'(등록+새로고침 전부),
-    // 아니면 '토너먼트 파싱'(토너먼트 전용 아이템). 위시·토너먼트가 별도 item 을 만들어 item 단위로 출처가 갈린다.
-    // 파싱은 user 차원이 없어 개발진 제외는 못 한다(전체 파싱과 동일한 인지된 한계) — 토글과 무관하게 개발진 파싱도 포함된다.
-    //
-    // 한계: 출처 분류는 스냅샷 생성 시점 고정이 아니라 조회 시점의 "이 아이템에 위시가 있나"로 판정한다. 현재는 위시·토너먼트가
-    // 서로 다른 item 을 만들어(공유 경로 없음) 한 아이템이 두 출처를 오가지 않으므로 과거 구간 집계가 안정적이다. 다만 앞으로
-    // 토너먼트 아이템을 위시로 자동 편입하는 등 두 흐름이 item 을 공유하게 되면, 위시가 생긴 순간 그 아이템의 과거 스냅샷이
-    // 토너먼트→위시로 재분류돼 지난 구간 수치가 달라진다 — 그 시점엔 출처를 스냅샷 생성 시점에 영속화(컬럼)해 고정해야 한다.
-    // (스냅샷 활성-위시로만 좁히면 새로고침·비활성 버전이 빠져 '위시 파싱=위시 아이템 전체 추출' 의미가 깨지므로 쓰지 않는다.)
+    // 끝난 파싱을 요청 출처(위시·토너먼트)별로 센다. 성공은 일부만 채운 경우를 포함한다
+    // 파싱은 user 차원이 없어 개발진 제외는 못 한다(전체 파싱과 동일한 인지된 한계)
     fun countParsingBySource(
         from: LocalDateTime,
         to: LocalDateTime,
@@ -139,25 +130,24 @@ class MetricsRepository(
         val rows =
             jdbcTemplate.query(
                 """
-                SELECT
-                  EXISTS(SELECT 1 FROM wishes w WHERE w.item_id = s.item_id) AS is_wish,
-                  s.status, COUNT(*)
-                FROM item_snapshots s
-                WHERE s.created_at >= ? AND s.created_at < ? AND s.status IN ('READY','FAILED')
-                GROUP BY is_wish, s.status
+                SELECT o.slot_type = 'WISH' AS is_wish, o.status, COUNT(*)
+                FROM item_parse_outbox o
+                WHERE o.updated_at >= ? AND o.updated_at < ? AND o.status IN ('SUCCEEDED','FAILED')
+                GROUP BY is_wish, o.status
                 """.trimIndent(),
                 { rs, _ -> Triple(rs.getBoolean(1), rs.getString(2), rs.getLong(3)) },
                 ts(from),
                 ts(to),
             )
+
         fun pick(
             isWish: Boolean,
             status: String,
         ): Long = rows.firstOrNull { it.first == isWish && it.second == status }?.third ?: 0L
         return ParsingBySource(
-            wishReady = pick(true, "READY"),
+            wishReady = pick(true, "SUCCEEDED"),
             wishFailed = pick(true, "FAILED"),
-            tournamentReady = pick(false, "READY"),
+            tournamentReady = pick(false, "SUCCEEDED"),
             tournamentFailed = pick(false, "FAILED"),
         )
     }
@@ -372,7 +362,7 @@ class MetricsRepository(
         )
 
     // 파싱 평균 시도 횟수(추출 건강도). 확정 상태(READY/FAILED)만. 대상이 없으면 null.
-    // TODO: #1176 1단계부터 attempt_count 를 쓰지 않아 새 행은 0. 3단계 재시도에서 아웃박스 기준으로 다시 연결
+    // TODO: #1176 1단계부터 attempt_count 를, 2단계부터 status 를 쓰지 않아 새 행은 집계에 안 잡힘. 3단계 재시도에서 아웃박스 기준으로 다시 연결
     fun avgParsingAttempts(
         from: LocalDateTime,
         to: LocalDateTime,
@@ -421,6 +411,10 @@ class MetricsRepository(
     private fun ts(value: LocalDateTime): Timestamp = Timestamp.valueOf(value)
 
     companion object {
+        private const val IS_IMAGE_WISH =
+            "EXISTS(SELECT 1 FROM item_parse_outbox o WHERE o.slot_type = 'WISH' AND o.slot_id = w.id " +
+                "AND o.input_type = 'IMAGE')"
+
         // 개발진 user_id 명단(developers 테이블). "개발진 포함" 토글이 꺼져 있을 때(기본) 이 user_id 들을 집계에서 뺀다.
         // 명단 추가는 이메일로 1회 해석해 넣는다: INSERT INTO developers (user_id) SELECT user_id FROM user_details WHERE email = '...'.
         private const val DEVELOPER_IDS = "SELECT user_id FROM developers"

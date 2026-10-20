@@ -1,13 +1,8 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
-import com.depromeet.piki.item.repository.ItemJpaRepository
-import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -27,7 +22,6 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -52,8 +46,6 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var jwtProvider: JwtProvider
     @Autowired private lateinit var userJpaRepository: UserJpaRepository
-    @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
-    @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
     @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
@@ -73,9 +65,6 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
 
         val ownerAuth = "Bearer ${jwtProvider.generateAccessToken(ownerId, IdentityType.MEMBER)}"
 
-        // 이 테스트가 새로 만드는 item/snapshot 의 하한 — finally 에서 이보다 큰 id 만 지워 추가분(사전 27 + 성공 5)까지 정리한다.
-        val maxItemIdBefore = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(id), 0) FROM items", Long::class.java) ?: 0L
-
         var tournamentId = 0L
         try {
             // 토너먼트 생성 — TournamentUser(owner) 도 함께 생성된다(verifyCanAddItems 의 참여자 검증 통과).
@@ -87,23 +76,9 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             ).andReturn()
             tournamentId = objectMapper.readTree(createResult.response.contentAsString)["data"]["tournamentId"].asLong()
 
-            // 출전 아이템 27개를 미리 채운다 — 각 요청(5장)은 27+5=32 로 단독 통과하지만, 둘이 합쳐 27+10=37>32 라
-            // 직렬화되면 반드시 하나가 거부된다. 정원 카운트는 tournament_items 행 수만 보므로 snapshot 상태는 무관(READY 로 둔다).
-            val items = itemJpaRepository.saveAll((1..27).map { Item() })
-            val snapshots = itemSnapshotJpaRepository.saveAll(
-                items.mapIndexed { i, item ->
-                    ItemSnapshot(
-                        itemId = item.getId(),
-                        name = "race-image-item-${i + 1}",
-                        price = 10_000,
-                        currency = "KRW",
-                        status = ItemStatus.READY,
-                        extractedAt = LocalDateTime.now(),
-                    )
-                },
-            )
+            // 각 요청(5장)은 27+5=32 로 단독 통과하지만 둘이 합치면 37 이라 직렬화되면 하나가 거부된다. 정원은 행 수만 센다
             tournamentItemJpaRepository.saveAll(
-                snapshots.map { TournamentItem(tournamentId = tournamentId, userId = ownerId, snapshotId = it.getId()) },
+                (1..27).map { TournamentItem(tournamentId = tournamentId, userId = ownerId, itemId = null) },
             )
 
             val status200 = AtomicInteger(0)
@@ -159,13 +134,14 @@ class TournamentItemImageAddConcurrencyIntegrationTest : IntegrationTestSupport(
             // 상한을 넘겨 저장된 것이 없어야 한다 — 성공한 5장까지만 반영되어 정확히 32개다.
             assertEquals(32, tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).size)
         } finally {
-            // @Transactional 자동 롤백이 없으므로 직접 지운다. 추가된 item/snapshot 은 id 하한으로 일괄 정리한다.
             if (tournamentId != 0L) {
+                jdbcTemplate.deleteParseOutboxOf(
+                    tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).map { it.slot },
+                )
                 jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
                 jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
             }
-            jdbcTemplate.deleteItems(jdbcTemplate.queryForList("SELECT id FROM items WHERE id > ?", Long::class.java, maxItemIdBefore).filterNotNull())
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
         }
     }

@@ -93,9 +93,11 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     // 매직바이트 교차검증을 통과하는 최소 유효 시그니처 (실제 픽셀 데이터는 검증과 무관).
     private fun jpegBytes(): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 0, 0, 0)
 
-    // 클라가 presigned 로 이미 올렸다고 가정하는 raw key. 확정 단계의 형식 검증(RAW_KEY_REGEX)을 통과해야 하므로
-    // 실제 발급 형식(items/raw/{UUID}.{ext})과 같은 모양으로 만든다.
-    private fun rawImageKey(extension: String): String = "items/raw/${UUID.randomUUID()}.$extension"
+    // 클라가 presigned 로 이미 올렸다고 가정하는 key. 발급 형식이어야 확정 단계의 형식 검증을 통과한다
+    private fun profileImageKey(
+        owner: UUID,
+        extension: String,
+    ): String = "profiles/$owner/${UUID.randomUUID()}.$extension"
 
     // PATCH /users/me 는 JSON 계약이다(이미지 바이트는 presigned 로 S3 에 직접 올라가고 여기엔 key 만 실린다).
     private fun patchMe(
@@ -220,8 +222,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .content("""{"contentType":"image/png","contentLength":1024}""")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(userId, IdentityType.MEMBER)}"),
             ).andExpect(status().isOk)
-            // key 는 확정 때 되돌려받아 형식 검증을 통과해야 하므로 발급 형식(items/raw/{UUID}.{ext})을 고정한다.
-            .andExpect(jsonPath("$.data.imageKey").value(startsWith("items/raw/")))
+            .andExpect(jsonPath("$.data.imageKey").value(startsWith("profiles/$userId/")))
             .andExpect(jsonPath("$.data.imageKey").value(endsWith(".png")))
             .andExpect(jsonPath("$.data.uploadUrl").value(startsWith(StubImageStorage.BASE_URL)))
             // 서명에 박힌 값이라 클라가 PUT 할 때 그대로 써야 한다.
@@ -366,7 +367,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                 .build()
         val userId = UUID.randomUUID()
         insertUser(userId, nickname = "초기닉네임", identityType = IdentityType.MEMBER)
-        val imageKey = rawImageKey("jpg")
+        val imageKey = profileImageKey(userId, "jpg")
         stubImageStorage.downloadBehavior = { jpegBytes() }
 
         mockMvc
@@ -375,16 +376,12 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             // 닉네임은 안 보냈으니 그대로, 프로필만 갱신된다.
             .andExpect(jsonPath("$.data.nickname").value("초기닉네임"))
-            // 확정본은 raw 가 아니라 profiles/{userId}/ 아래여야 탈퇴 cascade 의 prefix 파기가 닿는다.
-            .andExpect(
-                jsonPath("$.data.profileImage")
-                    .value(startsWith("${StubImageStorage.BASE_URL}/profiles/$userId/")),
-            )
+            .andExpect(jsonPath("$.data.profileImage").value("${StubImageStorage.BASE_URL}/$imageKey"))
 
-        // 서버가 그 key 의 원본을 실제로 읽어 검증했는지 — 검증 없이 URL 만 갈아끼우면 위장 업로드가 통과한다.
+        // 검증 없이 URL 만 갈아끼우면 위장 업로드가 통과한다
         assertContains(stubImageStorage.downloadedKeys, imageKey)
-        // 확정된 뒤 raw 는 회수한다(남겨도 lifecycle 이 지우지만, PII 를 하루 방치할 이유가 없다).
-        assertContains(stubImageStorage.deletedKeys, imageKey)
+        assertFalse(stubImageStorage.uploadedKeys.contains(imageKey))
+        assertFalse(stubImageStorage.deletedKeys.contains(imageKey))
     }
 
     @Test
@@ -401,7 +398,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 patchMe(
-                    """{"nickname":"새닉네임","imageKey":"${rawImageKey("jpg")}"}""",
+                    """{"nickname":"새닉네임","imageKey":"${profileImageKey(userId, "jpg")}"}""",
                     token(userId, IdentityType.MEMBER),
                 ),
             ).andExpect(status().isOk)
@@ -426,7 +423,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(
                 patchMe(
-                    """{"nickname":"새닉네임","imageKey":"${rawImageKey("jpg")}"}""",
+                    """{"nickname":"새닉네임","imageKey":"${profileImageKey(userId, "jpg")}"}""",
                     token(userId, IdentityType.GUEST),
                 ),
             ).andExpect(status().isForbidden)
@@ -451,7 +448,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                 .build()
         val userId = UUID.randomUUID()
         insertUser(userId, nickname = "게스트닉네임", identityType = IdentityType.GUEST)
-        val imageKey = rawImageKey("jpg")
+        val imageKey = profileImageKey(userId, "jpg")
 
         // 권한 확인이 payload 처리보다 먼저라는 계약을 고정한다(authorization before payload processing).
         // downloadBehavior 를 세팅하지 않았으므로, 순서가 뒤집혀 다운로드가 먼저 실행되면 stub 이 터져 500 이 난다.
@@ -481,6 +478,25 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH users me - 다른 회원이 올린 imageKey 는 UPLOAD-001 로 400 이 반환되고 읽지도 않는다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId, identityType = IdentityType.MEMBER)
+        val othersKey = profileImageKey(UUID.randomUUID(), "jpg")
+
+        mockMvc
+            .perform(patchMe("""{"imageKey":"$othersKey"}""", token(userId, IdentityType.MEMBER)))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("UPLOAD-001"))
+
+        assertFalse(stubImageStorage.downloadedKeys.contains(othersKey))
+    }
+
+    @Test
     fun `PATCH users me - 아직 올라오지 않은 imageKey 는 UPLOAD-002 로 400 이 반환된다`() {
         val mockMvc =
             MockMvcBuilders
@@ -494,7 +510,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         try {
             // 발급만 받고 PUT 을 건너뛴 채 확정을 부른 경우.
             mockMvc
-                .perform(patchMe("""{"imageKey":"${rawImageKey("jpg")}"}""", token(userId, IdentityType.MEMBER)))
+                .perform(patchMe("""{"imageKey":"${profileImageKey(userId, "jpg")}"}""", token(userId, IdentityType.MEMBER)))
                 .andExpect(status().isBadRequest)
                 .andExpect(jsonPath("$.code").value("UPLOAD-002"))
         } finally {
@@ -516,10 +532,15 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         // 서버가 원본을 읽어 교차검증하는 이유가 이 케이스다.
         stubImageStorage.downloadBehavior = { jpegBytes() }
 
+        val imageKey = profileImageKey(userId, "png")
+
         mockMvc
-            .perform(patchMe("""{"imageKey":"${rawImageKey("png")}"}""", token(userId, IdentityType.MEMBER)))
+            .perform(patchMe("""{"imageKey":"$imageKey"}""", token(userId, IdentityType.MEMBER)))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("USER-011"))
+
+        // 이미지가 아닌 파일이 공개 버킷에 남지 않는다
+        assertContains(stubImageStorage.deletedKeys, imageKey)
     }
 
     @Test
@@ -610,9 +631,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH users me - 영속화가 409 로 떨어지면 방금 올린 프로필 이미지를 S3 에서 회수한다`() {
-        // 업로드는 트랜잭션 밖에서 먼저 끝나므로, 뒤이은 영속화가 떨어지면 아무도 안 가리키는 객체가 남는다.
-        // 프로필 사진은 PII 라 lifecycle 만료에 맡기지 않고 즉시 회수해야 한다.
+    fun `PATCH users me - 영속화가 409 로 떨어져도 올린 이미지는 남아 같은 imageKey 로 다시 확정된다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -623,53 +642,18 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         val myUserId = UUID.randomUUID()
         insertUser(myUserId, nickname = "내닉네임", identityType = IdentityType.MEMBER)
         stubImageStorage.downloadBehavior = { jpegBytes() }
+        val imageKey = profileImageKey(myUserId, "jpg")
 
         mockMvc
-            .perform(
-                patchMe(
-                    """{"nickname":"점유닉네임","imageKey":"${rawImageKey("jpg")}"}""",
-                    token(myUserId, IdentityType.MEMBER),
-                ),
-            ).andExpect(status().isConflict)
+            .perform(patchMe("""{"nickname":"점유닉네임","imageKey":"$imageKey"}""", token(myUserId, IdentityType.MEMBER)))
+            .andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("USER-004"))
+        assertFalse(stubImageStorage.deletedKeys.contains(imageKey))
 
-        // 이 요청이 올린 key 가 그대로 삭제 호출됐는지 — 회수 대상이 방금 올린 그 객체여야 한다.
-        val uploadedKey = stubImageStorage.uploadedKeys.last { it.startsWith("profiles/$myUserId/") }
-        assertContains(stubImageStorage.deletedKeys, uploadedKey)
-    }
-
-    @Test
-    fun `PATCH users me - 업로드가 502 로 떨어져도 그 key 를 회수 시도한다`() {
-        // S3 응답 유실·timeout 이면 예외가 나도 객체는 올라가 있을 수 있다. key 는 우리가 만든 값이라
-        // 업로드 성공 여부와 무관하게 삭제를 걸 수 있고, 객체가 없으면 no-op 이라 안전하다.
-        val mockMvc =
-            MockMvcBuilders
-                .webAppContextSetup(webApplicationContext)
-                .apply<DefaultMockMvcBuilder>(springSecurity())
-                .build()
-        val userId = UUID.randomUUID()
-        insertUser(userId, nickname = "원래닉네임", identityType = IdentityType.MEMBER)
-        stubImageStorage.downloadBehavior = { jpegBytes() }
-        // 업로드가 던져 uploadedKeys 에는 안 남으므로, 업로드에 실제로 쓰인 key 를 여기서 직접 기록해 둔다 —
-        // 회수가 "그 유저의 아무 key"가 아니라 "방금 시도한 바로 그 key"를 지우는지 정확히 검증하기 위해서다.
-        val attemptedKeys = mutableListOf<String>()
-        stubImageStorage.behavior = { _, key, _ ->
-            attemptedKeys += key
-            throw ImageStorageException.uploadFailed()
-        }
-
-        try {
-            mockMvc
-                .perform(patchMe("""{"imageKey":"${rawImageKey("jpg")}"}""", token(userId, IdentityType.MEMBER)))
-                .andExpect(status().isBadGateway)
-        } finally {
-            // 공유 컨텍스트의 stub mutable state 를 복원해 다른 테스트로 누수되지 않게 한다.
-            stubImageStorage.behavior = stubImageStorage.defaultBehavior
-        }
-
-        // 업로드는 한 번만 시도되고, 회수는 stale key 가 아니라 그때 시도한 바로 그 key 를 지워야 한다.
-        assertEquals(1, attemptedKeys.size)
-        assertContains(stubImageStorage.deletedKeys, attemptedKeys.single())
+        mockMvc
+            .perform(patchMe("""{"nickname":"새닉네임","imageKey":"$imageKey"}""", token(myUserId, IdentityType.MEMBER)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.profileImage").value("${StubImageStorage.BASE_URL}/$imageKey"))
     }
 
     @Test
@@ -689,7 +673,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH users me - S3 업로드 실패 시 502 가 반환된다`() {
+    fun `PATCH users me - S3 에서 읽지 못하면 502 가 반환되고 닉네임도 반영되지 않는다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -697,24 +681,16 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                 .build()
         val userId = UUID.randomUUID()
         insertUser(userId, nickname = "원래닉네임", identityType = IdentityType.MEMBER)
-        stubImageStorage.downloadBehavior = { jpegBytes() }
-        stubImageStorage.behavior = { _, _, _ -> throw ImageStorageException.uploadFailed() }
+        stubImageStorage.downloadBehavior = { throw ImageStorageException.downloadFailed() }
 
-        try {
-            // 닉네임을 함께 보낸다 — S3 업로드가 영속화보다 먼저라, 업로드가 깨지면 닉네임도 반영되면 안 된다(원자성).
-            mockMvc
-                .perform(
-                    patchMe(
-                        """{"nickname":"새닉네임","imageKey":"${rawImageKey("jpg")}"}""",
-                        token(userId, IdentityType.MEMBER),
-                    ),
-                ).andExpect(status().isBadGateway)
-        } finally {
-            // 공유 컨텍스트의 stub mutable state 를 복원해 다른 테스트로 누수되지 않게 한다.
-            stubImageStorage.behavior = stubImageStorage.defaultBehavior
-        }
+        mockMvc
+            .perform(
+                patchMe(
+                    """{"nickname":"새닉네임","imageKey":"${profileImageKey(userId, "jpg")}"}""",
+                    token(userId, IdentityType.MEMBER),
+                ),
+            ).andExpect(status().isBadGateway)
 
-        // 502 로 끝났으니 닉네임도 반영되지 않아야 한다 — 업로드(트랜잭션 밖)가 영속화 전에 깨져 부분 적용이 없다.
         mockMvc
             .perform(
                 get("/api/v1/users/me")

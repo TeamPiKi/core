@@ -1,15 +1,11 @@
 package com.depromeet.piki.tournament.controller
 
-import jakarta.persistence.EntityManager
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.item.service.ItemParsingService
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.claimParseOutbox
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.tournament.repository.TournamentHistoryJpaRepository
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.tournament.service.TournamentErrorCode
@@ -18,6 +14,7 @@ import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
+import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -36,14 +33,11 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.Test
 
 // 매치 로직 백엔드 이관(#683)의 계약 검증. 브래킷은 서버가 파생하고 클라는 그리기만 하므로,
 // "GET 이 내려준 currentMatch 를 POST 에 그대로 되돌려주면 통과한다" 가 이 엔드포인트 쌍의 핵심 계약이다.
 @Transactional
 class TournamentMatchIntegrationTest : IntegrationTestSupport() {
-    @Autowired private lateinit var entityManager: EntityManager
-
     @Autowired private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired private lateinit var objectMapper: ObjectMapper
@@ -53,9 +47,6 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var tournamentHistoryJpaRepository: TournamentHistoryJpaRepository
 
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
-
-    @Autowired private lateinit var itemParsingService: ItemParsingService
-
 
     @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
 
@@ -469,13 +460,9 @@ class TournamentMatchIntegrationTest : IntegrationTestSupport() {
         price: Int,
     ): Long {
         // 필요한 것은 "READY 인 위시 아이템" 이라는 상태뿐이라 등록 API 를 타지 않고 행을 직접 심는다.
-        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
-        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        itemParsingService.markExtracted(
-            entityManager.claimParseOutbox(snapshot),
-            ProductSnapshot(name = name, price = price, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-        )
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(itemVersion(itemId = item.getId(), name = name, price = price, createdBy = userId))
+        wishJpaRepository.save(Wish(userId = userId, itemId = item.getId()))
         return item.getId()
     }
 

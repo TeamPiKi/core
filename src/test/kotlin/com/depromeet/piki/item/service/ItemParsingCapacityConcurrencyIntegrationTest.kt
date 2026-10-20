@@ -1,15 +1,19 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
-import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
-import com.depromeet.piki.item.repository.ItemRepository
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.repository.WishJpaRepository
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -31,7 +35,7 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var parsingEnqueuer: ParsingEnqueuer
 
-    @Autowired private lateinit var itemRepository: ItemRepository
+    @Autowired private lateinit var wishJpaRepository: WishJpaRepository
 
     @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
@@ -46,28 +50,41 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Test
     @Timeout(90)
     fun `풀이 가득 차면 집지 않고 슬롯이 나면 그때 집는다`() {
-        stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "상품", price = 1_000) }
+        stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "상품", price = 1_000) }
         val release = CountDownLatch(1)
         val slots = itemParsingExecutor.maxPoolSize
-        var itemId = 0L
+        var slot: ItemSlot? = null
         try {
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             repeat(slots) { itemParsingExecutor.execute { release.await(60, TimeUnit.SECONDS) } }
             await().atMost(Duration.ofSeconds(10)).until { itemParsingExecutor.activeCount >= slots }
 
-            itemId = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/capacity-${UUID.randomUUID()}"))).getId()
-            TransactionTemplate(transactionManager).executeWithoutResult { parsingEnqueuer.enqueue(itemId, requestedBy = UUID.randomUUID()) }
+            val link = ProductLink.parse("https://shop.example.com/products/capacity-${UUID.randomUUID()}")
+            val wishSlot =
+                TransactionTemplate(transactionManager).execute {
+                    val wish = wishJpaRepository.save(Wish(userId = UUID.randomUUID(), itemId = null))
+                    parsingEnqueuer.enqueue(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(link))
+                    wish.slot
+                } ?: error("위시 적재가 커밋되어야 한다")
+            slot = wishSlot
 
             itemParsingScheduler.dispatch()
-            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(itemId), "가용 슬롯이 없으면 대기해야 한다")
+            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(wishSlot), "가용 슬롯이 없으면 대기해야 한다")
 
             release.countDown()
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             itemParsingScheduler.dispatch()
-            await().atMost(Duration.ofSeconds(10)).until { jdbcTemplate.parseOutboxStatusOf(itemId) == ItemParseOutboxStatus.SUCCEEDED }
+            await().atMost(Duration.ofSeconds(10)).until { jdbcTemplate.parseOutboxStatusOf(wishSlot) == ItemParseOutboxStatus.SUCCEEDED }
         } finally {
             release.countDown()
-            if (itemId != 0L) jdbcTemplate.deleteItems(listOf(itemId))
+            slot?.let { cleanup(it) }
         }
+    }
+
+    private fun cleanup(slot: ItemSlot) {
+        val itemIds = jdbcTemplate.queryForList("SELECT item_id FROM wishes WHERE id = ? AND item_id IS NOT NULL", Long::class.java, slot.id)
+        jdbcTemplate.deleteItems(itemIds.filterNotNull())
+        jdbcTemplate.deleteParseOutboxOf(listOf(slot))
+        jdbcTemplate.update("DELETE FROM wishes WHERE id = ?", slot.id)
     }
 }

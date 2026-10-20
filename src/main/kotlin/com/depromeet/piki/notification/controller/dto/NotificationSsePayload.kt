@@ -35,7 +35,7 @@ sealed interface NotificationSsePayload {
         override val createdAt: LocalDateTime,
     ) : NotificationSsePayload
 
-    // 위시 출처 파싱 알림. refId(=itemId) + kind=WISH + wishId(#933). 클라는 wishId 로 위시 상세
+    // 위시 출처 파싱 알림. kind=WISH + wishId(#933). 클라는 wishId 로 위시 상세
     // (GET /api/v1/wishlists/{wishId})로 딥링크한다. wishId 는 수신자별로 다르며, 컬럼 도입 전 과거 행은 null 이라
     // 그 경우 클라가 refId(itemId)로 역추적하는 기존 폴백을 쓴다.
     data class WishParsing(
@@ -51,7 +51,7 @@ sealed interface NotificationSsePayload {
     ) : NotificationSsePayload
 
     // 토너먼트 아이템을 지목하는 알림. 입장(tournamentId)·아이템 지목(tournamentItemId) 좌표를 싣는다.
-    // 두 용도가 공유한다: 파싱 알림(refId=itemId) · 아이템 삭제 알림(refId=tournamentId). refId 의미는 type 별로 갈리니
+    // 두 용도가 공유한다: 파싱 알림 · 아이템 삭제 알림. refId 의미는 type 별로 갈리니(NotificationHistoryApi 표)
     // 클라는 type 으로 먼저 분기한다. (파싱 전용이 아니라 "토너먼트 아이템 라우팅" 셰입이라 이름이 중립적이다.)
     data class TournamentRouted(
         override val id: Long,
