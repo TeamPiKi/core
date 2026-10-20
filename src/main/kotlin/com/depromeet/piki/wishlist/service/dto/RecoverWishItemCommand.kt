@@ -18,7 +18,7 @@ data class RecoverWishItemCommand(
         return memo?.let { UpdateWishMemoCommand(userId = userId, wishId = wishId, memo = it) }
     }
 
-    fun userInput(imageUrl: String?): UserInput = UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency)
+    private fun userInput(imageUrl: String?): UserInput = UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency)
 
     fun toApplyUserInput(imageUrl: String?): ApplyWishUserInputCommand =
         ApplyWishUserInputCommand(

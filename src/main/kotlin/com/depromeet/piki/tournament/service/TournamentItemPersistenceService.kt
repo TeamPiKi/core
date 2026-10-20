@@ -149,7 +149,7 @@ class TournamentItemPersistenceService(
         val tournament = verifyEditable(userId, tournamentId)
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId) ?: throw TournamentException.notFoundTournamentItem()
         verifyEditor(tournamentItem, tournamentId, userId)
-        itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput(name = name, price = price, imageUrl = PRE_UPLOAD_VALIDATION_IMAGE_URL, currency = currency))
+        itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput.beforeImageUpload(name, price, currency))
     }
 
     private fun verifyEditable(
@@ -209,6 +209,3 @@ class TournamentItemPersistenceService(
         incomingCount: Int,
     ): Boolean = tournamentItemRepository.countByTournamentId(tournamentId) + incomingCount <= TOURNAMENT_MAX_ITEM_COUNT
 }
-
-// 사전 검증은 저장하지 않아 업로드 예정 이미지 자리를 자리표시 값으로 채운다
-private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"

@@ -4,6 +4,7 @@ import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.UserInput
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.item.service.ItemSlotFill
@@ -117,7 +118,7 @@ class WishPersistenceService(
     fun validateUserInput(command: RecoverWishItemCommand) {
         val wish = wishRepository.findById(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
-        itemCardService.cardOf(wish.cardQuery()).userInputValues(command.userInput(PRE_UPLOAD_VALIDATION_IMAGE_URL))
+        itemCardService.cardOf(wish.cardQuery()).userInputValues(UserInput.beforeImageUpload(command.name, command.price, command.currency))
     }
 
     // 합치기가 메모를 옮기는 동안 잠금을 기다린다. 잠그지 않으면 옮긴 뒤 사라지는 위시에 쓴 메모가 조용히 버려진다
@@ -160,5 +161,3 @@ class WishPersistenceService(
             is ItemSlotFill.AlreadyHeld -> wishRepository.findById(fill.holder.id) ?: error("위시 ${fill.holder.id} 가 없다")
         }
 }
-
-private const val PRE_UPLOAD_VALIDATION_IMAGE_URL = "https://validation.invalid/pre-upload.png"
