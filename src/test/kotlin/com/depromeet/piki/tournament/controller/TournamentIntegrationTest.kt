@@ -2308,6 +2308,54 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         assertTrue(remaining.none { it.getId() == itemId })
     }
 
+    // #1246 회귀: 빼기는 soft delete 라 행이 남고, 담기의 중복 검사는 살아 있는 행만 본다. 유니크 키가
+    // 삭제 행까지 세던 동안엔 같은 후보를 다시 담는 순간 Duplicate entry 로 500 이 났다(prod 24시간 ERROR 19건).
+    // 키를 활성 행 한정으로 바꿔(uk_tournament_items_active) 재담기가 새 행 insert 로 통과한다.
+    @Test
+    fun `POST tournaments-id-items-wish 는 뺀 후보를 다시 담아도 200 을 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveWishItem()
+        addItemsToTournament(mockMvc, tournamentId, userId, itemId)
+        val cardId = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId).first().getId()
+        mockMvc
+            .perform(
+                delete("/api/v1/tournaments/$tournamentId/items/$cardId")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId)),
+            ).andExpect(status().isOk)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isOk)
+
+        // 되살린 행이 아니라 새 행이다 - 옛 행은 삭제 표시 그대로 남아 대기실 순서가 담은 순서를 지킨다.
+        val active = tournamentItemJpaRepository.findAllByTournamentIdAndNotDeleted(tournamentId)
+        assertEquals(1, active.size)
+        assertNotEquals(cardId, active.first().getId(), "삭제 행을 되살리면 대기실 순서가 원래 자리로 돌아간다")
+    }
+
+    // 활성 행끼리의 중복은 그대로 막아야 한다 - 유니크를 푼 것이 아니라 판정 대상을 활성 행으로 좁힌 것이다.
+    @Test
+    fun `POST tournaments-id-items-wish 는 이미 담긴 후보를 또 담으면 409 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val tournamentId = createTournament(mockMvc)
+        val itemId = saveWishItem()
+        addItemsToTournament(mockMvc, tournamentId, userId, itemId)
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/items/wish")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"itemIds":[$itemId]}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value(TournamentErrorCode.DUPLICATE_TOURNAMENT_ITEM.code))
+    }
+
     @Test
     fun `DELETE tournaments-id-items-itemId 에서 IN_PROGRESS 토너먼트이면 409 를 반환한다`() {
         val mockMvc = buildMockMvc()
