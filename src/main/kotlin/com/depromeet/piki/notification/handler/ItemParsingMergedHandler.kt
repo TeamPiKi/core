@@ -7,13 +7,13 @@ import com.depromeet.piki.notification.domain.NotificationType
 import org.springframework.stereotype.Component
 import java.util.UUID
 
-// 사라진 카드로 가면 404 라 남은 카드 좌표로 보낸다
+// 사라진 카드로 가면 404 라 이동 좌표는 남은 카드, refId 는 요청한 쪽이 자기 요청을 알아보게 사라진 카드 id
 @Component
 class ItemParsingMergedHandler(
     private val recipientResolver: ItemParsingRecipientResolver,
     private val itemCardService: ItemCardService,
 ) : NotificationEventHandler<ItemSlotMerged>(NotificationType.ITEM_PARSING_MERGED) {
-    override fun resolveRefId(event: ItemSlotMerged): Long = event.itemId
+    override fun resolveRefId(event: ItemSlotMerged): Long = event.slot.id
 
     override fun resolveRecipients(event: ItemSlotMerged): Set<UUID> = setOf(event.owner)
 

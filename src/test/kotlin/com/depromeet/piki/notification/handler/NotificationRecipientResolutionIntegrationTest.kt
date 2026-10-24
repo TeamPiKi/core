@@ -381,7 +381,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
     }
 
     @Test
-    fun `같은 상품의 위시에 합쳐진 위시의 주인은 남은 위시 좌표와 위시 합침 문구로 알림을 받는다`() {
+    fun `같은 상품의 위시에 합쳐진 위시의 주인은 사라진 위시 id 와 남은 위시 좌표, 위시 합침 문구로 알림을 받는다`() {
         val owner = UUID.randomUUID()
         val finalUrl = newUrl()
         val holder = registerWish(owner, "https://short.example.com/${UUID.randomUUID()}")
@@ -394,6 +394,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         val saved = notificationRepository.findPage(owner, cursor = null, limit = 10).single { it.type == NotificationType.ITEM_PARSING_MERGED }
         assertEquals("새 이름", saved.title)
         assertEquals(ItemParsingMergedHandler.WISH_MERGED_MESSAGE, saved.body)
+        assertEquals(merged.getId(), saved.refId)
         assertEquals(NotificationRouting.Wish(holder.getId()), saved.routing())
     }
 

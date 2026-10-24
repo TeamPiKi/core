@@ -51,7 +51,7 @@ interface NotificationHistoryApi {
                 "| `ITEM_PARSING_INCOMPLETE` | 상품 정보 일부만 추출 (등록·새로고침 공통) | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = \"일부 정보만 찾았어요. 나머지는 직접 채워주세요.\") |\n" +
                 "| `ITEM_PARSING_FAILED` | 상품 추출 실패 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | 요청한 카드 id (wishId 또는 tournamentItemId) | 상품 정보를 가져오지 못했어요 |\n" +
                 "| `ITEM_PARSING_RECOVERED` | 미완으로 멈춘 내 카드가 같은 상품의 다른 추출 성공으로 채워짐 | 받는 사람 카드에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = \"상품 정보가 새로 확인돼 채워졌어요\"). 좌표는 받는 사람의 카드 |\n" +
-                "| `ITEM_PARSING_MERGED` | 같은 상품의 카드가 이미 있어 요청한 카드가 그쪽에 합쳐짐 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | itemId | {아이템 이름} (+ `body` = 위시 \"기존 위시에 합쳐졌어요\" / 토너먼트 \"기존 토너먼트 후보에 합쳐졌어요\"). 좌표는 남은 카드 |\n" +
+                "| `ITEM_PARSING_MERGED` | 같은 상품의 카드가 이미 있어 요청한 카드가 그쪽에 합쳐짐 | 출처에 따라 `WISH`(+`wishId`) 또는 `TOURNAMENT` | 요청한(사라진) 카드 id (wishId 또는 tournamentItemId) | {아이템 이름} (+ `body` = 위시 \"기존 위시에 합쳐졌어요\" / 토너먼트 \"기존 토너먼트 후보에 합쳐졌어요\"). 좌표는 남은 카드 |\n" +
                 "| `ITEM_REFRESH_COMPLETED` | 위시 새로고침(재추출) 성공 | `WISH`(+`wishId`) | itemId | {아이템 이름} (+ `body` = \"최신 상품 정보로 새로고침했어요\") |\n" +
                 "| `ITEM_REFRESH_FAILED` | 위시 새로고침(재추출) 실패 | `WISH`(+`wishId`) | 요청한 위시 id (wishId) | 새로고침에 실패했어요 (+ `body` = \"기존 상품 정보는 그대로 남아 있어요\") |\n" +
                 "| `ANNOUNCEMENT` | 관리자 공지(후속) | `SYSTEM` | 공지 id/0 | (관리자 입력) |\n\n" +
@@ -60,6 +60,8 @@ interface NotificationHistoryApi {
                 "> **실패 알림(`ITEM_PARSING_FAILED`·`ITEM_REFRESH_FAILED`)의 `refId` 는 상품 id 가 아니라 요청한 카드 id 다.** " +
                 "파싱에 실패한 카드는 확정된 상품이 없을 수 있어서다. 이동은 다른 파싱 알림처럼 `wishId` 또는 토너먼트 좌표로 한다. " +
                 "이 계약 이전에 발송된 실패 알림에는 itemId 가 실려 있다.\n\n" +
+                "> **합침 알림(`ITEM_PARSING_MERGED`)의 `refId` 도 요청한 카드 id 다.** 그 카드는 합쳐져 사라졌으므로 이동은 `wishId` 또는 토너먼트 좌표(남은 카드)로 하고, " +
+                "`refId` 는 결과를 기다리던 화면(예: 공유 시트)이 자기 요청에 대한 알림인지 알아보는 데 쓴다.\n\n" +
                 "> 파싱 알림(`ITEM_PARSING_*`)만 `kind` 가 발행 출처(위시 등록 / 토너먼트 추가)에 따라 갈린다 — 같은 `type` 이 두 플로우에서 발행되기 때문. " +
                 "`ITEM_PARSING_RECOVERED` 는 받는 사람 자신의 카드 출처를 따른다. 나머지 타입은 위 표의 값 하나로 고정이다.\n\n" +
                 "> **등록과 새로고침은 `type` 으로 갈린다(#1036).** 위시 새로고침(`POST /api/v1/wishlists/{wishId}/refresh`)의 결과는 " +
