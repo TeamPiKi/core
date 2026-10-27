@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProductLinkTest {
@@ -42,17 +43,14 @@ class ProductLinkTest {
 
     @Test
     fun `귀결점은 http 와 https 를 받는다`() {
-        assertEquals("http", ProductLink.parseHop("http://shop.example.com/items/42").value.scheme)
-        assertEquals("https", ProductLink.parseHop("https://shop.example.com/items/42").value.scheme)
+        assertEquals("http", ProductLink.parseHopOrNull("http://shop.example.com/items/42")?.value?.scheme)
+        assertEquals("https", ProductLink.parseHopOrNull("https://shop.example.com/items/42")?.value?.scheme)
     }
 
     @Test
-    fun `귀결점도 http·https 가 아닌 scheme 과 host 없는 주소는 거부한다`() {
-        listOf("ftp://example.com", "file:///etc/passwd", "javascript:alert(1)").forEach { raw ->
-            assertFailsWith<ProductLinkException>("$raw 는 거부되어야 함") { ProductLink.parseHop(raw) }
-        }
-        listOf("http:///p", "https:p").forEach { raw ->
-            assertFailsWith<IllegalArgumentException>("$raw 는 거부되어야 함") { ProductLink.parseHop(raw) }
+    fun `귀결점도 http·https 가 아닌 scheme 과 host 없는 주소는 없는 것으로 본다`() {
+        listOf("ftp://example.com", "file:///etc/passwd", "javascript:alert(1)", "http:///p", "https:p").forEach { raw ->
+            assertNull(ProductLink.parseHopOrNull(raw), "$raw 는 거부되어야 함")
         }
     }
 
@@ -85,6 +83,20 @@ class ProductLinkTest {
                 ProductLink.parse("example.com/product")
             }
         assertEquals("https 링크만 등록할 수 있어요.", ex.message)
+    }
+
+    @Test
+    fun `URI 로는 읽히지만 host 가 없는 raw 는 형식 오류로 거부한다`() {
+        listOf(
+            "https:foo",
+            "https:///products/1",
+            "https://exa_mple.com/products/1",
+            "https://user@/products/1",
+            "https://.com/products/1",
+        ).forEach { raw ->
+            val e = assertFailsWith<ProductLinkException>("'$raw' 는 거부되어야 함") { ProductLink.parse(raw) }
+            assertEquals(ProductLinkErrorCode.INVALID_FORMAT, e.errorCode)
+        }
     }
 
     @Test

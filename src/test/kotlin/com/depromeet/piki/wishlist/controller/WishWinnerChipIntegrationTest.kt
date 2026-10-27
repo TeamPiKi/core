@@ -1,13 +1,11 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
-import com.depromeet.piki.item.service.ItemParsingService
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
@@ -45,8 +43,6 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
 
     @Autowired private lateinit var itemSnapshotJpaRepository: ItemSnapshotJpaRepository
-
-    @Autowired private lateinit var itemParsingService: ItemParsingService
 
     @Autowired private lateinit var itemJpaRepository: ItemJpaRepository
 
@@ -323,30 +319,19 @@ class WishWinnerChipIntegrationTest : IntegrationTestSupport() {
             .findAllByTournamentIdAndNotDeleted(tournamentId)
             .map { it.getId() }
 
-    // 출전 카드는 상품을 버전(snapshot)으로 가리키므로 itemId 로 되찾으려면 그 단계를 거친다.
     private fun cardIdOf(
         cards: List<Long>,
         itemId: Long,
-    ): Long =
-        cards.first { cardId ->
-            val card = tournamentItemJpaRepository.findById(cardId).orElseThrow()
-            itemSnapshotJpaRepository.findById(card.snapshotId).orElseThrow().itemId == itemId
-        }
+    ): Long = cards.first { cardId -> tournamentItemJpaRepository.findById(cardId).orElseThrow().itemId == itemId }
 
     private fun saveWishItem(
         userId: UUID,
         name: String,
     ): Long {
         // 필요한 것은 "READY 인 위시 아이템" 이라는 상태뿐이라 등록 API 를 타지 않고 행을 직접 심는다.
-        val item = itemJpaRepository.save(Item(sourceImageKey = "items/raw/${UUID.randomUUID()}.png"))
-        val snapshot = itemSnapshotJpaRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId))
-        wishJpaRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        snapshot.markProcessing()
-        itemParsingService.markExtracted(
-            snapshot.getId(),
-            ProductSnapshot(name = name, price = 10_000, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-            expectedAttempt = 0,
-        )
+        val item = itemJpaRepository.save(imageItem())
+        itemSnapshotJpaRepository.save(itemVersion(itemId = item.getId(), name = name, price = 10_000, createdBy = userId))
+        wishJpaRepository.save(Wish(userId = userId, itemId = item.getId()))
         return item.getId()
     }
 

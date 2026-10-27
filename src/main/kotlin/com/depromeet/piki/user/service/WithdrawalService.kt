@@ -3,6 +3,7 @@ package com.depromeet.piki.user.service
 import com.depromeet.piki.auth.infrastructure.redis.RefreshTokenStore
 import com.depromeet.piki.auth.infrastructure.redis.WithdrawnTokenStore
 import com.depromeet.piki.common.storage.ImageStorage
+import com.depromeet.piki.image.domain.ProfileImageKey
 import com.depromeet.piki.notification.sse.LocalSseDelivery
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserException
@@ -63,7 +64,7 @@ class WithdrawalService(
         // 4. S3 프로필 이미지 파기 — best-effort, 트랜잭션 밖. tombstone 이 users.profile_image 를 기본 아바타로
         //    덮어 DB 포인터는 이미 정리됐고, 여기선 S3 객체 자체(얼굴 등 PII)를 prefix 통째로 삭제한다(PIPA·Apple 5.1.1(v)).
         //    객체가 없으면 no-op 이라 항상 호출해도 안전. 실패해도 탈퇴 자체는 성공 처리하고 후속 정리 대상으로 로그만 남긴다.
-        runCatching { imageStorage.deleteByPrefix("${ProfileUpdateService.PROFILE_PREFIX}$userId/") }
+        runCatching { imageStorage.deleteByPrefix(ProfileImageKey.prefixOf(userId)) }
             .onFailure { e -> log.warn("탈퇴 S3 프로필 정리 실패(후속 정리 대상) userId={}", userId, e) }
 
         log.info("회원 탈퇴 완료 userId={}", userId)

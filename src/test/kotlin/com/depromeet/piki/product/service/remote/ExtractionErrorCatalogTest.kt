@@ -68,7 +68,7 @@ class ExtractionErrorCatalogTest {
                     return@mapNotNull "${code.name}: 계약에 bucket 이 없다(확정 실패는 bucket 필수)"
                 }
                 val translate = RemoteExtractionContract.PERMANENT_TRANSLATIONS[code] ?: return@mapNotNull null
-                val reason = ItemParsingMetrics.reasonOf(translate())
+                val reason = ItemParsingMetrics.failureReasonOf(translate()).metricLabel
                 val expected = bucket.name.lowercase()
                 reason.takeIf { it != expected }?.let { "${code.name}: 계약 bucket=$expected 인데 메트릭 reason=$it 로 집계된다" }
             }

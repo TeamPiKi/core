@@ -1,8 +1,8 @@
 package com.depromeet.piki.wishlist.controller.dto
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
-import com.depromeet.piki.wishlist.service.dto.WishDetail
+import com.depromeet.piki.wishlist.service.dto.WishDetailResult
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
 import java.util.UUID
@@ -22,15 +22,15 @@ data class WishDetailResponse(
     )
     val item: WishItemResponse.ItemView,
     @field:Schema(
-        description = "가격 이력 — 이 상품의 가격 기록을 최신순으로 최대 50건. 서버가 추출한 값(SERVER·SERVER_LLM)과 " +
-            "사용자가 직접 입력한 값(MANUAL)을 함께 담으며, 수기는 **같은 상품을 담은 다른 사용자가 넣은 것도 포함**한다 " +
-            "(누가 넣었는지는 editedByMe 로만 구분되고 편집자 식별자는 내리지 않는다). 출처 기록 도입 전 버전만 빠진다. " +
-            "source 는 신뢰도 등급이 아니라 맥락 표시다 — 서버 추출값도 완전하지 않고(SERVER_LLM 은 재추출 시 값이 달라질 수 있다), " +
-            "수기는 사용자가 페이지를 직접 보고 적은 값이다. 다만 서로 다른 값을 재고 있을 수 있어(페이지 표시가 vs 실구매가) " +
+        description = "가격 이력 — 이 상품의 가격 기록을 최신순으로 최대 50건. 서버가 추출한 값과 " +
+            "사용자가 직접 입력한 값을 함께 담으며, 사용자 입력은 **같은 상품을 담은 다른 사용자가 넣은 것도 포함**한다 " +
+            "(누가 넣었는지는 editedByMe 로만 구분되고 편집자 식별자는 내리지 않는다). 이름·가격·이미지 중 하나라도 빈 버전과 출처 기록 도입 전 버전은 빠진다. " +
+            "method·userInput 은 신뢰도 등급이 아니라 맥락 표시다. 서버 추출값도 완전하지 않고(LLM 은 재추출 시 값이 달라질 수 있다), " +
+            "사용자 입력은 사용자가 페이지를 직접 보고 적은 값이다. 다만 서로 다른 값을 재고 있을 수 있어(페이지 표시가 vs 실구매가) " +
             "구분해 보여주기를 권한다. " +
-            "item 과는 별개의 축이다 — item 은 맥락 스코프(내 수기 존중, 타인 수기 무시)를 거친 표시값이고 이력은 그 필터를 " +
+            "item 과는 별개의 축이다 — item 은 맥락 스코프(내 입력 존중, 타인 입력 무시)를 거친 표시값이고 이력은 그 필터를 " +
             "타지 않으므로, 첫 항목이 지금 보이는 값과 다를 수 있다. " +
-            "가격 기록이 하나도 없으면 빈 배열이다(그때는 item.status 로 대기와 실패를 가른다).",
+            "이름·가격·이미지가 모두 있는 버전만 기록으로 친다. 그런 버전이 하나도 없으면 빈 배열이다(PARSING·FAILED 는 늘 빈 배열).",
     )
     val priceHistory: List<PriceHistoryEntry>,
     @field:Schema(
@@ -40,17 +40,16 @@ data class WishDetailResponse(
     val winnerTournamentIds: List<Long> = emptyList(),
 ) {
     companion object {
-        // requesterId 는 editedByMe(수기 버전을 내가 넣었는지) 파생용 — 편집자 식별자(UUID)는 응답에 노출하지 않는다.
         fun from(
-            detail: WishDetail,
+            detail: WishDetailResult,
             requesterId: UUID,
         ): WishDetailResponse =
             WishDetailResponse(
-                wish = WishItemResponse.WishView.from(detail.wish),
-                memo = detail.wish.memo,
-                item = WishItemResponse.ItemView.from(detail.item, detail.snapshot, detail.sourcePlatform),
+                wish = WishItemResponse.WishView.from(detail.wishResult.wish),
+                memo = detail.memo,
+                item = WishItemResponse.ItemView.from(detail.wishResult),
                 priceHistory = detail.history.map { PriceHistoryEntry.from(it, requesterId) },
-                winnerTournamentIds = detail.winnerTournamentIds,
+                winnerTournamentIds = detail.wishResult.winnerTournamentIds,
             )
     }
 
@@ -64,48 +63,44 @@ data class WishDetailResponse(
         )
         val extractedAt: LocalDateTime,
         @field:Schema(
-            description = "이 값의 출처 — SERVER(구조화 파서)·SERVER_LLM(LLM 추출)은 서버가 페이지에서 뽑은 값이고, " +
-                "MANUAL 은 사용자가 직접 입력한 값이다. " +
-                "신뢰도 등급이 아니라 맥락 표시다 — 서버 추출값도 완전하지 않고(SERVER_LLM 은 재추출 시 값이 달라질 수 있다), " +
-                "수기는 사용자가 페이지를 직접 보고 적은 값이다.",
-            example = "SERVER",
+            description = "서버가 페이지에서 값을 뽑은 경로. STRUCTURED(구조화 파서)·LLM. 사용자 입력은 null.",
+            example = "STRUCTURED",
+            nullable = true,
         )
-        val source: ItemSnapshotSource,
+        val method: ExtractionMethod?,
+        @field:Schema(description = "사용자가 직접 입력한 값인지", example = "false")
+        val userInput: Boolean,
         @field:Schema(
-            description = "수기(MANUAL) 값을 요청자 본인이 넣었는지 — false 면 같은 상품을 담은 다른 사용자가 넣은 값이다. " +
+            description = "사용자 입력 값을 요청자 본인이 넣었는지 — false 면 같은 상품을 담은 다른 사용자가 넣은 값이다. " +
                 "타인의 값은 어떤 조건(회원가·쿠폰 등)에서 본 것인지 알 수 없으므로 구분해 다루는 편이 좋다. " +
-                "서버 추출(SERVER·SERVER_LLM) 값은 null.",
+                "사용자 입력이 아니면 null.",
             example = "true",
             nullable = true,
         )
         val editedByMe: Boolean?,
     ) {
         companion object {
-            // 조회 조건이 READY 로 한정돼 price·extractedAt 은 ItemSnapshot 의 READY 불변식(requireReadyInvariant)이,
-            // source 는 쿼리의 "출처 기록된 행만" 필터가 각각 보장한다 — 셋 다 항상 채워져 있다. 비어 있으면 그 불변식이나
-            // 필터가 깨진 코드 버그이므로 requireNotNull(500)으로 드러낸다(정상 흐름의 클라이언트는 닿지 않는다).
+            // 가격 이력 쿼리가 이름·가격·이미지가 다 있는 행만 고르므로 price 가 비면 코드 버그다
             fun from(
                 snapshot: ItemSnapshot,
                 requesterId: UUID,
             ): PriceHistoryEntry {
                 val snapshotId = snapshot.getId()
                 return PriceHistoryEntry(
-                    price = requireNotNull(snapshot.price) { "READY snapshot $snapshotId 의 price 가 없다" },
-                    extractedAt = requireNotNull(snapshot.extractedAt) { "READY snapshot $snapshotId 의 extractedAt 이 없다" },
-                    source = requireNotNull(snapshot.source) { "가격 이력 snapshot $snapshotId 의 source 가 없다" },
+                    price = requireNotNull(snapshot.price) { "가격 이력 snapshot $snapshotId 의 price 가 없다" },
+                    extractedAt = snapshot.createdAt,
+                    method = snapshot.method,
+                    userInput = snapshot.userInput,
                     editedByMe = editedByMe(snapshot, requesterId),
                 )
             }
 
-            // MANUAL 값만 "누가 넣었나" 가 의미를 갖는다. 편집자 UUID 원값은 개인 식별자라 응답에 싣지 않고
-            // 본인 여부(Boolean)로만 파생한다.
+            // 편집자 UUID 원값은 개인 식별자라 응답에 싣지 않고 본인 여부로만 내린다
             private fun editedByMe(
                 snapshot: ItemSnapshot,
                 requesterId: UUID,
             ): Boolean? {
-                if (!snapshot.isManual()) return null
-                // 수기 행의 만든 사람이 곧 편집자(#1051) — 표시값 규칙(ItemVersions)과 같은 술어로 판정한다.
-                snapshot.createdBy ?: return null
+                if (!snapshot.userInput) return null
                 return snapshot.isOwnedBy(requesterId)
             }
         }

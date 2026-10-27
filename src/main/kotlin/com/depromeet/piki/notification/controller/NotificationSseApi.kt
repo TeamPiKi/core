@@ -27,7 +27,8 @@ interface NotificationSseApi {
                 "| `notification` | 알림 1건마다 | `type` 으로 화면을, 전 알림 공통 필드 `kind`(`WISH`\\|`TOURNAMENT`\\|`SYSTEM`)로 " +
                 "라벨·아이콘과 딥링크 출처를 분기. payload 셰입과 아이템 좌표(`tournamentId`·`tournamentItemId`)가 실리는 조건은 `notification-sse-spec.md` 참조 |\n" +
                 "| `silent-sync` | 화면 갱신 사건마다 | 조용한 화면 갱신 신호(알림 아님). payload 의 `type` 으로 사건을 분기한다: " +
-                "`TOURNAMENT_ITEM_PARSED`(`{type, tournamentId, tournamentItemId, status}`, status=`READY`\\|`FAILED`) · " +
+                "`TOURNAMENT_ITEM_PARSED`(`{type, tournamentId, tournamentItemId, status}`, status=`READY`\\|`INCOMPLETE`\\|`FAILED`) · " +
+                "`TOURNAMENT_ITEM_MERGED`(`{type, tournamentId, tournamentItemId, mergedIntoTournamentItemId}`, 후보가 같은 상품의 다른 후보에 합쳐져 사라짐) · " +
                 "`UNREAD_COUNT_CHANGED`(`{type, unreadCount}`, 읽음 후 멀티 디바이스 인앱 배지 동기화). 알림센터·푸시 없이 SSE 로만 흐른다. `notification-sse-spec.md` 참조 |\n" +
                 "| `heartbeat` | 약 30초 간격 | 서버 ping. `data=<connectionId>`(connect 와 같은 번호). **60초 동안 안 오면 스트림이 죽은 것이므로 재연결**한다 |\n\n" +
                 "- 토너먼트 알림은 해당 토너먼트 참여자에게만 fan-out 되므로, **자기 스트림 1개만 구독**하면 토너먼트·개인 알림이 모두 도착한다.\n" +

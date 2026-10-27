@@ -23,6 +23,8 @@ return isMounted ? shufflePairs(sorted) : sorted; // Math.random Fisher-Yates, �
 
 ### 서버에 이미 있는 것 (`TournamentService.kt`)
 
+> 아래 표는 작성 당시(#683) 기준이다. 지금은 클론 토너먼트를 새로 만들지 않고(#1027), 시작한 토너먼트의 가격은 고정 snapshot 이 아니라 시작 시각까지의 버전으로 계산한다. 줄 번호도 그때 기준이다.
+
 | 자산 | 위치 |
 |---|---|
 | 가격 정렬 (`price ASC, tournamentItemId ASC`) | `:377` |

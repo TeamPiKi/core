@@ -6,8 +6,8 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.web.client.RestClient
 
-// 원격 추출 호출용 RestClient 빈. HttpProductLinkExtractor 안에서 직접 만들면 테스트가 가짜 응답을
-// 끼울 수 없어 빈으로 분리한다. 링크(HttpProductLinkExtractor)·이미지(HttpImageSnapshotExtractor)가 공유한다.
+// 원격 추출 호출용 RestClient 빈. HttpLinkSnapshotExtractor 안에서 직접 만들면 테스트가 가짜 응답을
+// 끼울 수 없어 빈으로 분리한다. 링크(HttpLinkSnapshotExtractor)·이미지(HttpImageSnapshotExtractor)가 공유한다.
 @Configuration(proxyBeanMethods = false)
 class RemoteExtractionHttpClientConfig {
     // 정적 RestClient.builder() 를 쓴다 — 이 프로젝트의 Boot 4 구성엔 RestClient.Builder 빈이 자동 구성되지 않는다.

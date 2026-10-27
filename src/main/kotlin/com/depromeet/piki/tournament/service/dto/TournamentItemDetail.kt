@@ -4,7 +4,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 
 data class TournamentItemDetail(
     val tournamentItemId: Long,
-    val itemId: Long,
+    val itemId: Long?,
     val sourceUrl: String?,
     val name: String?,
     val imageUrl: String?,

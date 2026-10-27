@@ -1,17 +1,16 @@
 package com.depromeet.piki.tournament.repository
 
 import com.depromeet.piki.tournament.domain.Tournament
-import com.depromeet.piki.tournament.domain.TournamentPlayType
 import com.depromeet.piki.tournament.domain.TournamentStatus
 import jakarta.persistence.LockModeType
-import java.time.LocalDateTime
-import java.util.UUID
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.LocalDateTime
+import java.util.UUID
 
 interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     fun findByIdAndDeletedAtIsNull(id: Long): Tournament?
@@ -24,13 +23,12 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
     // 필터·정렬·limit 이 앱으로 올라오면 홈 카드(limit=3) 한 번에 내 전체 이력의 참가자·프로필을 선로드하게 된다.
     // uk_tournament_users (tournament_id, user_id) 가 (유저, 토너먼트) 당 멤버십 행을 1개로 보장해 조인이 행을 늘리지 않는다.
     // createdAt 동률 시 어느 행이 LIMIT 에 잘릴지 비결정적이므로 생성 순서와 일치하는 id 로 tie-break 한다.
-    // t._ownerTournamentUserId — 엔티티가 backing field 캡슐화(private var _ownerTournamentUserId)라 JPA 속성명이 field 이름이다.
     //
     // #1027: CLONE 이 사라지고 모든 참여자가 ROOT 참여 행(tournament_users) 하나를 가진다. 그래서 가시성·상태는
     // 전역 tournament.status 가 아니라 "내 참여 행 status"(tu.status) 로 판정한다 — 주최자·멤버·게스트가 같은
     // 토너먼트를 각자의 진행 상태로 본다(방장이 완료해도 아직 안 끝낸 멤버에겐 진행중). CLONE 행은 참여 행이
     // 없어(백필로 평탄화) 이 조인에 걸리지 않으므로 자연히 목록에서 빠진다.
-    //  ownedOnly — 홈(내가 생성한 것만)은 TRUE 로 참여만 한 방을 끈다(_ownerTournamentUserId = tu.id 만). 탭은 FALSE.
+    //  ownedOnly — 홈(내가 생성한 것만)은 TRUE 로 참여만 한 방을 끈다(ownerTournamentUserId = tu.id 만). 탭은 FALSE.
     //
     // playType(솔로/소셜)은 저장된 컬럼이 아니라 참가 결과로 파생되는 상태다(TournamentPlayType 참고).
     // 파생값이라 앱에서 거르면 limit 이 파생 필터보다 먼저 걸려 "SOCIAL 3개" 를 요구했는데 그보다 적게 나오므로,
@@ -44,7 +42,7 @@ interface TournamentJpaRepository : JpaRepository<Tournament, Long> {
           AND tu.deletedAt IS NULL
           AND t.deletedAt IS NULL
           AND tu.status IN :statuses
-          AND (:ownedOnly = FALSE OR t._ownerTournamentUserId = tu.id)
+          AND (:ownedOnly = FALSE OR t.ownerTournamentUserId = tu.id)
           AND (
             (
               :includeSocial = TRUE

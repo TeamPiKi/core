@@ -24,7 +24,6 @@ interface TournamentHistoryJpaRepository : JpaRepository<TournamentHistory, Long
      * 삭제된 참여 행은 빠진다 — 토너먼트를 지우면 칩도 사라져야 한다는 기획 요구가 여기서 충족된다.
      * 우승을 따로 저장하지 않고 매 조회에 계산하는 이유도 이것이다. 저장하면 삭제와 동기화하는 부채가 생긴다.
      *
-     * 출전(TournamentItem)은 상품을 버전(snapshot)으로 가리키므로 itemId 까지 두 단계를 더 탄다.
      * FK·연관관계를 두지 않는 규약이라 암시적 조인으로 엮는다(TournamentItemJpaRepository 의 선례와 같은 형태).
      *
      * itemIds 로 먼저 좁혀, 한 페이지에 보이는 상품만 본다. 위시가 수백 건이어도 조회 비용이 페이지 크기에 묶인다.
@@ -33,12 +32,12 @@ interface TournamentHistoryJpaRepository : JpaRepository<TournamentHistory, Long
      * 그 값이 완료 판정의 출처가 아니어서(#1027) 레거시 행에 비어 있을 수 있기 때문이다. 기록 id 는 항상 있다.
      */
     @Query(
-        "SELECT s.itemId AS itemId, h.tournamentId AS tournamentId " +
-            "FROM TournamentHistory h, TournamentUser tu, TournamentItem ti, ItemSnapshot s " +
+        "SELECT ti.itemId AS itemId, h.tournamentId AS tournamentId " +
+            "FROM TournamentHistory h, TournamentUser tu, TournamentItem ti " +
             "WHERE h.tournamentUserId = tu.id AND tu.userId = :userId AND tu.deletedAt IS NULL " +
             "AND h.currentRound = :finalRound AND h.deletedAt IS NULL " +
             "AND ti.id = h.selectedTournamentItemId AND ti.deletedAt IS NULL " +
-            "AND s.id = ti.snapshotId AND s.itemId IN :itemIds " +
+            "AND ti.itemId IN :itemIds " +
             "ORDER BY h.id DESC",
     )
     fun findWinnerItems(

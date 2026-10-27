@@ -27,7 +27,7 @@ data class PresignedImageUpload(
     companion object {
         fun from(upload: PresignedRawUpload): PresignedImageUpload =
             PresignedImageUpload(
-                imageKey = upload.imageKey,
+                imageKey = upload.imageKey.value,
                 uploadUrl = upload.uploadUrl,
                 contentType = upload.contentType,
             )

@@ -3,13 +3,14 @@ package com.depromeet.piki.common.storage
 import java.time.Duration
 
 // 이미지 바이트를 저장소(S3 등)에 올리고 공개 접근 URL 을 돌려준다.
-// 크롭 이미지 외에도 재사용할 수 있도록 저장 구현(S3)과 분리한다.
 interface ImageStorage {
     fun upload(
         bytes: ByteArray,
         key: String,
         contentType: String,
     ): String
+
+    fun urlOf(key: String): String
 
     // 클라이언트가 서버를 거치지 않고 S3 에 직접 PUT 업로드할 수 있는 presigned URL 을 발급한다(이미지 등록 v2).
     fun presignUpload(
@@ -23,7 +24,7 @@ interface ImageStorage {
     // 객체 없음은 정상 결과(false)이고, 스토리지 장애만 ImageStorageException(502)로 던진다.
     fun exists(key: String): Boolean
 
-    // key 에 해당하는 객체의 바이트를 읽는다 — 클라가 presigned 로 직접 올린 raw 를 서버가 검증·가공해야 할 때 쓴다.
+    // key 에 해당하는 객체의 바이트를 읽는다 — 클라가 presigned 로 직접 올린 객체를 서버가 검증해야 할 때 쓴다.
     // (상품 이미지 등록은 extractor 가 bucket·key 를 받아 자기가 내려받으므로 이 경로를 타지 않는다.)
     // 객체 없음도 장애로 본다 — 호출부가 exists 로 존재를 확인한 뒤 부르는 계약이라, 그 사이 사라졌으면 예외가 맞다.
     fun download(key: String): ByteArray

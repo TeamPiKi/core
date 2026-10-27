@@ -1,6 +1,5 @@
 package com.depromeet.piki.wishlist.controller
 
-import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.common.exception.AlreadyRegisteredException
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
@@ -10,12 +9,13 @@ import com.depromeet.piki.common.ratelimit.ItemQuotaException
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
 import com.depromeet.piki.image.domain.ProductImageException
+import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemException
-import com.depromeet.piki.item.domain.ItemSnapshotSource
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.user.domain.UserException
@@ -45,20 +45,15 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.CREATED,
-                        name = "등록 접수 (파싱 대기 — PENDING)",
-                        payload = ApiResponseBody.created(pendingRegistrationEntry),
-                    )
-                    add(
-                        status = HttpStatus.CREATED,
-                        name = "기존 값 재사용 (캐시 — reused=true, 낡은 값이라 새로 가져오기 권고)",
-                        payload = ApiResponseBody.created(reusedRegistrationEntry),
+                        name = "등록 접수 (파싱 중 — PARSING)",
+                        payload = ApiResponseBody.created(pendingSampleEntry),
                     )
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
                     add(
                         AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, EXAMPLE_WISH_ID),
-                        name = "이미 위시리스트에 등록된 상품 (공유 정체성 기준)",
+                        name = "이미 위시리스트에 등록된 상품",
                     )
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
@@ -71,10 +66,10 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.OK,
-                        name = "조회 성공 (대기·담는 중 + 완성 혼재, 마지막 페이지)",
+                        name = "조회 성공 (파싱 중 + 완성 혼재, 마지막 페이지)",
                         payload =
                             ApiResponseBody.ok(
-                                data = listOf(pendingSampleEntry, processingSampleEntry, sampleEntry),
+                                data = listOf(pendingSampleEntry, sampleEntry),
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
                     )
@@ -113,7 +108,7 @@ class WishlistApiExamples(
                     add(
                         status = HttpStatus.OK,
                         name = "본인이 직접 고친 항목 (입력값이 이력 맨 앞)",
-                        payload = ApiResponseBody.ok(manualEditedDetailSample),
+                        payload = ApiResponseBody.ok(userInputDetailSample),
                     )
                     add(
                         status = HttpStatus.OK,
@@ -131,8 +126,8 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.OK,
-                        name = "FAILED 보정 성공 (READY 로 복구)",
-                        payload = ApiResponseBody.ok(sampleEntry),
+                        name = "FAILED 항목에 사용자 입력 (READY 로 복구)",
+                        payload = ApiResponseBody.ok(userInputEntry),
                     )
                     add(
                         status = HttpStatus.OK,
@@ -158,9 +153,11 @@ class WishlistApiExamples(
                                 detail = WishlistUpdateRequest.MEMO_MAX_MESSAGE,
                             ),
                     )
-                    add(ItemException.nameRequiredForReady(), name = "병합 후에도 상품명 없음 (빈 항목에 일부 필드만 수정)")
-                    add(ItemException.priceRequiredForReady(), name = "병합 후에도 가격 없음")
-                    add(ItemException.imageRequiredForReady(), name = "병합 후에도 이미지 없음")
+                    add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
+                    add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
+                    add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
+                    add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
+                    add(ItemException.parsingInProgress(), name = "파싱 중이거나 새로고침 중인 항목")
                     // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
                     add(ProductImageException.emptyImage(), name = "빈 이미지 파일")
                     add(ProductImageException.unknownType(), name = "이미지 형식을 확인할 수 없음")
@@ -177,16 +174,16 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.OK,
-                        name = "새로고침 접수 (새 추출 버전 — PENDING)",
-                        payload = ApiResponseBody.ok(pendingSampleEntry),
+                        name = "새로고침 접수 (refreshing=true, 값과 status 는 새로고침 전 것)",
+                        payload = ApiResponseBody.ok(refreshingSampleEntry),
                     )
                     add(
                         status = HttpStatus.OK,
                         name = "이미 새로고침 진행 중 (멱등 — 현재 진행 상태)",
-                        payload = ApiResponseBody.ok(processingSampleEntry),
+                        payload = ApiResponseBody.ok(refreshingSampleEntry),
                     )
-                    add(WishException.notRefreshable(), name = "링크 없는 항목(이미지 등록) — 새로고침 불가")
-                    add(WishException.failedNotRefreshable(), name = "추출 실패(FAILED) 항목 — 보정으로 복구")
+                    add(ItemException.notRefreshable(), name = "이미지로 등록한 항목은 새로고침 불가")
+                    add(WishException.failedNotRefreshable(), name = "추출 실패(FAILED) 항목 — 사용자 입력으로 복구")
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                     add(WishException.forbiddenWishItems(), name = "본인 위시 아님")
@@ -247,7 +244,7 @@ class WishlistApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(
                         status = HttpStatus.CREATED,
-                        name = "이미지 등록 접수 (PENDING, 다건)",
+                        name = "이미지 등록 접수 (PARSING, 다건)",
                         payload = ApiResponseBody.created(imagePendingEntries),
                     )
                     add(WishException.invalidImageCount(), name = "이미지 개수 위반 (1~5개 아님)")
@@ -273,8 +270,8 @@ class WishlistApiExamples(
     // 전역 가용량 소진(#927). 요청자의 몫과 무관하게 서비스 전체가 찬 상태라 503 이고, code 도 도메인이 아닌 공통이다.
     private val capacityExceeded = ItemQuotaException.capacityExceeded(900)
 
-    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 수기(89,000원)가 섞여 있어,
-    // source·editedByMe 로 구분해 그리는 예시다.
+    // 상세 조회 — 지금 보이는 값(item)과 그 상품의 가격 기록. 서버 추출값 사이에 타인이 넣은 값(89,000원)이 섞여 있어,
+    // userInput·editedByMe 로 구분해 그리는 예시다.
     private val wishDetailSample =
         WishDetailResponse(
             wish =
@@ -287,7 +284,9 @@ class WishlistApiExamples(
                 WishItemResponse.ItemView(
                     id = 512,
                     status = ItemStatus.READY,
-                    source = ItemSnapshotSource.SERVER,
+                    refreshing = false,
+                    method = ExtractionMethod.STRUCTURED,
+                    userInput = false,
                     name = "에어 조던 1 미드",
                     price = 109_000,
                     currency = "KRW",
@@ -301,39 +300,44 @@ class WishlistApiExamples(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 109_000,
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
-                        source = ItemSnapshotSource.SERVER,
+                        method = ExtractionMethod.STRUCTURED,
+                        userInput = false,
                         editedByMe = null,
                     ),
                     // 같은 상품을 담은 다른 사용자가 넣은 값 — 어떤 조건에서 본 가격인지 알 수 없어 구분해 다룬다.
                     WishDetailResponse.PriceHistoryEntry(
                         price = 89_000,
                         extractedAt = LocalDateTime.of(2026, 6, 10, 9, 0, 0),
-                        source = ItemSnapshotSource.MANUAL,
+                        method = null,
+                        userInput = true,
                         editedByMe = false,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 115_000,
                         extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
-                        source = ItemSnapshotSource.SERVER_LLM,
+                        method = ExtractionMethod.LLM,
+                        userInput = false,
                         editedByMe = null,
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 119_000,
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
-                        source = ItemSnapshotSource.SERVER,
+                        method = ExtractionMethod.STRUCTURED,
+                        userInput = false,
                         editedByMe = null,
                     ),
                 ),
         )
 
     // 본인이 직접 고친 항목 — 표시값(99,000원)은 본인 입력값이고 이력 맨 앞에도 온다.
-    // 반면 타인 수기(89,000원)는 이력에 남아 있어도 표시값이 되지 않는다(맥락 스코프) — 그래서 이력의 순서만으로
+    // 반면 타인이 넣은 값(89,000원)은 이력에 남아 있어도 표시값이 되지 않는다(맥락 스코프) — 그래서 이력의 순서만으로
     // 표시값을 유추할 수 없고, 지금 보이는 값은 item 에서 읽어야 한다.
-    private val manualEditedDetailSample =
+    private val userInputDetailSample =
         wishDetailSample.copy(
             item =
                 wishDetailSample.item.copy(
-                    source = ItemSnapshotSource.MANUAL,
+                    method = null,
+                    userInput = true,
                     price = 99_000,
                 ),
             priceHistory =
@@ -341,14 +345,15 @@ class WishlistApiExamples(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 99_000,
                         extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
-                        source = ItemSnapshotSource.MANUAL,
+                        method = null,
+                        userInput = true,
                         editedByMe = true,
                     ),
                 ) + wishDetailSample.priceHistory,
         )
 
     // 아직 추출에 한 번도 성공하지 못한 상품 — 추출 진행 중이라 표시값도 비어 있고 이력도 없다.
-    // 클라는 status 로 "기다린다(PENDING·PROCESSING)" 와 "그만 기다린다(FAILED)" 를 가른다.
+    // 클라는 status 로 "기다린다(PARSING)" 와 "그만 기다린다(FAILED)" 를 가른다.
     private val emptyHistoryDetailSample =
         WishDetailResponse(
             wish =
@@ -359,9 +364,11 @@ class WishlistApiExamples(
             memo = null,
             item =
                 WishItemResponse.ItemView(
-                    id = 515,
-                    status = ItemStatus.PROCESSING,
-                    source = null,
+                    id = null,
+                    status = ItemStatus.PARSING,
+                    refreshing = false,
+                    method = null,
+                    userInput = null,
                     name = null,
                     price = null,
                     currency = null,
@@ -384,7 +391,9 @@ class WishlistApiExamples(
                 WishItemResponse.ItemView(
                     id = 512,
                     status = ItemStatus.READY,
-                    source = ItemSnapshotSource.SERVER,
+                    refreshing = false,
+                    method = ExtractionMethod.STRUCTURED,
+                    userInput = false,
                     name = "에어 조던 1 미드",
                     price = 119_000,
                     currency = "KRW",
@@ -395,7 +404,7 @@ class WishlistApiExamples(
                 ),
         )
 
-    // URL 등록 직후 항목 (PENDING) — link 만 있고 name·가격·이미지는 비어 있다. 디스패처가 집어 PROCESSING 으로 전이한다.
+    // URL 등록 직후 항목. 상품이 확정되기 전이라 id 와 값이 비어 있고 sourceUrl 은 요청한 URL 이다
     private val pendingSampleEntry =
         WishItemResponse(
             wish =
@@ -405,9 +414,11 @@ class WishlistApiExamples(
                 ),
             item =
                 WishItemResponse.ItemView(
-                    id = 515,
-                    status = ItemStatus.PENDING,
-                    source = null,
+                    id = null,
+                    status = ItemStatus.PARSING,
+                    refreshing = false,
+                    method = null,
+                    userInput = null,
                     name = null,
                     price = null,
                     currency = null,
@@ -417,38 +428,12 @@ class WishlistApiExamples(
                 ),
         )
 
-    // URL 등록 응답 전용(#853) — 등록 경로는 attach 메타(reused·refreshNeeded)가 non-null 로 내려간다.
-    // 새 파싱을 만든 등록: 캐시에 붙지 않았으므로 둘 다 false.
+    private val refreshingSampleEntry = sampleEntry.copy(item = sampleEntry.item.copy(refreshing = true))
+
     // 우승 칩이 붙는 항목(#1236) — 두 판에서 이긴 상품이라 최신 우승이 앞에 온다. 그 토너먼트를 지우면 id 가 빠진다.
     private val winnerSampleEntry = sampleEntry.copy(winnerTournamentIds = listOf(1402, 1397))
 
-    private val pendingRegistrationEntry = pendingSampleEntry.copy(reused = false, refreshNeeded = false)
-
-    // 파싱 없이 다른 등록의 완성 값(캐시)에 붙은 등록 — 값이 갱신 권고 임계(24h)보다 낡아 refreshNeeded=true.
-    // 클라는 "새로운 정보로 가져올까요?" 를 물어 사용자가 원하면 새로고침 API 를 호출한다.
-    private val reusedRegistrationEntry = sampleEntry.copy(reused = true, refreshNeeded = true)
-
-    // 파싱 진행 중 항목 (PROCESSING) — 디스패처가 집어 추출 중인 상태. 목록·단건 조회에서 등장한다.
-    private val processingSampleEntry =
-        WishItemResponse(
-            wish =
-                WishItemResponse.WishView(
-                    id = 1026,
-                    createdAt = LocalDateTime.of(2026, 5, 21, 10, 10, 0),
-                ),
-            item =
-                WishItemResponse.ItemView(
-                    id = 514,
-                    status = ItemStatus.PROCESSING,
-                    source = null,
-                    name = null,
-                    price = null,
-                    currency = null,
-                    imageUrl = null,
-                    sourceUrl = "https://www.example-shop.com/products/67890",
-                    sourcePlatform = "example-shop",
-                ),
-        )
+    private val userInputEntry = sampleEntry.copy(item = sampleEntry.item.copy(method = null, userInput = true))
 
     // 이미지 등록 v2 presigned 발급 응답 샘플 — 클라는 각 uploadUrl 로 contentType 을 Content-Type 헤더에 실어 S3 에 직접 PUT 한 뒤
     // imageKey 들을 confirm 으로 되돌려준다. uploadUrl 의 서명 쿼리스트링은 예시라 실제 값이 아니다.
@@ -473,7 +458,7 @@ class WishlistApiExamples(
                 ),
         )
 
-    // 이미지 등록 직후 항목들 — link 도 없이 imageKey 로 작업 큐 적재된 PENDING(sourceUrl=null). 디스패처가 집어 PROCESSING→READY/FAILED 로 전이한다.
+    // 이미지 등록 직후 항목들. 링크가 없어 sourceUrl 도 비어 있다
     private val imagePendingEntries =
         listOf(
             WishItemResponse(
@@ -484,9 +469,11 @@ class WishlistApiExamples(
                     ),
                 item =
                     WishItemResponse.ItemView(
-                        id = 513,
-                        status = ItemStatus.PENDING,
-                        source = null,
+                        id = null,
+                        status = ItemStatus.PARSING,
+                        refreshing = false,
+                        method = null,
+                        userInput = null,
                         name = null,
                         price = null,
                         currency = null,
@@ -503,9 +490,11 @@ class WishlistApiExamples(
                     ),
                 item =
                     WishItemResponse.ItemView(
-                        id = 515,
-                        status = ItemStatus.PENDING,
-                        source = null,
+                        id = null,
+                        status = ItemStatus.PARSING,
+                        refreshing = false,
+                        method = null,
+                        userInput = null,
                         name = null,
                         price = null,
                         currency = null,

@@ -27,8 +27,7 @@ enum class ExtractionFailureBucket {
 // 확정 실패 예외가 자기 bucket 을 스스로 밝히게 하는 ErrorCode. 예외 클래스가 늘어도 워커는 이 인터페이스만
 // 보므로 reason 파생 경로가 한 줄로 유지되고, bucket 은 code 정의 옆(single source)에 박힌다.
 //
-// bucket 이 nullable 인 이유: 일시(transient) code 는 bucket 이 없다(계약도 같은 모양). 일시 실패는
-// 소유권 반납으로 되살아나 종결 집계(reason)에 닿지 않고, 상한을 소진하면 recover 가 retry_exhausted 로 센다.
+// 일시(transient) code 는 bucket 이 없다(카탈로그도 같은 모양)
 interface ExtractionFailureCode : ErrorCode {
     val bucket: ExtractionFailureBucket?
 }

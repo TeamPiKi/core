@@ -118,7 +118,7 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 외부 호출 (LLM · HTTP fetch · 결제 등 우리 바깥 의존성) 을 트랜잭션 안에 넣지 않는다. read-timeout 이 길어 (예: extractor 원격 추출 호출) 그 동안 DB 커넥션을 잡으면 커넥션 풀이 고갈되어 다른 API 까지 latency 가 번진다.
 
 - 외부 호출은 트랜잭션 바깥에서 끝내고, **영속화만 별도 빈에 위임**해 짧은 트랜잭션으로 묶는다.
-- 예: `AsyncItemParsingWorker` 는 트랜잭션 없이 추출을 끝낸 뒤 상태 전이 영속화만 `ItemParsingService`(`@Transactional`)에 위임한다. 같은 빈 안 호출은 proxy 를 거치지 않아 `@Transactional` 이 걸리지 않으므로 별도 빈이어야 한다.
+- 예: `ItemParser` 는 트랜잭션 없이 추출을 끝낸 뒤 결과 영속화만 `ItemParsingService`(`@Transactional`)에 위임한다. 같은 빈 안 호출은 proxy 를 거치지 않아 `@Transactional` 이 걸리지 않으므로 별도 빈이어야 한다.
 
 ## 로깅
 
@@ -126,9 +126,10 @@ FK 제약과 JPA 연관관계 어노테이션(`@ManyToOne` 등)을 쓰지 않는
 `private val log = LoggerFactory.getLogger(javaClass)` 로 통일한다. 메시지는 `{}` placeholder 로 바인딩한다.
 
 ### 민감 정보는 마스킹해서 찍는다
-URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대로 남기지 않는다. URL 은 `ProductLink.safeLogString()` (host + path 만, 쿼리스트링 제외) 처럼 마스킹 헬퍼를 거친다.
+토큰 · 비밀번호 같은 인증 값은 로그에 그대로 남기지 않는다.
 
-- 이유: URL 쿼리스트링에 인증 토큰이 실릴 수 있어 raw 로깅 시 누출된다. (`.claude/rules/domain-exception.md` 의 "메시지 톤: 응답 detail 은 전부 사용자 대면, 개발자 구분은 로그로" 와 같은 결)
+- 상품 URL 은 민감 정보로 보지 않는다. 쿼리까지 그대로 찍는다. DB 에도 평문으로 저장하는 값이고, 쿼리를 가리면 상품 번호가 쿼리에 있는 몰은 로그로 추적할 수 없다.
+- logfmt 로 읽는 로그 줄에 URL 을 실을 때는 따옴표로 감싼다(`url="..."`). 값 안의 `=` 가 파싱을 깨면 그 줄이 대시보드·알림 집계에서 빠진다.
 
 ### 레벨 기준
 - **info** — 정상 흐름·지표 (latency 등), 클라이언트 계약 위반 (검증 실패·도메인 예외). 클라이언트 잘못은 서버 입장에선 정상 동작이라 info.
@@ -137,11 +138,11 @@ URL · 토큰 · 사용자 입력 원본 등 민감 정보를 로그에 그대�
 
 ## 도메인 용어
 
-- **product** — 외부 상품(쇼핑몰 페이지)과 그 추출 파이프라인. `ProductLink`(외부 URL) · `ProductLinkExtractor` · `ProductSnapshot`(추출 시점 결과).
-- **item** — 상품의 정체성(`link`). 추출값·상태·이력은 버전(`ItemSnapshot`)이 들고, item 은 wish · tournament 가 참조하는 안정적 식별 단위다.
-- **item_snapshot** (`ItemSnapshot`) — item 의 한 추출 버전. item 갱신 때마다 새 행이 쌓여 가격·이름 이력을 보존한다. 화면값은 버전들에서 계산한다(`ItemVersions`, 내 맥락의 값 vs 공유 READY). wish 는 item 을 참조하고 "기다리는 행"(`waitingSnapshotId`)만 따로 들며, tournament_item 은 출전 시점 고정 버전(pin)을 가리킨다.
-- **wish** — user 가 item 을 위시리스트에 담은 기록 (`user_id` + `item_id`).
-- **tournament** — item 들로 겨루는 토너먼트. `tournament_item`(출전 아이템) · `tournament_user`(참여자).
+- **product** — 외부 상품(쇼핑몰 페이지)과 그 추출 파이프라인. `ProductLink`(외부 URL) · `LinkSnapshotExtractor` · `ProductSnapshot`(추출 시점 결과).
+- **item** — 상품의 정체성(`canonicalUrl`: 링크는 정체 URL, 이미지는 이미지 키). 파싱 성공이나 사용자 입력으로 상품이 정해질 때 찾거나 만든다. 추출값·이력은 버전(`ItemSnapshot`)이 들고, item 은 wish · tournament 가 참조하는 안정적 식별 단위다.
+- **item_snapshot** (`ItemSnapshot`) — item 의 한 버전. 파싱 성공·사용자 입력 때마다 새 행이 쌓여 가격·이름 이력을 보존한다. 상태 칸은 없고, 카드의 화면값·상태는 버전들과 최근 파싱 요청(`item_parse_outbox`)에서 계산한다(`ItemVersions`, `ItemCard`). 시작한 토너먼트의 값은 시작 시각(`started_at`)까지의 버전으로 계산한다.
+- **wish** — user 가 상품을 위시리스트에 담은 기록 (`user_id` + `item_id`). `item_id` 는 상품이 정해지기 전 null.
+- **tournament** — 상품들로 겨루는 토너먼트. `tournament_item`(출전 후보, 상품이 정해지기 전 `item_id` null) · `tournament_user`(참여자).
 
 추출 결과(`ProductSnapshot`)를 영속화하면 그 상품의 `item`(정체성)과 `ItemSnapshot`(버전)이 된다. 외부 경계를 가리키는 이름에 `item` 을, 우리 엔티티에 `product` 를 쓰지 않는다.
 
@@ -166,8 +167,8 @@ docker info > /dev/null 2>&1 || (open -a Docker && until docker info > /dev/null
 
 - **도메인 → 응답 DTO**: 응답 DTO 의 `companion object` 에 `from(도메인)` 정적 팩토리. 예: `UserResponse.from(user)`, `WishItemResponse.WishView.from(wish)`.
 - **요청 DTO → 도메인/커맨드**: 요청 DTO 의 `toXxx()` 인스턴스 메서드. 예: `CreateTournamentRequest.toCreateTournament()`.
-- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 생성 응답 클래스(`ExtractionResult`)의 확장 `toProductSnapshot(link)` (`RemoteExtractionContract.kt`).
-- **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `companion object` 정적 팩토리. 예: `ItemSnapshot.pending(...)`, `ItemSnapshot.manual(...)`.
+- **외부 응답 → 도메인**: 외부 결과 객체의 `toXxx()`. 예: 원격 추출 응답 DTO 의 `toProductSnapshot()` (`RemoteExtractionContract.kt`).
+- **스냅샷·도메인 → 엔티티**: 받는 엔티티의 `companion object` 정적 팩토리. 예: `ItemSnapshot.extracted(...)`, `ItemSnapshot.userInput(...)`.
 
 매핑 분기·정규화는 단위 테스트로 검증한다 (`.claude/rules/testing-principles.md` 의 "분기 위치 결정 트리" (3) 매퍼 함수 분기).
 

@@ -3,7 +3,6 @@ package com.depromeet.piki.wishlist.controller
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubItemParsingWorker
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.junit.jupiter.api.Test
@@ -37,8 +36,6 @@ class WishlistEntryPointIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var jwtProvider: JwtProvider
 
-    @Autowired
-    private lateinit var stubItemParsingWorker: StubItemParsingWorker
 
     @Test
     fun `공유 시트로 넘어온 담기는 SHARE_SHEET 로 기록된다`() {
@@ -82,13 +79,7 @@ class WishlistEntryPointIntegrationTest : IntegrationTestSupport() {
                 .content(objectMapper.writeValueAsString(mapOf("url" to url)))
         entryPoint?.let { request.header(ExternalEntry.HEADER, it) }
 
-        // 파싱은 이 테스트의 관심사가 아니고, 켜 두면 워커가 미커밋 item 을 읽어 warn 을 쏟는다.
-        stubItemParsingWorker.enabled = false
-        try {
-            buildMockMvc().perform(request).andExpect(status().isCreated)
-        } finally {
-            stubItemParsingWorker.enabled = true
-        }
+        buildMockMvc().perform(request).andExpect(status().isCreated)
     }
 
     private fun recordedEntries(userId: UUID): List<String?> =

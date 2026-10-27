@@ -2,9 +2,10 @@ package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.image.domain.UploadSize
+import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.presignImages
+import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.junit.jupiter.api.Test
@@ -365,10 +366,7 @@ class TournamentItemImagePresignedIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM tournament_items WHERE tournament_id = ?", tournamentId)
             jdbcTemplate.update("DELETE FROM tournament_users WHERE tournament_id = ?", tournamentId)
             jdbcTemplate.update("DELETE FROM tournaments WHERE id = ?", tournamentId)
-            itemIds.takeIf { it.isNotEmpty() }?.let {
-                jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN (${it.joinToString(",")})")
-                jdbcTemplate.update("DELETE FROM items WHERE id IN (${it.joinToString(",")})")
-            }
+            jdbcTemplate.deleteItems(itemIds.filterNotNull())
         }
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(ownerId))
     }
