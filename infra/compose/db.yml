@@ -18,6 +18,9 @@ services:
     container_name: piki-prod-mysql
     image: mysql:8.4
     restart: unless-stopped
+    # 끊긴 상대에 대한 재전송 포기를 호스트(provision-db.sh)와 같은 8 로. 컨테이너 net namespace 라 호스트 값이 안 닿는다(#1249).
+    sysctls:
+      net.ipv4.tcp_retries2: 8
 
     # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
     # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 - 3306 인바운드는
@@ -104,6 +107,9 @@ services:
     container_name: piki-prod-redis
     image: redis:7.4-alpine
     restart: unless-stopped
+    # 끊긴 상대에 대한 재전송 포기를 호스트(provision-db.sh)와 같은 8 로. 컨테이너 net namespace 라 호스트 값이 안 닿는다(#1249).
+    sysctls:
+      net.ipv4.tcp_retries2: 8
 
     # 노출 범위는 보안그룹과 비밀번호가 맡는다. EC2 는 공인 IP 가 NIC 에 없어 바인딩 주소로는 좁혀지지 않는다.
     ports:
