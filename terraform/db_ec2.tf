@@ -292,6 +292,9 @@ resource "aws_instance" "db" {
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
     echo 'vm.swappiness=10' > /etc/sysctl.d/99-swappiness.conf
     sysctl -w vm.swappiness=10
+    # tcp_retries2 8 은 provision-db.sh 가 멱등으로 다시 보장한다(#1249). 첫 부팅부터 같은 값을 두는 용도.
+    echo 'net.ipv4.tcp_retries2=8' > /etc/sysctl.d/99-tcp-retries2.conf
+    sysctl -w net.ipv4.tcp_retries2=8
   EOF
 
   metadata_options {
