@@ -2,37 +2,58 @@ package com.depromeet.piki.support
 
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
-import com.depromeet.piki.item.domain.ItemSnapshot
+import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.service.ExtractionSettlement
+import com.depromeet.piki.item.service.ItemParsingService
+import com.depromeet.piki.product.service.ProductSnapshot
 import jakarta.persistence.EntityManager
 import org.springframework.jdbc.core.JdbcTemplate
 
 // 엔티티 전이를 거친다. JDBC 로 상태만 바꾸면 같은 트랜잭션에서 이미 관리 중인 엔티티는 옛 상태로 남는다.
-fun EntityManager.claimParseOutbox(snapshot: ItemSnapshot): Long {
-    val outbox = parseOutboxOf(snapshot) ?: ItemParseOutbox(itemSnapshotId = snapshot.getId()).also(::persist)
+fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): Long {
+    val outbox = latestParseOutboxOf(slot) ?: error("요청자 $slot 의 아웃박스가 없다")
     outbox.claim()
     flush()
     return outbox.getId()
 }
 
-fun JdbcTemplate.parseOutboxStatusOf(itemId: Long): ItemParseOutboxStatus =
-    queryForObject(
-        "SELECT o.status FROM item_parse_outbox o JOIN item_snapshots s ON s.id = o.item_snapshot_id WHERE s.item_id = ?",
-        String::class.java,
-        itemId,
-    )?.let(ItemParseOutboxStatus::valueOf) ?: error("item $itemId 의 아웃박스 행이 없다")
+// 등록 뒤 파싱이 끝난 것과 같은 경로로 아이템과 버전을 만든다
+fun ItemParsingService.completeLatest(
+    entityManager: EntityManager,
+    slot: ItemSlot,
+    extracted: ProductSnapshot,
+): ExtractionSettlement = markExtracted(entityManager.claimLatestParseOutbox(slot), extracted)
 
-// 별칭(item_links)이 남으면 다음 실행의 같은 URL 등록이 지워진 item 을 가리켜 공유 매칭이 어긋남
+fun ItemParsingService.failLatest(
+    entityManager: EntityManager,
+    slot: ItemSlot,
+): Boolean = markFailed(entityManager.claimLatestParseOutbox(slot))
+
+fun JdbcTemplate.parseOutboxStatusOf(slot: ItemSlot): ItemParseOutboxStatus =
+    queryForObject(
+        "SELECT status FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ? ORDER BY id DESC LIMIT 1",
+        String::class.java,
+        slot.type.name,
+        slot.id,
+    )?.let(ItemParseOutboxStatus::valueOf) ?: error("요청자 $slot 의 아웃박스가 없다")
+
 fun JdbcTemplate.deleteItems(itemIds: Collection<Long>) {
     if (itemIds.isEmpty()) return
     val ids = itemIds.joinToString(",")
-    update("DELETE FROM item_links WHERE item_id IN ($ids)")
-    update("DELETE o FROM item_parse_outbox o JOIN item_snapshots s ON s.id = o.item_snapshot_id WHERE s.item_id IN ($ids)")
     update("DELETE FROM item_snapshots WHERE item_id IN ($ids)")
     update("DELETE FROM items WHERE id IN ($ids)")
 }
 
-private fun EntityManager.parseOutboxOf(snapshot: ItemSnapshot): ItemParseOutbox? =
-    createQuery("select o from ItemParseOutbox o where o.itemSnapshotId = :itemSnapshotId", ItemParseOutbox::class.java)
-        .setParameter("itemSnapshotId", snapshot.getId())
+fun JdbcTemplate.deleteParseOutboxOf(slots: Collection<ItemSlot>) {
+    slots.forEach { update("DELETE FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ?", it.type.name, it.id) }
+}
+
+private fun EntityManager.latestParseOutboxOf(slot: ItemSlot): ItemParseOutbox? =
+    createQuery(
+        "select o from ItemParseOutbox o where o.slotType = :type and o.slotId = :id order by o.id desc",
+        ItemParseOutbox::class.java,
+    ).setParameter("type", slot.type)
+        .setParameter("id", slot.id)
+        .setMaxResults(1)
         .resultList
-        .singleOrNull()
+        .firstOrNull()

@@ -7,7 +7,7 @@ import com.depromeet.piki.item.domain.ItemStatus
 // 거치지 않고 열린 SSE 연결로만 흐른다(NotificationSsePayload 와 별개 경로). 클라는 type 으로 갱신 사건을 분기한다.
 //
 // notification 봉투가 sealed + type 으로 여러 알림 셰입을 묶듯, silent-sync 도 sealed + type 으로 여러 갱신 사건을 묶는다.
-// 첫 사건은 토너먼트 출전 아이템 파싱 완료/실패(TournamentItemParsed). 갱신 사건이 늘면 SilentSyncType + 구현체를 더한다.
+// 갱신 사건이 늘면 SilentSyncType + 구현체를 더한다.
 sealed interface SilentSyncPayload {
     val type: SilentSyncType
 }
@@ -15,18 +15,28 @@ sealed interface SilentSyncPayload {
 // silent-sync 갱신 사건의 종류. 클라가 화면 갱신 동작을 분기하는 키.
 enum class SilentSyncType {
     TOURNAMENT_ITEM_PARSED,
+    TOURNAMENT_ITEM_MERGED,
     UNREAD_COUNT_CHANGED,
 }
 
 // 토너먼트 출전 아이템의 파싱이 끝났음을 그 토너먼트 참여자 화면에 반영하는 갱신 신호.
 // 클라는 (tournamentId, tournamentItemId)로 그 출전 카드를 찾아 status 로 갱신한다:
-// PENDING/PROCESSING 로딩 → READY(상품 정보 표시) / FAILED(에러·재시도). status 는 항상 READY·FAILED 중 하나다.
+// 로딩 중이던 카드를 READY(상품 정보 표시)·INCOMPLETE(나머지 입력 요청)·FAILED(에러) 로 바꾼다. status 는 이 셋 중 하나다
 data class TournamentItemParsed(
     val tournamentId: Long,
     val tournamentItemId: Long,
     val status: ItemStatus,
 ) : SilentSyncPayload {
     override val type: SilentSyncType = SilentSyncType.TOURNAMENT_ITEM_PARSED
+}
+
+// 클라는 tournamentItemId 카드를 지우고 mergedIntoTournamentItemId 카드를 다시 읽는다
+data class TournamentItemMerged(
+    val tournamentId: Long,
+    val tournamentItemId: Long,
+    val mergedIntoTournamentItemId: Long,
+) : SilentSyncPayload {
+    override val type: SilentSyncType = SilentSyncType.TOURNAMENT_ITEM_MERGED
 }
 
 // 읽음 처리 후 갱신된 안읽음 수를 그 유저의 온라인(SSE 연결) 기기 인앱 배지에 즉시 반영하는 갱신 신호(#487 의 SSE 보강).

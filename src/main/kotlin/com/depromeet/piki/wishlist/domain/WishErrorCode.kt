@@ -12,18 +12,45 @@ enum class WishErrorCode(
     override val category: ErrorCategory,
     override val message: String,
 ) : ErrorCode {
-    GUEST_CANNOT_USE_WISHLIST("WISH-001", ErrorCategory.FORBIDDEN, "위시리스트는 회원만 이용할 수 있어요."),
-    FORBIDDEN_WISH_ITEMS("WISH-002", ErrorCategory.FORBIDDEN, "내 위시 아이템만 볼 수 있어요."),
-    INVALID_CURSOR("WISH-003", ErrorCategory.INVALID_INPUT, "페이지를 불러오지 못했어요. 새로고침 해주세요."),
-    NOT_FOUND("WISH-004", ErrorCategory.NOT_FOUND, "이미 삭제된 아이템이에요."),
-    INVALID_IMAGE_COUNT("WISH-005", ErrorCategory.INVALID_INPUT, "이미지는 1~5장만 올릴 수 있어요."),
-    INVALID_ID_COUNT("WISH-006", ErrorCategory.INVALID_INPUT, "한 번에 최대 100개까지 삭제할 수 있어요."),
-    NOT_REFRESHABLE("WISH-007", ErrorCategory.INVALID_INPUT, "링크가 없는 항목은 새로고침할 수 없습니다."),
+    GUEST_CANNOT_USE_WISHLIST(
+        "WISH-001",
+        ErrorCategory.FORBIDDEN,
+        "위시리스트는 회원만 이용할 수 있어요.",
+    ),
+    FORBIDDEN_WISH_ITEMS(
+        "WISH-002",
+        ErrorCategory.FORBIDDEN,
+        "내 위시만 볼 수 있어요.",
+    ),
+    INVALID_CURSOR(
+        "WISH-003",
+        ErrorCategory.INVALID_INPUT,
+        "페이지를 불러오지 못했어요. 새로고침 해주세요.",
+    ),
+    NOT_FOUND(
+        "WISH-004",
+        ErrorCategory.NOT_FOUND,
+        "이미 삭제된 위시예요.",
+    ),
+    INVALID_IMAGE_COUNT(
+        "WISH-005",
+        ErrorCategory.INVALID_INPUT,
+        "이미지는 1~5장만 올릴 수 있어요.",
+    ),
+    INVALID_ID_COUNT(
+        "WISH-006",
+        ErrorCategory.INVALID_INPUT,
+        "한 번에 최대 100개까지 삭제할 수 있어요.",
+    ),
+    // WISH-007 은 ITEM-007 로 옮겨 결번
     FAILED_NOT_REFRESHABLE(
         "WISH-008",
         ErrorCategory.CONFLICT,
         "추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요.",
     ),
-    ALREADY_EXISTS("WISH-009", ErrorCategory.CONFLICT, "이미 위시리스트에 등록된 상품이에요."),
-
+    ALREADY_EXISTS(
+        "WISH-009",
+        ErrorCategory.CONFLICT,
+        "이미 위시리스트에 등록된 상품이에요.",
+    ),
 }

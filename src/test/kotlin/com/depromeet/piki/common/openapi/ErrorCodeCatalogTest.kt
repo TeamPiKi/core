@@ -54,10 +54,10 @@ class ErrorCodeCatalogTest {
         assertTrue(md.contains("### WISH"), md)
         assertTrue(md.contains("| WISH-001 | 403 | 위시리스트는 회원만 이용할 수 있어요. |"), md)
         assertTrue(md.contains("| WISH-003 | 400 | 페이지를 불러오지 못했어요. 새로고침 해주세요. |"), md)
-        assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 아이템이에요. |"), md)
+        assertTrue(md.contains("| WISH-004 | 404 | 이미 삭제된 위시예요. |"), md)
         assertTrue(md.contains("| WISH-008 | 409 | 추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요. |"), md)
 
-        // item 도메인 이관(#798) — 5개. 전부 FAILED 항목 보정(위시·토너먼트 아이템 공용 경로)에서 나온다.
+        // item 도메인 이관(#798) — 5개. 전부 FAILED 항목 사용자 입력(위시·토너먼트 아이템 공용 경로)에서 나온다.
         // 다른 도메인은 개수가 많아 대표만 단언하지만, item 은 5개뿐이라 전량 단언해 결번 없이 고정한다.
         assertTrue(md.contains("### ITEM"), md)
         // ITEM-001·002 는 수기 수정 상시 허용(#825 결정 4)으로 결번 — 카탈로그에서 빠졌음을 함께 고정한다.

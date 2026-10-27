@@ -3,6 +3,7 @@ package com.depromeet.piki.item.repository
 import com.depromeet.piki.item.domain.ItemSnapshot
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 
 @Repository
 class ItemSnapshotRepositoryImpl(
@@ -10,24 +11,26 @@ class ItemSnapshotRepositoryImpl(
 ) : ItemSnapshotRepository {
     override fun save(snapshot: ItemSnapshot): ItemSnapshot = itemSnapshotJpaRepository.save(snapshot)
 
-
-    override fun findLatestInProgressByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestInProgressByItemId(itemId)
-
-    override fun findLatestMachineReadyByItemId(itemId: Long): ItemSnapshot? = itemSnapshotJpaRepository.findLatestMachineReadyByItemId(itemId)
-
     override fun findAllByItemIds(itemIds: Collection<Long>): List<ItemSnapshot> =
         itemIds
             .takeIf { it.isNotEmpty() }
             ?.let { itemSnapshotJpaRepository.findByItemIdInAndDeletedAtIsNullOrderByIdAsc(it) }
             .orEmpty()
 
-    override fun reparentAll(
-        fromItemId: Long,
-        toItemId: Long,
-    ): Int = itemSnapshotJpaRepository.reparentAll(fromItemId, toItemId)
+    override fun findAllByItemIdsForShare(itemIds: Collection<Long>): List<ItemSnapshot> =
+        itemIds
+            .takeIf { it.isNotEmpty() }
+            ?.let { itemSnapshotJpaRepository.findByItemIdsForShare(it) }
+            .orEmpty()
 
-    override fun findLatestByItemId(itemId: Long): ItemSnapshot? =
-        itemSnapshotJpaRepository.findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId)
+    override fun findAllByItemIdsAsOf(
+        itemIds: Collection<Long>,
+        at: LocalDateTime,
+    ): List<ItemSnapshot> =
+        itemIds
+            .takeIf { it.isNotEmpty() }
+            ?.let { itemSnapshotJpaRepository.findByItemIdInAndCreatedAtLessThanEqualAndDeletedAtIsNullOrderByIdAsc(it, at) }
+            .orEmpty()
 
     override fun findPriceHistoryByItemId(
         itemId: Long,

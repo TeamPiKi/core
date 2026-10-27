@@ -1,9 +1,12 @@
 package com.depromeet.piki.tournament.repository
 
+import com.depromeet.piki.image.domain.ProductImageKey
+import com.depromeet.piki.item.domain.CanonicalInput
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.tournament.domain.TournamentItem
+import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
 import java.util.UUID
-import org.springframework.stereotype.Repository
 
 @Repository
 class TournamentItemRepositoryImpl(
@@ -21,14 +24,36 @@ class TournamentItemRepositoryImpl(
 
     override fun findByIdForUpdate(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdForUpdate(id)
 
-    override fun findUserIdsBySnapshotId(snapshotId: Long): List<UUID> =
-        tournamentItemJpaRepository.findUserIdsBySnapshotId(snapshotId)
+    override fun findByIdIncludingDeletedForUpdate(id: Long): TournamentItem? =
+        tournamentItemJpaRepository.findByIdIncludingDeletedForUpdate(id)
 
-    override fun findRoutingBySnapshotId(snapshotId: Long): List<TournamentItemRoutingView> =
-        tournamentItemJpaRepository.findRoutingBySnapshotId(snapshotId)
+    override fun findByIdIncludingDeleted(id: Long): TournamentItem? = tournamentItemJpaRepository.findByIdIncludingDeleted(id)
 
-    override fun findRoutingsWithUserBySnapshotId(snapshotId: Long): List<TournamentItemUserRoutingView> =
-        tournamentItemJpaRepository.findRoutingsWithUserBySnapshotId(snapshotId)
+    override fun findIdByTournamentIdAndNormalizedInput(
+        tournamentId: Long,
+        normalized: NormalizedInput,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndNormalizedInput(tournamentId, normalized).firstOrNull()
+
+    override fun findByTournamentIdAndItemId(
+        tournamentId: Long,
+        itemId: Long,
+    ): TournamentItem? = tournamentItemJpaRepository.findFirstByTournamentIdAndItemIdAndDeletedAtIsNullOrderByIdAsc(tournamentId, itemId)
+
+    override fun findIdByTournamentIdAndItemCanonical(
+        tournamentId: Long,
+        canonical: CanonicalInput,
+    ): Long? = tournamentItemJpaRepository.findIdsByTournamentIdAndItemCanonical(tournamentId, canonical).firstOrNull()
+
+    override fun findRequestedImageKeys(
+        tournamentId: Long,
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey> {
+        if (keys.isEmpty()) return emptySet()
+        return tournamentItemJpaRepository
+            .findRequestedInputsByTournamentId(tournamentId, keys.map { it.value })
+            .map(ProductImageKey::parse)
+            .toSet()
+    }
 
     override fun findPendingCardsByItemId(itemId: Long): List<TournamentItemCardView> =
         tournamentItemJpaRepository.findPendingCardsByItemId(itemId)

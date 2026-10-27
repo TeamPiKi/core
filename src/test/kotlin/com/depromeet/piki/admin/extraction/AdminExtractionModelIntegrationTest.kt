@@ -1,8 +1,8 @@
 package com.depromeet.piki.admin.extraction
 
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.service.remote.DbExtractionModelSettings
 import com.depromeet.piki.product.service.remote.ExtractionModelJpaRepository
-import com.depromeet.piki.product.service.remote.ExtractionTarget
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubExtractionModelProbe
 import org.junit.jupiter.api.Test
@@ -45,7 +45,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
             .apply<DefaultMockMvcBuilder>(springSecurity())
             .build()
 
-    private fun cleanUp(target: ExtractionTarget) {
+    private fun cleanUp(target: ParseInputType) {
         repository.deleteById(target.name)
         settings.reload()
     }
@@ -61,12 +61,12 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(status().is3xxRedirection)
                 .andExpect(redirectedUrl("/admin/extraction-models?updated"))
 
-            assertEquals("gemini-probe-ok", settings.modelOf(ExtractionTarget.LINK))
+            assertEquals("gemini-probe-ok", settings.modelOverrideOf(ParseInputType.LINK))
             assertEquals("gemini-probe-ok", repository.findById("LINK").get().model)
             // 저장 전에 프로브를 거쳤다는 사실 자체가 게이트의 본질이다.
-            assertEquals(listOf(ExtractionTarget.LINK to "gemini-probe-ok"), probe.calls)
+            assertEquals(listOf(ParseInputType.LINK to "gemini-probe-ok"), probe.calls)
         } finally {
-            cleanUp(ExtractionTarget.LINK)
+            cleanUp(ParseInputType.LINK)
         }
     }
 
@@ -81,9 +81,9 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(status().isOk)
 
             assertTrue(repository.findById("IMAGE").isEmpty, "거절된 모델이 저장되면 게이트가 뚫린 것이다")
-            assertNull(settings.modelOf(ExtractionTarget.IMAGE))
+            assertNull(settings.modelOverrideOf(ParseInputType.IMAGE))
         } finally {
-            cleanUp(ExtractionTarget.IMAGE)
+            cleanUp(ParseInputType.IMAGE)
         }
     }
 
@@ -101,7 +101,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
             assertTrue(repository.findById("LINK").isEmpty)
             assertTrue(probe.calls.isEmpty(), "경계에서 걸린 입력은 외부 호출을 유발하면 안 된다")
         } finally {
-            cleanUp(ExtractionTarget.LINK)
+            cleanUp(ParseInputType.LINK)
         }
     }
 
@@ -113,7 +113,7 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
             mockMvc
                 .perform(post("/admin/extraction-models/IMAGE").with(csrf()).param("model", "gemini-to-be-cleared"))
                 .andExpect(status().is3xxRedirection)
-            assertEquals("gemini-to-be-cleared", settings.modelOf(ExtractionTarget.IMAGE))
+            assertEquals("gemini-to-be-cleared", settings.modelOverrideOf(ParseInputType.IMAGE))
 
             mockMvc
                 .perform(post("/admin/extraction-models/IMAGE/clear").with(csrf()))
@@ -121,9 +121,9 @@ class AdminExtractionModelIntegrationTest : IntegrationTestSupport() {
                 .andExpect(redirectedUrl("/admin/extraction-models?cleared"))
 
             assertTrue(repository.findById("IMAGE").isEmpty)
-            assertNull(settings.modelOf(ExtractionTarget.IMAGE), "해제 후엔 요청에 모델이 실리지 않아야 한다")
+            assertNull(settings.modelOverrideOf(ParseInputType.IMAGE), "해제 후엔 요청에 모델이 실리지 않아야 한다")
         } finally {
-            cleanUp(ExtractionTarget.IMAGE)
+            cleanUp(ParseInputType.IMAGE)
         }
     }
 }

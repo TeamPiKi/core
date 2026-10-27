@@ -6,11 +6,12 @@ import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParser
 import com.depromeet.piki.item.service.ItemParsingScheduler
+import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ProductExtractorException
@@ -19,10 +20,13 @@ import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
-import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.normalizedOf
+import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.latestParseOutboxIdOf
 import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
+import com.depromeet.piki.support.wishItemIdOf
 import com.depromeet.piki.user.domain.IdentityType
 import io.micrometer.core.instrument.MeterRegistry
 import org.awaitility.Awaitility.await
@@ -35,6 +39,7 @@ import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -45,7 +50,6 @@ import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -91,12 +95,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     private lateinit var stubImageStorage: StubImageStorage
 
     @Test
-    fun `등록하면 추출을 기다리지 않고 PENDING 상태로 201 이 즉시 반환된다`() {
+    fun `등록하면 추출을 기다리지 않고 아이템 없이 PARSING 으로 201 이 즉시 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000) }
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "나이키 에어포스", price = 99_000) }
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/42"))
 
             mockMvc
@@ -107,8 +111,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                         .content(body),
                 ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.wish.id").isNumber)
-                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
-                // 파싱 전이라 추출 결과는 아직 비어 있고, 입력으로 받은 sourceUrl 만 채워진다.
+                .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.status").value("PARSING"))
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
                 .andExpect(jsonPath("$.data.item.name").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.price").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/42"))
@@ -120,59 +125,70 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `등록 후 파싱이 성공하면 item 이 READY 로 전이하며 추출 결과가 채워진다`() {
+    fun `등록 후 파싱이 성공하면 위시에 아이템이 확정되고 READY 가 된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubLinkSnapshotExtractor.build = {
-                ProductSnapshot(link = it, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+                ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val readyBefore = parseCount("ready", "none")
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/42")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/42")
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            // 결과 메트릭(#506): 성공은 result=ready,reason=none 으로 +1 (파서 비동기라 메트릭 증가도 await).
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            // 파서 비동기라 메트릭 증가도 기다린다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("ready", "none") - readyBefore >= 1.0 }
 
-            // 표시값·상태는 활성 snapshot 이 보유한다. item 은 정체성(link)만 든다.
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.price)
-            assertEquals("KRW", snapshot.currency)
-            assertEquals(ItemParseOutboxStatus.SUCCEEDED, jdbcTemplate.parseOutboxStatusOf(itemId))
+            val itemId = jdbcTemplate.wishItemIdOf(slot.id) ?: error("wish ${slot.id} 에 아이템이 확정되지 않았다")
+            val version = versionsOf(itemId).single()
+            assertTrue(version.isReady())
+            assertEquals("나이키 에어포스", version.name)
+            assertEquals(99_000, version.price)
+            assertEquals("KRW", version.currency)
+            assertEquals(normalizedOf("https://shop.example.com/products/42").asCanonical(), itemRepository.findById(itemId)?.canonicalUrl)
+
+            mockMvc
+                .perform(get("/api/v1/wishlists/${slot.id}").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(itemId))
+                .andExpect(jsonPath("$.data.item.status").value("READY"))
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
+                .andExpect(jsonPath("$.data.item.name").value("나이키 에어포스"))
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `등록 후 상품 페이지가 아니라고 판정되면 item 이 FAILED 로 전이한다`() {
+    fun `등록 후 상품 페이지가 아니라고 판정되면 아이템 없이 FAILED 로 종결한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
-        // 실패 원장 라인도 latency 를 갖는 계약(#916)을 라인 모양으로 고정한다 — 성공만 latency 를 가지면
-        // 타임아웃형(느린) 실패가 로그 기반 소요 통계에서 통째로 사라진다.
+        // 실패 라인도 latency 를 가져야 타임아웃형 실패가 로그 기반 소요 통계에서 빠지지 않는다(#916)
         val parserLogs = ListAppender<ILoggingEvent>().apply { start() }
         val parserLogger = LoggerFactory.getLogger(ItemParser::class.java) as Logger
         parserLogger.addAppender(parserLogs)
         try {
-            // 파싱 결과 실패는 동기 400 이 아니라 FAILED 상태로 남는다 (등록 응답은 이미 201 로 끝났으므로).
             stubLinkSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val notProductBefore = parseCount("failed", "not_product")
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/not-a-product")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/not-a-product")
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
-            // 결과 메트릭(#506): 상품 아님 확정 실패는 result=failed,reason=not_product 로 +1.
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "not_product") - notProductBefore >= 1.0 }
 
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(ItemStatus.FAILED, snapshot.status)
-            assertNull(snapshot.name)
-            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(itemId))
-            // item 을 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 하고, latency 는 값 형식(\d+ms)까지 조인다.
+            assertNull(jdbcTemplate.wishItemIdOf(slot.id))
+            mockMvc
+                .perform(get("/api/v1/wishlists/${slot.id}").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.status").value("FAILED"))
+                .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/not-a-product"))
+                .andExpect(jsonPath("$.data.priceHistory.length()").value(0))
+            // 아웃박스를 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 한다
+            val outboxId = jdbcTemplate.latestParseOutboxIdOf(slot)
             val expectedResultLog =
-                Regex("""item\.parse\.result item=$itemId result=failed reason=not_product latency=\d+ms""")
+                Regex("""item\.parse\.result outbox=$outboxId result=failed reason=not_product latency=\d+ms""")
             assertTrue(
                 parserLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
                 "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
@@ -184,39 +200,36 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `추출이 이름을 못 얻으면 item 이 INCOMPLETE 로 전이하고 얻은 값은 남는다`() {
+    fun `추출이 이름을 못 얻으면 아이템이 확정되고 INCOMPLETE 버전에 얻은 값이 남는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // isProductPage=true 라도 이름을 못 뽑으면 name 이 비어 온다. 예전에는 READY 불변식(name 필수)에 걸려
-            // FAILED 로 떨어졌지만, 이제는 채운 만큼을 남기고 INCOMPLETE 로 안착해 사용자가 나머지를 채운다(#944).
-            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, price = 99_000) }
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(price = 99_000) }
             val incompleteBefore = parseCount("incomplete", "none")
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/no-name")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/no-name")
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.INCOMPLETE }
-            // 결과 메트릭(#506): 부분 성공은 실패에 섞지 않고 result=incomplete,reason=none 으로 +1 한다.
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            // 부분 성공은 실패에 섞지 않는다(#506)
             await().atMost(Duration.ofSeconds(2)).until { parseCount("incomplete", "none") - incompleteBefore >= 1.0 }
 
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(ItemStatus.INCOMPLETE, snapshot.status)
-            assertNull(snapshot.name, "못 얻은 필드는 비어 있어 사용자가 채운다")
-            assertEquals(99_000, snapshot.price, "얻은 값은 버려지지 않는다")
-            assertNotNull(snapshot.extractedAt)
+            val itemId = jdbcTemplate.wishItemIdOf(slot.id) ?: error("wish ${slot.id} 에 아이템이 확정되지 않았다")
+            val version = versionsOf(itemId).single()
+            assertTrue(version.isIncomplete())
+            assertNull(version.name, "못 얻은 필드는 비어 있어 사용자가 채운다")
+            assertEquals(99_000, version.price, "얻은 값은 버려지지 않는다")
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `같은 URL 재등록은 공유 정체성 기준 409 로 막혀 wish 가 1건만 남는다`() {
+    fun `같은 사용자가 같은 URL 을 다시 등록하면 파싱 중에도 확정 뒤에도 409 로 막힌다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubLinkSnapshotExtractor.build = { ProductSnapshot(link = it, name = "기본 상품") }
-            // 이 파일의 다른 테스트와 URL 을 공유하지 않는다 — 정체성 매칭(별칭)이 테스트 간 상태가 되므로 전용 URL 로 격리.
+            stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "기본 상품") }
             val body = objectMapper.writeValueAsString(mapOf("url" to "https://shop.example.com/products/9942"))
             val auth = "Bearer ${memberToken(userId)}"
 
@@ -227,10 +240,24 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, auth)
                         .content(body),
                 ).andExpect(status().isCreated)
-                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.item.status").value("PARSING"))
 
-            // 공유 정체성(#825 활성화) — 같은 사용자가 같은 상품을 다시 담으면 새 카드 대신 409.
-            // (옛 dedup 없는 multi-record 모델을 뒤집은 새 계약이다.)
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, auth)
+                        .content(body),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("WISH-009"))
+
+            val wishId =
+                jdbcTemplate.queryForObject("SELECT id FROM wishes WHERE user_id = ?", Long::class.java, uuidToBytes(userId))
+                    ?: error("위시가 없다")
+            itemParsingScheduler.awaitTicking {
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
+            }
+
             mockMvc
                 .perform(
                     post("/api/v1/wishlists")
@@ -253,55 +280,54 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `이미지로 등록하면 PENDING 으로 201 즉시 반환 후 파싱 성공 시 READY 로 전이한다`() {
+    fun `이미지로 등록하면 파싱 성공 시 링크 없는 아이템이 확정되고 READY 가 된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
+                ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/af.png")
             }
-            val itemId = registerImageAndGetItemId(mockMvc, userId)
+            val (slot, imageKey) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("나이키 에어포스", snapshot.name)
-            assertEquals(99_000, snapshot.price)
-            assertEquals("KRW", snapshot.currency)
-            // 이미지 등록은 link(원본 URL)가 없다 — link 는 정체성이라 item 에서 읽는다.
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            val itemId = jdbcTemplate.wishItemIdOf(slot.id) ?: error("wish ${slot.id} 에 아이템이 확정되지 않았다")
+            val version = versionsOf(itemId).single()
+            assertTrue(version.isReady())
+            assertEquals("나이키 에어포스", version.name)
+            assertEquals(99_000, version.price)
+            assertEquals("KRW", version.currency)
             val item = itemRepository.findById(itemId) ?: error("item $itemId 가 없다")
-            assertNull(item.link)
+            assertNull(item.sourceLink())
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `이미지 파싱이 확정 실패(상품 아님)면 item 이 FAILED 로 전이한다`() {
+    fun `이미지 파싱이 확정 실패(상품 아님)면 아이템 없이 FAILED 로 종결한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
-            val itemId = registerImageAndGetItemId(mockMvc, userId)
+            val (slot, _) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(ItemStatus.FAILED, snapshot.status)
-            assertNull(snapshot.name)
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `이미지 5개를 등록하면 모두 PENDING 으로 반환되고 각각 READY 로 전이한다`() {
+    fun `이미지 5개를 등록하면 모두 PARSING 으로 반환되고 각각 아이템이 확정된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
             stubImageSnapshotExtractor.build = {
-                ProductSnapshot(link = null, name = "상품", price = 1_000, imageUrl = "https://img.example.com/p.png")
+                ProductSnapshot(name = "상품", price = 1_000, imageUrl = "https://img.example.com/p.png")
             }
             val presignResponse =
                 mockMvc
@@ -325,23 +351,28 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                             .content(objectMapper.writeValueAsString(mapOf("imageKeys" to imageKeys))),
                     ).andExpect(status().isCreated)
                     .andExpect(jsonPath("$.data.length()").value(5))
-                    // 이미지도 link 처럼 등록 직후 READY 를 내리는 회귀를 잡음
-                    .andExpect(jsonPath("$.data[0].item.status").value("PENDING"))
-                    .andExpect(jsonPath("$.data[4].item.status").value("PENDING"))
+                    .andExpect(jsonPath("$.data[0].item.status").value("PARSING"))
+                    .andExpect(jsonPath("$.data[4].item.status").value("PARSING"))
                     .andReturn()
                     .response
                     .getContentAsString(Charsets.UTF_8)
             val dataNode = objectMapper.readTree(response).path("data")
-            val itemIds =
+            val slots =
                 (0 until dataNode.size()).map { i ->
-                    dataNode
-                        .path(i)
-                        .path("item")
-                        .path("id")
-                        .asLong()
+                    ItemSlot.wish(
+                        dataNode
+                            .path(i)
+                            .path("wish")
+                            .path("id")
+                            .asLong(),
+                    )
                 }
 
-            itemParsingScheduler.awaitTicking { itemIds.all { latestSnapshot(it)?.status == ItemStatus.READY } }
+            itemParsingScheduler.awaitTicking {
+                slots.all { jdbcTemplate.parseOutboxStatusOf(it) == ItemParseOutboxStatus.SUCCEEDED }
+            }
+            val itemIds = slots.map { jdbcTemplate.wishItemIdOf(it.id) ?: error("wish ${it.id} 에 아이템이 확정되지 않았다") }
+            assertEquals(5, itemIds.distinct().size)
         } finally {
             cleanup(userId)
         }
@@ -355,16 +386,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             stubLinkSnapshotExtractor.build = { throw ProductExtractorException.permanentFailure() }
             val internalErrorBefore = parseCount("failed", "internal_error")
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/blocked")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/blocked")
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
-            // 결과 메트릭(#506·#936): 우리 방어(SSRF 가드)로 확정 실패한 건은 result=failed,reason=internal_error 로 +1.
-            // reason 이 예외에서 파생되므로, 이 단언이 파서에서 메트릭까지 배선을 함께 고정한다.
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            // reason 이 예외에서 파생되므로 파서에서 메트릭까지 배선을 함께 고정한다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
-            val snapshot = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals(ItemStatus.FAILED, snapshot.status)
-            assertNull(snapshot.name)
+            assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
         }
@@ -378,12 +406,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             stubLinkSnapshotExtractor.build = { throw ProductExtractorException.transientFailure(null) }
             val internalErrorBefore = parseCount("failed", "internal_error")
-            val itemId = registerAndGetItemId(mockMvc, userId, "https://shop.example.com/products/transient")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/transient")
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.FAILED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
-            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(itemId))
+            assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
         }
@@ -445,7 +473,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                     Triple("example.com/products/1", "LINK-002", "https 링크만 등록할 수 있어요."),
                     Triple("http://example.com/products/1", "LINK-002", "https 링크만 등록할 수 있어요."),
                     Triple("", "COMMON-INVALID-INPUT", "링크를 입력해 주세요."),
-                    Triple("https://a.com/" + "x".repeat(2048), "COMMON-INVALID-INPUT", "링크가 너무 길어요."),
+                    Triple("https://a.com/" + "x".repeat(ProductLink.MAX_LENGTH), "COMMON-INVALID-INPUT", "링크가 너무 길어요."),
                 )
             cases.forEach { (url, code, detail) ->
                 mockMvc
@@ -463,11 +491,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    private fun registerAndGetItemId(
+    private fun registerAndGetSlot(
         mockMvc: MockMvc,
         userId: UUID,
         url: String,
-    ): Long {
+    ): ItemSlot {
         val body = objectMapper.writeValueAsString(mapOf("url" to url))
         val response =
             mockMvc
@@ -480,20 +508,21 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 .andReturn()
                 .response
                 .getContentAsString(Charsets.UTF_8)
-        return objectMapper
-            .readTree(response)
-            .path("data")
-            .path("item")
-            .path("id")
-            .asLong()
+        return ItemSlot.wish(
+            objectMapper
+                .readTree(response)
+                .path("data")
+                .path("wish")
+                .path("id")
+                .asLong(),
+        )
     }
 
-    // 이미지 한 장을 등록하고 그 item id 를 돌려준다 — 발급(presigned) → 확정(confirm) 2단계를 그대로 탄다.
-    // 업로드 자체는 클라가 S3 에 직접 하므로 여기선 재현하지 않는다(StubImageStorage.exists 기본값이 "올라왔다").
-    private fun registerImageAndGetItemId(
+    // 업로드는 클라가 S3 에 직접 하므로 재현하지 않는다(StubImageStorage.exists 기본값이 "올라왔다")
+    private fun registerImage(
         mockMvc: MockMvc,
         userId: UUID,
-    ): Long {
+    ): Pair<ItemSlot, String> {
         val presignResponse =
             mockMvc
                 .perform(
@@ -524,13 +553,15 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 .andReturn()
                 .response
                 .getContentAsString(Charsets.UTF_8)
-        return objectMapper
-            .readTree(response)
-            .path("data")
-            .path(0)
-            .path("item")
-            .path("id")
-            .asLong()
+        val wishId =
+            objectMapper
+                .readTree(response)
+                .path("data")
+                .path(0)
+                .path("wish")
+                .path("id")
+                .asLong()
+        return ItemSlot.wish(wishId) to imageKey
     }
 
     private fun buildMockMvc(): MockMvc =
@@ -550,8 +581,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
-    // 표시값·상태는 item 의 활성(최신) snapshot 이 보유한다. 폴링·단언이 이 snapshot 을 읽는다.
-    private fun latestSnapshot(itemId: Long): ItemSnapshot? = itemSnapshotRepository.findLatestByItemId(itemId)
+    private fun versionsOf(itemId: Long): List<ItemSnapshot> = itemSnapshotRepository.findAllByItemIds(listOf(itemId))
 
     // item.parsing 카운터의 현재 값. 공유 컨텍스트라 누적되므로 호출 전후 증가분(delta)으로 단언한다(#468 패턴).
     private fun parseCount(
@@ -559,17 +589,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         reason: String,
     ): Double = meterRegistry.find("item.parsing").tags("result", result, "reason", reason).counter()?.count() ?: 0.0
 
-    // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 user·wish·item·snapshot 을 직접 정리한다.
     private fun cleanup(userId: UUID) {
-        // wishes 는 item_id 를 더 들지 않아 snapshot_id 로 item_snapshots 를 조인해 itemId 에 도달한다.
-        val itemIds =
-            jdbcTemplate.queryForList(
-                "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.user_id = ?",
-                Long::class.java,
-                uuidToBytes(userId),
-            )
-        jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        jdbcTemplate.deleteItems(itemIds.filterNotNull())
+        jdbcTemplate.deleteWishDataOf(userId)
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }

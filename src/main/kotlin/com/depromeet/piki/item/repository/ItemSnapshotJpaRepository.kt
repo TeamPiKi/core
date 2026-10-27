@@ -1,20 +1,20 @@
 package com.depromeet.piki.item.repository
 
 import com.depromeet.piki.item.domain.ItemSnapshot
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.LocalDateTime
 
 interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
-    fun findFirstByItemIdAndDeletedAtIsNullOrderByIdDesc(itemId: Long): ItemSnapshot?
-
     @Query(
         "select s from ItemSnapshot s where s.itemId = :itemId " +
-            "and s.status = com.depromeet.piki.item.domain.ItemStatus.READY " +
+            "and s.name is not null and s.price is not null and s.imageUrl is not null " +
             "and s.deletedAt is null " +
-            "and s.source is not null " +
+            "and (s.method is not null or s.userInput = true) " +
             "order by s.id desc",
     )
     fun findPriceHistoryByItemId(
@@ -28,27 +28,14 @@ interface ItemSnapshotJpaRepository : JpaRepository<ItemSnapshot, Long> {
 
     fun findByItemIdInAndDeletedAtIsNullOrderByIdAsc(itemIds: Collection<Long>): List<ItemSnapshot>
 
-    @Query(
-        "select s from ItemSnapshot s where s.itemId = :itemId and s.status in (com.depromeet.piki.item.domain.ItemStatus.PENDING, com.depromeet.piki.item.domain.ItemStatus.PROCESSING) and s.deletedAt is null order by s.id desc limit 1",
-    )
-    fun findLatestInProgressByItemId(
-        @Param("itemId") itemId: Long,
-    ): ItemSnapshot?
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select s from ItemSnapshot s where s.itemId in :itemIds and s.deletedAt is null order by s.id")
+    fun findByItemIdsForShare(
+        @Param("itemIds") itemIds: Collection<Long>,
+    ): List<ItemSnapshot>
 
-    @Query(
-        "select s from ItemSnapshot s where s.itemId = :itemId and s.status = com.depromeet.piki.item.domain.ItemStatus.READY and s.source in (com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER, com.depromeet.piki.item.domain.ItemSnapshotSource.SERVER_LLM) and s.deletedAt is null order by s.id desc limit 1",
-    )
-    fun findLatestMachineReadyByItemId(
-        @Param("itemId") itemId: Long,
-    ): ItemSnapshot?
-
-    @Modifying
-    @Query(
-        value = "UPDATE item_snapshots SET item_id = :toItemId, updated_at = NOW(6) WHERE item_id = :fromItemId",
-        nativeQuery = true,
-    )
-    fun reparentAll(
-        @Param("fromItemId") fromItemId: Long,
-        @Param("toItemId") toItemId: Long,
-    ): Int
+    fun findByItemIdInAndCreatedAtLessThanEqualAndDeletedAtIsNullOrderByIdAsc(
+        itemIds: Collection<Long>,
+        at: LocalDateTime,
+    ): List<ItemSnapshot>
 }

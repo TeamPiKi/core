@@ -18,13 +18,16 @@ class ItemException private constructor(
     override val httpStatus: HttpStatus get() = errorCode.category.httpStatus
 
     companion object {
-        // 수기 수정(MANUAL 새 버전)의 입력 경계 계약 — base 값과 병합해도 필수 필드가 없으면 "쓸 수 있는 상품"
-        // (READY)이 될 수 없다. 엔티티 불변식이 최후의 보루라면, 이건 그 전에 클라이언트에게 400 으로 돌려주는 경계다.
-        // (ALREADY_READY·STILL_PROCESSING 409 는 수기 수정 상시 허용(#825 결정 4)으로 폐기 — ItemErrorCode 결번 참고.)
         fun nameRequiredForReady(): ItemException = ItemException(ItemErrorCode.NAME_REQUIRED_FOR_READY)
 
         fun priceRequiredForReady(): ItemException = ItemException(ItemErrorCode.PRICE_REQUIRED_FOR_READY)
 
         fun imageRequiredForReady(): ItemException = ItemException(ItemErrorCode.IMAGE_REQUIRED_FOR_READY)
+
+        fun notRefreshable(): ItemException = ItemException(ItemErrorCode.NOT_REFRESHABLE)
+
+        fun parsingInProgress(): ItemException = ItemException(ItemErrorCode.PARSING_IN_PROGRESS)
+
+        fun emptyUserInput(): ItemException = ItemException(ItemErrorCode.EMPTY_USER_INPUT)
     }
 }

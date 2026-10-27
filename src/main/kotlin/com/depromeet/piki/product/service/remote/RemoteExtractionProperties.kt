@@ -22,12 +22,16 @@ data class RemoteExtractionProperties(
         // 0/음수는 HttpURLConnection 에서 '무한 타임아웃'이라, 상한 검사만 있으면 워커 스레드가 영구 블록될 수 있다.
         require(readTimeoutMs > 0) { "read-timeout($readTimeoutMs ms)은 양수여야 한다 — 0 은 무한 대기다." }
         require(readTimeoutMs < STALE_TIMEOUT_MS) {
-            "read-timeout($readTimeoutMs ms)은 회수 stale 판정(60s)보다 작아야 한다 — 중복 발주 방지."
+            "read-timeout($readTimeoutMs ms)은 작업 큐 stale 판정(60s)보다 작아야 한다 — recover 유령 중복 발주 방지."
         }
     }
 
     companion object {
-        // TODO: 4단계 회수 도입 시 그쪽 stale 판정 상수와 묶음
+        // ItemParsingScheduler.STALE_TIMEOUT_SECONDS(60L, 초) 를 ms 로 옮긴 복제값. 스케줄러 상수를 직접 참조하면
+        // 순환 의존(item→product 가 이미 있는데 product→item 을 더하는 꼴)이라 값을 복제하고 주석으로 결속한다.
+        // 한계: 이 결속은 기계 강제가 아니라 주석이라, 스케줄러 쪽 60L 을 바꾸면 여기 60_000 도 함께 봐야 한다
+        // (한쪽만 바꾸면 유령 중복 방지 불변식이 조용히 깨진다). 두 값을 공용 상수로 올리는 건 item↔product 패키지
+        // 경계를 건드리는 별도 작업이라 복제+주석으로 둔다.
         private const val STALE_TIMEOUT_MS = 60_000
     }
 }

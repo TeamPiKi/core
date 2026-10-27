@@ -131,8 +131,7 @@ class UserApiExamples(
                         // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
                         add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
                         add(ImageStorageException.existsCheckFailed(), name = "이미지 저장소(S3) 업로드 상태 확인 실패")
-                        add(ImageStorageException.downloadFailed(), name = "이미지 저장소(S3) 원본 읽기 실패")
-                        add(ImageStorageException.uploadFailed(), name = "이미지 저장소(S3) 저장 실패")
+                        add(ImageStorageException.downloadFailed(), name = "이미지 저장소(S3) 올린 이미지 읽기 실패")
                     }
 
                 handlerMethod.binds(UserController::withdraw) ->
@@ -176,9 +175,7 @@ class UserApiExamples(
             operation
         }
 
-    // 발급 example 의 raw key — 실제 발급 형식(items/raw/{UUID}.{ext})과 같은 모양으로 둔다.
-
-    private val SAMPLE_IMAGE_KEY = "items/raw/550e8400-e29b-41d4-a716-446655440000.png"
+    private val SAMPLE_IMAGE_KEY = "profiles/7c9e6679-7425-40de-944b-e07fc1f90ae7/550e8400-e29b-41d4-a716-446655440000.png"
 
 
     private fun sampleUser(): UserResponse =

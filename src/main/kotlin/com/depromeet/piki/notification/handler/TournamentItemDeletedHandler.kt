@@ -14,7 +14,7 @@ import java.util.UUID
 // 재조회 없이 그 항목만 빼고 "OO님이 '상품명'을 삭제" 로 보여줄 수 있게 한다.
 //   - refId=tournamentId : 딥링크(탭하면 그 토너먼트로 입장). 추가 알림과 동일.
 //   - routing=Tournament(tournamentId, tournamentItemId) : payload 에 아이템 좌표를 싣는다(파싱 알림과 공유 셰입).
-//   - itemName : snapshotId 로 상품명 해석. 아직 파싱 전(PROCESSING)이라 name 이 없으면 fallback.
+//   - itemName : snapshotId 로 상품명 해석. 파싱 전이라 버전이 없으면 fallback.
 @Component
 class TournamentItemDeletedHandler(
     private val tournamentUserRepository: TournamentUserRepository,
@@ -31,7 +31,7 @@ class TournamentItemDeletedHandler(
 
     override fun resolveActorContext(event: TournamentItemDeleted): ActorContext {
         val base = tournamentVariables.context(event.tournamentId, event.actorId)
-        val itemName = ItemDisplayName.of(itemSnapshotRepository.findById(event.snapshotId)?.name, MAX_NAME_LENGTH)
+        val itemName = ItemDisplayName.of(event.snapshotId?.let { itemSnapshotRepository.findById(it) }?.name, MAX_NAME_LENGTH)
         return base.copy(variables = base.variables + ("itemName" to itemName))
     }
 

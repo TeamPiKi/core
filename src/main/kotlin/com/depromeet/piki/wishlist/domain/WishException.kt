@@ -33,8 +33,6 @@ class WishException private constructor(
 
         fun invalidIdCount(): WishException = WishException(WishErrorCode.INVALID_ID_COUNT)
 
-        fun notRefreshable(): WishException = WishException(WishErrorCode.NOT_REFRESHABLE)
-
         fun failedNotRefreshable(): WishException = WishException(WishErrorCode.FAILED_NOT_REFRESHABLE)
 
     }
