@@ -3,7 +3,7 @@ package com.depromeet.piki.admin.extraction
 import com.depromeet.piki.admin.access.AdminSession
 import com.depromeet.piki.admin.config.ClientIp
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
-import com.depromeet.piki.product.service.remote.ExtractionTarget
+import com.depromeet.piki.product.domain.ParseInputType
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.stereotype.Controller
@@ -35,7 +35,7 @@ class AdminExtractionModelController(
 
     @PostMapping("/{target}")
     fun save(
-        @PathVariable target: ExtractionTarget,
+        @PathVariable target: ParseInputType,
         @RequestParam("model") rawModel: String,
         request: HttpServletRequest,
         view: Model,
@@ -58,7 +58,7 @@ class AdminExtractionModelController(
 
     @PostMapping("/{target}/check")
     fun check(
-        @PathVariable target: ExtractionTarget,
+        @PathVariable target: ParseInputType,
         view: Model,
     ): String =
         try {
@@ -70,7 +70,7 @@ class AdminExtractionModelController(
 
     @PostMapping("/{target}/clear")
     fun clear(
-        @PathVariable target: ExtractionTarget,
+        @PathVariable target: ParseInputType,
         request: HttpServletRequest,
         view: Model,
     ): String =

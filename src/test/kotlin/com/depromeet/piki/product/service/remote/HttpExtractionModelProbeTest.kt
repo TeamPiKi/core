@@ -1,6 +1,7 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionErrorCode
+import com.depromeet.piki.product.domain.ParseInputType
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -19,7 +20,7 @@ import kotlin.test.assertFailsWith
 
 // 저장 게이트의 판정이 원격 응답 3갈래(200 / 422+code / 그 외)와 정확히 맞물리는지 고정한다. 여기서 나온
 // 메시지가 그대로 백오피스 화면의 거절 사유가 되므로, 사유별 문구까지 상수로 단언한다.
-// 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpProductLinkExtractorTest 와 같은 방식).
+// 외부 경계(원격 HTTP)는 MockRestServiceServer 로 격리한다(HttpLinkSnapshotExtractorTest 와 같은 방식).
 class HttpExtractionModelProbeTest {
     private val probeUrl = "http://extractor.test/internal/models/probe"
 
@@ -45,7 +46,7 @@ class HttpExtractionModelProbeTest {
                             .body(body),
                     )
             }
-        val rejection = assertFailsWith<IllegalArgumentException> { probe.verify(ExtractionTarget.LINK, "gemini-x") }
+        val rejection = assertFailsWith<IllegalArgumentException> { probe.verify(ParseInputType.LINK, "gemini-x") }
         return rejection.message.orEmpty()
     }
 
@@ -61,7 +62,7 @@ class HttpExtractionModelProbeTest {
                     .andRespond(withSuccess())
             }
 
-        probe.verify(ExtractionTarget.IMAGE, "gemini-3-flash")
+        probe.verify(ParseInputType.IMAGE, "gemini-3-flash")
     }
 
     @Test
@@ -93,7 +94,7 @@ class HttpExtractionModelProbeTest {
     fun `422 가 아닌 status 는 일시 실패로 안내한다`() {
         val probe = probeWith { server -> server.expect(requestTo(probeUrl)).andRespond(withServerError()) }
 
-        val e = assertFailsWith<IllegalArgumentException> { probe.verify(ExtractionTarget.LINK, "gemini-x") }
+        val e = assertFailsWith<IllegalArgumentException> { probe.verify(ParseInputType.LINK, "gemini-x") }
         assertEquals(HttpExtractionModelProbe.MESSAGE_UNAVAILABLE, e.message)
     }
 
@@ -104,7 +105,7 @@ class HttpExtractionModelProbeTest {
                 server.expect(requestTo(probeUrl)).andRespond { throw IOException("connection reset") }
             }
 
-        val e = assertFailsWith<IllegalArgumentException> { probe.verify(ExtractionTarget.LINK, "gemini-x") }
+        val e = assertFailsWith<IllegalArgumentException> { probe.verify(ParseInputType.LINK, "gemini-x") }
         assertEquals(HttpExtractionModelProbe.MESSAGE_UNAVAILABLE, e.message)
     }
 }

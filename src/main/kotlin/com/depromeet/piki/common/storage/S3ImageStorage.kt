@@ -41,8 +41,10 @@ class S3ImageStorage(
                     .build(),
                 RequestBody.fromBytes(bytes),
             )
-            "${s3Properties.publicBaseUrl.trimEnd('/')}/${encodePath(key)}"
+            urlOf(key)
         }.getOrElse { e -> throw ImageStorageException.uploadFailed(e) }
+
+    override fun urlOf(key: String): String = "${s3Properties.publicBaseUrl.trimEnd('/')}/${encodePath(key)}"
 
     override fun presignUpload(
         key: String,

@@ -43,9 +43,8 @@ class DbSourcePlatformResolver(
 
     override fun resolve(link: ProductLink?): String? {
         link ?: return null
-        val host = link.normalizedHost() ?: return null
         return platforms.firstOrNull { link.matchesAnyDomain(it.domains) }?.displayName
-            ?: SourcePlatformFallback.of(host)
+            ?: SourcePlatformFallback.of(link.normalizedHost())
     }
 
     private class DomainDisplayName(

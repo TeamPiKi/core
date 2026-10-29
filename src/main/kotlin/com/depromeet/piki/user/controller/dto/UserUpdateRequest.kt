@@ -14,7 +14,7 @@ data class UserUpdateRequest(
     // 형식·존재·실제 내용 검증은 서버가 이 key 로 raw 를 읽어 확정 단계에서 수행한다.
     @field:Schema(
         description = "업로드를 마친 프로필 이미지의 key (선택). POST /users/me/profile-image 로 발급받은 값을 그대로 보낸다",
-        example = "items/raw/550e8400-e29b-41d4-a716-446655440000.png",
+        example = "profiles/7c9e6679-7425-40de-944b-e07fc1f90ae7/550e8400-e29b-41d4-a716-446655440000.png",
         nullable = true,
     )
     val imageKey: String? = null,

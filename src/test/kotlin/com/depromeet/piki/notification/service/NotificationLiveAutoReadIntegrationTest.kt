@@ -1,6 +1,5 @@
 package com.depromeet.piki.notification.service
 
-import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
@@ -8,6 +7,7 @@ import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.notification.sse.SseConnection
 import com.depromeet.piki.notification.sse.SseEmitterRegistry
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.event.TournamentItemAdded
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
@@ -50,12 +50,12 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
     fun `인앱(SSE 연결) 유저의 파싱 완료 알림은 자동 읽음으로 저장된다`() {
         val userId = UUID.randomUUID()
         val itemId = 8101L
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
-        wishRepository.save(Wish(userId, snapshotId, itemId))
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = itemId, name = "나이키")).getId()
+        val slot = wishRepository.save(Wish(userId, itemId)).slot
         val emitter = SseEmitter()
         sseEmitterRegistry.register(SseConnection(userId, emitter))
         try {
-            notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
+            notificationDispatcher.dispatch(ItemParsingCompleted(slot, userId, itemId, snapshotId, refresh = false))
 
             val saved = notificationRepository.findPage(userId, cursor = null, limit = 10)
             assertEquals(1, saved.size)
@@ -70,13 +70,11 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
     fun `인앱(SSE 연결) 유저의 파싱 실패 알림도 자동 읽음으로 저장된다`() {
         // 파싱 실패는 별도 이벤트(ItemParsingFailed)·별도 핸들러라, 완료와 무관하게 자동읽음 경로를 따로 가드한다.
         val userId = UUID.randomUUID()
-        val itemId = 8103L
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
-        wishRepository.save(Wish(userId, snapshotId, itemId))
+        val slot = wishRepository.save(Wish(userId, itemId = null)).slot
         val emitter = SseEmitter()
         sseEmitterRegistry.register(SseConnection(userId, emitter))
         try {
-            notificationDispatcher.dispatch(ItemParsingFailed(itemId, snapshotId))
+            notificationDispatcher.dispatch(ItemParsingFailed(slot, userId, refresh = false))
 
             val saved = notificationRepository.findPage(userId, cursor = null, limit = 10)
             assertEquals(1, saved.size)
@@ -93,12 +91,12 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
         // 여기선 이미 완료된 emitter 로 write 실패를 재현한다.
         val userId = UUID.randomUUID()
         val itemId = 8104L
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
-        wishRepository.save(Wish(userId, snapshotId, itemId))
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = itemId, name = "나이키")).getId()
+        val slot = wishRepository.save(Wish(userId, itemId)).slot
         val deadEmitter = SseEmitter().apply { complete() }
         sseEmitterRegistry.register(SseConnection(userId, deadEmitter))
         try {
-            notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
+            notificationDispatcher.dispatch(ItemParsingCompleted(slot, userId, itemId, snapshotId, refresh = false))
 
             val saved = notificationRepository.findPage(userId, cursor = null, limit = 10)
             assertEquals(1, saved.size)
@@ -112,10 +110,10 @@ class NotificationLiveAutoReadIntegrationTest : IntegrationTestSupport() {
     fun `연결 없는 유저의 파싱 완료 알림은 안읽음으로 저장된다`() {
         val userId = UUID.randomUUID()
         val itemId = 8102L
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, name = "나이키")).getId()
-        wishRepository.save(Wish(userId, snapshotId, itemId))
+        val snapshotId = itemSnapshotRepository.save(itemVersion(itemId = itemId, name = "나이키")).getId()
+        val slot = wishRepository.save(Wish(userId, itemId)).slot
 
-        notificationDispatcher.dispatch(ItemParsingCompleted(itemId, snapshotId))
+        notificationDispatcher.dispatch(ItemParsingCompleted(slot, userId, itemId, snapshotId, refresh = false))
 
         val saved = notificationRepository.findPage(userId, cursor = null, limit = 10)
         assertEquals(1, saved.size)

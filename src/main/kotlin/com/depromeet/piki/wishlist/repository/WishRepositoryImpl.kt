@@ -1,5 +1,8 @@
 package com.depromeet.piki.wishlist.repository
 
+import com.depromeet.piki.image.domain.ProductImageKey
+import com.depromeet.piki.item.domain.CanonicalInput
+import com.depromeet.piki.item.domain.NormalizedInput
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import org.springframework.data.domain.Limit
@@ -13,21 +16,6 @@ class WishRepositoryImpl(
     override fun save(wish: Wish): Wish = wishJpaRepository.save(wish)
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = wishJpaRepository.hardDeleteAllByUserId(userId)
-
-    override fun reparentItem(
-        fromItemId: Long,
-        toItemId: Long,
-    ): Int = wishJpaRepository.reparentItem(fromItemId, toItemId)
-
-    override fun countByIdsAndUserId(
-        ids: List<Long>,
-        userId: UUID,
-    ): Long = wishJpaRepository.countByIdInAndUserId(ids, userId)
-
-    override fun countByItemIdsAndUserId(
-        itemIds: List<Long>,
-        userId: UUID,
-    ): Long = wishJpaRepository.countByItemIdInAndUserIdAndDeletedAtIsNull(itemIds, userId)
 
     override fun findPage(
         userId: UUID,
@@ -54,8 +42,28 @@ class WishRepositoryImpl(
         userId: UUID,
     ): List<Wish> = wishJpaRepository.findByItemIdInAndUserIdAndDeletedAtIsNull(itemIds, userId)
 
-    override fun findOwnerWishIdsBySnapshotId(snapshotId: Long): List<WishOwnerView> =
-        wishJpaRepository.findOwnerWishIdsBySnapshotId(snapshotId)
-
     override fun findCardsByItemId(itemId: Long): List<WishCardView> = wishJpaRepository.findCardsByItemId(itemId)
+
+    override fun findByIdIncludingDeletedForUpdate(id: Long): Wish? = wishJpaRepository.findByIdIncludingDeletedForUpdate(id)
+
+    override fun findIdByUserIdAndNormalizedInput(
+        userId: UUID,
+        normalized: NormalizedInput,
+    ): Long? = wishJpaRepository.findIdsByUserIdAndNormalizedInput(userId, normalized).firstOrNull()
+
+    override fun findIdByUserIdAndItemCanonical(
+        userId: UUID,
+        canonical: CanonicalInput,
+    ): Long? = wishJpaRepository.findIdsByUserIdAndItemCanonical(userId, canonical).firstOrNull()
+
+    override fun findRequestedImageKeys(
+        userId: UUID,
+        keys: Collection<ProductImageKey>,
+    ): Set<ProductImageKey> {
+        if (keys.isEmpty()) return emptySet()
+        return wishJpaRepository
+            .findRequestedInputsByUserId(userId, keys.map { it.value })
+            .map(ProductImageKey::parse)
+            .toSet()
+    }
 }

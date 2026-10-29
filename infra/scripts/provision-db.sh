@@ -57,6 +57,17 @@ ssm_param() {
     --region "$REGION" --query Parameter.Value --output text
 }
 
+# ── 0) 커널 ─────────────────────────────────────────────────────────────────
+# tcp_retries2 — ACK 없는 재전송을 기본 15(약 15-17분) 대신 8(약 100초)에서 포기한다(#1249). 호스트 소켓에만
+# 닿는다. MySQL·Redis 컨테이너는 별도 net namespace 라 compose/db.yml 의 sysctls 가 같은 값을 따로 건다.
+if [ "$(cat /proc/sys/net/ipv4/tcp_retries2)" = "8" ]; then
+  echo "[tcp_retries2] 이미 8 — skip"
+else
+  echo "[tcp_retries2] $(cat /proc/sys/net/ipv4/tcp_retries2) → 8 설정"
+  echo 'net.ipv4.tcp_retries2=8' | sudo tee /etc/sysctl.d/99-tcp-retries2.conf
+  sudo sysctl -w net.ipv4.tcp_retries2=8
+fi
+
 # ── 1) MySQL ────────────────────────────────────────────────────────────────
 # 자격증명은 컨테이너를 "최초 생성"할 때만 쓰인다. 이미 있으면 값이 안 쓰이지만 조회는 매번 한다 —
 # 재생성 때만 도는 경로로 두면 조용히 썩은 채 가장 필요한 순간에 터진다(provision-runtime.sh 와 같은 규율).

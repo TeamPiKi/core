@@ -1,59 +1,60 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
+import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ItemParseOutboxStatus
+import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
-import com.depromeet.piki.item.service.ItemParsingService
-import com.depromeet.piki.item.service.ParsingOwnership
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubProductLinkExtractor
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
+import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.imageItem
+import com.depromeet.piki.support.itemVersion
+import com.depromeet.piki.support.linkItem
+import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.uuidToBytes
-import com.depromeet.piki.tournament.domain.TournamentItem
-import com.depromeet.piki.tournament.repository.TournamentItemJpaRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishRepository
-import com.depromeet.piki.wishlist.service.WishPersistenceService
+import org.awaitility.Awaitility.await
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
-import org.awaitility.Awaitility.await
 import java.time.Duration
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
-import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
-// 위시 새로고침(#358)은 등록과 같은 비동기 작업 큐 흐름이다 — 새 PENDING snapshot 을 적재하고 활성 포인터를 즉시 스왑한 뒤
-// 디스패처가 집어 READY/FAILED 로 전이한다. @Transactional 자동 롤백으로는 워커(별도 스레드·새 트랜잭션)가
-// 미커밋 데이터를 못 보므로, 여기서는 실제 커밋하고 전이를 기다린다(awaitTicking 이 디스패처 tick 을 직접 돌린다).
-// 자기가 만든 행은 격리 userId 로 정리한다.
+// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
 
     @Autowired
-    private lateinit var stubProductLinkExtractor: StubProductLinkExtractor
+    private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
     @Autowired
     private lateinit var itemRepository: ItemRepository
@@ -62,10 +63,10 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
-    private lateinit var wishRepository: WishRepository
+    private lateinit var itemParseOutboxRepository: ItemParseOutboxRepository
 
     @Autowired
-    private lateinit var tournamentItemJpaRepository: TournamentItemJpaRepository
+    private lateinit var wishRepository: WishRepository
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -74,78 +75,73 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private lateinit var jwtProvider: JwtProvider
 
     @Autowired
-    private lateinit var itemParsingService: ItemParsingService
-
-    @Autowired
     private lateinit var itemParsingScheduler: ItemParsingScheduler
-
-    @Autowired
-    private lateinit var parsingOwnership: ParsingOwnership
-
-    @Autowired
-    private lateinit var wishPersistenceService: WishPersistenceService
 
     @Autowired
     private lateinit var notificationRepository: NotificationRepository
 
     @Test
-    fun `READY 위시를 새로고침하면 새 PENDING 버전이 활성이 되고 추출 성공 시 READY 로 전이한다`() {
+    fun `READY 위시를 새로고침하면 값은 그대로 refreshing 이 켜지고 성공하면 같은 아이템에 새 버전이 쌓인다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            stubLinkSnapshotExtractor.build = {
+                ProductSnapshot(name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
-            val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
+            val (wishId, itemId, oldVersionId) = saveReadyWish(userId, "https://shop.example.com/products/refresh", "옛 상품", 10_000)
 
-            // 새로고침 — 같은 item 의 새 PENDING 버전이 즉시 활성이 된다(등록과 동일 비동기 전이 모델: 완료는 SSE 알림으로 통보).
             mockMvc
                 .perform(
                     post("/api/v1/wishlists/$wishId/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
                 .andExpect(jsonPath("$.data.item.id").value(itemId))
-                .andExpect(jsonPath("$.data.item.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.item.status").value("READY"))
+                .andExpect(jsonPath("$.data.item.refreshing").value(true))
+                .andExpect(jsonPath("$.data.item.name").value("옛 상품"))
+                .andExpect(jsonPath("$.data.item.price").value(10_000))
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            val active = latestSnapshot(itemId) ?: error("item $itemId 의 snapshot 이 없다")
-            assertEquals("새 상품", active.name)
-            assertEquals(20_000, active.price)
-            assertNotEquals(oldSnapshotId, active.getId()) // 새 버전 행
+            val slot = ItemSlot.wish(wishId)
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
 
-            // 옛 snapshot 행은 보존된다(토너먼트 출전 격리의 근거) — 여전히 READY, 옛 값.
-            val preserved = itemSnapshotRepository.findById(oldSnapshotId) ?: error("옛 snapshot 이 사라졌다")
-            assertEquals(ItemStatus.READY, preserved.status)
-            assertEquals("옛 상품", preserved.name)
+            val versions = versionsOf(itemId)
+            assertEquals(2, versions.size)
+            assertEquals(listOf("옛 상품", "새 상품"), versions.sortedBy { it.getId() }.map { it.name })
+            assertEquals(oldVersionId, versions.minBy { it.getId() }.getId())
+            assertEquals(itemId, wishRepository.findById(wishId)?.itemId)
 
-            assertEquals(active.getId(), wishRepository.findById(wishId)?.waitingSnapshotId)
+            mockMvc
+                .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
+                .andExpect(jsonPath("$.data.item.name").value("새 상품"))
+                .andExpect(jsonPath("$.data.item.price").value(20_000))
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `이미 진행 중인 위시를 새로고침하면 새 추출을 만들지 않고 현재 진행 상태를 그대로 반환한다`() {
+    fun `새로고침이 진행 중인 위시를 다시 새로고침하면 요청을 더 쌓지 않고 진행 상태를 그대로 반환한다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/inprogress")))
-            val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
-            val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-            val itemId = item.getId()
-            val before = countSnapshots(itemId)
+            val (wishId, itemId, _) = saveReadyWish(userId, "https://shop.example.com/products/inprogress", "옛 상품", 10_000)
+            repeat(2) {
+                mockMvc
+                    .perform(
+                        post("/api/v1/wishlists/$wishId/refresh")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                    ).andExpect(status().isOk)
+                    .andExpect(jsonPath("$.data.item.id").value(itemId))
+                    .andExpect(jsonPath("$.data.item.refreshing").value(true))
+                    .andExpect(jsonPath("$.data.item.name").value("옛 상품"))
+            }
 
-            mockMvc
-                .perform(
-                    post("/api/v1/wishlists/${wish.getId()}/refresh")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
-                ).andExpect(status().isOk)
-                .andExpect(jsonPath("$.data.item.status").value("PROCESSING"))
-
-            assertEquals(before, countSnapshots(itemId))
-            assertEquals(snapshot.getId(), wishRepository.findById(wish.getId())?.waitingSnapshotId)
+            assertEquals(1, countParseOutbox(ItemSlot.wish(wishId)))
+            assertEquals(1, versionsOf(itemId).size)
         } finally {
             cleanup(userId)
         }
@@ -157,28 +153,17 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            // 이미지로 등록한 item 은 link 가 없어 재추출 입력이 없다.
-            val item = itemRepository.save(Item(link = null))
-            val snapshot =
-                itemSnapshotRepository.save(
-                    ItemSnapshot(
-                        itemId = item.getId(),
-                        name = "이미지 상품",
-                        price = 5_000,
-                        currency = "KRW",
-                        status = ItemStatus.READY,
-                        extractedAt = LocalDateTime.now(),
-                    ),
-                )
-            val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
+            val item = itemRepository.save(imageItem())
+            itemSnapshotRepository.save(itemVersion(item.getId(), name = "이미지 상품", price = 5_000, createdBy = userId))
+            val wish = wishRepository.save(Wish(userId = userId, itemId = item.getId()))
 
             mockMvc
                 .perform(
                     post("/api/v1/wishlists/${wish.getId()}/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isBadRequest)
-                .andExpect(jsonPath("$.code").value("WISH-007"))
-                .andExpect(jsonPath("$.detail").value("링크가 없는 항목은 새로고침할 수 없습니다."))
+                .andExpect(jsonPath("$.code").value("ITEM-007"))
+                .andExpect(jsonPath("$.detail").value("링크로 등록한 상품만 새로고침할 수 있어요."))
         } finally {
             cleanup(userId)
         }
@@ -189,12 +174,11 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val owner = UUID.randomUUID()
         insertMember(owner)
-        // 회원 가드(requireMember)가 findById 로 identityType 을 보므로 attacker 도 실제 회원 행이 있어야
-        // 가드를 통과해 소유권 검증(403)까지 닿는다. 행이 없으면 가드가 먼저 404(notFound)로 막는다.
+        // 회원 가드가 먼저 회원 행을 보므로 attacker 도 회원이어야 소유권 검증(403)까지 닿는다
         val attacker = UUID.randomUUID()
         insertMember(attacker)
         try {
-            val (wishId, _, _) = seedReadyWish(owner, "https://shop.example.com/products/owned", "옛 상품", 10_000)
+            val (wishId, _, _) = saveReadyWish(owner, "https://shop.example.com/products/owned", "옛 상품", 10_000)
 
             mockMvc
                 .perform(
@@ -232,14 +216,15 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `추출 실패(FAILED) 위시를 새로고침하면 409 로 거부된다`() {
-        // 표시값까지 FAILED(같은 item 에 기계 READY 부재)면 재추출도 결정론적으로 재실패한다 — 보정(recover,
-        // 수기 수정)으로 유도한다. 아래 "남이 채운 READY" 테스트의 대조군: 이게 없으면 판정을 통째로 지워도 초록불이다.
+    fun `아이템이 확정되지 못한 실패 위시를 새로고침하면 409 로 거부되고 요청이 쌓이지 않는다`() {
+        // 재추출해도 결정론적으로 다시 실패해 사용자 입력으로 유도한다
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val (wish, _, _) = seedFailedWish(userId, "https://shop.example.com/products/failed")
+            val url = "https://shop.example.com/products/failed"
+            val wish = wishRepository.save(Wish(userId = userId, itemId = null))
+            itemParseOutboxRepository.save(failedOutbox(wish.slot, url))
 
             mockMvc
                 .perform(
@@ -248,65 +233,52 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isConflict)
                 .andExpect(jsonPath("$.code").value("WISH-008"))
                 .andExpect(jsonPath("$.detail").value("추출에 실패한 항목은 새로고침 대신 정보를 직접 입력해 복구해 주세요."))
+
+            assertEquals(1, countParseOutbox(wish.slot))
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `포인터가 FAILED 여도 같은 item 에 남이 채운 기계 READY 가 있으면 새로고침된다`() {
-        // 회귀(#1006 과 같은 축): 카드는 표시값(최신 기계 READY)을 그리는데 판정만 포인터를 보면, 화면엔 값이
-        // 다 떠 있는데 "실패한 항목이라 안 된다"(409)가 나간다. item 이 추출 가능하다는 증거(남의 성공)가 있으므로
-        // 새로고침을 허용하고 새 PENDING 으로 스왑되는 것까지 본다.
+    fun `직전 새로고침이 실패했어도 아이템이 있는 위시는 다시 새로고침된다`() {
+        // 409 는 아이템이 없는 실패 위시에만 걸린다. 위 테스트의 대조군
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            val (wish, item, failed) = seedFailedWish(userId, "https://shop.example.com/products/failed-shared")
-            // 남이 같은 링크를 담아 추출이 성공한 상황 — source 가 기계(SERVER)여야 표시값 파생 후보에 든다.
-            itemSnapshotRepository.save(
-                ItemSnapshot(
-                    itemId = item.getId(),
-                    name = "남이 채운 이름",
-                    price = 89_000,
-                    currency = "KRW",
-                    imageUrl = "https://img.example.com/b.png",
-                    status = ItemStatus.READY,
-                    extractedAt = LocalDateTime.now(),
-                    source = ItemSnapshotSource.SERVER,
-                ),
-            )
+            val url = "https://shop.example.com/products/refresh-failed-before"
+            val (wishId, itemId, _) = saveReadyWish(userId, url, "옛 상품", 10_000)
+            val slot = ItemSlot.wish(wishId)
+            itemParseOutboxRepository.save(failedOutbox(slot, url))
 
             mockMvc
                 .perform(
-                    post("/api/v1/wishlists/${wish.getId()}/refresh")
+                    post("/api/v1/wishlists/$wishId/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(itemId))
+                .andExpect(jsonPath("$.data.item.status").value("READY"))
+                .andExpect(jsonPath("$.data.item.refreshing").value(true))
 
-            val swapped = wishRepository.findById(wish.getId())!!
-            assertNotEquals(failed.getId(), swapped.waitingSnapshotId, "활성 포인터가 새 버전으로 스왑돼야 한다")
-            assertEquals(ItemStatus.PENDING, itemSnapshotRepository.findById(swapped.waitingSnapshotId)?.status)
+            assertEquals(2, countParseOutbox(slot))
+            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
         } finally {
             cleanup(userId)
         }
     }
 
     @Test
-    fun `토너먼트에 출전한 위시를 새로고침해도 출전 시점 snapshot 은 바뀌지 않는다`() {
-        // #362 의 핵심 회귀 — 위시 갱신이 tournament_item 의 고정 snapshot 을 침범하면 출전 공정성이 깨진다.
+    fun `위시를 새로고침해 파싱이 완료되면 본인에게 새로고침 완료 알림만 발행된다`() {
+        // 등록 완료와 새로고침 완료는 요청 시점에 아이템이 있었는지로 갈린다(#1036). HTTP 에서 리스너까지 고정한다
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         try {
-            stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            stubLinkSnapshotExtractor.build = {
+                ProductSnapshot(name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
-            val (wishId, itemId, oldSnapshotId) = seedReadyWish(userId, "https://shop.example.com/products/inplay", "옛 상품", 10_000)
-            // 출전 시점 고정 — tournament_item 이 옛 snapshot 을 가리킨다(FK 없으니 tournament 행 없이도 격리만 검증).
-            val tournamentItem =
-                tournamentItemJpaRepository.save(
-                    TournamentItem(tournamentId = 999_999L, userId = userId, snapshotId = oldSnapshotId),
-                )
+            val (wishId, _, _) = saveReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
 
             mockMvc
                 .perform(
@@ -314,52 +286,15 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
 
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-
-            assertNotEquals(oldSnapshotId, wishRepository.findById(wishId)?.waitingSnapshotId)
-            val fixedSnapshotId =
-                jdbcTemplate.queryForObject(
-                    "SELECT snapshot_id FROM tournament_items WHERE id = ?",
-                    Long::class.java,
-                    tournamentItem.getId(),
-                )
-            assertEquals(oldSnapshotId, fixedSnapshotId)
-            val preserved = itemSnapshotRepository.findById(oldSnapshotId) ?: error("옛 snapshot 이 사라졌다")
-            assertEquals("옛 상품", preserved.name)
-            assertEquals(ItemStatus.READY, preserved.status)
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `위시를 새로고침해 파싱이 완료되면 본인에게 새로고침 완료 알림이 발행된다`() {
-        // refresh 도 등록과 동일한 markReady→ItemParsingCompleted 경로를 타지만, 위시가 새 버전보다 먼저 있었다는
-        // 사실로 등록과 갈려(#1036) 위시 주인(본인)에게 ITEM_REFRESH_COMPLETED 가 발행되고 등록 완료 알림은 오지 않는다.
-        // 그 갈림을 실제 HTTP→디스패처→리스너 경로로 end-to-end 고정한다(수신자 해석 단위는 NotificationRecipientResolutionIntegrationTest).
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            stubProductLinkExtractor.build = {
-                ProductSnapshot(link = it, name = "새 상품", price = 20_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            itemParsingScheduler.awaitTicking {
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
             }
-            val (wishId, itemId, _) = seedReadyWish(userId, "https://shop.example.com/products/refresh-notify", "옛 상품", 10_000)
-
-            mockMvc
-                .perform(
-                    post("/api/v1/wishlists/$wishId/refresh")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
-                ).andExpect(status().isOk)
-
-            itemParsingScheduler.awaitTicking { latestSnapshot(itemId)?.status == ItemStatus.READY }
-            // 새로고침 완료 알림이 본인에게 저장됐다 (markReady 의 AFTER_COMMIT 리스너 → 비동기 저장이라 await).
+            // AFTER_COMMIT 리스너가 비동기로 저장한다
             await().atMost(Duration.ofSeconds(5)).until {
                 notificationRepository
                     .findPage(userId, cursor = null, limit = 10)
                     .any { it.type == NotificationType.ITEM_REFRESH_COMPLETED }
             }
-            // 등록 완료 알림은 오지 않는다 — 둘은 수신자가 배타적이다.
             assertEquals(
                 listOf(NotificationType.ITEM_REFRESH_COMPLETED),
                 notificationRepository.findPage(userId, cursor = null, limit = 10).map { it.type },
@@ -370,119 +305,87 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `markExtracted 는 claim 한 snapshot 만 전이하고 같은 item 의 다른 진행 중 버전은 건드리지 않는다`() {
-        // F2 회귀 — 갱신은 한 item 에 여러 진행 중 snapshot 을 만든다. 전이가 findLatestByItemId(최신)가 아니라
-        // claim 한 snapshotId 를 짚어야, stale·좀비 워커가 다른(새) 버전을 오전이하지 않는다.
+    fun `새로고침 중인 위시는 사용자 입력이 409 이고 버전과 진행 중인 새로고침이 그대로다`() {
+        val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/two-versions")))
         try {
-            val v1 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
-            val v2 = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
+            val url = "https://shop.example.com/products/input-while-refreshing"
+            val (wishId, itemId, _) = saveReadyWish(userId, url, "기계 값", 10_000)
+            val slot = ItemSlot.wish(wishId)
+            itemParseOutboxRepository.save(ItemParseOutbox.of(slot, ParsePurpose.REFRESH, ParseInput.Link(ProductLink.parse(url))))
 
-            // v1(더 낮은 id, 최신 아님)을 지정해 전이 — findLatest 였다면 v2 가 전이됐을 것이다.
-            // 집기는 attempt 를 안 올리므로 워커의 소유권 획득(0 -> 1)을 재현한 뒤 그 토큰으로 전이한다.
-            val attempt = parsingOwnership.acquire(v1.getId(), 0) ?: error("소유권 획득 실패")
-            itemParsingService.markExtracted(
-                v1.getId(),
-                ProductSnapshot(link = null, name = "버전1", price = 100, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
-                expectedAttempt = attempt,
-            )
+            mockMvc
+                .perform(
+                    multipart("/api/v1/wishlists/$wishId")
+                        .param("name", "직접 입력한 이름")
+                        .with {
+                            it.method = "PATCH"
+                            it
+                        }.header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                ).andExpect(status().isConflict)
+                .andExpect(jsonPath("$.code").value("ITEM-008"))
 
-            assertEquals(ItemStatus.READY, itemSnapshotRepository.findById(v1.getId())?.status)
-            assertEquals("버전1", itemSnapshotRepository.findById(v1.getId())?.name)
-            // 최신(v2)은 그대로 PROCESSING — claim 한 행만 정확히 전이됐다.
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(v2.getId())?.status)
-            assertNull(itemSnapshotRepository.findById(v2.getId())?.name)
+            assertEquals(listOf("기계 값"), versionsOf(itemId).map { it.name })
+            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
         } finally {
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
+            cleanup(userId)
         }
     }
 
     @Test
-    fun `manualEdit 은 위시 활성 버전을 base 로 MANUAL 새 버전을 쌓아 스왑하고 기존 행들은 건드리지 않는다`() {
-        // 수기 수정(#825 결정 4) 회귀 — 활성(FAILED) 버전이 최신이 아니어도 base 는 wish 활성 포인터가 결정하고,
-        // 수정은 기존 행을 고치지 않으므로 FAILED 행도 같은 item 의 최신(PROCESSING) 행도 그대로 남는다.
+    fun `등록 파싱 중인 위시를 새로고침하면 409 없이 아이템 없는 PARSING 응답을 그대로 돌려준다`() {
+        val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
-        val item = itemRepository.save(Item(ProductLink.parse("https://shop.example.com/products/recover-version")))
         try {
-            val failed =
-                itemSnapshotRepository.save(
-                    ItemSnapshot.pending(item.getId(), requestedBy = userId).apply {
-                        markProcessing()
-                        markFailed()
-                    },
-                )
-            val newer = itemSnapshotRepository.save(ItemSnapshot.pending(item.getId(), requestedBy = userId).apply { markProcessing() })
-            val wish = wishRepository.save(Wish(userId, failed.getId(), failed.itemId))
+            val url = "https://shop.example.com/products/refresh-parsing"
+            val wish = wishRepository.save(Wish(userId = userId, itemId = null))
+            itemParseOutboxRepository.save(ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))))
 
-            val result =
-                wishPersistenceService.manualEdit(
-                    userId = userId,
-                    wishId = wish.getId(),
-                    name = "보정",
-                    price = 200,
-                    imageUrl = "https://img.example.com/a.png",
-                    currency = "KRW",
-                    memo = null,
-                )
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/${wish.getId()}/refresh")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.status").value("PARSING"))
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
+                .andExpect(jsonPath("$.data.item.sourceUrl").value(url))
 
-            // 새 MANUAL 버전이 활성으로 스왑됐다 — 편집자·출처가 박힌다.
-            val active =
-                itemSnapshotRepository.findById(wishRepository.findById(wish.getId())!!.waitingSnapshotId)
-                    ?: error("활성 snapshot 이 없다")
-            assertEquals(result.snapshot.getId(), active.getId())
-            assertEquals(ItemStatus.READY, active.status)
-            assertEquals("보정", active.name)
-            assertEquals(ItemSnapshotSource.MANUAL, active.source)
-            assertEquals(userId, active.createdBy)
-            // 기존 행들은 불변 — FAILED 는 FAILED 로(이력), 최신 PROCESSING 은 파싱 계속.
-            assertEquals(ItemStatus.FAILED, itemSnapshotRepository.findById(failed.getId())?.status)
-            assertEquals(ItemStatus.PROCESSING, itemSnapshotRepository.findById(newer.getId())?.status)
+            assertEquals(1, countParseOutbox(wish.slot))
         } finally {
-            jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM items WHERE id = ?", item.getId())
-            jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
+            cleanup(userId)
         }
     }
 
-    // READY 상태의 link 보유 위시를 직접 시딩한다. (wishId, itemId, snapshotId) 반환.
-    // FAILED 위시 시딩 — 재추출 입력(link)이 있는 item 에 실패로 종결된 활성 포인터를 단다.
-    private fun seedFailedWish(
-        userId: UUID,
-        url: String,
-    ): Triple<Wish, Item, ItemSnapshot> {
-        val item = itemRepository.save(Item(ProductLink.parse(url)))
-        val failed = itemSnapshotRepository.save(ItemSnapshot(itemId = item.getId(), status = ItemStatus.FAILED))
-        val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = failed.getId(), itemId = failed.itemId))
-        return Triple(wish, item, failed)
-    }
-
-    private fun seedReadyWish(
+    // 파싱 경로를 거치지 않고 행만 저장한다
+    private fun saveReadyWish(
         userId: UUID,
         url: String,
         name: String,
         price: Int,
-    ): Triple<Long, Long, Long> {
-        val item = itemRepository.save(Item(ProductLink.parse(url)))
-        val snapshot =
-            itemSnapshotRepository.save(
-                ItemSnapshot(
-                    itemId = item.getId(),
-                    name = name,
-                    price = price,
-                    currency = "KRW",
-                    status = ItemStatus.READY,
-                    extractedAt = LocalDateTime.now(),
-                ),
-            )
-        val wish = wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshot.getId(), itemId = snapshot.itemId))
-        return Triple(wish.getId(), item.getId(), snapshot.getId())
+    ): SavedWish {
+        val item = itemRepository.save(linkItem(url))
+        val version = itemSnapshotRepository.save(itemVersion(item.getId(), name = name, price = price, createdBy = userId))
+        val wish = wishRepository.save(Wish(userId = userId, itemId = item.getId()))
+        return SavedWish(wishId = wish.getId(), itemId = item.getId(), versionId = version.getId())
     }
+
+    private data class SavedWish(
+        val wishId: Long,
+        val itemId: Long,
+        val versionId: Long,
+    )
+
+    private fun failedOutbox(
+        slot: ItemSlot,
+        url: String,
+    ): ItemParseOutbox =
+        ItemParseOutbox.of(slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))).apply {
+            claim()
+            fail()
+        }
 
     private fun buildMockMvc(): MockMvc =
         MockMvcBuilders
@@ -501,27 +404,18 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
-    private fun latestSnapshot(itemId: Long): ItemSnapshot? = itemSnapshotRepository.findLatestByItemId(itemId)
+    private fun versionsOf(itemId: Long): List<ItemSnapshot> = itemSnapshotRepository.findAllByItemIds(listOf(itemId))
 
-    private fun countSnapshots(itemId: Long): Int =
-        jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?", Int::class.java, itemId) ?: 0
+    private fun countParseOutbox(slot: ItemSlot): Int =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ?",
+            Int::class.java,
+            slot.type.name,
+            slot.id,
+        ) ?: 0
 
-    // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 행을 직접 정리한다. wishes 는 snapshot_id 만 들어(4b)
-    // item_snapshots 를 조인해 itemId 에 도달하고, tournament_item 은 snapshot_id 로 그 itemId 의 버전들을 가리킨다.
     private fun cleanup(userId: UUID) {
-        val itemIds =
-            jdbcTemplate.queryForList(
-                "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.user_id = ?",
-                Long::class.java,
-                uuidToBytes(userId),
-            )
-        jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        itemIds.takeIf { it.isNotEmpty() }?.let {
-            val ph = it.joinToString(",")
-            jdbcTemplate.update("DELETE FROM tournament_items WHERE snapshot_id IN (SELECT id FROM item_snapshots WHERE item_id IN ($ph))")
-            jdbcTemplate.update("DELETE FROM item_snapshots WHERE item_id IN ($ph)")
-            jdbcTemplate.update("DELETE FROM items WHERE id IN ($ph)")
-        }
+        jdbcTemplate.deleteWishDataOf(userId)
         jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }

@@ -1,18 +1,24 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.Item
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ItemSnapshotSource
-import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.itemVersion
+import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.repository.WishRepository
+import jakarta.persistence.EntityManager
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -29,13 +35,7 @@ import org.springframework.web.context.WebApplicationContext
 import java.time.LocalDateTime
 import java.util.UUID
 
-// 상세 조회(GET /wishlists/{wishId})가 함께 내려주는 가격 이력의 계약을 고정한다. 동기 조회라 @Transactional 자동 롤백으로 격리하고,
-// 한 item 에 버전을 직접 쌓아 "갱신·새로고침·수기 수정이 누적된 상태"를 시딩한다.
-//
-// 고정하는 계약: 출처가 남은 READY 버전(서버 추출·수기 모두, 편집자 무관)을 최신순으로, 출처 미상(null)·
-// 미완성(PENDING/PROCESSING/FAILED)·soft-delete 는 제외, 상한 50건. 수기는 editedByMe 로 본인 것인지만 구분하고
-// 편집자 식별자는 내리지 않는다. 그리고 **item 과 priceHistory 가 별개의 축**이라는 것 — item 은 맥락 스코프를 거친
-// 표시값이고 이력은 그 필터를 타지 않아, 이력 첫 항목이 표시값과 다를 수 있다.
+// item 은 맥락 스코프를 거친 표시값이고 priceHistory 는 그 필터를 타지 않아, 이력 첫 항목이 표시값과 다를 수 있다
 @Transactional
 class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -48,6 +48,9 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
+    private lateinit var itemParseOutboxRepository: ItemParseOutboxRepository
+
+    @Autowired
     private lateinit var wishRepository: WishRepository
 
     @Autowired
@@ -55,6 +58,9 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var jwtProvider: JwtProvider
+
+    @Autowired
+    private lateinit var entityManager: EntityManager
 
     @Test
     fun `상세 조회하면 표시값과 가격 이력이 함께 내려가고 이력은 최신순이다`() {
@@ -64,8 +70,8 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val itemId = saveItem("https://shop.example.com/products/history")
         saveMachineReady(itemId, "옛 상품", 119_000, LocalDateTime.of(2026, 5, 1, 10, 0))
         saveMachineReady(itemId, "중간 상품", 99_000, LocalDateTime.of(2026, 5, 15, 10, 0))
-        val active = saveMachineReady(itemId, "현재 상품", 109_000, LocalDateTime.of(2026, 6, 1, 10, 0))
-        val wishId = saveWish(userId, active)
+        saveMachineReady(itemId, "현재 상품", 109_000, LocalDateTime.of(2026, 6, 1, 10, 0))
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -75,84 +81,71 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.wish.id").value(wishId))
             .andExpect(jsonPath("$.data.item.id").value(itemId))
             .andExpect(jsonPath("$.data.item.status").value("READY"))
-            .andExpect(jsonPath("$.data.item.source").value("SERVER"))
+            .andExpect(jsonPath("$.data.item.method").value("STRUCTURED"))
             .andExpect(jsonPath("$.data.item.name").value("현재 상품"))
             .andExpect(jsonPath("$.data.item.price").value(109_000))
             .andExpect(jsonPath("$.data.item.sourceUrl").value("https://shop.example.com/products/history"))
             // 백오피스(source_platforms) 미등록 도메인 — host 에서 유도한 임시 표시명(등록 가능 도메인의 첫 라벨)이 나간다.
             .andExpect(jsonPath("$.data.item.sourcePlatform").value("example"))
             .andExpect(jsonPath("$.data.priceHistory.length()").value(3))
-            // 최신순(id desc). 항목은 가격과 추출시각 둘뿐이다.
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(109_000))
-            // 시각은 UTC wall-clock 으로 저장하고 응답에서 KST(+09:00)로 변환한다(JacksonConfig).
-            // KST 는 DST 가 없는 고정 오프셋이라 이 단언은 실행 환경 타임존과 무관하게 결정적이다.
+            // UTC 로 저장하고 응답에서 KST 로 바꾼다(JacksonConfig). KST 는 DST 가 없어 실행 환경 타임존과 무관하다
             .andExpect(jsonPath("$.data.priceHistory[0].extractedAt").value("2026-06-01T19:00:00+09:00"))
-            .andExpect(jsonPath("$.data.priceHistory[0].source").value("SERVER"))
+            .andExpect(jsonPath("$.data.priceHistory[0].method").value("STRUCTURED"))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(99_000))
             .andExpect(jsonPath("$.data.priceHistory[2].price").value(119_000))
-            // 이력이 별도 API 로 갈리지 않게 한 결과 — 상세 응답 하나로 끝난다.
             .andExpect(jsonPath("$.data.priceHistory[0].snapshotId").doesNotExist())
             .andExpect(jsonPath("$.data.priceHistory[0].isActive").doesNotExist())
             .andExpect(jsonPath("$.data.activeSnapshotId").doesNotExist())
     }
 
     @Test
-    fun `가격 이력에는 타인의 수기도 담기고 editedByMe 로 구분된다 - 출처 미상만 빠진다`() {
-        // 이력은 그 상품의 가격 기록이라 편집자를 가리지 않는다. 다만 타인의 값은 어떤 조건에서 본 것인지 알 수 없어
-        // editedByMe 로 구분해 주고, 편집자 식별자(UUID)는 개인정보라 응답에 싣지 않는다.
-        // 출처 미상(도입 전 행)만 빠진다 — 서버 추출인지 사용자 입력인지 소급 판정할 수 없기 때문이다.
-        //
-        // 동시에 이 케이스는 **item 과 priceHistory 가 별개의 축**임을 고정한다. 이력은 편집자를 가리지 않는 그 상품의
-        // 기록이고, 표시값은 내 맥락의 값 vs 공유 기계 READY 의 최신순(#1051)이다 — 포인터가 기계 버전을 가리켜도 내 수기
-        // (99,000원)가 LLM 버전(97,000원)보다 새로우므로 카드는 내 수기값이다.
+    fun `가격 이력에는 타인의 입력도 담기고 editedByMe 로 구분된다 - 출처 미상만 빠진다`() {
+        // 출처 미상(도입 전 행)은 서버 추출인지 사용자 입력인지 소급 판정할 수 없어 뺀다. 편집자 UUID 는 개인정보라 싣지 않는다
         val mockMvc = buildMockMvc()
         val me = UUID.randomUUID()
         val other = UUID.randomUUID()
         insertMember(me)
         val itemId = saveItem("https://shop.example.com/products/source-labels")
-        saveVersion(itemId, "출처 미상", 90_000, source = null, createdBy = null)
-        val machine = saveVersion(itemId, "기계 추출", 95_000, source = ItemSnapshotSource.SERVER, createdBy = null)
-        saveVersion(itemId, "타인 수기", 80_000, source = ItemSnapshotSource.MANUAL, createdBy = other)
-        saveVersion(itemId, "LLM 추출", 97_000, source = ItemSnapshotSource.SERVER_LLM, createdBy = null)
-        saveVersion(itemId, "내 수기", 99_000, source = ItemSnapshotSource.MANUAL, createdBy = me)
-        val wishId = saveWish(me, machine)
+        saveVersion(itemId, "출처 미상", 90_000, method = null, userInput = false, createdBy = UUID.randomUUID())
+        saveVersion(itemId, "기계 추출", 95_000, method = ExtractionMethod.STRUCTURED, userInput = false, createdBy = UUID.randomUUID())
+        saveVersion(itemId, "타인 수기", 80_000, method = null, userInput = true, createdBy = other)
+        saveVersion(itemId, "LLM 추출", 97_000, method = ExtractionMethod.LLM, userInput = false, createdBy = UUID.randomUUID())
+        saveVersion(itemId, "내 수기", 99_000, method = null, userInput = true, createdBy = me)
+        val wishId = saveWish(me, itemId)
 
         mockMvc
             .perform(
                 get("/api/v1/wishlists/$wishId")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(me)}"),
             ).andExpect(status().isOk)
-            // 다섯 버전 중 넷이 남는다 — 출처 미상만 빠진다.
             .andExpect(jsonPath("$.data.priceHistory.length()").value(4))
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
-            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[0].userInput").value(true))
             .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").value(true))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(97_000))
-            .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER_LLM"))
-            // 기계 추출값은 "누가 넣었나" 가 의미 없어 editedByMe 를 내리지 않는다.
+            .andExpect(jsonPath("$.data.priceHistory[1].method").value("LLM"))
             .andExpect(jsonPath("$.data.priceHistory[1].editedByMe").doesNotExist())
             .andExpect(jsonPath("$.data.priceHistory[2].price").value(80_000))
-            .andExpect(jsonPath("$.data.priceHistory[2].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[2].userInput").value(true))
             .andExpect(jsonPath("$.data.priceHistory[2].editedByMe").value(false))
             .andExpect(jsonPath("$.data.priceHistory[3].price").value(95_000))
-            .andExpect(jsonPath("$.data.priceHistory[3].source").value("SERVER"))
+            .andExpect(jsonPath("$.data.priceHistory[3].method").value("STRUCTURED"))
             .andExpect(jsonPath("$.data.item.id").value(itemId))
-            // 표시값은 파생 규칙(#1051)대로 내 최신 수기 — 그보다 새로운 서버 READY 가 없으므로 포인터와 무관하게 이긴다.
+            // 내 입력보다 새로운 기계 READY 가 없어 표시값은 내 입력이다(#1051)
             .andExpect(jsonPath("$.data.item.price").value(99_000))
-            .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.item.userInput").value(true))
     }
 
     @Test
     fun `본인이 고친 값은 표시값이 되고 이력에도 남는다`() {
-        // 포인터가 내 수기를 가리키면 표시값이 그 값이 된다(수기 존중, 맥락 스코프). 이력에도 함께 남는다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/manual-display")
         saveMachineReady(itemId, "기계 값", 109_000, LocalDateTime.of(2026, 6, 1, 10, 0))
-        // 기계 READY 보다 뒤에 쌓인 내 수기 — 표시값이 되고(수기 존중) 이력에도 맨 앞에 온다.
-        val myEdit = saveVersion(itemId, "내가 고친 값", 99_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
-        val wishId = saveWish(userId, myEdit)
+        saveVersion(itemId, "내가 고친 값", 99_000, method = null, userInput = true, createdBy = userId)
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -160,27 +153,25 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.item.price").value(99_000))
-            .andExpect(jsonPath("$.data.item.source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.item.userInput").value(true))
             .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(99_000))
-            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[0].userInput").value(true))
             .andExpect(jsonPath("$.data.priceHistory[0].editedByMe").value(true))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(109_000))
-            .andExpect(jsonPath("$.data.priceHistory[1].source").value("SERVER"))
+            .andExpect(jsonPath("$.data.priceHistory[1].method").value("STRUCTURED"))
     }
 
     @Test
     fun `추출이 한 번도 성공하지 못한 상품도 본인이 입력했다면 이력이 남는다`() {
-        // 차단·403 몰처럼 파싱이 계속 실패하는 상품에서는 본인 입력이 유일한 가격 기록이다.
-        // 이것까지 빼면 그 상품은 가격 추적 자체가 불가능해진다.
+        // 파싱이 계속 실패하는 몰에서는 본인 입력이 유일한 가격 기록이다
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/never-parsed")
-        itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, status = ItemStatus.FAILED))
-        saveVersion(itemId, "직접 입력 1차", 120_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
-        val second = saveVersion(itemId, "직접 입력 2차", 110_000, source = ItemSnapshotSource.MANUAL, createdBy = userId)
-        val wishId = saveWish(userId, second)
+        saveVersion(itemId, "직접 입력 1차", 120_000, method = null, userInput = true, createdBy = userId)
+        saveVersion(itemId, "직접 입력 2차", 110_000, method = null, userInput = true, createdBy = userId)
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -189,22 +180,20 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.priceHistory.length()").value(2))
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(110_000))
-            .andExpect(jsonPath("$.data.priceHistory[0].source").value("MANUAL"))
+            .andExpect(jsonPath("$.data.priceHistory[0].userInput").value(true))
             .andExpect(jsonPath("$.data.priceHistory[1].price").value(120_000))
     }
 
     @Test
-    fun `가격 이력에는 READY 버전만 포함되고 PENDING·PROCESSING·FAILED 는 제외된다`() {
+    fun `가격 이력에는 이름·가격·이미지가 다 있는 버전만 포함되고 INCOMPLETE 는 제외된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/mixed")
-        val ready = saveMachineReady(itemId, "완성 버전", 50_000, LocalDateTime.now())
-        // 같은 item 에 가격 없는 버전들을 섞어 둔다 — 이력에서 빠져야 한다.
-        itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = userId))
-        itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = userId).apply { markProcessing() })
-        itemSnapshotRepository.save(ItemSnapshot(itemId = itemId, status = ItemStatus.FAILED))
-        val wishId = saveWish(userId, ready)
+        saveMachineReady(itemId, "완성 버전", 50_000, LocalDateTime.now())
+        itemSnapshotRepository.save(itemVersion(itemId, name = null, price = 40_000, createdBy = userId))
+        itemSnapshotRepository.save(itemVersion(itemId, name = "이미지 없음", price = 45_000, imageUrl = null, createdBy = userId))
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -217,25 +206,15 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `soft-delete 된 READY snapshot 은 가격 이력에서 제외된다`() {
-        // production 쿼리의 deletedAt IS NULL 필터 회귀 방지 — status·source 필터와 별개로 삭제된 행이 새지 않는지 고정한다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/soft-deleted")
-        val live = saveMachineReady(itemId, "살아있는 버전", 30_000, LocalDateTime.now())
+        saveMachineReady(itemId, "살아있는 버전", 30_000, LocalDateTime.now())
         itemSnapshotRepository.save(
-            ItemSnapshot(
-                itemId = itemId,
-                name = "삭제된 버전",
-                price = 99_000,
-                currency = "KRW",
-                imageUrl = "https://cdn.example.com/p/deleted.jpg",
-                status = ItemStatus.READY,
-                extractedAt = LocalDateTime.now(),
-                source = ItemSnapshotSource.SERVER,
-            ).apply { deletedAt = LocalDateTime.now() },
+            itemVersion(itemId, name = "삭제된 버전", price = 99_000).apply { deletedAt = LocalDateTime.now() },
         )
-        val wishId = saveWish(userId, live)
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -247,38 +226,55 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `아직 추출 성공 이력이 없으면 빈 배열이고 status 로 대기와 실패를 가른다`() {
+    fun `아이템이 확정되기 전이면 이력은 빈 배열이고 status 로 파싱 중과 실패를 가른다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
-        val itemId = saveItem("https://shop.example.com/products/pending-only")
-        val pending = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy = userId)).getId()
-        val wishId = saveWish(userId, pending)
+        val parsingUrl = "https://shop.example.com/products/parsing-only"
+        val failedUrl = "https://shop.example.com/products/failed-only"
+        val parsingWishId = saveUnresolvedWish(userId)
+        val failedWishId = saveUnresolvedWish(userId)
+        itemParseOutboxRepository.save(
+            ItemParseOutbox.of(ItemSlot.wish(failedWishId), ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(failedUrl))).apply {
+                claim()
+                fail()
+            },
+        )
+        itemParseOutboxRepository.save(
+            ItemParseOutbox.of(ItemSlot.wish(parsingWishId), ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(parsingUrl))),
+        )
 
         mockMvc
             .perform(
-                get("/api/v1/wishlists/$wishId")
+                get("/api/v1/wishlists/$parsingWishId")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isOk)
-            // 값이 비어 있을 때 "기다린다"와 "그만 기다린다"를 가르는 유일한 수단이 status 다.
-            .andExpect(jsonPath("$.data.item.status").value("PENDING"))
+            .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+            .andExpect(jsonPath("$.data.item.status").value("PARSING"))
+            .andExpect(jsonPath("$.data.item.sourceUrl").value(parsingUrl))
             .andExpect(jsonPath("$.data.item.price").doesNotExist())
+            .andExpect(jsonPath("$.data.priceHistory.length()").value(0))
+        mockMvc
+            .perform(
+                get("/api/v1/wishlists/$failedWishId")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+            .andExpect(jsonPath("$.data.item.status").value("FAILED"))
             .andExpect(jsonPath("$.data.priceHistory.length()").value(0))
     }
 
     @Test
     fun `가격 이력은 최신 50건까지만 내려간다`() {
-        // item 을 여러 사용자가 공유해 새로고침이 누적되므로 상한이 없으면 응답이 시간에 비례해 자란다.
+        // 여러 사용자의 새로고침이 누적되므로 상한이 없으면 응답이 시간에 비례해 자란다
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/many-versions")
-        // 55건을 1,000원씩 올려가며 쌓는다 — 최신 50건이면 가장 오래된 5건(1,000~5,000원)이 잘린다.
-        var last = 0L
         repeat(55) { i ->
-            last = saveMachineReady(itemId, "버전 $i", (i + 1) * 1_000, LocalDateTime.now())
+            saveMachineReady(itemId, "버전 $i", (i + 1) * 1_000, LocalDateTime.now())
         }
-        val wishId = saveWish(userId, last)
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -286,20 +282,18 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.data.priceHistory.length()").value(50))
-            // 최신순이라 맨 앞이 마지막에 쌓은 55,000원, 맨 뒤가 6,000원(1~5,000원은 상한에 잘림)
             .andExpect(jsonPath("$.data.priceHistory[0].price").value(55_000))
             .andExpect(jsonPath("$.data.priceHistory[49].price").value(6_000))
     }
 
     @Test
     fun `옛 가격 히스토리 엔드포인트는 더 이상 존재하지 않는다`() {
-        // 상세 조회로 흡수됐다. 남아 있으면 표시값 파생을 타지 않는 옛 계약이 함께 사는 것이라 회귀로 고정한다.
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/gone")
-        val snapshot = saveMachineReady(itemId, "상품", 10_000, LocalDateTime.now())
-        val wishId = saveWish(userId, snapshot)
+        saveMachineReady(itemId, "상품", 10_000, LocalDateTime.now())
+        val wishId = saveWish(userId, itemId)
 
         mockMvc
             .perform(
@@ -310,14 +304,13 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `탈퇴한 회원의 살아있는 access token 으로 상세 조회하면 409 가 반환된다`() {
-        // 소유권 검증(verifyOwnedBy)만으로는 탈퇴 여부를 못 본다 — 본인 위시이므로 그대로 통과해버린다.
-        // 회원 가드가 활성 조회로 끊어야 탈퇴 회원이 자기 가격 이력을 계속 읽는 것을 막는다 (#691).
+        // 본인 위시라 소유권 검증은 통과하므로 회원 가드가 활성 조회로 끊어야 한다(#691)
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
         val itemId = saveItem("https://shop.example.com/products/withdrawn")
-        val snapshot = saveMachineReady(itemId, "내 상품", 10_000, LocalDateTime.now())
-        val wishId = saveWish(userId, snapshot)
+        saveMachineReady(itemId, "내 상품", 10_000, LocalDateTime.now())
+        val wishId = saveWish(userId, itemId)
         jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(userId))
 
         mockMvc
@@ -329,60 +322,59 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.detail").value("탈퇴한 계정이에요."))
     }
 
-    private fun saveItem(url: String): Long = itemRepository.save(Item(ProductLink.parse(url))).getId()
+    private fun saveItem(url: String): Long = itemRepository.save(linkItem(url)).getId()
 
-    // 출처를 명시해 쌓는 READY 시딩. 순서(최신순)는 id 단조증가에 맡긴다.
+    // 최신순은 id 단조증가에 맡긴다
     private fun saveVersion(
         itemId: Long,
         name: String,
         price: Int,
-        source: ItemSnapshotSource?,
-        createdBy: UUID?,
+        method: ExtractionMethod?,
+        userInput: Boolean,
+        createdBy: UUID,
     ): Long =
         itemSnapshotRepository
             .save(
-                ItemSnapshot(
+                itemVersion(
                     itemId = itemId,
                     name = name,
                     price = price,
-                    currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/$price.jpg",
-                    status = ItemStatus.READY,
-                    extractedAt = LocalDateTime.now(),
-                    source = source,
+                    method = method,
+                    userInput = userInput,
                     createdBy = createdBy,
                 ),
             ).getId()
 
-    // 기계 추출(SERVER) READY 시딩 — 출처가 기록돼 있어 가격 이력에 실린다.
-    // 수기(MANUAL)도 편집자와 무관하게 이력에 실리므로(그쪽은 saveVersion 을 쓴다) 이 헬퍼는 기계 출처 케이스 전용이다.
+    // created_at 은 auditing 이 채우므로 저장 뒤 SQL 로 바꾸고 영속성 컨텍스트를 비운다
     private fun saveMachineReady(
         itemId: Long,
         name: String,
         price: Int,
-        extractedAt: LocalDateTime,
-    ): Long =
-        itemSnapshotRepository
-            .save(
-                ItemSnapshot(
-                    itemId = itemId,
-                    name = name,
-                    price = price,
-                    currency = "KRW",
-                    imageUrl = "https://cdn.example.com/p/$price.jpg",
-                    status = ItemStatus.READY,
-                    extractedAt = extractedAt,
-                    source = ItemSnapshotSource.SERVER,
-                ),
-            ).getId()
+        createdAt: LocalDateTime,
+    ): Long {
+        val id =
+            itemSnapshotRepository
+                .save(
+                    itemVersion(
+                        itemId = itemId,
+                        name = name,
+                        price = price,
+                        imageUrl = "https://cdn.example.com/p/$price.jpg",
+                        method = ExtractionMethod.STRUCTURED,
+                    ),
+                ).getId()
+        jdbcTemplate.update("UPDATE item_snapshots SET created_at = ? WHERE id = ?", createdAt, id)
+        entityManager.clear()
+        return id
+    }
 
     private fun saveWish(
         userId: UUID,
-        snapshotId: Long,
-    ): Long {
-        val itemId = requireNotNull(itemSnapshotRepository.findById(snapshotId)) { "snapshot $snapshotId 없음" }.itemId
-        return wishRepository.save(Wish(userId = userId, waitingSnapshotId = snapshotId, itemId = itemId)).getId()
-    }
+        itemId: Long,
+    ): Long = wishRepository.save(Wish(userId = userId, itemId = itemId)).getId()
+
+    private fun saveUnresolvedWish(userId: UUID): Long = wishRepository.save(Wish(userId = userId, itemId = null)).getId()
 
     private fun buildMockMvc(): MockMvc =
         MockMvcBuilders

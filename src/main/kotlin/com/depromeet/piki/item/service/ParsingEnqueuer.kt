@@ -1,33 +1,22 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.domain.ParseRequest
-import com.depromeet.piki.item.domain.ParseTrigger
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.repository.ParseRequestRepository
+import com.depromeet.piki.item.domain.ItemParseOutbox
+import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import org.springframework.stereotype.Component
-import java.util.UUID
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 
-// 작업 큐 적재의 단일 지점(#1073). @Transactional 이 없는 이유: 적재는 등록·새로고침 쓰기 묶음의 일부라 호출부 경계에 합류한다.
 @Component
 class ParsingEnqueuer(
-    private val itemSnapshotRepository: ItemSnapshotRepository,
-    private val parseRequestRepository: ParseRequestRepository,
+    private val itemParseOutboxRepository: ItemParseOutboxRepository,
 ) {
+    @Transactional(propagation = Propagation.MANDATORY)
     fun enqueue(
-        itemId: Long,
-        requestedBy: UUID,
-        triggerType: ParseTrigger,
-    ): ItemSnapshot {
-        val snapshot = itemSnapshotRepository.save(ItemSnapshot.pending(itemId, requestedBy))
-        parseRequestRepository.save(
-            ParseRequest(
-                itemId = itemId,
-                requestedBy = requestedBy,
-                triggerType = triggerType,
-                resultSnapshotId = snapshot.getId(),
-            ),
-        )
-        return snapshot
-    }
+        slot: ItemSlot,
+        purpose: ParsePurpose,
+        input: ParseInput,
+    ): ItemParseOutbox = itemParseOutboxRepository.save(ItemParseOutbox.of(slot, purpose, input))
 }

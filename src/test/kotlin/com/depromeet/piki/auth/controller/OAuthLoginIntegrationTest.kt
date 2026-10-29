@@ -3,19 +3,21 @@ package com.depromeet.piki.auth.controller
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthException
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
-import com.depromeet.piki.item.domain.ItemSnapshot
-import com.depromeet.piki.item.repository.ItemSnapshotRepository
+import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.service.ParsingEnqueuer
+import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.StubOAuthClient
 import com.depromeet.piki.tournament.domain.Tournament
 import com.depromeet.piki.tournament.domain.TournamentItem
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.repository.TournamentItemRepository
 import com.depromeet.piki.tournament.repository.TournamentRepository
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
-import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubOAuthClient
+import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.service.WithdrawalService
 import com.depromeet.piki.wishlist.domain.Wish
-import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
@@ -42,6 +44,8 @@ import kotlin.test.assertNotEquals
 
 @Transactional
 class OAuthLoginIntegrationTest : IntegrationTestSupport() {
+    @Autowired private lateinit var parsingEnqueuer: ParsingEnqueuer
+
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
 
@@ -62,9 +66,6 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var wishRepository: WishRepository
-
-    @Autowired
-    private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
     private lateinit var userDetailRepository: UserDetailRepository
@@ -228,9 +229,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         val guest = createGuest()
         val guestId = UUID.fromString(guest.userId)
         // 게스트 상태에서 위시 1건 생성 (user_id = 게스트 id). 승격은 id 를 유지하므로 이 행이 그대로 따라와야 한다.
-        // wish 는 활성 snapshot 을 가리키므로(snapshotId NOT NULL) 대응 snapshot 을 먼저 시딩하고 그 id 를 넘긴다.
-        val snapshotId = itemSnapshotRepository.save(ItemSnapshot.pending(itemId = 1L, requestedBy = guestId).apply { markProcessing() }).getId()
-        wishRepository.save(Wish(userId = guestId, waitingSnapshotId = snapshotId, itemId = 1L))
+        wishRepository.save(Wish(userId = guestId, itemId = null))
         kakaoOAuthClient.fetchByAccessTokenStub = { OAuthUserInfo(OAuthProvider.KAKAO, "kakao_inherit", null) }
 
         val resultId =
@@ -590,11 +589,7 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         val guest = createGuest()
         val guestId = UUID.fromString(guest.userId)
         val tournamentId = createLegacyGuestTournament(guestId, "게스트가 만든 토너먼트")
-        val snapshotId =
-            itemSnapshotRepository
-                .save(ItemSnapshot.pending(itemId = 9001L, requestedBy = guestId).apply { markProcessing() })
-                .getId()
-        tournamentItemRepository.save(TournamentItem(tournamentId = tournamentId, userId = guestId, snapshotId = snapshotId))
+        addParsingItem(tournamentId, guestId)
 
         // 3. 게스트 토큰을 들고 같은 소셜로 로그인 → 게스트를 버리고 기존 회원으로 합류한다.
         val loginJson = loginWithGuestToken(guest.accessToken, body)
@@ -732,16 +727,8 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         // 담은 상품은 같은 사람이 담은 것이라 합쳐져야 한다 — 합치지 않으면 회원에게 3개만 보인다.
         val memberId = UUID.fromString(firstLogin.at("/data/user/id").asString())
         val guestId = UUID.fromString(guest.userId)
-        listOf(memberId to 9101L, memberId to 9102L, memberId to 9103L, guestId to 9104L, guestId to 9105L)
-            .forEach { (owner, itemId) ->
-                val snapshotId =
-                    itemSnapshotRepository
-                        .save(ItemSnapshot.pending(itemId = itemId, requestedBy = owner).apply { markProcessing() })
-                        .getId()
-                tournamentItemRepository.save(
-                    TournamentItem(tournamentId = sharedId, userId = owner, snapshotId = snapshotId),
-                )
-            }
+        listOf(memberId, memberId, memberId, guestId, guestId)
+            .forEach { owner -> addParsingItem(sharedId, owner) }
         // 충돌과 무관한 게스트 전용 토너먼트도 하나 만든다.
         val guestOnlyId = createLegacyGuestTournament(guestId, "게스트만 있는 방")
 
@@ -761,5 +748,15 @@ class OAuthLoginIntegrationTest : IntegrationTestSupport() {
         mockMvc()
             .perform(get("/api/v1/tournaments/$guestOnlyId").header(HttpHeaders.AUTHORIZATION, bearer(memberToken)))
             .andExpect(status().isOk)
+    }
+
+    // 아이템이 비어 있는 출전은 항상 파싱 요청과 함께 생긴다
+    private fun addParsingItem(
+        tournamentId: Long,
+        owner: UUID,
+    ) {
+        val tournamentItem = tournamentItemRepository.save(TournamentItem(tournamentId = tournamentId, userId = owner, itemId = null))
+        val link = ProductLink.parse("https://shop.example.com/products/${UUID.randomUUID()}")
+        parsingEnqueuer.enqueue(tournamentItem.slot, ParsePurpose.REGISTER, ParseInput.Link(link))
     }
 }

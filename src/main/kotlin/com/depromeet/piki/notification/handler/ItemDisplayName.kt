@@ -2,14 +2,14 @@ package com.depromeet.piki.notification.handler
 
 import java.text.BreakIterator
 
-// 알림 문구에 실을 상품명을 표시용으로 다듬는다. 파싱 완료(#913)와 아이템 삭제 두 알림이 공유한다.
+// 알림 문구에 실을 상품명을 표시용으로 다듬는다. 파싱 알림(#913)과 아이템 삭제 알림이 공유한다.
 //
-// 표시 글자 절단은 **선택**이다 — 두 알림의 사정이 다르다.
-//   - 파싱 완료: title 이 이름뿐이라 OS 가 잘라도 의미가 안 사라진다. 절단하지 않는다(maxGraphemes = null).
+// 표시 글자 절단은 **선택**이다 — 두 쪽의 사정이 다르다.
+//   - 파싱 알림: title 이 이름뿐이라 OS 가 잘라도 의미가 안 사라진다. 절단하지 않는다(maxGraphemes = null).
 //   - 아이템 삭제: "OO님이 '{이름}'을(를) 삭제했어요" 처럼 이름 뒤에 문장이 붙어, 이름이 길면 정작 무슨 일인지가
 //     OS 절단에 먹힌다. 그래서 이쪽은 캡이 필요하다.
 object ItemDisplayName {
-    // 이름이 없거나 공백뿐일 때. 파싱 전(PENDING·PROCESSING)이나 추출 실패로 name 이 비는 경우가 실재한다.
+    // 이름이 없거나 공백뿐일 때. 이름 없이 가격·이미지만 추출된 버전이 실재한다
     const val FALLBACK = "상품"
 
     // 표시 글자 수와 무관하게 거는 UTF-16 char 상한. grapheme cluster 1개가 조합 부호로 수십~수백 char 일 수 있어

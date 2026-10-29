@@ -100,6 +100,16 @@ else
 fi
 grep -q '^/swapfile2[[:space:]]' /etc/fstab || echo '/swapfile2 none swap sw 0 0' | sudo tee -a /etc/fstab
 
+# 1d) tcp_retries2 — ACK 없는 재전송을 기본 15(약 15-17분) 대신 8(약 100초)에서 포기한다. 호스트 소켓(nginx 의
+# 클라이언트 소켓)에만 닿고 앱 컨테이너는 별도 net namespace 라 안 닿는다(#1249). 멱등: 드롭인 + 즉시 적용.
+if [ "$(cat /proc/sys/net/ipv4/tcp_retries2)" = "8" ]; then
+  echo "[tcp_retries2] 이미 8 — skip"
+else
+  echo "[tcp_retries2] $(cat /proc/sys/net/ipv4/tcp_retries2) → 8 설정"
+  echo 'net.ipv4.tcp_retries2=8' | sudo tee /etc/sysctl.d/99-tcp-retries2.conf
+  sudo sysctl -w net.ipv4.tcp_retries2=8
+fi
+
 # 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 없을 때만 named 볼륨(piki-redis-data)으로 기동.
 #    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
 #    이후 컨테이너 재생성에도 refresh token 이 유지된다.

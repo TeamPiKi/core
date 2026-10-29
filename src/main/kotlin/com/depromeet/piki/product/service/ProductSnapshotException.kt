@@ -8,8 +8,7 @@ import org.springframework.http.HttpStatus
 
 // 추출 결과 검증 실패. message·category·httpStatus 는 전부 errorCode 하나에서 파생한다
 // (ProductSnapshotErrorCode 가 single source).
-// errorCode 는 클래스 모양 통일 목적이며, 비동기 워커 전용이라 공개 카탈로그에 등록하지 않는다
-// (ProductSnapshotErrorCode 주석 참고).
+// 공개 카탈로그 미등록 이유는 ProductSnapshotErrorCode 참고
 class ProductSnapshotException private constructor(
     override val errorCode: ErrorCode,
 ) : BaseException(errorCode.message),
