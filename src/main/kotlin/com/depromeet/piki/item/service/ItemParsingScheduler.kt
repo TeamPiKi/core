@@ -2,6 +2,7 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.ParseAttempt
+import com.depromeet.piki.item.domain.RecoveryOutcome
 import com.depromeet.piki.product.service.remote.RemoteExtractionProperties
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -24,7 +25,7 @@ class ItemParsingScheduler(
     private val log = LoggerFactory.getLogger(javaClass)
 
     init {
-        requireExtractionUnderStuck(remoteExtractionProperties.connectTimeoutMs, remoteExtractionProperties.readTimeoutMs)
+        requireExtractionUnderStuck(remoteExtractionProperties)
     }
 
     @Scheduled(fixedDelay = DISPATCH_INTERVAL_MS)
@@ -54,11 +55,12 @@ class ItemParsingScheduler(
     }
 
     private fun report(recovery: StuckRecovery) {
-        when (recovery) {
-            is StuckRecovery.Requeued -> log.warn("item.parse.recover outbox={} action=requeue", recovery.itemParseOutboxId)
-            is StuckRecovery.Failed -> {
-                log.warn("item.parse.recover outbox={} action=fail 회수한 뒤 다시 멈춤", recovery.itemParseOutboxId)
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ParseFailureReason.INTERNAL_ERROR.metricLabel)
+        when (recovery.outcome) {
+            RecoveryOutcome.REQUEUED -> log.warn("item.parse.recover outbox={} action=requeue", recovery.itemParseOutboxId)
+            RecoveryOutcome.EXHAUSTED -> {
+                val reason = ParseFailureReason.INTERNAL_ERROR.metricLabel
+                log.warn("item.parse.result outbox={} result={} reason={} recovery=exhausted", recovery.itemParseOutboxId, ItemParsingMetrics.RESULT_FAILED, reason)
+                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
             }
         }
     }
@@ -68,16 +70,13 @@ class ItemParsingScheduler(
         private const val RECOVER_INTERVAL_MS = 30_000L
         private const val RECOVER_LIMIT = 100
 
-        // 한 번의 파싱은 추출 읽기 상한 안에 끝나므로 그보다 오래 처리 중이면 워커가 없는 것
         private val STUCK_AFTER: Duration = Duration.ofMinutes(2)
 
-        // 추출 호출 동안은 행을 잠그지 않아 회수가 집을 수 있음. 호출 상한이 더 길면 살아 있는 워커의 요청을 회수함
-        // read 상한은 read 한 번마다라 조금씩 오는 응답은 넘을 수 있음
-        fun requireExtractionUnderStuck(
-            connectTimeoutMs: Int,
-            readTimeoutMs: Int,
-        ) = require(connectTimeoutMs + readTimeoutMs < STUCK_AFTER.toMillis()) {
-            "connect-timeout(${connectTimeoutMs}ms) + read-timeout(${readTimeoutMs}ms)은 회수 기준(${STUCK_AFTER.toMillis()}ms)보다 작아야 한다"
-        }
+        // 추출 호출 중에는 행을 잠그지 않아 상한이 회수 기준보다 길면 살아 있는 워커의 요청을 회수함(read 상한은 read 한 번마다)
+        fun requireExtractionUnderStuck(properties: RemoteExtractionProperties) =
+            require(properties.connectTimeoutMs + properties.readTimeoutMs < STUCK_AFTER.toMillis()) {
+                "connect-timeout(${properties.connectTimeoutMs}ms) + read-timeout(${properties.readTimeoutMs}ms)은 " +
+                    "회수 기준(${STUCK_AFTER.toMillis()}ms)보다 작아야 한다"
+            }
     }
 }

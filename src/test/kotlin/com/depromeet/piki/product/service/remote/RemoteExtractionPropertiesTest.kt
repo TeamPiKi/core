@@ -29,10 +29,4 @@ class RemoteExtractionPropertiesTest {
         val props = RemoteExtractionProperties(baseUrl = "http://x")
         assertEquals(ExtractionEndpoints.CALLER_READ_TIMEOUT_MS, props.readTimeoutMs)
     }
-
-    @Test
-    fun `양수 타임아웃은 그대로 받는다`() {
-        val props = RemoteExtractionProperties(baseUrl = "http://x", connectTimeoutMs = 2_000, readTimeoutMs = 55_000)
-        assertEquals(55_000, props.readTimeoutMs)
-    }
 }

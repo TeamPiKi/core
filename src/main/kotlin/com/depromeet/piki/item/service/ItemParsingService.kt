@@ -6,6 +6,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.RecoveryOutcome
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
@@ -56,7 +57,8 @@ class ItemParsingService(
                 ItemSlotState.Gone -> return discard(outbox)
             }
         if (!ItemSnapshot.accepts(extracted)) {
-            closeAfterExtraction(outbox, slot)
+            close(outbox, slot)
+            logRefreshFailure(outbox, slot)
             return ExtractionSettlement.Applied(ItemStatus.FAILED)
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
@@ -74,10 +76,8 @@ class ItemParsingService(
     @Transactional
     fun markFailed(attempt: ParseAttempt): Boolean {
         val outbox = findHeldForUpdate(attempt) ?: return false
-        when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> closeAfterExtraction(outbox, state)
-            ItemSlotState.Gone -> discard(outbox)
-        }
+        outbox.fail()
+        notifyFailed(outbox)?.let { logRefreshFailure(outbox, it) }
         return true
     }
 
@@ -93,17 +93,10 @@ class ItemParsingService(
         limit: Int,
     ): List<StuckRecovery> =
         itemParseOutboxRepository.findStuckForUpdate(claimedBefore, limit).map { outbox ->
-            if (outbox.isRecoverable()) {
-                outbox.recover()
-                StuckRecovery.Requeued(outbox.getId())
-            } else {
-                // 원인이 서버 중단이라 정체 URL 실패 관측에 섞지 않음
-                when (val state = itemSlots.find(outbox.slot)) {
-                    is ItemSlotState.Present -> close(outbox, state)
-                    ItemSlotState.Gone -> discard(outbox)
-                }
-                StuckRecovery.Failed(outbox.getId())
-            }
+            val outcome = outbox.recover()
+            // 원인이 서버 중단이라 정체 URL 실패 관측에 남기지 않음
+            if (outcome == RecoveryOutcome.EXHAUSTED) notifyFailed(outbox)
+            StuckRecovery(outbox.getId(), outcome)
         }
 
     private fun findHeldForUpdate(attempt: ParseAttempt): ItemParseOutbox? =
@@ -127,19 +120,25 @@ class ItemParsingService(
         return item
     }
 
-    private fun closeAfterExtraction(
-        outbox: ItemParseOutbox,
-        slot: ItemSlotState.Present,
-    ) {
-        close(outbox, slot)
-        if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
-    }
+    // 탈퇴로 슬롯 행이 하드 삭제됐으면 결과를 받을 곳이 없어 알리지 않고 null
+    private fun notifyFailed(outbox: ItemParseOutbox): ItemSlotState.Present? =
+        when (val state = itemSlots.find(outbox.slot)) {
+            is ItemSlotState.Present -> state.also { publishFailed(outbox, it) }
+            ItemSlotState.Gone -> null
+        }
 
     private fun close(
         outbox: ItemParseOutbox,
         slot: ItemSlotState.Present,
     ) {
         outbox.fail()
+        publishFailed(outbox, slot)
+    }
+
+    private fun publishFailed(
+        outbox: ItemParseOutbox,
+        slot: ItemSlotState.Present,
+    ) {
         eventPublisher.publishEvent(
             ItemParsingFailed(
                 slot = outbox.slot,
@@ -154,6 +153,7 @@ class ItemParsingService(
         outbox: ItemParseOutbox,
         slot: ItemSlotState.Present,
     ) {
+        if (!outbox.isRefresh()) return
         log.error(
             "item.refresh.failed outbox={} item={} url=\"{}\" 정체 URL 로 다시 가져오지 못함",
             outbox.getId(),

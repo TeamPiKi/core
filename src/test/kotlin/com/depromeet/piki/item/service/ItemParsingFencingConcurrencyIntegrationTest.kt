@@ -6,12 +6,15 @@ import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
+import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.remote.ProductExtractorException
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.markParseOutboxStuck
+import com.depromeet.piki.support.notificationCountOf
 import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.support.wishItemIdOf
@@ -27,9 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
-import java.sql.Timestamp
 import java.time.Duration
-import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -65,7 +66,7 @@ class ItemParsingFencingConcurrencyIntegrationTest : IntegrationTestSupport() {
         )
         val url = "https://shop.example.com/products/fencing-${UUID.randomUUID()}"
         val wish = wishJpaRepository.save(Wish(userId = userId, itemId = null))
-        val outbox = itemParseOutboxRepository.save(ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))))
+        itemParseOutboxRepository.save(ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))))
 
         val calls = AtomicInteger(0)
         val oldEntered = CountDownLatch(1)
@@ -89,12 +90,7 @@ class ItemParsingFencingConcurrencyIntegrationTest : IntegrationTestSupport() {
             itemParsingScheduler.dispatch()
             assertTrue(oldEntered.await(5, TimeUnit.SECONDS), "옛 워커가 추출에 들어가야 한다")
 
-            // 옛 워커가 추출에서 2분 넘게 멈춘 상황
-            jdbcTemplate.update(
-                "UPDATE item_parse_outbox SET updated_at = ? WHERE id = ?",
-                Timestamp.valueOf(LocalDateTime.now().minusMinutes(3)),
-                outbox.getId(),
-            )
+            jdbcTemplate.markParseOutboxStuck(wish.slot, claimedAgo = Duration.ofMinutes(3))
             itemParsingScheduler.recover()
             itemParsingScheduler.dispatch()
             assertTrue(newEntered.await(5, TimeUnit.SECONDS), "회수된 요청을 새 워커가 다시 집어야 한다")
@@ -107,7 +103,7 @@ class ItemParsingFencingConcurrencyIntegrationTest : IntegrationTestSupport() {
             await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == ItemParseOutboxStatus.SUCCEEDED }
             assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()))
             // 알림은 커밋 뒤 비동기로 저장되므로 정리 전에 도착을 기다린다
-            await().atMost(Duration.ofSeconds(5)).until { notificationsOf(userId, "ITEM_PARSING_COMPLETED") == 1 }
+            await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.notificationCountOf(userId, NotificationType.ITEM_PARSING_COMPLETED) == 1 }
         } finally {
             releaseOld.countDown()
             releaseNew.countDown()
@@ -117,15 +113,4 @@ class ItemParsingFencingConcurrencyIntegrationTest : IntegrationTestSupport() {
             jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
         }
     }
-
-    private fun notificationsOf(
-        userId: UUID,
-        type: String,
-    ): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = ?",
-            Int::class.java,
-            uuidToBytes(userId),
-            type,
-        ) ?: 0
 }

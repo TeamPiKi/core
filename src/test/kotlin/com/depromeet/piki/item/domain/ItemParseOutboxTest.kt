@@ -86,20 +86,19 @@ class ItemParseOutboxTest {
     fun `멈춘 PROCESSING 을 회수하면 PENDING 으로 되돌아가고 회수 횟수가 는다`() {
         val outbox = processing()
 
-        outbox.recover()
-
+        assertEquals(RecoveryOutcome.REQUEUED, outbox.recover())
         assertEquals(ItemParseOutboxStatus.PENDING, outbox.status)
         assertEquals(1, outbox.recoveryCount)
     }
 
     @Test
-    fun `한 번 회수한 아웃박스는 다시 회수할 수 없다`() {
+    fun `한 번 회수한 아웃박스가 다시 멈추면 되돌리지 않고 실패로 닫는다`() {
         val outbox = processing().apply { recover() }
         outbox.claim()
 
-        assertFalse(outbox.isRecoverable())
-        assertFailsWith<IllegalStateException> { outbox.recover() }
-        assertEquals(ItemParseOutboxStatus.PROCESSING, outbox.status)
+        assertEquals(RecoveryOutcome.EXHAUSTED, outbox.recover())
+        assertEquals(ItemParseOutboxStatus.FAILED, outbox.status)
+        assertEquals(1, outbox.recoveryCount)
     }
 
     @Test

@@ -68,12 +68,14 @@ class ItemParseOutbox(
     fun fail() = transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.FAILED)
 
     // 매번 멈추는 요청이 영원히 다시 파싱되지 않게 회수는 한 번까지만
-    fun isRecoverable(): Boolean = recoveryCount < MAX_RECOVERIES
-
-    fun recover() {
-        check(isRecoverable()) { "item parse outbox ${getIdOrNull()} 은 이미 ${recoveryCount}번 회수됐다" }
+    fun recover(): RecoveryOutcome {
+        if (recoveryCount >= MAX_RECOVERIES) {
+            fail()
+            return RecoveryOutcome.EXHAUSTED
+        }
         transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.PENDING)
         recoveryCount++
+        return RecoveryOutcome.REQUEUED
     }
 
     private fun transit(

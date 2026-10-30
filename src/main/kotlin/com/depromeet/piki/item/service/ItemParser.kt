@@ -161,7 +161,7 @@ class ItemParser(
             .getOrDefault(false)
 
     private fun logSuperseded(attempt: ParseAttempt) {
-        log.warn("item.parse.superseded outbox={} recovery={} 회수로 놓친 시도의 결과를 버림", attempt.itemParseOutboxId, attempt.recoveryCount)
+        log.warn("item.parse.superseded outbox={} recovery={} 행을 놓친 시도의 결과를 버림", attempt.itemParseOutboxId, attempt.recoveryCount)
     }
 
     private fun recordResult(
