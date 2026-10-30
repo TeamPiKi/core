@@ -4,6 +4,7 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
@@ -33,10 +34,10 @@ class ItemParsingService(
 
     // RR 이면 새 PENDING insert 막힘
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    fun claim(limit: Int): List<Long> =
+    fun claim(limit: Int): List<ParseAttempt> =
         itemParseOutboxRepository.findPendingForUpdate(limit).map { outbox ->
             outbox.claim()
-            outbox.getId()
+            outbox.attempt()
         }
 
     @Transactional(readOnly = true)
@@ -45,10 +46,10 @@ class ItemParsingService(
 
     @Transactional
     fun markExtracted(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         extracted: ProductSnapshot,
     ): ExtractionSettlement {
-        val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return ExtractionSettlement.Superseded
+        val outbox = findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
         val slot =
             when (val state = itemSlots.find(outbox.slot)) {
                 is ItemSlotState.Present -> state
@@ -71,8 +72,8 @@ class ItemParsingService(
     }
 
     @Transactional
-    fun markFailed(itemParseOutboxId: Long): Boolean {
-        val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
+    fun markFailed(attempt: ParseAttempt): Boolean {
+        val outbox = findHeldForUpdate(attempt) ?: return false
         when (val state = itemSlots.find(outbox.slot)) {
             is ItemSlotState.Present -> closeAfterExtraction(outbox, state)
             ItemSlotState.Gone -> discard(outbox)
@@ -81,8 +82,8 @@ class ItemParsingService(
     }
 
     @Transactional
-    fun requeue(itemParseOutboxId: Long) {
-        findProcessingForUpdate(itemParseOutboxId)?.requeue()
+    fun requeue(attempt: ParseAttempt) {
+        findHeldForUpdate(attempt)?.requeue()
     }
 
     // RR 이면 새 PENDING insert 막힘
@@ -105,8 +106,8 @@ class ItemParsingService(
             }
         }
 
-    private fun findProcessingForUpdate(itemParseOutboxId: Long): ItemParseOutbox? =
-        itemParseOutboxRepository.findByIdForUpdate(itemParseOutboxId)?.takeIf { it.isProcessing() }
+    private fun findHeldForUpdate(attempt: ParseAttempt): ItemParseOutbox? =
+        itemParseOutboxRepository.findByIdForUpdate(attempt.itemParseOutboxId)?.takeIf { it.isHeldBy(attempt) }
 
     // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
     private fun discard(outbox: ItemParseOutbox): ExtractionSettlement.Discarded {

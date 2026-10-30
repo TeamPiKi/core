@@ -4,6 +4,7 @@ import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.image.service.ImageSnapshotExtractor
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.LinkSnapshotExtractor
@@ -26,40 +27,40 @@ class ItemParser(
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Async(AsyncConfig.ITEM_PARSING_EXECUTOR)
-    fun parse(itemParseOutboxId: Long) {
-        val input = runCatchingException { itemParsingService.inputOf(itemParseOutboxId) }.getOrElse { return failWithoutSource(itemParseOutboxId, it) }
+    fun parse(attempt: ParseAttempt) {
+        val input = runCatchingException { itemParsingService.inputOf(attempt.itemParseOutboxId) }.getOrElse { return failWithoutSource(attempt, it) }
         when (input) {
-            is ParseInput.Link -> parseLink(itemParseOutboxId, input.link)
-            is ParseInput.Image -> parseImage(itemParseOutboxId, input.key)
+            is ParseInput.Link -> parseLink(attempt, input.link)
+            is ParseInput.Image -> parseImage(attempt, input.key)
         }
     }
 
     private fun failWithoutSource(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         cause: Throwable,
     ) {
-        log.error("item parse outbox {} 의 입력을 읽지 못해 실패로 종결", itemParseOutboxId, cause)
-        if (markFailedQuietly(itemParseOutboxId)) {
+        log.error("item parse outbox {} 의 입력을 읽지 못해 실패로 종결", attempt.itemParseOutboxId, cause)
+        if (markFailedQuietly(attempt)) {
             ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ParseFailureReason.INTERNAL_ERROR.metricLabel)
         }
     }
 
     private fun parseLink(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         link: ProductLink,
     ) {
-        extractAndSettle(itemParseOutboxId, "type=link url=\"$link\"") { linkSnapshotExtractor.extract(link) }
+        extractAndSettle(attempt, "type=link url=\"$link\"") { linkSnapshotExtractor.extract(link) }
     }
 
     private fun parseImage(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         key: ProductImageKey,
     ) {
-        extractAndSettle(itemParseOutboxId, "type=image key=$key") { imageSnapshotExtractor.extract(key) }
+        extractAndSettle(attempt, "type=image key=$key") { imageSnapshotExtractor.extract(key) }
     }
 
     private fun extractAndSettle(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         extract: () -> ProductSnapshot,
     ) {
@@ -67,69 +68,75 @@ class ItemParser(
             Runnable {
                 val started = System.nanoTime()
                 runCatchingException(extract).fold(
-                    onSuccess = { settle(itemParseOutboxId, logSubject, it, started) },
-                    onFailure = { failExtraction(itemParseOutboxId, logSubject, it, started) },
+                    onSuccess = { settle(attempt, logSubject, it, started) },
+                    onFailure = { failExtraction(attempt, logSubject, it, started) },
                 )
             },
         )
     }
 
     private fun settle(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         extracted: ProductSnapshot,
         started: Long,
     ) {
-        runCatchingException { UniqueConflictRetry.once("outbox=$itemParseOutboxId") { itemParsingService.markExtracted(itemParseOutboxId, extracted) } }.fold(
-            onSuccess = { settlement -> if (settlement is ExtractionSettlement.Applied) recordSettled(itemParseOutboxId, logSubject, extracted, settlement.status, started) },
+        runCatchingException { UniqueConflictRetry.once("outbox=${attempt.itemParseOutboxId}") { itemParsingService.markExtracted(attempt, extracted) } }.fold(
+            onSuccess = { settlement ->
+                when (settlement) {
+                    is ExtractionSettlement.Applied -> recordSettled(attempt, logSubject, extracted, settlement.status, started)
+                    ExtractionSettlement.Superseded -> logSuperseded(attempt)
+                    ExtractionSettlement.Discarded -> Unit
+                }
+            },
             onFailure = { e ->
                 markError(e)
-                if (e.isInvariantViolation()) rejectReady(itemParseOutboxId, logSubject, e, started) else leaveForRecovery(itemParseOutboxId, e)
+                if (e.isInvariantViolation()) rejectReady(attempt, logSubject, e, started) else leaveForRecovery(attempt, e)
             },
         )
     }
 
     // 같은 값으로 다시 돌려도 또 막히므로 실패로 닫음
     private fun rejectReady(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         cause: Throwable,
         started: Long,
     ) {
-        log.warn("item.parse.error outbox={} reason={} READY 전이 거부", itemParseOutboxId, ParseFailureReason.READY_REJECTED.metricLabel, cause)
-        fail(itemParseOutboxId, logSubject, ParseFailureReason.READY_REJECTED, started)
+        log.warn("item.parse.error outbox={} reason={} READY 전이 거부", attempt.itemParseOutboxId, ParseFailureReason.READY_REJECTED.metricLabel, cause)
+        fail(attempt, logSubject, ParseFailureReason.READY_REJECTED, started)
     }
 
     private fun leaveForRecovery(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         cause: Throwable,
     ) {
-        log.error("item parse outbox {} 추출 결과 기록 실패, 회수 대기", itemParseOutboxId, cause)
+        log.error("item parse outbox {} 추출 결과 기록 실패, 회수 대기", attempt.itemParseOutboxId, cause)
     }
 
     // require·check·error 가 던지는 예외. 일시 오류와 달리 재실행해도 결과가 같음
     private fun Throwable.isInvariantViolation(): Boolean = this is IllegalArgumentException || this is IllegalStateException
 
     private fun recordSettled(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         extracted: ProductSnapshot,
         status: ItemStatus,
         started: Long,
     ) {
         val missing = extracted.takeIf { status == ItemStatus.INCOMPLETE }?.let { " missing=${ItemParsingMetrics.missingFieldsOf(it)}" }.orEmpty()
-        recordResult(itemParseOutboxId, resultOf(status), reasonOf(status), started, "$logSubject$missing")
+        recordResult(attempt, resultOf(status), reasonOf(status), started, "$logSubject$missing")
     }
 
     private fun failExtraction(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         cause: Throwable,
         started: Long,
     ) {
         markError(cause)
         val reason = ItemParsingMetrics.failureReasonOf(cause)
-        if (fail(itemParseOutboxId, logSubject, reason, started)) log.info("item.parse.error outbox={} reason={} cause={}", itemParseOutboxId, reason.metricLabel, cause.message)
+        if (fail(attempt, logSubject, reason, started)) log.info("item.parse.error outbox={} reason={} cause={}", attempt.itemParseOutboxId, reason.metricLabel, cause.message)
     }
 
     private fun markError(cause: Throwable) {
@@ -137,30 +144,35 @@ class ItemParser(
     }
 
     private fun fail(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         logSubject: String,
         reason: ParseFailureReason,
         started: Long,
     ): Boolean {
-        if (!markFailedQuietly(itemParseOutboxId)) return false
-        recordResult(itemParseOutboxId, ItemParsingMetrics.RESULT_FAILED, reason.metricLabel, started, logSubject)
+        if (!markFailedQuietly(attempt)) return false
+        recordResult(attempt, ItemParsingMetrics.RESULT_FAILED, reason.metricLabel, started, logSubject)
         return true
     }
 
-    private fun markFailedQuietly(itemParseOutboxId: Long): Boolean =
-        runCatchingException { itemParsingService.markFailed(itemParseOutboxId) }
-            .onFailure { e -> log.error("item parse outbox {} FAILED 전이 실패, 회수 대기", itemParseOutboxId, e) }
+    private fun markFailedQuietly(attempt: ParseAttempt): Boolean =
+        runCatchingException { itemParsingService.markFailed(attempt) }
+            .onSuccess { held -> if (!held) logSuperseded(attempt) }
+            .onFailure { e -> log.error("item parse outbox {} FAILED 전이 실패, 회수 대기", attempt.itemParseOutboxId, e) }
             .getOrDefault(false)
 
+    private fun logSuperseded(attempt: ParseAttempt) {
+        log.warn("item.parse.superseded outbox={} recovery={} 회수로 놓친 시도의 결과를 버림", attempt.itemParseOutboxId, attempt.recoveryCount)
+    }
+
     private fun recordResult(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         result: String,
         reason: String,
         started: Long,
         trailingFields: String,
     ) {
         val latencyMs = (System.nanoTime() - started) / 1_000_000
-        log.info("item.parse.result outbox={} result={} reason={} latency={}ms {}", itemParseOutboxId, result, reason, latencyMs, trailingFields)
+        log.info("item.parse.result outbox={} result={} reason={} latency={}ms {}", attempt.itemParseOutboxId, result, reason, latencyMs, trailingFields)
         ItemParsingMetrics.record(meterRegistry, result, reason)
     }
 

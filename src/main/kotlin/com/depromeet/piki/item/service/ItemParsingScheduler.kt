@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.product.service.remote.RemoteExtractionProperties
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -39,17 +40,17 @@ class ItemParsingScheduler(
         itemParsingService.recoverStuck(LocalDateTime.now().minus(STUCK_AFTER), RECOVER_LIMIT).forEach { report(it) }
     }
 
-    private fun submit(itemParseOutboxId: Long) {
-        runCatchingException { itemParser.parse(itemParseOutboxId) }.onFailure { e ->
-            log.warn("item parse outbox {} 파서 제출 거부, 대기로 되돌림: {}", itemParseOutboxId, e.message)
-            requeueQuietly(itemParseOutboxId)
+    private fun submit(attempt: ParseAttempt) {
+        runCatchingException { itemParser.parse(attempt) }.onFailure { e ->
+            log.warn("item parse outbox {} 파서 제출 거부, 대기로 되돌림: {}", attempt.itemParseOutboxId, e.message)
+            requeueQuietly(attempt)
         }
     }
 
     // 되돌리기가 실패해도 같은 배치의 나머지 제출은 계속한다.
-    private fun requeueQuietly(itemParseOutboxId: Long) {
-        runCatchingException { itemParsingService.requeue(itemParseOutboxId) }
-            .onFailure { e -> log.error("item parse outbox {} 대기로 되돌리기 실패", itemParseOutboxId, e) }
+    private fun requeueQuietly(attempt: ParseAttempt) {
+        runCatchingException { itemParsingService.requeue(attempt) }
+            .onFailure { e -> log.error("item parse outbox {} 대기로 되돌리기 실패", attempt.itemParseOutboxId, e) }
     }
 
     private fun report(recovery: StuckRecovery) {

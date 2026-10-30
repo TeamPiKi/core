@@ -3,6 +3,7 @@ package com.depromeet.piki.support
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.service.ExtractionSettlement
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -10,11 +11,11 @@ import jakarta.persistence.EntityManager
 import org.springframework.jdbc.core.JdbcTemplate
 
 // 엔티티 전이를 거친다. JDBC 로 상태만 바꾸면 같은 트랜잭션에서 이미 관리 중인 엔티티는 옛 상태로 남는다.
-fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): Long {
+fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): ParseAttempt {
     val outbox = latestParseOutboxOf(slot) ?: error("요청자 $slot 의 아웃박스가 없다")
     outbox.claim()
     flush()
-    return outbox.getId()
+    return outbox.attempt()
 }
 
 // 등록 뒤 파싱이 끝난 것과 같은 경로로 아이템과 버전을 만든다

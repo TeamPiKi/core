@@ -103,6 +103,32 @@ class ItemParseOutboxTest {
     }
 
     @Test
+    fun `PROCESSING 은 집을 때의 회수 횟수를 든 시도만 쥔다`() {
+        val outbox = processing()
+
+        assertTrue(outbox.isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
+        assertFalse(outbox.isHeldBy(ParseAttempt(1L, recoveryCount = 1)))
+    }
+
+    @Test
+    fun `회수 뒤 다시 집히면 회수 전에 집은 시도는 행을 놓친다`() {
+        val outbox = processing()
+        val before = ParseAttempt(1L, outbox.recoveryCount)
+
+        outbox.recover()
+        outbox.claim()
+
+        assertFalse(outbox.isHeldBy(before))
+        assertTrue(outbox.isHeldBy(ParseAttempt(1L, outbox.recoveryCount)))
+    }
+
+    @Test
+    fun `PROCESSING 이 아니면 어떤 시도도 행을 쥐지 않는다`() {
+        assertFalse(pending().isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
+        assertFalse(processing().apply { succeed() }.isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
+    }
+
+    @Test
     fun `PROCESSING 이 아닌 아웃박스는 닫거나 되돌릴 수 없다`() {
         listOf(ItemParseOutbox::succeed, ItemParseOutbox::fail, ItemParseOutbox::requeue, ItemParseOutbox::recover).forEach { transit ->
             assertFailsWith<IllegalStateException> { transit(pending()) }

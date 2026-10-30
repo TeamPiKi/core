@@ -51,7 +51,9 @@ class ItemParseOutbox(
 
     fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
 
-    fun isProcessing(): Boolean = status == ItemParseOutboxStatus.PROCESSING
+    fun attempt(): ParseAttempt = ParseAttempt(getId(), recoveryCount)
+
+    fun isHeldBy(attempt: ParseAttempt): Boolean = status == ItemParseOutboxStatus.PROCESSING && recoveryCount == attempt.recoveryCount
 
     fun isInProgress(): Boolean = status == ItemParseOutboxStatus.PENDING || status == ItemParseOutboxStatus.PROCESSING
 
