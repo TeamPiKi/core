@@ -5,6 +5,7 @@ import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSlotType
 import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 
 @Repository
 class ItemParseOutboxRepositoryImpl(
@@ -14,6 +15,11 @@ class ItemParseOutboxRepositoryImpl(
 
     override fun findPendingForUpdate(limit: Int): List<ItemParseOutbox> =
         itemParseOutboxJpaRepository.findPendingForUpdate(Limit.of(limit))
+
+    override fun findStuckForUpdate(
+        claimedBefore: LocalDateTime,
+        limit: Int,
+    ): List<ItemParseOutbox> = itemParseOutboxJpaRepository.findStuckForUpdate(claimedBefore, Limit.of(limit))
 
     override fun findById(id: Long): ItemParseOutbox? = itemParseOutboxJpaRepository.findByIdAndDeletedAtIsNull(id)
 

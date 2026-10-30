@@ -18,6 +18,7 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDateTime
 
 @Service
 class ItemParsingService(
@@ -54,7 +55,7 @@ class ItemParsingService(
                 ItemSlotState.Gone -> return discard(outbox)
             }
         if (!ItemSnapshot.accepts(extracted)) {
-            close(outbox, slot)
+            closeAfterExtraction(outbox, slot)
             return ExtractionSettlement.Applied(ItemStatus.FAILED)
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
@@ -73,7 +74,7 @@ class ItemParsingService(
     fun markFailed(itemParseOutboxId: Long): Boolean {
         val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
         when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> close(outbox, state)
+            is ItemSlotState.Present -> closeAfterExtraction(outbox, state)
             ItemSlotState.Gone -> discard(outbox)
         }
         return true
@@ -83,6 +84,26 @@ class ItemParsingService(
     fun requeue(itemParseOutboxId: Long) {
         findProcessingForUpdate(itemParseOutboxId)?.requeue()
     }
+
+    // RR 이면 새 PENDING insert 막힘
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    fun recoverStuck(
+        claimedBefore: LocalDateTime,
+        limit: Int,
+    ): List<StuckRecovery> =
+        itemParseOutboxRepository.findStuckForUpdate(claimedBefore, limit).map { outbox ->
+            if (outbox.isRecoverable()) {
+                outbox.recover()
+                StuckRecovery.Requeued(outbox.getId())
+            } else {
+                // 원인이 서버 중단이라 정체 URL 실패 관측에 섞지 않음
+                when (val state = itemSlots.find(outbox.slot)) {
+                    is ItemSlotState.Present -> close(outbox, state)
+                    ItemSlotState.Gone -> discard(outbox)
+                }
+                StuckRecovery.Failed(outbox.getId())
+            }
+        }
 
     private fun findProcessingForUpdate(itemParseOutboxId: Long): ItemParseOutbox? =
         itemParseOutboxRepository.findByIdForUpdate(itemParseOutboxId)?.takeIf { it.isProcessing() }
@@ -105,12 +126,19 @@ class ItemParsingService(
         return item
     }
 
+    private fun closeAfterExtraction(
+        outbox: ItemParseOutbox,
+        slot: ItemSlotState.Present,
+    ) {
+        close(outbox, slot)
+        if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
+    }
+
     private fun close(
         outbox: ItemParseOutbox,
         slot: ItemSlotState.Present,
     ) {
         outbox.fail()
-        if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
         eventPublisher.publishEvent(
             ItemParsingFailed(
                 slot = outbox.slot,
