@@ -51,7 +51,6 @@ class WeeklyReportService(
         val cumulativeProvider = metricsRepository.countCumulativeByProvider(toUtc(week.to), EXCLUDE_INTERNAL)
         val wau = metricsRepository.countWeeklyActiveUsers(week.from.toLocalDate(), week.to.minusSeconds(1).toLocalDate(), EXCLUDE_INTERNAL)
         val withdrawals = metricsRepository.countWithdrawals(toUtc(week.from), toUtc(week.to), EXCLUDE_INTERNAL)
-        val avgAttempts = metricsRepository.avgParsingAttempts(toUtc(week.from), toUtc(week.to))
 
         val report =
             WeeklyReport.of(
@@ -63,7 +62,6 @@ class WeeklyReportService(
                 cumulativeProvider = cumulativeProvider,
                 wau = wau,
                 withdrawals = withdrawals,
-                avgAttempts = avgAttempts,
             )
 
         return if (sender.send(channelId, WeeklyReportEmbed.build(report))) ReportOutcome.SENT else ReportOutcome.FAILED

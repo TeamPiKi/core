@@ -361,20 +361,6 @@ class MetricsRepository(
             ts(to),
         )
 
-    // 파싱 평균 시도 횟수(추출 건강도). 확정 상태(READY/FAILED)만. 대상이 없으면 null.
-    // TODO: #1176 1단계부터 attempt_count 를, 2단계부터 status 를 쓰지 않아 새 행은 집계에 안 잡힘. 3단계 재시도에서 아웃박스 기준으로 다시 연결
-    fun avgParsingAttempts(
-        from: LocalDateTime,
-        to: LocalDateTime,
-    ): Double? =
-        jdbcTemplate.queryForObject(
-            "SELECT AVG(attempt_count) FROM item_snapshots " +
-                "WHERE created_at >= ? AND created_at < ? AND status IN ('READY','FAILED')",
-            Double::class.javaObjectType,
-            ts(from),
-            ts(to),
-        )
-
     // exclude=true 면 "AND <column> NOT IN (개발진 user_id)" 조각을, false(포함)면 빈 문자열을 돌려준다.
     // developers 가 비어 있으면 NOT IN (빈 집합)이라 아무도 제외되지 않는다(SQL 안전).
     private fun notInternal(

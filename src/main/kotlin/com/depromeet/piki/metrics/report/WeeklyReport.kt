@@ -47,7 +47,6 @@ data class WeeklyReport(
     val plays: Long,
     // 건강도 · 전달
     val parseFailRate: Int,
-    val avgAttempts: Double?,
     val pushSent: Long,
     val deliverySuccessRate: Int?, // null = 금주 공지 발송 없음(0/0) — "0%" 로 오해되지 않게 구분
     val ctrApproxPct: Int,
@@ -72,7 +71,6 @@ data class WeeklyReport(
             cumulativeProvider: Map<String, Long>,
             wau: Long,
             withdrawals: Long,
-            avgAttempts: Double?,
         ): WeeklyReport {
             // 주의: cumulativeUsers 는 users(게스트 포함) 기준, provider % 는 user_details(회원 전용) 기준이라 모집단이 다르다.
             // %는 provider 합 대비 비율이라 내부적으로 정합하며, "누적 N명"(전체 유저)을 partition 하지 않는다(회원 구성비일 뿐).
@@ -105,7 +103,6 @@ data class WeeklyReport(
                 completionRate = MetricsSnapshot.pct(cur.tournament.completed, cur.tournament.participants),
                 plays = cur.tournament.plays,
                 parseFailRate = 100 - cur.wish.parseSuccessRate,
-                avgAttempts = avgAttempts,
                 pushSent = cur.push.notificationsTotal,
                 // 공지 발송이 0건이면(성공+실패=0) 성공률이 0/0 이라 "0%" 로 표시하면 "다 실패"로 오해된다 → null 로 두고 embed 가 "금주 공지 없음" 표시.
                 deliverySuccessRate =

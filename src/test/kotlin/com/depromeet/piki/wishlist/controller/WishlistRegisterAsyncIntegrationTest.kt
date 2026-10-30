@@ -47,9 +47,12 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
+import java.sql.Timestamp
 import java.time.Duration
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -418,6 +421,73 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `집은 지 2분 넘게 처리 중인 요청은 회수돼 다시 파싱된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            stubLinkSnapshotExtractor.build = {
+                ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
+            }
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck")
+            markStuck(slot, recoveryCount = 0, claimedAgo = Duration.ofMinutes(3))
+
+            itemParsingScheduler.recover()
+
+            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(1, recoveryCountOf(slot))
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            assertNotNull(jdbcTemplate.wishItemIdOf(slot.id))
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `회수한 뒤 다시 멈춘 요청은 실패로 닫고 실패 알림을 보낸다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            val internalErrorBefore = parseCount("failed", "internal_error")
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck-again")
+            markStuck(slot, recoveryCount = 1, claimedAgo = Duration.ofMinutes(3))
+
+            itemParsingScheduler.recover()
+
+            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertTrue(parseCount("failed", "internal_error") - internalErrorBefore >= 1.0)
+            await().atMost(Duration.ofSeconds(2)).until { parsingFailedNotificationsOf(userId) == 1 }
+            mockMvc
+                .perform(get("/api/v1/wishlists/${slot.id}").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(nullValue()))
+                .andExpect(jsonPath("$.data.item.status").value("FAILED"))
+        } finally {
+            jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
+            cleanup(userId)
+        }
+    }
+
+    @Test
+    fun `집은 지 2분이 안 된 처리 중 요청은 회수하지 않는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        try {
+            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/still-parsing")
+            markStuck(slot, recoveryCount = 0, claimedAgo = Duration.ofMinutes(1))
+
+            itemParsingScheduler.recover()
+
+            assertEquals(ItemParseOutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(0, recoveryCountOf(slot))
+        } finally {
+            cleanup(userId)
+        }
+    }
+
+    @Test
     fun `차단 도메인 URL 을 등록하면 등록 시점에 400 으로 거부되고 위시가 생기지 않는다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
@@ -580,6 +650,34 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
+
+    // 테스트 컨텍스트는 스케줄링이 꺼져 있어 등록한 요청은 PENDING 그대로다. 워커가 집은 뒤 내려간 상태를 만든다
+    private fun markStuck(
+        slot: ItemSlot,
+        recoveryCount: Int,
+        claimedAgo: Duration,
+    ) {
+        jdbcTemplate.update(
+            "UPDATE item_parse_outbox SET status = 'PROCESSING', recovery_count = ?, updated_at = ? WHERE id = ?",
+            recoveryCount,
+            Timestamp.valueOf(LocalDateTime.now().minus(claimedAgo)),
+            jdbcTemplate.latestParseOutboxIdOf(slot),
+        )
+    }
+
+    private fun recoveryCountOf(slot: ItemSlot): Int =
+        jdbcTemplate.queryForObject(
+            "SELECT recovery_count FROM item_parse_outbox WHERE id = ?",
+            Int::class.java,
+            jdbcTemplate.latestParseOutboxIdOf(slot),
+        ) ?: error("요청자 $slot 의 아웃박스가 없다")
+
+    private fun parsingFailedNotificationsOf(userId: UUID): Int =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = 'ITEM_PARSING_FAILED'",
+            Int::class.java,
+            uuidToBytes(userId),
+        ) ?: 0
 
     private fun versionsOf(itemId: Long): List<ItemSnapshot> = itemSnapshotRepository.findAllByItemIds(listOf(itemId))
 

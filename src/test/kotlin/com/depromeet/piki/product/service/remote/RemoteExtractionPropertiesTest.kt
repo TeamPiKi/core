@@ -12,16 +12,6 @@ class RemoteExtractionPropertiesTest {
     }
 
     @Test
-    fun `read-timeout 이 stale 판정(60s) 이상이면 부팅에서 거부한다`() {
-        assertFailsWith<IllegalArgumentException> {
-            RemoteExtractionProperties(baseUrl = "http://x", readTimeoutMs = 60_000)
-        }
-        assertFailsWith<IllegalArgumentException> {
-            RemoteExtractionProperties(baseUrl = "http://x", readTimeoutMs = 60_001)
-        }
-    }
-
-    @Test
     fun `타임아웃이 0 이하이면 거부한다 - 0 은 무한 대기라 워커 스레드가 영구 블록된다`() {
         assertFailsWith<IllegalArgumentException> {
             RemoteExtractionProperties(baseUrl = "http://x", readTimeoutMs = 0)
@@ -34,7 +24,6 @@ class RemoteExtractionPropertiesTest {
         }
     }
 
-    // 계약 값이 stale 이상으로 바뀌면 운영 부팅이 깨진다 — 그 전에 여기서 걸린다.
     @Test
     fun `read-timeout 기본값은 계약의 호출자 타임아웃이고 그 값으로 생성된다`() {
         val props = RemoteExtractionProperties(baseUrl = "http://x")
@@ -42,7 +31,7 @@ class RemoteExtractionPropertiesTest {
     }
 
     @Test
-    fun `stale 미만의 양수 타임아웃은 통과한다`() {
+    fun `양수 타임아웃은 그대로 받는다`() {
         val props = RemoteExtractionProperties(baseUrl = "http://x", connectTimeoutMs = 2_000, readTimeoutMs = 55_000)
         assertEquals(55_000, props.readTimeoutMs)
     }
