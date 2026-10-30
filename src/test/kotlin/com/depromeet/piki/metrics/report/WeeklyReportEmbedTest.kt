@@ -11,7 +11,6 @@ class WeeklyReportEmbedTest {
     private fun sampleReport(
         signupNewTrend: Trend = Trend(12, false),
         participants: Long = 140,
-        avgAttempts: Double? = 1.2,
         deliverySuccessRate: Int? = 97,
     ) = WeeklyReport(
         weekLabel = "07/06(월) ~ 07/12(일)",
@@ -44,7 +43,6 @@ class WeeklyReportEmbedTest {
         completionRate = 71,
         plays = 980,
         parseFailRate = 6,
-        avgAttempts = avgAttempts,
         pushSent = 3,
         deliverySuccessRate = deliverySuccessRate,
         ctrApproxPct = 12,
@@ -142,7 +140,6 @@ class WeeklyReportEmbedTest {
                 cumulativeProvider = emptyMap(),
                 wau = 0,
                 withdrawals = 0,
-                avgAttempts = null,
             )
 
         assertEquals(0, report.completionRate) // 0 분모에도 예외 없이 0
@@ -167,11 +164,10 @@ class WeeklyReportEmbedTest {
         )
 
     @Test
-    fun `파싱 평균 시도가 없으면 대시로 표시한다`() {
-        val embeds = WeeklyReportEmbed.build(sampleReport(avgAttempts = null))
+    fun `파싱 실패율은 퍼센트로 표시한다`() {
+        val embeds = WeeklyReportEmbed.build(sampleReport())
 
-        val field = fieldValue(embeds[2], "파싱 실패율")
-        assertTrue(field.contains("—"), "실제: $field")
+        assertEquals("6%", fieldValue(embeds[2], "파싱 실패율"))
     }
 
     @Test
@@ -188,7 +184,6 @@ class WeeklyReportEmbedTest {
                 cumulativeProvider = emptyMap(),
                 wau = 0,
                 withdrawals = 0,
-                avgAttempts = null,
             )
 
         val embeds = WeeklyReportEmbed.build(report)

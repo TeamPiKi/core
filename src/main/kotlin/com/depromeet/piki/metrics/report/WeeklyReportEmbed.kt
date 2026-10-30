@@ -47,10 +47,9 @@ object WeeklyReportEmbed {
     }
 
     private fun healthCard(r: WeeklyReport): Map<String, Any> {
-        val attempts = r.avgAttempts?.let { "%.1f".format(it) } ?: "—"
         val fields =
             listOf(
-                field("파싱 실패율", "${r.parseFailRate}%\n평균 시도 $attempts"),
+                field("파싱 실패율", "${r.parseFailRate}%"),
                 // 개인 푸시(notifications 테이블) — 발송 수·근사 CTR 은 같은 대상이라 한 필드로 묶는다.
                 // 아래 "공지 전달"(announcements 테이블)과는 다른 발송이므로 라벨로 명확히 가른다(같은 카드에 나란히 둬 오독되던 것 정정).
                 field("푸시 알림", "${r.pushSent}건 발송\n근사 CTR ${r.ctrApproxPct}%"),
