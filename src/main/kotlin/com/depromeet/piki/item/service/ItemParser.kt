@@ -9,7 +9,6 @@ import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.LinkSnapshotExtractor
 import com.depromeet.piki.product.service.ProductSnapshot
-import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.observation.Observation
 import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
@@ -21,7 +20,7 @@ class ItemParser(
     private val linkSnapshotExtractor: LinkSnapshotExtractor,
     private val imageSnapshotExtractor: ImageSnapshotExtractor,
     private val itemParsingService: ItemParsingService,
-    private val meterRegistry: MeterRegistry,
+    private val itemParseResultRecorder: ItemParseResultRecorder,
     private val observationRegistry: ObservationRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -40,9 +39,7 @@ class ItemParser(
         cause: Throwable,
     ) {
         log.error("item parse outbox {} 의 입력을 읽지 못해 실패로 종결", attempt.itemParseOutboxId, cause)
-        if (markFailedQuietly(attempt)) {
-            ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, ParseFailureReason.INTERNAL_ERROR.metricLabel)
-        }
+        if (markFailedQuietly(attempt)) itemParseResultRecorder.recordFailed(attempt.itemParseOutboxId, ParseFailureReason.INTERNAL_ERROR, "input=unreadable")
     }
 
     private fun parseLink(
@@ -125,7 +122,7 @@ class ItemParser(
         started: Long,
     ) {
         val missing = extracted.takeIf { status == ItemStatus.INCOMPLETE }?.let { " missing=${ItemParsingMetrics.missingFieldsOf(it)}" }.orEmpty()
-        recordResult(attempt, resultOf(status), reasonOf(status), started, "$logSubject$missing")
+        itemParseResultRecorder.recordSettled(attempt.itemParseOutboxId, status, "${latencyField(started)} $logSubject$missing")
     }
 
     private fun failExtraction(
@@ -150,7 +147,7 @@ class ItemParser(
         started: Long,
     ): Boolean {
         if (!markFailedQuietly(attempt)) return false
-        recordResult(attempt, ItemParsingMetrics.RESULT_FAILED, reason.metricLabel, started, logSubject)
+        itemParseResultRecorder.recordFailed(attempt.itemParseOutboxId, reason, "${latencyField(started)} $logSubject")
         return true
     }
 
@@ -164,28 +161,7 @@ class ItemParser(
         log.warn("item.parse.superseded outbox={} recovery={} 행을 놓친 시도의 결과를 버림", attempt.itemParseOutboxId, attempt.recoveryCount)
     }
 
-    private fun recordResult(
-        attempt: ParseAttempt,
-        result: String,
-        reason: String,
-        started: Long,
-        trailingFields: String,
-    ) {
-        val latencyMs = (System.nanoTime() - started) / 1_000_000
-        log.info("item.parse.result outbox={} result={} reason={} latency={}ms {}", attempt.itemParseOutboxId, result, reason, latencyMs, trailingFields)
-        ItemParsingMetrics.record(meterRegistry, result, reason)
-    }
-
-    private fun resultOf(status: ItemStatus): String =
-        when (status) {
-            ItemStatus.READY -> ItemParsingMetrics.RESULT_READY
-            ItemStatus.INCOMPLETE -> ItemParsingMetrics.RESULT_INCOMPLETE
-            ItemStatus.FAILED -> ItemParsingMetrics.RESULT_FAILED
-            ItemStatus.PARSING -> error("추출 전이가 만들 수 없는 상태 $status")
-        }
-
-    private fun reasonOf(status: ItemStatus): String =
-        if (status == ItemStatus.FAILED) ParseFailureReason.EXTRACT_QUALITY.metricLabel else ItemParsingMetrics.REASON_NONE
+    private fun latencyField(started: Long): String = "latency=${(System.nanoTime() - started) / 1_000_000}ms"
 
     companion object {
         private const val PARSE_OBSERVATION = "item.parse"

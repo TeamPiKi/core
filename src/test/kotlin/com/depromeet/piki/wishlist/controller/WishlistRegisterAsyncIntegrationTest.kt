@@ -9,7 +9,7 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemParser
+import com.depromeet.piki.item.service.ItemParseResultRecorder
 import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.product.domain.ProductLink
@@ -171,9 +171,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         // 실패 라인도 latency 를 가져야 타임아웃형 실패가 로그 기반 소요 통계에서 빠지지 않는다(#916)
-        val parserLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val parserLogger = LoggerFactory.getLogger(ItemParser::class.java) as Logger
-        parserLogger.addAppender(parserLogs)
+        val resultLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val resultLogger = LoggerFactory.getLogger(ItemParseResultRecorder::class.java) as Logger
+        resultLogger.addAppender(resultLogs)
         try {
             stubLinkSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val notProductBefore = parseCount("failed", "not_product")
@@ -195,11 +195,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val expectedResultLog =
                 Regex("""item\.parse\.result outbox=$outboxId result=failed reason=not_product latency=\d+ms""")
             assertTrue(
-                parserLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
+                resultLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
                 "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
             )
         } finally {
-            parserLogger.detachAppender(parserLogs)
+            resultLogger.detachAppender(resultLogs)
             cleanup(userId)
         }
     }

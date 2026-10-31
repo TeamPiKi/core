@@ -42,12 +42,8 @@ fun JdbcTemplate.parseOutboxStatusOf(slot: ItemSlot): ItemParseOutboxStatus =
     )?.let(ItemParseOutboxStatus::valueOf) ?: error("요청자 $slot 의 아웃박스가 없다")
 
 fun JdbcTemplate.parseOutboxRecoveryCountOf(slot: ItemSlot): Int =
-    queryForObject(
-        "SELECT recovery_count FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ? ORDER BY id DESC LIMIT 1",
-        Int::class.java,
-        slot.type.name,
-        slot.id,
-    ) ?: error("요청자 $slot 의 아웃박스가 없다")
+    queryForObject("SELECT recovery_count FROM item_parse_outbox WHERE id = ?", Int::class.java, latestParseOutboxIdOf(slot))
+        ?: error("요청자 $slot 의 아웃박스가 없다")
 
 // 테스트 컨텍스트는 스케줄링이 꺼져 있어 워커가 집은 뒤 멈춘 상태를 직접 만든다
 fun JdbcTemplate.markParseOutboxStuck(

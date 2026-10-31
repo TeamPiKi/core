@@ -67,7 +67,7 @@ class ItemParseOutbox(
 
     fun fail() = transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.FAILED)
 
-    // 매번 멈추는 요청이 영원히 다시 파싱되지 않게 회수는 한 번까지만
+    // 매번 멈추는 요청이 영원히 다시 파싱되지 않게 회수 횟수에 상한을 둠
     fun recover(): RecoveryOutcome {
         if (recoveryCount >= MAX_RECOVERIES) {
             fail()

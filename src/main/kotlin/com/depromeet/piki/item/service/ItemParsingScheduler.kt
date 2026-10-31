@@ -4,7 +4,6 @@ import com.depromeet.piki.common.config.AsyncConfig
 import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.RecoveryOutcome
 import com.depromeet.piki.product.service.remote.RemoteExtractionProperties
-import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.scheduling.annotation.Scheduled
@@ -19,7 +18,7 @@ class ItemParsingScheduler(
     private val itemParsingService: ItemParsingService,
     private val itemParser: ItemParser,
     @Qualifier(AsyncConfig.ITEM_PARSING_EXECUTOR) private val itemParsingExecutor: ThreadPoolTaskExecutor,
-    private val meterRegistry: MeterRegistry,
+    private val itemParseResultRecorder: ItemParseResultRecorder,
     remoteExtractionProperties: RemoteExtractionProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -57,11 +56,7 @@ class ItemParsingScheduler(
     private fun report(recovery: StuckRecovery) {
         when (recovery.outcome) {
             RecoveryOutcome.REQUEUED -> log.warn("item.parse.recover outbox={} action=requeue", recovery.itemParseOutboxId)
-            RecoveryOutcome.EXHAUSTED -> {
-                val reason = ParseFailureReason.INTERNAL_ERROR.metricLabel
-                log.warn("item.parse.result outbox={} result={} reason={} recovery=exhausted", recovery.itemParseOutboxId, ItemParsingMetrics.RESULT_FAILED, reason)
-                ItemParsingMetrics.record(meterRegistry, ItemParsingMetrics.RESULT_FAILED, reason)
-            }
+            RecoveryOutcome.EXHAUSTED -> itemParseResultRecorder.recordFailed(recovery.itemParseOutboxId, ParseFailureReason.INTERNAL_ERROR, "recovery=exhausted")
         }
     }
 
