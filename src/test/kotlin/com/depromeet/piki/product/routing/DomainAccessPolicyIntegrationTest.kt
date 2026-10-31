@@ -5,7 +5,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
-import com.depromeet.piki.support.deleteItems
+import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import org.junit.jupiter.api.Test
@@ -198,17 +198,8 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
 
-    // @Transactional 자동 롤백이 없으므로 이 테스트가 만든 user·wish·item·snapshot 을 직접 정리한다
-    // (WishlistRegisterAsyncIntegrationTest 와 같은 패턴).
     private fun cleanup(userId: UUID) {
-        val itemIds =
-            jdbcTemplate.queryForList(
-                "SELECT s.item_id FROM wishes w JOIN item_snapshots s ON s.id = w.snapshot_id WHERE w.user_id = ?",
-                Long::class.java,
-                uuidToBytes(userId),
-            )
-        jdbcTemplate.update("DELETE FROM wishes WHERE user_id = ?", uuidToBytes(userId))
-        jdbcTemplate.deleteItems(itemIds.filterNotNull())
+        jdbcTemplate.deleteWishDataOf(userId)
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", uuidToBytes(userId))
     }
 }
