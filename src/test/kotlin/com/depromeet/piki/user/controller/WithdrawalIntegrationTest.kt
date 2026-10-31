@@ -108,21 +108,17 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         )
     }
 
-    // wish 는 활성 snapshot 을 가리킨다(snapshot_id NOT NULL). 먼저 item_snapshots 행을 만들고 그 id 를 snapshot_id 로 넣는다.
     private fun insertWish(userId: UUID): Long {
-        val snapshotId = insertItemSnapshot(itemId = 1L)
         jdbcTemplate.update(
-            "INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, ?, 1, NOW(6), NOW(6))",
+            "INSERT INTO wishes (user_id, item_id, created_at, updated_at) VALUES (?, 1, NOW(6), NOW(6))",
             uuidToBytes(userId),
-            snapshotId,
         )
         return jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long::class.java)!!
     }
 
-    // 알림·역조회 무관한 fixture 라 PROCESSING 상태로 최소 행만 만든다. status·item_id·timestamp 가 NOT NULL.
     private fun insertItemSnapshot(itemId: Long): Long {
         jdbcTemplate.update(
-            "INSERT INTO item_snapshots (item_id, status, created_by, created_at, updated_at) VALUES (?, 'PROCESSING', ?, NOW(6), NOW(6))",
+            "INSERT INTO item_snapshots (item_id, created_by, created_at, updated_at) VALUES (?, ?, NOW(6), NOW(6))",
             itemId,
             uuidToBytes(UUID.randomUUID()),
         )

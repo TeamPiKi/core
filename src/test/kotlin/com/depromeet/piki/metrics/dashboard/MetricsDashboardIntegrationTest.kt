@@ -237,13 +237,10 @@ class MetricsDashboardIntegrationTest : IntegrationTestSupport() {
         // 개발진을 developers 명단에 user_id 로 등록(운영에선 이메일로 1회 해석해 넣는 그 user_id).
         jdbcTemplate.update("INSERT INTO developers (user_id) VALUES (?)", uuidToBytes(dev))
 
-        // 위시 — 각 유저 1건(snapshot_id 로 참조).
         jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (7001, 'LINK', 'https://shop.example/n', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
         jdbcTemplate.update("INSERT INTO items (id, source_type, canonical_url, created_at, updated_at) VALUES (7002, 'LINK', 'https://shop.example/d', ?, ?)", Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_by, created_at, updated_at) VALUES (7101, 7001, 'READY', ?, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO item_snapshots (id, item_id, status, created_by, created_at, updated_at) VALUES (7102, 7002, 'READY', ?, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 7101, 7001, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
-        jdbcTemplate.update("INSERT INTO wishes (user_id, snapshot_id, item_id, created_at, updated_at) VALUES (?, 7102, 7002, ?, ?)", uuidToBytes(dev), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO wishes (user_id, item_id, created_at, updated_at) VALUES (?, 7001, ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
+        jdbcTemplate.update("INSERT INTO wishes (user_id, item_id, created_at, updated_at) VALUES (?, 7002, ?, ?)", uuidToBytes(dev), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
 
         // 푸시 도달 가능 — 각자 활성 디바이스 1개.
         jdbcTemplate.update("INSERT INTO user_devices (user_id, device_id, fcm_token, created_at, updated_at) VALUES (?, 'dev-n', 'tok-n', ?, ?)", uuidToBytes(normal), Timestamp.valueOf(withinWindow), Timestamp.valueOf(withinWindow))
