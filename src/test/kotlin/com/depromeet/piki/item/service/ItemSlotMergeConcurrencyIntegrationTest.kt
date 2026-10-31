@@ -3,9 +3,9 @@ package com.depromeet.piki.item.service
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
@@ -105,7 +105,7 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
         try {
             stubBothExtractionsFinishTogether(finalUrl)
 
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { entries.all { jdbcTemplate.parseOutboxStatusOf(it) == ItemParseOutboxStatus.SUCCEEDED } }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { entries.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED } }
 
             val live =
                 jdbcTemplate.queryForList(
@@ -188,7 +188,7 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
                 }
             stubBothExtractionsFinishTogether(finalUrl)
 
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { slots.all { jdbcTemplate.parseOutboxStatusOf(it) == ItemParseOutboxStatus.SUCCEEDED } }
+            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { slots.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED } }
 
             val live =
                 jdbcTemplate.queryForList(

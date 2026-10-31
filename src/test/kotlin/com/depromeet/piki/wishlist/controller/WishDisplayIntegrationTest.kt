@@ -13,6 +13,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.completeLatest
+import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.uuidToBytes
@@ -175,10 +176,7 @@ class WishDisplayIntegrationTest : IntegrationTestSupport() {
         saveVersion(itemId, "수기 복구값", 70_000, true, by = userA)
         val wishId = saveWish(userA, itemId)
         val failedRefresh =
-            ItemParseOutbox.of(ItemSlot.wish(wishId), ParsePurpose.REFRESH, ParseInput.Link(ProductLink.parse(url))).apply {
-                claim()
-                fail()
-            }
+            ItemParseOutbox.of(ItemSlot.wish(wishId), ParsePurpose.REFRESH, ParseInput.Link(ProductLink.parse(url))).failedBeforeSave()
         itemParseOutboxRepository.save(failedRefresh)
 
         mockMvc

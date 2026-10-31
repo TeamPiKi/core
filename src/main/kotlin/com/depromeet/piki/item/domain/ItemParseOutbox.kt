@@ -1,6 +1,6 @@
 package com.depromeet.piki.item.domain
 
-import com.depromeet.piki.common.domain.LongBaseEntity
+import com.depromeet.piki.common.outbox.Outbox
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import jakarta.persistence.Column
@@ -35,60 +35,14 @@ class ItemParseOutbox(
     @Column(length = ProductLink.MAX_LENGTH)
     val normalizedInput: NormalizedInput?,
 
-) : LongBaseEntity() {
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
-    var status: ItemParseOutboxStatus = ItemParseOutboxStatus.PENDING
-        protected set
-
-    @Column(nullable = false)
-    var recoveryCount: Int = 0
-        protected set
-
+) : Outbox() {
     val slot: ItemSlot get() = ItemSlot(slotType, slotId)
 
     val input: ParseInput get() = ParseInput.of(inputType, inputValue)
 
     fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
 
-    fun attempt(): ParseAttempt = ParseAttempt(getId(), recoveryCount)
-
-    fun isHeldBy(attempt: ParseAttempt): Boolean = status == ItemParseOutboxStatus.PROCESSING && recoveryCount == attempt.recoveryCount
-
-    fun isInProgress(): Boolean = status == ItemParseOutboxStatus.PENDING || status == ItemParseOutboxStatus.PROCESSING
-
-    fun isFailed(): Boolean = status == ItemParseOutboxStatus.FAILED
-
-    fun claim() = transit(from = ItemParseOutboxStatus.PENDING, to = ItemParseOutboxStatus.PROCESSING)
-
-    fun requeue() = transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.PENDING)
-
-    fun succeed() = transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.SUCCEEDED)
-
-    fun fail() = transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.FAILED)
-
-    // 매번 멈추는 요청이 영원히 다시 파싱되지 않게 회수 횟수에 상한을 둠
-    fun recover(): RecoveryOutcome {
-        if (recoveryCount >= MAX_RECOVERIES) {
-            fail()
-            return RecoveryOutcome.EXHAUSTED
-        }
-        transit(from = ItemParseOutboxStatus.PROCESSING, to = ItemParseOutboxStatus.PENDING)
-        recoveryCount++
-        return RecoveryOutcome.REQUEUED
-    }
-
-    private fun transit(
-        from: ItemParseOutboxStatus,
-        to: ItemParseOutboxStatus,
-    ) {
-        check(status == from) { "item parse outbox ${getIdOrNull()} 은 $status 라 $to 로 갈 수 없다" }
-        status = to
-    }
-
     companion object {
-        private const val MAX_RECOVERIES = 1
-
         fun of(
             slot: ItemSlot,
             purpose: ParsePurpose,

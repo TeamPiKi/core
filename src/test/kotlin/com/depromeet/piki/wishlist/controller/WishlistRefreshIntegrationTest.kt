@@ -1,8 +1,8 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
@@ -19,6 +19,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
@@ -103,7 +104,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.price").value(10_000))
 
             val slot = ItemSlot.wish(wishId)
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
 
             val versions = versionsOf(itemId)
             assertEquals(2, versions.size)
@@ -262,7 +263,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.refreshing").value(true))
 
             assertEquals(2, countParseOutbox(slot))
-            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
         } finally {
             cleanup(userId)
         }
@@ -287,7 +288,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 ).andExpect(status().isOk)
 
             itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
             }
             // AFTER_COMMIT 리스너가 비동기로 저장한다
             await().atMost(Duration.ofSeconds(5)).until {
@@ -327,7 +328,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("ITEM-008"))
 
             assertEquals(listOf("기계 값"), versionsOf(itemId).map { it.name })
-            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
         } finally {
             cleanup(userId)
         }
@@ -382,10 +383,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
         slot: ItemSlot,
         url: String,
     ): ItemParseOutbox =
-        ItemParseOutbox.of(slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))).apply {
-            claim()
-            fail()
-        }
+        ItemParseOutbox.of(slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))).failedBeforeSave()
 
     private fun buildMockMvc(): MockMvc =
         MockMvcBuilders
