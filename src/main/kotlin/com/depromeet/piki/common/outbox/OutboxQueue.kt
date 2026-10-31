@@ -51,6 +51,6 @@ abstract class OutboxQueue<T : Outbox>(
     // 바깥 트랜잭션에 합류하면 Spring 이 isolation 설정을 무시함
     private fun <R : Any> inReadCommitted(block: () -> R): R {
         check(!TransactionSynchronizationManager.isActualTransactionActive()) { "아웃박스 집기·되돌리기·회수는 바깥 트랜잭션 안에서 부를 수 없다" }
-        return readCommitted.execute { block() } ?: error("트랜잭션 콜백이 null 을 돌려줬다")
+        return readCommitted.execute { block() }
     }
 }

@@ -136,7 +136,7 @@ interface OutboxQueueContract<T : Outbox> {
         assertTrue(indexes.isNotEmpty(), "$table 에 (status, created_at) 으로 시작하는 인덱스가 없다")
     }
 
-    private fun <R : Any> inTransaction(block: () -> R): R = TransactionTemplate(transactionManager).execute { block() } ?: error("트랜잭션 결과가 없다")
+    private fun <R : Any> inTransaction(block: () -> R): R = TransactionTemplate(transactionManager).execute { block() }
 
     private fun isHeld(attempt: OutboxAttempt): Boolean = inTransaction { jpaRepository.findHeldForUpdate(attempt)?.let { true } ?: false }
 
