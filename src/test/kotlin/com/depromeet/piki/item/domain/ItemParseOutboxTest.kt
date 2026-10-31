@@ -86,20 +86,45 @@ class ItemParseOutboxTest {
     fun `멈춘 PROCESSING 을 회수하면 PENDING 으로 되돌아가고 회수 횟수가 는다`() {
         val outbox = processing()
 
-        outbox.recover()
-
+        assertEquals(RecoveryOutcome.REQUEUED, outbox.recover())
         assertEquals(ItemParseOutboxStatus.PENDING, outbox.status)
         assertEquals(1, outbox.recoveryCount)
     }
 
     @Test
-    fun `한 번 회수한 아웃박스는 다시 회수할 수 없다`() {
+    fun `한 번 회수한 아웃박스가 다시 멈추면 되돌리지 않고 실패로 닫는다`() {
         val outbox = processing().apply { recover() }
         outbox.claim()
 
-        assertFalse(outbox.isRecoverable())
-        assertFailsWith<IllegalStateException> { outbox.recover() }
-        assertEquals(ItemParseOutboxStatus.PROCESSING, outbox.status)
+        assertEquals(RecoveryOutcome.EXHAUSTED, outbox.recover())
+        assertEquals(ItemParseOutboxStatus.FAILED, outbox.status)
+        assertEquals(1, outbox.recoveryCount)
+    }
+
+    @Test
+    fun `PROCESSING 은 집을 때의 회수 횟수를 든 시도만 쥔다`() {
+        val outbox = processing()
+
+        assertTrue(outbox.isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
+        assertFalse(outbox.isHeldBy(ParseAttempt(1L, recoveryCount = 1)))
+    }
+
+    @Test
+    fun `회수 뒤 다시 집히면 회수 전에 집은 시도는 행을 놓친다`() {
+        val outbox = processing()
+        val before = ParseAttempt(1L, outbox.recoveryCount)
+
+        outbox.recover()
+        outbox.claim()
+
+        assertFalse(outbox.isHeldBy(before))
+        assertTrue(outbox.isHeldBy(ParseAttempt(1L, outbox.recoveryCount)))
+    }
+
+    @Test
+    fun `PROCESSING 이 아니면 어떤 시도도 행을 쥐지 않는다`() {
+        assertFalse(pending().isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
+        assertFalse(processing().apply { succeed() }.isHeldBy(ParseAttempt(1L, recoveryCount = 0)))
     }
 
     @Test

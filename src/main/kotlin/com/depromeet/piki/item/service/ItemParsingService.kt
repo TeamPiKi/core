@@ -4,7 +4,9 @@ import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.ParseInput
+import com.depromeet.piki.item.domain.RecoveryOutcome
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
@@ -33,10 +35,10 @@ class ItemParsingService(
 
     // RR 이면 새 PENDING insert 막힘
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    fun claim(limit: Int): List<Long> =
+    fun claim(limit: Int): List<ParseAttempt> =
         itemParseOutboxRepository.findPendingForUpdate(limit).map { outbox ->
             outbox.claim()
-            outbox.getId()
+            outbox.attempt()
         }
 
     @Transactional(readOnly = true)
@@ -45,10 +47,10 @@ class ItemParsingService(
 
     @Transactional
     fun markExtracted(
-        itemParseOutboxId: Long,
+        attempt: ParseAttempt,
         extracted: ProductSnapshot,
     ): ExtractionSettlement {
-        val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return ExtractionSettlement.Superseded
+        val outbox = findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
         val slot =
             when (val state = itemSlots.find(outbox.slot)) {
                 is ItemSlotState.Present -> state
@@ -71,8 +73,8 @@ class ItemParsingService(
     }
 
     @Transactional
-    fun markFailed(itemParseOutboxId: Long): Boolean {
-        val outbox = findProcessingForUpdate(itemParseOutboxId) ?: return false
+    fun markFailed(attempt: ParseAttempt): Boolean {
+        val outbox = findHeldForUpdate(attempt) ?: return false
         when (val state = itemSlots.find(outbox.slot)) {
             is ItemSlotState.Present -> closeAfterExtraction(outbox, state)
             ItemSlotState.Gone -> discard(outbox)
@@ -81,8 +83,8 @@ class ItemParsingService(
     }
 
     @Transactional
-    fun requeue(itemParseOutboxId: Long) {
-        findProcessingForUpdate(itemParseOutboxId)?.requeue()
+    fun requeue(attempt: ParseAttempt) {
+        findHeldForUpdate(attempt)?.requeue()
     }
 
     // RR 이면 새 PENDING insert 막힘
@@ -92,21 +94,16 @@ class ItemParsingService(
         limit: Int,
     ): List<StuckRecovery> =
         itemParseOutboxRepository.findStuckForUpdate(claimedBefore, limit).map { outbox ->
-            if (outbox.isRecoverable()) {
-                outbox.recover()
-                StuckRecovery.Requeued(outbox.getId())
-            } else {
-                // 원인이 서버 중단이라 정체 URL 실패 관측에 섞지 않음
-                when (val state = itemSlots.find(outbox.slot)) {
-                    is ItemSlotState.Present -> close(outbox, state)
-                    ItemSlotState.Gone -> discard(outbox)
-                }
-                StuckRecovery.Failed(outbox.getId())
+            val outcome = outbox.recover()
+            when (outcome) {
+                RecoveryOutcome.REQUEUED -> Unit
+                RecoveryOutcome.EXHAUSTED -> notifyFailed(outbox)
             }
+            StuckRecovery(outbox.getId(), outcome)
         }
 
-    private fun findProcessingForUpdate(itemParseOutboxId: Long): ItemParseOutbox? =
-        itemParseOutboxRepository.findByIdForUpdate(itemParseOutboxId)?.takeIf { it.isProcessing() }
+    private fun findHeldForUpdate(attempt: ParseAttempt): ItemParseOutbox? =
+        itemParseOutboxRepository.findByIdForUpdate(attempt.itemParseOutboxId)?.takeIf { it.isHeldBy(attempt) }
 
     // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
     private fun discard(outbox: ItemParseOutbox): ExtractionSettlement.Discarded {
@@ -126,19 +123,27 @@ class ItemParsingService(
         return item
     }
 
+    // 회수 상한 실패는 원인이 서버 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
+    private fun notifyFailed(outbox: ItemParseOutbox) {
+        when (val state = itemSlots.find(outbox.slot)) {
+            is ItemSlotState.Present -> publishFailed(outbox, state)
+            ItemSlotState.Gone -> Unit
+        }
+    }
+
     private fun closeAfterExtraction(
         outbox: ItemParseOutbox,
         slot: ItemSlotState.Present,
     ) {
-        close(outbox, slot)
+        outbox.fail()
+        publishFailed(outbox, slot)
         if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
     }
 
-    private fun close(
+    private fun publishFailed(
         outbox: ItemParseOutbox,
         slot: ItemSlotState.Present,
     ) {
-        outbox.fail()
         eventPublisher.publishEvent(
             ItemParsingFailed(
                 slot = outbox.slot,

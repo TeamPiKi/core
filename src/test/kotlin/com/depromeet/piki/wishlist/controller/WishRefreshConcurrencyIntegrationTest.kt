@@ -166,7 +166,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
                 listOf(
                     {
                         itemParsingService.markExtracted(
-                            outbox.getId(),
+                            outbox.attempt(),
                             ProductSnapshot(
                                 name = "확정 상품",
                                 price = 10_000,

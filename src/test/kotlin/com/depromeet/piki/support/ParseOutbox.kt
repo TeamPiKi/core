@@ -3,18 +3,22 @@ package com.depromeet.piki.support
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.service.ExtractionSettlement
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
 import jakarta.persistence.EntityManager
 import org.springframework.jdbc.core.JdbcTemplate
+import java.sql.Timestamp
+import java.time.Duration
+import java.time.LocalDateTime
 
 // 엔티티 전이를 거친다. JDBC 로 상태만 바꾸면 같은 트랜잭션에서 이미 관리 중인 엔티티는 옛 상태로 남는다.
-fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): Long {
+fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): ParseAttempt {
     val outbox = latestParseOutboxOf(slot) ?: error("요청자 $slot 의 아웃박스가 없다")
     outbox.claim()
     flush()
-    return outbox.getId()
+    return outbox.attempt()
 }
 
 // 등록 뒤 파싱이 끝난 것과 같은 경로로 아이템과 버전을 만든다
@@ -36,6 +40,24 @@ fun JdbcTemplate.parseOutboxStatusOf(slot: ItemSlot): ItemParseOutboxStatus =
         slot.type.name,
         slot.id,
     )?.let(ItemParseOutboxStatus::valueOf) ?: error("요청자 $slot 의 아웃박스가 없다")
+
+fun JdbcTemplate.parseOutboxRecoveryCountOf(slot: ItemSlot): Int =
+    queryForObject("SELECT recovery_count FROM item_parse_outbox WHERE id = ?", Int::class.java, latestParseOutboxIdOf(slot))
+        ?: error("요청자 $slot 의 아웃박스가 없다")
+
+// 테스트 컨텍스트는 스케줄링이 꺼져 있어 워커가 집은 뒤 멈춘 상태를 직접 만든다
+fun JdbcTemplate.markParseOutboxStuck(
+    slot: ItemSlot,
+    claimedAgo: Duration,
+    recoveryCount: Int = 0,
+) {
+    update(
+        "UPDATE item_parse_outbox SET status = 'PROCESSING', recovery_count = ?, updated_at = ? WHERE id = ?",
+        recoveryCount,
+        Timestamp.valueOf(LocalDateTime.now().minus(claimedAgo)),
+        latestParseOutboxIdOf(slot),
+    )
+}
 
 fun JdbcTemplate.deleteItems(itemIds: Collection<Long>) {
     if (itemIds.isEmpty()) return

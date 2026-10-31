@@ -8,7 +8,7 @@ sealed interface ExtractionSettlement {
         val status: ItemStatus,
     ) : ExtractionSettlement
 
-    // 다른 실행(회수)이 이미 이 행을 끝냄
+    // 회수로 이 시도가 행을 놓쳤거나 다른 실행이 이미 끝냄
     data object Superseded : ExtractionSettlement
 
     // 탈퇴로 슬롯 행이 사라져 결과를 받을 곳이 없음

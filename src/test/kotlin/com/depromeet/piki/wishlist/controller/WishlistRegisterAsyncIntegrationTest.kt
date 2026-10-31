@@ -9,8 +9,9 @@ import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemParser
+import com.depromeet.piki.item.service.ItemParseResultRecorder
 import com.depromeet.piki.item.service.ItemParsingScheduler
+import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
@@ -23,6 +24,9 @@ import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.normalizedOf
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.latestParseOutboxIdOf
+import com.depromeet.piki.support.markParseOutboxStuck
+import com.depromeet.piki.support.notificationCountOf
+import com.depromeet.piki.support.parseOutboxRecoveryCountOf
 import com.depromeet.piki.support.parseOutboxStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
@@ -47,9 +51,7 @@ import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
-import java.sql.Timestamp
 import java.time.Duration
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -169,9 +171,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val userId = UUID.randomUUID()
         insertMember(userId)
         // 실패 라인도 latency 를 가져야 타임아웃형 실패가 로그 기반 소요 통계에서 빠지지 않는다(#916)
-        val parserLogs = ListAppender<ILoggingEvent>().apply { start() }
-        val parserLogger = LoggerFactory.getLogger(ItemParser::class.java) as Logger
-        parserLogger.addAppender(parserLogs)
+        val resultLogs = ListAppender<ILoggingEvent>().apply { start() }
+        val resultLogger = LoggerFactory.getLogger(ItemParseResultRecorder::class.java) as Logger
+        resultLogger.addAppender(resultLogs)
         try {
             stubLinkSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val notProductBefore = parseCount("failed", "not_product")
@@ -193,11 +195,11 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val expectedResultLog =
                 Regex("""item\.parse\.result outbox=$outboxId result=failed reason=not_product latency=\d+ms""")
             assertTrue(
-                parserLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
+                resultLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
                 "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
             )
         } finally {
-            parserLogger.detachAppender(parserLogs)
+            resultLogger.detachAppender(resultLogs)
             cleanup(userId)
         }
     }
@@ -430,12 +432,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
             }
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck")
-            markStuck(slot, recoveryCount = 0, claimedAgo = Duration.ofMinutes(3))
+            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(3))
 
             itemParsingScheduler.recover()
 
             assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
-            assertEquals(1, recoveryCountOf(slot))
+            assertEquals(1, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
             itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
             assertNotNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
@@ -451,13 +453,13 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         try {
             val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck-again")
-            markStuck(slot, recoveryCount = 1, claimedAgo = Duration.ofMinutes(3))
+            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(3), recoveryCount = 1)
 
             itemParsingScheduler.recover()
 
             assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(slot))
             assertTrue(parseCount("failed", "internal_error") - internalErrorBefore >= 1.0)
-            await().atMost(Duration.ofSeconds(2)).until { parsingFailedNotificationsOf(userId) == 1 }
+            await().atMost(Duration.ofSeconds(2)).until { jdbcTemplate.notificationCountOf(userId, NotificationType.ITEM_PARSING_FAILED) == 1 }
             mockMvc
                 .perform(get("/api/v1/wishlists/${slot.id}").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
                 .andExpect(status().isOk)
@@ -476,12 +478,12 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         insertMember(userId)
         try {
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/still-parsing")
-            markStuck(slot, recoveryCount = 0, claimedAgo = Duration.ofMinutes(1))
+            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(1))
 
             itemParsingScheduler.recover()
 
             assertEquals(ItemParseOutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(slot))
-            assertEquals(0, recoveryCountOf(slot))
+            assertEquals(0, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
         } finally {
             cleanup(userId)
         }
@@ -650,34 +652,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     }
 
     private fun memberToken(userId: UUID): String = jwtProvider.generateAccessToken(userId, IdentityType.MEMBER)
-
-    // 테스트 컨텍스트는 스케줄링이 꺼져 있어 등록한 요청은 PENDING 그대로다. 워커가 집은 뒤 내려간 상태를 만든다
-    private fun markStuck(
-        slot: ItemSlot,
-        recoveryCount: Int,
-        claimedAgo: Duration,
-    ) {
-        jdbcTemplate.update(
-            "UPDATE item_parse_outbox SET status = 'PROCESSING', recovery_count = ?, updated_at = ? WHERE id = ?",
-            recoveryCount,
-            Timestamp.valueOf(LocalDateTime.now().minus(claimedAgo)),
-            jdbcTemplate.latestParseOutboxIdOf(slot),
-        )
-    }
-
-    private fun recoveryCountOf(slot: ItemSlot): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT recovery_count FROM item_parse_outbox WHERE id = ?",
-            Int::class.java,
-            jdbcTemplate.latestParseOutboxIdOf(slot),
-        ) ?: error("요청자 $slot 의 아웃박스가 없다")
-
-    private fun parsingFailedNotificationsOf(userId: UUID): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = 'ITEM_PARSING_FAILED'",
-            Int::class.java,
-            uuidToBytes(userId),
-        ) ?: 0
 
     private fun versionsOf(itemId: Long): List<ItemSnapshot> = itemSnapshotRepository.findAllByItemIds(listOf(itemId))
 
