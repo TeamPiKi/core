@@ -12,6 +12,7 @@ import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.domain.UserInput
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.linkItem
 import org.junit.jupiter.api.Test
@@ -120,11 +121,7 @@ class ItemCardTest {
     private fun request(input: ParseInput = ParseInput.Link(ProductLink.parse("https://shop.example.com/products/1"))): ItemParseOutbox =
         ItemParseOutbox.of(ItemSlot.wish(1L), ParsePurpose.REGISTER, input)
 
-    private fun failedRequest(): ItemParseOutbox =
-        request().also {
-            it.claim()
-            it.fail()
-        }
+    private fun failedRequest(): ItemParseOutbox = request().failedBeforeSave()
 
     private fun fullInput(): UserInput = UserInput(name = "직접 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW")
 

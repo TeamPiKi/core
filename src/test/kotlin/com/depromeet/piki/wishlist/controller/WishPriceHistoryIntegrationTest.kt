@@ -11,6 +11,7 @@ import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
 import com.depromeet.piki.support.uuidToBytes
@@ -235,10 +236,7 @@ class WishPriceHistoryIntegrationTest : IntegrationTestSupport() {
         val parsingWishId = saveUnresolvedWish(userId)
         val failedWishId = saveUnresolvedWish(userId)
         itemParseOutboxRepository.save(
-            ItemParseOutbox.of(ItemSlot.wish(failedWishId), ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(failedUrl))).apply {
-                claim()
-                fail()
-            },
+            ItemParseOutbox.of(ItemSlot.wish(failedWishId), ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(failedUrl))).failedBeforeSave(),
         )
         itemParseOutboxRepository.save(
             ItemParseOutbox.of(ItemSlot.wish(parsingWishId), ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(parsingUrl))),

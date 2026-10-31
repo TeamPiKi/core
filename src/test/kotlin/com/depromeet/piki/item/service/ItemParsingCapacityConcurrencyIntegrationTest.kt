@@ -1,7 +1,7 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.domain.ItemSlot
@@ -69,12 +69,12 @@ class ItemParsingCapacityConcurrencyIntegrationTest : IntegrationTestSupport() {
             slot = wishSlot
 
             itemParsingScheduler.dispatch()
-            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(wishSlot), "가용 슬롯이 없으면 대기해야 한다")
+            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(wishSlot), "가용 슬롯이 없으면 대기해야 한다")
 
             release.countDown()
             await().atMost(Duration.ofSeconds(30)).until { itemParsingExecutor.activeCount == 0 }
             itemParsingScheduler.dispatch()
-            await().atMost(Duration.ofSeconds(10)).until { jdbcTemplate.parseOutboxStatusOf(wishSlot) == ItemParseOutboxStatus.SUCCEEDED }
+            await().atMost(Duration.ofSeconds(10)).until { jdbcTemplate.parseOutboxStatusOf(wishSlot) == OutboxStatus.SUCCEEDED }
         } finally {
             release.countDown()
             slot?.let { cleanup(it) }

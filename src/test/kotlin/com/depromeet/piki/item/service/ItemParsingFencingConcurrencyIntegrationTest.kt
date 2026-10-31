@@ -1,8 +1,8 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.config.AsyncConfig
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
@@ -97,10 +97,10 @@ class ItemParsingFencingConcurrencyIntegrationTest : IntegrationTestSupport() {
 
             releaseOld.countDown()
             await().atMost(Duration.ofSeconds(5)).until { itemParsingExecutor.activeCount == 1 }
-            assertEquals(ItemParseOutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(wish.slot))
+            assertEquals(OutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(wish.slot))
 
             releaseNew.countDown()
-            await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == ItemParseOutboxStatus.SUCCEEDED }
+            await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.SUCCEEDED }
             assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()))
             // 알림은 커밋 뒤 비동기로 저장되므로 정리 전에 도착을 기다린다
             await().atMost(Duration.ofSeconds(5)).until { jdbcTemplate.notificationCountOf(userId, NotificationType.ITEM_PARSING_COMPLETED) == 1 }

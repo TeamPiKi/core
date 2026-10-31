@@ -1,12 +1,11 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.common.outbox.OutboxAttempt
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
-import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.domain.ParseInput
-import com.depromeet.piki.item.domain.RecoveryOutcome
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
@@ -18,9 +17,8 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Isolation
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
-import java.time.LocalDateTime
 
 @Service
 class ItemParsingService(
@@ -33,37 +31,29 @@ class ItemParsingService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // RR 이면 새 PENDING insert 막힘
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    fun claim(limit: Int): List<ParseAttempt> =
-        itemParseOutboxRepository.findPendingForUpdate(limit).map { outbox ->
-            outbox.claim()
-            outbox.attempt()
-        }
-
     @Transactional(readOnly = true)
     fun inputOf(itemParseOutboxId: Long): ParseInput =
         itemParseOutboxRepository.findById(itemParseOutboxId)?.input ?: error("item parse outbox $itemParseOutboxId 이 없다")
 
     @Transactional
     fun markExtracted(
-        attempt: ParseAttempt,
+        attempt: OutboxAttempt,
         extracted: ProductSnapshot,
     ): ExtractionSettlement {
-        val outbox = findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
+        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
         val slot =
             when (val state = itemSlots.find(outbox.slot)) {
                 is ItemSlotState.Present -> state
-                ItemSlotState.Gone -> return discard(outbox)
+                ItemSlotState.Gone -> return discard(outbox, attempt)
             }
         if (!ItemSnapshot.accepts(extracted)) {
-            closeAfterExtraction(outbox, slot)
+            closeAfterExtraction(outbox, attempt, slot)
             return ExtractionSettlement.Applied(ItemStatus.FAILED)
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
         val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, slot.owner))
         val fill = itemSlots.fill(outbox.slot, item.getId())
-        outbox.succeed()
+        outbox.succeed(attempt)
         when (fill) {
             ItemSlotFill.Filled -> eventPublisher.publishEvent(parsingFact(outbox, slot, version))
             // 합침 사실은 ItemSlots 가 발행한다
@@ -73,41 +63,30 @@ class ItemParsingService(
     }
 
     @Transactional
-    fun markFailed(attempt: ParseAttempt): Boolean {
-        val outbox = findHeldForUpdate(attempt) ?: return false
+    fun markFailed(attempt: OutboxAttempt): Boolean {
+        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return false
         when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> closeAfterExtraction(outbox, state)
-            ItemSlotState.Gone -> discard(outbox)
+            is ItemSlotState.Present -> closeAfterExtraction(outbox, attempt, state)
+            ItemSlotState.Gone -> discard(outbox, attempt)
         }
         return true
     }
 
-    @Transactional
-    fun requeue(attempt: ParseAttempt) {
-        findHeldForUpdate(attempt)?.requeue()
+    // 회수 상한 실패는 원인이 서버 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun notifyRecoveryExhausted(outbox: ItemParseOutbox) {
+        when (val state = itemSlots.find(outbox.slot)) {
+            is ItemSlotState.Present -> publishFailed(outbox, state)
+            ItemSlotState.Gone -> Unit
+        }
     }
 
-    // RR 이면 새 PENDING insert 막힘
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    fun recoverStuck(
-        claimedBefore: LocalDateTime,
-        limit: Int,
-    ): List<StuckRecovery> =
-        itemParseOutboxRepository.findStuckForUpdate(claimedBefore, limit).map { outbox ->
-            val outcome = outbox.recover()
-            when (outcome) {
-                RecoveryOutcome.REQUEUED -> Unit
-                RecoveryOutcome.EXHAUSTED -> notifyFailed(outbox)
-            }
-            StuckRecovery(outbox.getId(), outcome)
-        }
-
-    private fun findHeldForUpdate(attempt: ParseAttempt): ItemParseOutbox? =
-        itemParseOutboxRepository.findByIdForUpdate(attempt.itemParseOutboxId)?.takeIf { it.isHeldBy(attempt) }
-
     // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
-    private fun discard(outbox: ItemParseOutbox): ExtractionSettlement.Discarded {
-        outbox.fail()
+    private fun discard(
+        outbox: ItemParseOutbox,
+        attempt: OutboxAttempt,
+    ): ExtractionSettlement.Discarded {
+        outbox.fail(attempt)
         return ExtractionSettlement.Discarded
     }
 
@@ -123,19 +102,12 @@ class ItemParsingService(
         return item
     }
 
-    // 회수 상한 실패는 원인이 서버 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
-    private fun notifyFailed(outbox: ItemParseOutbox) {
-        when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> publishFailed(outbox, state)
-            ItemSlotState.Gone -> Unit
-        }
-    }
-
     private fun closeAfterExtraction(
         outbox: ItemParseOutbox,
+        attempt: OutboxAttempt,
         slot: ItemSlotState.Present,
     ) {
-        outbox.fail()
+        outbox.fail(attempt)
         publishFailed(outbox, slot)
         if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
     }

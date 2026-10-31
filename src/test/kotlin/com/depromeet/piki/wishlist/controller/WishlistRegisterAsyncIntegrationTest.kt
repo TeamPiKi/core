@@ -4,7 +4,7 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemRepository
@@ -141,7 +141,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val readyBefore = parseCount("ready", "none")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/42")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
             // 파서 비동기라 메트릭 증가도 기다린다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("ready", "none") - readyBefore >= 1.0 }
 
@@ -179,7 +179,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val notProductBefore = parseCount("failed", "not_product")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/not-a-product")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "not_product") - notProductBefore >= 1.0 }
 
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
@@ -214,7 +214,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val incompleteBefore = parseCount("incomplete", "none")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/no-name")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
             // 부분 성공은 실패에 섞지 않는다(#506)
             await().atMost(Duration.ofSeconds(2)).until { parseCount("incomplete", "none") - incompleteBefore >= 1.0 }
 
@@ -260,7 +260,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 jdbcTemplate.queryForObject("SELECT id FROM wishes WHERE user_id = ?", Long::class.java, uuidToBytes(userId))
                     ?: error("위시가 없다")
             itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
             }
 
             mockMvc
@@ -295,7 +295,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             }
             val (slot, imageKey) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
             val itemId = jdbcTemplate.wishItemIdOf(slot.id) ?: error("wish ${slot.id} 에 아이템이 확정되지 않았다")
             val version = versionsOf(itemId).single()
             assertTrue(version.isReady())
@@ -318,7 +318,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val (slot, _) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
@@ -374,7 +374,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                 }
 
             itemParsingScheduler.awaitTicking {
-                slots.all { jdbcTemplate.parseOutboxStatusOf(it) == ItemParseOutboxStatus.SUCCEEDED }
+                slots.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED }
             }
             val itemIds = slots.map { jdbcTemplate.wishItemIdOf(it.id) ?: error("wish ${it.id} 에 아이템이 확정되지 않았다") }
             assertEquals(5, itemIds.distinct().size)
@@ -393,7 +393,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/blocked")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
             // reason 이 예외에서 파생되므로 파서에서 메트릭까지 배선을 함께 고정한다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
@@ -413,7 +413,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/transient")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.FAILED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
@@ -436,9 +436,9 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
             itemParsingScheduler.recover()
 
-            assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
             assertEquals(1, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == ItemParseOutboxStatus.SUCCEEDED }
+            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
             assertNotNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
@@ -457,7 +457,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
             itemParsingScheduler.recover()
 
-            assertEquals(ItemParseOutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(OutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(slot))
             assertTrue(parseCount("failed", "internal_error") - internalErrorBefore >= 1.0)
             await().atMost(Duration.ofSeconds(2)).until { jdbcTemplate.notificationCountOf(userId, NotificationType.ITEM_PARSING_FAILED) == 1 }
             mockMvc
@@ -482,7 +482,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
 
             itemParsingScheduler.recover()
 
-            assertEquals(ItemParseOutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(OutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(slot))
             assertEquals(0, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
         } finally {
             cleanup(userId)

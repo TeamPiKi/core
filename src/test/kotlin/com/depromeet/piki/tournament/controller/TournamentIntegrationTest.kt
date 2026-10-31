@@ -1,11 +1,11 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
@@ -17,6 +17,7 @@ import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubRefreshTokenStore
+import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.normalizedOf
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
@@ -2649,7 +2650,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         }.first()
         assertEquals(tournamentItemId, tournamentItem.getId())
         assertNull(tournamentItem.itemId)
-        assertEquals(ItemParseOutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(tournamentItem.slot))
+        assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(tournamentItem.slot))
 
         mockMvc
             .perform(
@@ -3053,11 +3054,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     ): TournamentItem {
         val tournamentItem = tournamentItemJpaRepository.save(TournamentItem(tournamentId = tournamentId, userId = owner, itemId = null))
         val outbox = ItemParseOutbox.of(tournamentItem.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(link)))
-        if (failed) {
-            outbox.claim()
-            outbox.fail()
-        }
-        itemParseOutboxRepository.save(outbox)
+        itemParseOutboxRepository.save(if (failed) outbox.failedBeforeSave() else outbox)
         return tournamentItem
     }
 

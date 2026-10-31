@@ -1,8 +1,8 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.UploadSize
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParsingScheduler
@@ -400,7 +400,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                     .asLong()
 
             itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == ItemParseOutboxStatus.SUCCEEDED
+                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
             }
             val itemId = jdbcTemplate.wishItemIdOf(wishId) ?: error("wish $wishId 에 아이템이 확정되지 않았다")
             val version = itemSnapshotRepository.findAllByItemIds(listOf(itemId)).single()

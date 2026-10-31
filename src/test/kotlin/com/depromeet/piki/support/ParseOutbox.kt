@@ -1,9 +1,9 @@
 package com.depromeet.piki.support
 
+import com.depromeet.piki.common.outbox.OutboxAttempt
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemParseOutbox
-import com.depromeet.piki.item.domain.ItemParseOutboxStatus
 import com.depromeet.piki.item.domain.ItemSlot
-import com.depromeet.piki.item.domain.ParseAttempt
 import com.depromeet.piki.item.service.ExtractionSettlement
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -14,12 +14,19 @@ import java.time.Duration
 import java.time.LocalDateTime
 
 // 엔티티 전이를 거친다. JDBC 로 상태만 바꾸면 같은 트랜잭션에서 이미 관리 중인 엔티티는 옛 상태로 남는다.
-fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): ParseAttempt {
+fun EntityManager.claimLatestParseOutbox(slot: ItemSlot): OutboxAttempt {
     val outbox = latestParseOutboxOf(slot) ?: error("요청자 $slot 의 아웃박스가 없다")
     outbox.claim()
     flush()
     return outbox.attempt()
 }
+
+// 저장 전이라 id 가 없어 attempt() 대신 회수 횟수만 맞춘 시도로 닫는다
+fun ItemParseOutbox.failedBeforeSave(): ItemParseOutbox =
+    apply {
+        claim()
+        fail(OutboxAttempt(outboxId = 0L, recoveryCount = recoveryCount))
+    }
 
 // 등록 뒤 파싱이 끝난 것과 같은 경로로 아이템과 버전을 만든다
 fun ItemParsingService.completeLatest(
@@ -33,13 +40,13 @@ fun ItemParsingService.failLatest(
     slot: ItemSlot,
 ): Boolean = markFailed(entityManager.claimLatestParseOutbox(slot))
 
-fun JdbcTemplate.parseOutboxStatusOf(slot: ItemSlot): ItemParseOutboxStatus =
+fun JdbcTemplate.parseOutboxStatusOf(slot: ItemSlot): OutboxStatus =
     queryForObject(
         "SELECT status FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ? ORDER BY id DESC LIMIT 1",
         String::class.java,
         slot.type.name,
         slot.id,
-    )?.let(ItemParseOutboxStatus::valueOf) ?: error("요청자 $slot 의 아웃박스가 없다")
+    )?.let(OutboxStatus::valueOf) ?: error("요청자 $slot 의 아웃박스가 없다")
 
 fun JdbcTemplate.parseOutboxRecoveryCountOf(slot: ItemSlot): Int =
     queryForObject("SELECT recovery_count FROM item_parse_outbox WHERE id = ?", Int::class.java, latestParseOutboxIdOf(slot))
