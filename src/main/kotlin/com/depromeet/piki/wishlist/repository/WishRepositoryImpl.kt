@@ -26,7 +26,7 @@ class WishRepositoryImpl(
         cursor ?: return wishJpaRepository.findByUserIdAndDeletedAtIsNullOrderByIdDesc(userId, limited)
         return wishJpaRepository.findByUserIdAndIdLessThanAndDeletedAtIsNullOrderByIdDesc(
             userId,
-            cursor.lastWishId,
+            cursor.position,
             limited,
         )
     }

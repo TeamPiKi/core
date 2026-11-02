@@ -13,6 +13,7 @@ import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
+import com.depromeet.piki.wishlist.domain.WishSearchQuery
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.service.WishlistService
 import com.depromeet.piki.wishlist.service.dto.DeleteWishCommand
@@ -84,8 +85,21 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) cursor: String?,
         @RequestParam(required = false) size: Int?,
+        @RequestParam(required = false) folderId: Long?,
+        @RequestParam(required = false) excludeFolderId: Long?,
+        @RequestParam(required = false) q: String?,
     ): ApiResponseBody<List<WishItemResponse>> {
-        val page = wishlistService.getWishlist(GetWishlistQuery(userId = userId, cursor = WishCursor.parse(cursor), size = WishlistSize.of(size)))
+        val page =
+            wishlistService.getWishlist(
+                GetWishlistQuery(
+                    userId = userId,
+                    cursor = WishCursor.parse(cursor),
+                    size = WishlistSize.of(size),
+                    folderId = folderId,
+                    excludeFolderId = excludeFolderId,
+                    search = WishSearchQuery.of(q),
+                ),
+            )
         val data = page.entries.map(WishItemResponse::from)
         return ApiResponseBody.ok(
             data = data,

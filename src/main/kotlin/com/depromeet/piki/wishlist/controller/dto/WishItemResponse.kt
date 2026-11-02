@@ -2,7 +2,6 @@ package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemStatus
-import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishFolderResult
 import com.depromeet.piki.wishlist.service.dto.WishResult
 import io.swagger.v3.oas.annotations.media.Schema
@@ -37,7 +36,7 @@ data class WishItemResponse(
             result: WishResult,
         ): WishItemResponse =
             WishItemResponse(
-                wish = WishView.from(result.wish),
+                wish = WishView.from(result),
                 item = ItemView.from(result),
                 winnerTournamentIds = result.winnerTournamentIds,
                 folderResult = result.folderResult,
@@ -50,12 +49,18 @@ data class WishItemResponse(
         val id: Long,
         @field:Schema(description = "위시리스트에 담은 시각", example = "2026-05-21T10:00:00")
         val createdAt: LocalDateTime,
+        @field:Schema(
+            description = "이 위시가 들어 있는 내 폴더 id. 폴더 id 오름차순이고, 폴더에 없으면 빈 배열",
+            example = "[12, 15]",
+        )
+        val folderIds: List<Long> = emptyList(),
     ) {
         companion object {
-            fun from(wish: Wish): WishView =
+            fun from(result: WishResult): WishView =
                 WishView(
-                    id = wish.getId(),
-                    createdAt = wish.createdAt,
+                    id = result.wish.getId(),
+                    createdAt = result.wish.createdAt,
+                    folderIds = result.folderIds,
                 )
         }
     }

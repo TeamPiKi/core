@@ -9,6 +9,7 @@ import com.depromeet.piki.folder.controller.dto.FolderResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.wishlist.controller.WishlistController
 import com.depromeet.piki.wishlist.domain.WishException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -23,6 +24,12 @@ class FolderApiExamples(
     @Bean
     fun folderOpenApiExamples(): OperationCustomizer =
         OperationCustomizer { operation, handlerMethod ->
+            // 위시 목록의 폴더 거르기가 내는 404. 위시 쪽 문서가 폴더 예외를 참조하지 않게 폴더 쪽에서 예시를 더한다
+            if (handlerMethod.binds(WishlistController::getWishlist)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(FolderException.notFound(), name = "folderId · excludeFolderId 가 없는 폴더 · 남의 폴더")
+                }
+            }
             if (handlerMethod.binds(FolderController::create)) {
                 operation.examples(openApiObjectMapper.delegate) {
                     add(status = HttpStatus.CREATED, name = "생성 성공 (빈 폴더)", payload = ApiResponseBody.created(newFolder))

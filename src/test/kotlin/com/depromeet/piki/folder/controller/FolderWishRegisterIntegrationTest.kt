@@ -125,6 +125,8 @@ class FolderWishRegisterIntegrationTest : IntegrationTestSupport() {
                 .andExpect(status().isCreated)
                 .andExpect(jsonPath("$.data.item.status").value("PARSING"))
                 .andExpect(jsonPath("$.data.folderResult").value(nullValue()))
+                // 등록 응답도 목록처럼 소속 폴더를 싣는다(#1265 의 folderIds)
+                .andExpect(jsonPath("$.data.wish.folderIds[0]").value(folderId))
                 .andReturn()
                 .response.contentAsString
 
@@ -144,6 +146,7 @@ class FolderWishRegisterIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.code").value(nullValue()))
             .andExpect(jsonPath("$.data.wish.id").value(existing.getId()))
             .andExpect(jsonPath("$.data.folderResult").value(WishFolderResult.ADDED.name))
+            .andExpect(jsonPath("$.data.wish.folderIds[0]").value(folderId))
 
         assertEquals(listOf(existing.getId()), wishIdsIn(folderId))
         assertEquals(1, wishCountOf(userId), "새 위시는 생기지 않는다")
