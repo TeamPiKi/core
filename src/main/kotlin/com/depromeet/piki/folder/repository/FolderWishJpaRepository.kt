@@ -45,6 +45,13 @@ interface FolderWishJpaRepository : JpaRepository<FolderWish, Long> {
         limit: Limit,
     ): List<FolderWishPositionView>
 
+    // 주어진 위시 중 이 폴더에 든 것. 유니크 키(folder_id, wish_id)로 찾는다
+    @Query("SELECT fw.wishId FROM FolderWish fw WHERE fw.folderId = :folderId AND fw.wishId IN :wishIds")
+    fun findWishIdsByFolderIdAndWishIdIn(
+        @Param("folderId") folderId: Long,
+        @Param("wishIds") wishIds: Collection<Long>,
+    ): List<Long>
+
     // 위시마다 들어 있는 폴더. 폴더를 지우면 연결도 지우므로 연결만 보면 된다
     @Query("SELECT fw.folderId AS folderId, fw.wishId AS wishId FROM FolderWish fw WHERE fw.wishId IN :wishIds ORDER BY fw.folderId ASC")
     fun findByWishIdIn(

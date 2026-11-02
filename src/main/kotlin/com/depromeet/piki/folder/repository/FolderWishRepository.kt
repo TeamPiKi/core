@@ -22,6 +22,11 @@ interface FolderWishRepository {
 
     fun findFolderIdsByWishIds(wishIds: Collection<Long>): Map<Long, List<Long>>
 
+    fun findWishIdsByFolderIdAmong(
+        folderId: Long,
+        wishIds: Collection<Long>,
+    ): Set<Long>
+
     fun deleteByFolderIdAndWishIds(
         folderId: Long,
         wishIds: Collection<Long>,

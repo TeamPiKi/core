@@ -13,9 +13,11 @@ interface WishFolderPort {
         limit: Int,
     ): List<FolderEntry>
 
+    // 주어진 위시 중 그 폴더에 든 것. 목록이 비어도 폴더 소유는 확인한다
     fun wishIdsInFolder(
         userId: UUID,
         folderId: Long,
+        among: Collection<Long>,
     ): Set<Long>
 
     // 위시마다 들어 있는 폴더 id. 폴더가 없는 위시는 맵에 없다

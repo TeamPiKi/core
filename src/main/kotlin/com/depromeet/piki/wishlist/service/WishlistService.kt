@@ -17,7 +17,6 @@ import com.depromeet.piki.item.service.ItemCard
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishException
-import com.depromeet.piki.wishlist.domain.WishSearchQuery
 import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
@@ -83,18 +82,22 @@ class WishlistService(
 
     // 폴더·제외 폴더·검색어로 거른다. 제외와 검색어는 페이지를 읽은 뒤 거르므로, 한 페이지가 찰 때까지 다음 묶음을 더 읽는다.
     // 검색어는 화면 이름(사용자가 고친 이름 포함)과 비교해야 해 카드를 계산한 뒤에만 거를 수 있다.
-    // 거르는 조건이 없으면 첫 묶음이 곧 한 페이지(size + 1)라 예전과 같은 쿼리 하나로 끝난다
-    @Transactional(readOnly = true)
+    // 거르는 조건이 없으면 첫 묶음이 곧 한 페이지(size + 1)라 예전과 같은 쿼리 하나로 끝난다.
+    //
+    // 조회지만 일부러 트랜잭션으로 묶지 않는다(#1270 리뷰). 검색어가 드물게 맞으면 묶음을 여러 번 읽는데, 트랜잭션 하나로 묶으면
+    // 그동안 DB 연결 하나를 계속 쥐어 다른 API 가 연결을 기다린다. 묶지 않으면 쿼리마다 연결을 빌렸다 바로 돌려준다
+    // (open-in-view 꺼짐). 읽기만 하고 잠그지 않아 묶음마다 시점이 달라도 문제없고, 묶음 사이에 지워진 위시는 빠진다.
     fun getWishlist(query: GetWishlistQuery): WishlistResult {
         requireMember(query.userId)
         val size = query.size.value
-        val excluded = query.excludeFolderId?.let { wishFolderPort.wishIdsInFolder(query.userId, it) }.orEmpty()
-        val chunkSize = chunkSizeOf(size, excluded, query.search)
+        val chunkSize = chunkSizeOf(size, query)
 
         val matched = mutableListOf<PositionedWish>()
         var after = query.cursor?.position
         while (matched.size <= size) {
             val chunk = chunkOf(query, after, chunkSize)
+            // 빈 묶음이어도 묻는다 — 남의 폴더는 위시가 없어도 404 여야 한다
+            val excluded = excludedAmong(query, chunk)
             val candidates = chunk.wishes.filterNot { it.wish.getId() in excluded }
             val cards = itemCardService.cardsOf(candidates.map { it.wish.cardQuery() })
             candidates.forEach { candidate ->
@@ -128,12 +131,20 @@ class WishlistService(
 
     private fun chunkSizeOf(
         size: Int,
-        excluded: Set<Long>,
-        search: WishSearchQuery?,
+        query: GetWishlistQuery,
     ): Int {
         // 거르는 조건이 없으면 한 페이지만 읽는다
-        if (excluded.isEmpty()) search ?: return size + 1
+        query.excludeFolderId ?: query.search ?: return size + 1
         return maxOf(size + 1, FILTER_CHUNK_SIZE)
+    }
+
+    // 제외 폴더에 든 위시 중 이 묶음에 있는 것만 묻는다. 폴더 연결 전체를 읽지 않는다(#1270 리뷰)
+    private fun excludedAmong(
+        query: GetWishlistQuery,
+        chunk: WishChunk,
+    ): Set<Long> {
+        val folderId = query.excludeFolderId ?: return emptySet()
+        return wishFolderPort.wishIdsInFolder(query.userId, folderId, chunk.wishes.map { it.wish.getId() })
     }
 
     private fun matchesSearch(

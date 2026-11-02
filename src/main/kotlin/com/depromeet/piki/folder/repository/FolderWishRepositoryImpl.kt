@@ -31,6 +31,14 @@ class FolderWishRepositoryImpl(
         return folderWishJpaRepository.findLivePositionsByFolderIdAfter(folderId, afterPosition, Limit.of(limit))
     }
 
+    override fun findWishIdsByFolderIdAmong(
+        folderId: Long,
+        wishIds: Collection<Long>,
+    ): Set<Long> {
+        if (wishIds.isEmpty()) return emptySet()
+        return folderWishJpaRepository.findWishIdsByFolderIdAndWishIdIn(folderId, wishIds).toSet()
+    }
+
     override fun findFolderIdsByWishIds(wishIds: Collection<Long>): Map<Long, List<Long>> {
         if (wishIds.isEmpty()) return emptyMap()
         return folderWishJpaRepository.findByWishIdIn(wishIds).groupBy({ it.wishId }, { it.folderId })

@@ -8,7 +8,7 @@ import com.depromeet.piki.wishlist.service.WishFolderPort
 import org.springframework.stereotype.Component
 import java.util.UUID
 
-// 위시 목록 조회가 폴더에 묻는 것을 답한다. 호출부(위시 서비스)의 읽기 트랜잭션에 합류한다
+// 위시 목록 조회가 폴더에 묻는 것을 답한다. 잠그지 않는 읽기만 한다
 @Component
 class WishFolderAdapter(
     private val folderRepository: FolderRepository,
@@ -29,9 +29,10 @@ class WishFolderAdapter(
     override fun wishIdsInFolder(
         userId: UUID,
         folderId: Long,
+        among: Collection<Long>,
     ): Set<Long> {
         requireOwned(userId, folderId)
-        return folderWishRepository.findWishIdsByFolderId(folderId).toSet()
+        return folderWishRepository.findWishIdsByFolderIdAmong(folderId, among)
     }
 
     override fun folderIdsOf(wishIds: Collection<Long>): Map<Long, List<Long>> = folderWishRepository.findFolderIdsByWishIds(wishIds)
