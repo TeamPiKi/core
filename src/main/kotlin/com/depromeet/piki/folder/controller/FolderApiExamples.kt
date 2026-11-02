@@ -28,7 +28,7 @@ class FolderApiExamples(
                     add(status = HttpStatus.CREATED, name = "생성 성공 (빈 폴더)", payload = ApiResponseBody.created(newFolder))
                     add(FolderException.invalidName(), name = "이름이 비었거나 20자 초과")
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
@@ -37,7 +37,7 @@ class FolderApiExamples(
                     add(status = HttpStatus.OK, name = "조회 성공 (생성순)", payload = ApiResponseBody.ok(listOf(coatFolder, giftFolder, newFolder)))
                     add(status = HttpStatus.OK, name = "폴더 없음", payload = ApiResponseBody.ok(emptyList<FolderResponse>()))
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
@@ -46,7 +46,7 @@ class FolderApiExamples(
                     add(status = HttpStatus.OK, name = "변경 성공", payload = ApiResponseBody.ok(coatFolder.copy(name = "코트")))
                     add(FolderException.invalidName(), name = "이름이 비었거나 20자 초과")
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
@@ -55,7 +55,7 @@ class FolderApiExamples(
                 operation.examples(openApiObjectMapper.delegate) {
                     add(status = HttpStatus.OK, name = "삭제 성공", payload = ApiResponseBody.ok<Unit>())
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
@@ -65,7 +65,7 @@ class FolderApiExamples(
                     add(status = HttpStatus.OK, name = "넣기 성공", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 10)))
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(WishException.forbiddenWishItems(), name = "남의 위시나 지운 위시 포함")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -76,7 +76,7 @@ class FolderApiExamples(
                     add(status = HttpStatus.OK, name = "빼기 성공", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 8)))
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
@@ -94,7 +94,7 @@ class FolderApiExamples(
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
                     add(FolderException.sameFolderMove(), name = "이 폴더와 대상 폴더가 같음")
                     unauthorized()
-                    add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(WishException.forbiddenWishItems(), name = "남의 위시나 지운 위시 포함")
                     add(FolderException.notFound(), name = "이 폴더나 대상 폴더가 없음 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
