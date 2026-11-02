@@ -8,6 +8,7 @@ import com.depromeet.piki.folder.controller.dto.FolderResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishesRequest
 import io.swagger.v3.oas.annotations.Operation
+import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -39,7 +40,7 @@ interface FolderApi {
         ],
     )
     fun create(
-        userId: UUID,
+        @Parameter(hidden = true) userId: UUID,
         request: FolderNameRequest,
     ): ApiResponseBody<FolderResponse>
 
@@ -59,7 +60,9 @@ interface FolderApi {
             ApiResponse(responseCode = "409", description = DELETED_USER, content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))]),
         ],
     )
-    fun getFolders(userId: UUID): ApiResponseBody<List<FolderResponse>>
+    fun getFolders(
+        @Parameter(hidden = true) userId: UUID,
+    ): ApiResponseBody<List<FolderResponse>>
 
     @Operation(
         summary = "폴더 이름 바꾸기",
@@ -76,8 +79,8 @@ interface FolderApi {
         ],
     )
     fun rename(
-        userId: UUID,
-        folderId: Long,
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
         request: FolderNameRequest,
     ): ApiResponseBody<FolderResponse>
 
@@ -95,8 +98,8 @@ interface FolderApi {
         ],
     )
     fun delete(
-        userId: UUID,
-        folderId: Long,
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
     ): ApiResponseBody<Unit>
 
     @Operation(
@@ -121,8 +124,8 @@ interface FolderApi {
         ],
     )
     fun putWishes(
-        userId: UUID,
-        folderId: Long,
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
         request: FolderWishesRequest,
     ): ApiResponseBody<FolderWishCountResponse>
 
@@ -144,9 +147,12 @@ interface FolderApi {
         ],
     )
     fun takeOutWishes(
-        userId: UUID,
-        folderId: Long,
-        wishIds: List<Long>?,
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
+        @Parameter(
+            description = "뺄 위시 id. 1-100개, 중복은 하나로 센다. query 로 반복해 보낸다(?wishIds=101&wishIds=102). 폴더에 없는 위시는 건너뛴다",
+            example = "101",
+        ) wishIds: List<Long>?,
     ): ApiResponseBody<FolderWishCountResponse>
 
     @Operation(
@@ -181,8 +187,8 @@ interface FolderApi {
         ],
     )
     fun moveWishes(
-        userId: UUID,
-        folderId: Long,
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
         request: FolderMoveRequest,
     ): ApiResponseBody<FolderMoveResponse>
 }
