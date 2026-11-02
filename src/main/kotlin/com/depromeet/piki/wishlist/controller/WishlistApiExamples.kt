@@ -92,7 +92,17 @@ class WishlistApiExamples(
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
                     )
+                    add(
+                        status = HttpStatus.OK,
+                        name = "폴더로 거른 조회 (folderId · 폴더에 넣은 순서)",
+                        payload =
+                            ApiResponseBody.ok(
+                                data = listOf(folderedSampleEntry),
+                                pageResponse = PageResponse(nextCursor = null, hasNext = false),
+                            ),
+                    )
                     add(WishException.invalidCursor(), name = "유효하지 않은 cursor")
+                    add(WishException.invalidSearchQuery(), name = "검색어가 비었거나 공백뿐")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -429,6 +439,9 @@ class WishlistApiExamples(
         )
 
     private val refreshingSampleEntry = sampleEntry.copy(item = sampleEntry.item.copy(refreshing = true))
+
+    // 두 폴더에 들어 있는 위시 — folderIds 로 어느 폴더에 있는지 그린다
+    private val folderedSampleEntry = sampleEntry.copy(wish = sampleEntry.wish.copy(folderIds = listOf(12, 15)))
 
     // 우승 칩이 붙는 항목(#1236) — 두 판에서 이긴 상품이라 최신 우승이 앞에 온다. 그 토너먼트를 지우면 id 가 빠진다.
     private val winnerSampleEntry = sampleEntry.copy(winnerTournamentIds = listOf(1402, 1397))

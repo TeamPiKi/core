@@ -170,6 +170,15 @@ interface WishlistApi {
             같은 상품의 다른 위시에 합쳐진 항목은 목록에서 사라진다(ITEM_PARSING_MERGED).
             item.refreshing=true 면 새로고침 중이고, 값과 status 는 새로고침 전 것이다.
             INCOMPLETE 는 추출이 일부 필드만 채운 상태다 — 빈 필드를 사용자 입력(PATCH)으로 채우면 READY 가 된다.
+            각 항목의 wish.folderIds 는 그 위시가 들어 있는 내 폴더 id 다.
+
+            거르기 (셋 다 선택, 함께 줄 수 있음. 셋 다 없으면 전체):
+            - folderId: 그 폴더에 든 위시만. 이때 순서는 폴더에 넣은 순서(최근 넣은 순)이고, cursor 도 그 순서의 위치라
+              folderId 없는 목록의 cursor 와 섞어 쓰지 않는다. 폴더 상세·토너먼트 가져오기 칩에서 쓴다.
+            - excludeFolderId: 그 폴더에 없는 위시만. 폴더에 "내 위시에서 가져오기" 화면에서 쓴다.
+            - q: 화면에 보이는 상품명(본인이 고친 이름 포함)과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상.
+              상품명이 아직 없는 항목(PARSING·FAILED)은 찾지 않는다.
+            거르기가 있어도 한 페이지는 size 개를 채워 돌려준다(마지막 페이지 제외).
         """,
     )
     @ApiResponses(
@@ -186,7 +195,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "유효하지 않은 cursor 값 (숫자로 변환 불가)",
+                description = "잘못된 요청 (cursor 를 숫자로 바꿀 수 없음 — code: WISH-003 · q 가 비었거나 공백뿐 — code: WISH-011)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -215,6 +224,16 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId · excludeFolderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "409",
                 description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
@@ -228,10 +247,16 @@ interface WishlistApi {
     )
     fun getWishlist(
         @Parameter(hidden = true) userId: UUID,
-        @Parameter(description = "직전 응답의 nextCursor (없으면 첫 페이지)", example = "1010")
+        @Parameter(description = "직전 응답의 nextCursor (없으면 첫 페이지). folderId 를 줄 때와 안 줄 때 cursor 의 의미가 달라 섞어 쓰지 않는다", example = "1010")
         cursor: String?,
         @Parameter(description = "페이지 크기 (기본 20, 최대 50)", example = "20")
         size: Int?,
+        @Parameter(description = "이 폴더에 든 위시만 (폴더에 넣은 순서)", example = "12")
+        folderId: Long?,
+        @Parameter(description = "이 폴더에 없는 위시만", example = "15")
+        excludeFolderId: Long?,
+        @Parameter(description = "상품명 검색어. 화면에 보이는 이름과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상", example = "에코백")
+        q: String?,
     ): ApiResponseBody<List<WishItemResponse>>
 
     @Operation(
