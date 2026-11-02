@@ -6,6 +6,7 @@ import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.folder.domain.FolderName
 import com.depromeet.piki.folder.domain.FolderWish
 import com.depromeet.piki.folder.domain.FolderWishIds
+import com.depromeet.piki.folder.domain.FolderWishSelection
 import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.folder.repository.FolderWishRepository
 import com.depromeet.piki.folder.service.dto.FolderMoveResult
@@ -95,16 +96,19 @@ class FolderService(
         return countOf(folder)
     }
 
-    // 폴더에서만 빠진다. 위시는 지워지지 않는다
+    // 폴더에서만 빠진다. 위시는 지워지지 않는다. 전체 선택이면 폴더의 연결을 전부 지운다(개수 제한 없음)
     @Transactional
     fun takeOutWishes(
         userId: UUID,
         folderId: Long,
-        wishIds: FolderWishIds,
+        selection: FolderWishSelection,
     ): FolderWishCountResult {
         requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
-        folderWishRepository.deleteByFolderIdAndWishIds(folder.getId(), contentsOf(folder).takeOut(wishIds.values))
+        when (selection) {
+            FolderWishSelection.All -> folderWishRepository.deleteAllByFolderId(folder.getId())
+            is FolderWishSelection.Ids -> folderWishRepository.deleteByFolderIdAndWishIds(folder.getId(), contentsOf(folder).takeOut(selection.ids.values))
+        }
         return countOf(folder)
     }
 
@@ -114,7 +118,7 @@ class FolderService(
         userId: UUID,
         folderId: Long,
         targetFolderId: Long,
-        wishIds: FolderWishIds,
+        selection: FolderWishSelection,
     ): FolderMoveResult {
         requireMemberForUpdate(userId)
         // 두 폴더를 같은 순서로 잠가 반대 방향 이동이 동시에 와도 서로를 기다리며 멈추지 않게 한다
@@ -124,13 +128,24 @@ class FolderService(
             }
         val source = locked.getValue(folderId)
         val target = locked.getValue(targetFolderId)
-        // 옮기기는 빼기 뒤 넣기라 넣기와 같은 규칙을 쓴다. 안 거르면 원래 폴더에 남은 지운 위시의 연결이 대상으로 넘어간다
-        verifyLiveWishesOf(userId, wishIds.values)
-        val move = contentsOf(source).moveTo(contentsOf(target), wishIds.values)
+        val moving = movingWishIds(userId, source, selection)
+        val move = contentsOf(source).moveTo(contentsOf(target), moving)
         folderWishRepository.deleteByFolderIdAndWishIds(source.getId(), move.takeOut)
         folderWishRepository.saveAll(move.putIntoTarget.map { FolderWish(folderId = target.getId(), wishId = it) })
         return FolderMoveResult(source = countOf(source), target = countOf(target))
     }
+
+    private fun movingWishIds(
+        userId: UUID,
+        source: Folder,
+        selection: FolderWishSelection,
+    ): List<Long> =
+        when (selection) {
+            // 전체 선택은 이 폴더의 살아 있는 위시. 내 폴더에 든 위시라 소유 확인이 필요 없고, 지운 위시의 연결은 옮기지 않는다
+            FolderWishSelection.All -> folderWishRepository.findLiveWishIdsByFolderIds(listOf(source.getId()))[source.getId()].orEmpty()
+            // 옮기기는 빼기 뒤 넣기라 넣기와 같은 규칙을 쓴다. 안 거르면 원래 폴더에 남은 지운 위시의 연결이 대상으로 넘어간다
+            is FolderWishSelection.Ids -> selection.ids.values.also { verifyLiveWishesOf(userId, it) }
+        }
 
     // 남의 위시나 지워진 위시가 하나라도 섞이면 요청 전체를 거절한다. 위시 다건 삭제와 같은 403 이다
     private fun verifyLiveWishesOf(

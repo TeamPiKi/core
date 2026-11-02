@@ -3,6 +3,7 @@ package com.depromeet.piki.folder.controller.dto
 import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.folder.domain.FolderName
 import com.depromeet.piki.folder.domain.FolderWishIds
+import com.depromeet.piki.folder.domain.FolderWishSelection
 import io.swagger.v3.oas.annotations.media.ArraySchema
 import io.swagger.v3.oas.annotations.media.Schema
 
@@ -40,16 +41,21 @@ data class FolderMoveRequest(
     @field:ArraySchema(
         arraySchema =
             Schema(
-                description = "옮길 위시 id. 1-100개, 중복은 하나로 센다. 이 폴더에 든 위시만 옮긴다",
+                description = "옮길 위시 id. 1-100개, 중복은 하나로 센다. 이 폴더에 든 위시만 옮긴다. all 과 함께 보내지 않는다",
                 example = "[101, 102]",
-                requiredMode = Schema.RequiredMode.REQUIRED,
             ),
     )
-    val wishIds: List<Long>?,
+    val wishIds: List<Long>? = null,
     @field:Schema(description = "옮겨 갈 폴더 id. 이 폴더와 같으면 400", example = "15", requiredMode = Schema.RequiredMode.REQUIRED)
     val targetFolderId: Long?,
+    @field:Schema(
+        description = "true 면 이 폴더의 위시 전부를 옮긴다(폴더 편집의 전체 선택, 개수 제한 없음). wishIds 와 함께 보내지 않는다",
+        example = "true",
+        nullable = true,
+    )
+    val all: Boolean? = null,
 ) {
-    fun toFolderWishIds(): FolderWishIds = FolderWishIds.of(wishIds)
+    fun toSelection(): FolderWishSelection = FolderWishSelection.of(all, wishIds)
 
     // 대상이 빠진 요청은 "그런 폴더 없음" 과 같게 다룬다
     fun toTargetFolderId(): Long = targetFolderId ?: throw FolderException.notFound()

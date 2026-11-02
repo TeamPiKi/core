@@ -99,21 +99,9 @@ class WishlistService(
         val size = query.size.value
         val chunkSize = chunkSizeOf(size, query)
 
+        // 다음 페이지가 있는지 알려고 한 개를 더 모은다
         val matched = mutableListOf<PositionedWish>()
-        var after = query.cursor?.position
-        while (matched.size <= size) {
-            val chunk = chunkOf(query, after, chunkSize)
-            // 빈 묶음이어도 묻는다 — 남의 폴더는 위시가 없어도 404 여야 한다
-            val excluded = excludedAmong(query, chunk)
-            val candidates = chunk.wishes.filterNot { it.wish.getId() in excluded }
-            val cards = itemCardService.cardsOf(candidates.map { it.wish.cardQuery() })
-            candidates.forEach { candidate ->
-                val card = cards.getValue(candidate.wish.cardQuery())
-                if (matchesSearch(query, card)) matched += candidate.copy(card = card)
-            }
-            after = chunk.lastPosition ?: break
-            if (chunk.exhausted) break
-        }
+        forEachMatch(query, query.cursor?.position, chunkSize) { matched += it; matched.size <= size }
 
         val hasNext = matched.size > size
         val page = matched.take(size)
@@ -134,6 +122,50 @@ class WishlistService(
 
         val nextCursor = page.lastOrNull()?.position?.toString().takeIf { hasNext }
         return WishlistResult(entries = entries, nextCursor = nextCursor, hasNext = hasNext)
+    }
+
+    // "상품 999+" 와 "검색 결과 N개" 의 개수. 목록과 같은 거르기를 쓴다.
+    // 검색어가 없으면 COUNT 쿼리로 끝난다. 검색어가 있으면 화면 이름을 계산해야 해 내 위시를 끝까지 묶음으로 읽는다.
+    // 목록처럼 트랜잭션으로 묶지 않아 오래 걸려도 DB 연결을 쥐지 않는다
+    fun countWishes(query: GetWishlistQuery): Long {
+        requireMember(query.userId)
+        query.search ?: return countWithoutSearch(query)
+        var count = 0L
+        forEachMatch(query, after = null, chunkSize = FILTER_CHUNK_SIZE) {
+            count++
+            true
+        }
+        return count
+    }
+
+    private fun countWithoutSearch(query: GetWishlistQuery): Long {
+        query.folderId?.let { return wishFolderPort.countInFolder(query.userId, it, query.excludeFolderId) }
+        // 쿼리 하나로 센다. 전체 수와 폴더 수를 따로 세어 빼면 사이에 지워진 위시로 음수가 될 수 있다(#1273 리뷰)
+        query.excludeFolderId?.let { return wishFolderPort.countOutsideFolder(query.userId, it) }
+        return wishRepository.countByUserId(query.userId)
+    }
+
+    // 거르기(제외 폴더 · 검색어)를 통과한 위시를 순서대로 넘긴다. onMatch 가 false 를 돌려주면 멈춘다
+    private fun forEachMatch(
+        query: GetWishlistQuery,
+        after: Long?,
+        chunkSize: Int,
+        onMatch: (PositionedWish) -> Boolean,
+    ) {
+        var cursor = after
+        while (true) {
+            val chunk = chunkOf(query, cursor, chunkSize)
+            // 빈 묶음이어도 묻는다 — 남의 폴더는 위시가 없어도 404 여야 한다
+            val excluded = excludedAmong(query, chunk)
+            val candidates = chunk.wishes.filterNot { it.wish.getId() in excluded }
+            val cards = itemCardService.cardsOf(candidates.map { it.wish.cardQuery() })
+            for (candidate in candidates) {
+                val card = cards.getValue(candidate.wish.cardQuery())
+                if (matchesSearch(query, card) && !onMatch(candidate.copy(card = card))) return
+            }
+            cursor = chunk.lastPosition ?: return
+            if (chunk.exhausted) return
+        }
     }
 
     private fun chunkSizeOf(

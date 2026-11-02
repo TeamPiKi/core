@@ -13,6 +13,17 @@ interface FolderWishRepository {
 
     fun countLiveByFolderId(folderId: Long): Int
 
+    fun countLiveByFolderIdExcluding(
+        folderId: Long,
+        excludeFolderId: Long,
+    ): Long
+
+    // 내 살아 있는 위시 중 이 폴더에 없는 것의 수
+    fun countLiveOutsideFolder(
+        userId: UUID,
+        excludeFolderId: Long,
+    ): Long
+
     // 폴더 안 살아 있는 위시 한 페이지. 최근 넣은 순
     fun findLivePositions(
         folderId: Long,

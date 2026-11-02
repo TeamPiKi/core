@@ -20,6 +20,7 @@ import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
@@ -115,6 +116,16 @@ class WishlistApiExamples(
                             ),
                     )
                     add(WishException.invalidCursor(), name = "유효하지 않은 cursor")
+                    add(WishException.invalidSearchQuery(), name = "검색어가 비었거나 공백뿐")
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
+                }
+            }
+            if (handlerMethod.binds(WishlistController::countWishes)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(status = HttpStatus.OK, name = "개수 조회 성공", payload = ApiResponseBody.ok(WishCountResponse(count = 128)))
+                    add(status = HttpStatus.OK, name = "검색 결과 없음", payload = ApiResponseBody.ok(WishCountResponse(count = 0)))
                     add(WishException.invalidSearchQuery(), name = "검색어가 비었거나 공백뿐")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
