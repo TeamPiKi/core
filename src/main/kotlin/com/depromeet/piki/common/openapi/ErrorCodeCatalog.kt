@@ -7,6 +7,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.apple.AppleErrorCode
 import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.storage.ImageStorageErrorCode
+import com.depromeet.piki.folder.domain.FolderErrorCode
 import com.depromeet.piki.image.domain.ImageUploadErrorCode
 import com.depromeet.piki.image.domain.ProductImageErrorCode
 import com.depromeet.piki.item.domain.ItemErrorCode
@@ -34,6 +35,7 @@ object ErrorCodeRegistry {
             addAll(AnnouncementErrorCode.entries)
             addAll(TournamentErrorCode.entries)
             addAll(WishErrorCode.entries)
+            addAll(FolderErrorCode.entries)
             addAll(ItemErrorCode.entries)
             addAll(ProductLinkErrorCode.entries)
             // PROXY-001~003(이미지 프록시)은 엔드포인트째 제거되어 빠졌다. prefix PROXY 는 재사용하지 않는다.
