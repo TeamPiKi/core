@@ -23,6 +23,16 @@ class FolderContents(
         val moving = takeOut(ids)
         return FolderMove(takeOut = moving, putIntoTarget = target.put(moving))
     }
+
+    // 위시가 다른 위시에 합쳐질 때(#1248) 이 폴더 안에서 사라지는 위시를 남는 위시로 바꾼다.
+    // 남는 위시가 이미 있으면 사라지는 위시만 뺀다. 결과는 같은 폴더 안의 빼기·넣기라 putIntoTarget 도 이 폴더다
+    fun replace(
+        merged: Long,
+        survivor: Long,
+    ): FolderMove {
+        if (merged !in held) return FolderMove(takeOut = emptyList(), putIntoTarget = emptyList())
+        return FolderMove(takeOut = listOf(merged), putIntoTarget = put(listOf(survivor)))
+    }
 }
 
 data class FolderMove(

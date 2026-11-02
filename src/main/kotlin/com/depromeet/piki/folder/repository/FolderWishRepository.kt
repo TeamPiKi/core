@@ -43,6 +43,10 @@ interface FolderWishRepository {
         wishIds: Collection<Long>,
     ): Int
 
+    fun findFolderIdsByWishId(wishId: Long): List<Long>
+
+    fun deleteAllByWishId(wishId: Long): Int
+
     fun deleteAllByFolderId(folderId: Long): Int
 
     fun hardDeleteAllByUserId(userId: UUID): Int

@@ -57,4 +57,28 @@ class FolderContentsTest {
         val e = assertFailsWith<FolderException> { source.moveTo(FolderContents(folderId = 1, wishIds = listOf(10L)), listOf(10L)) }
         assertEquals(FolderErrorCode.SAME_FOLDER_MOVE, e.errorCode)
     }
+
+    @Test
+    fun `합쳐지는 위시가 든 폴더는 그 위시를 빼고 남는 위시를 넣는다`() {
+        val move = FolderContents(folderId = 1, wishIds = listOf(10L)).replace(merged = 10L, survivor = 20L)
+
+        assertEquals(listOf(10L), move.takeOut)
+        assertEquals(listOf(20L), move.putIntoTarget)
+    }
+
+    @Test
+    fun `남는 위시가 이미 있으면 합쳐지는 위시만 뺀다`() {
+        val move = FolderContents(folderId = 1, wishIds = listOf(10L, 20L)).replace(merged = 10L, survivor = 20L)
+
+        assertEquals(listOf(10L), move.takeOut)
+        assertEquals(emptyList(), move.putIntoTarget)
+    }
+
+    @Test
+    fun `합쳐지는 위시가 없는 폴더는 바꿀 것이 없다`() {
+        val move = FolderContents(folderId = 1, wishIds = listOf(30L)).replace(merged = 10L, survivor = 20L)
+
+        assertEquals(emptyList(), move.takeOut)
+        assertEquals(emptyList(), move.putIntoTarget)
+    }
 }

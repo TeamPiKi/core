@@ -50,6 +50,7 @@ class WishlistService(
     private val sourcePlatformResolver: SourcePlatformResolver,
     private val tournamentWinnerReader: TournamentWinnerReader,
     private val wishFolderPort: WishFolderPort,
+    private val wishFolderLinker: WishFolderLinker,
 ) {
     private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(card.sourceLink))
 
@@ -61,9 +62,12 @@ class WishlistService(
 
     fun registerFromUrl(command: RegisterWishFromUrlCommand): WishResult {
         requireMember(command.userId)
+        // 없는 폴더면 한도를 깎기 전에 등록 전체를 거절한다
+        command.folderId?.let { wishFolderLinker.requireOwned(command.userId, it) }
+        wishPersistenceService.linkIfAlreadyRegistered(command)?.let { return it.withSourcePlatform().withFolderIds() }
         wishPersistenceService.rejectIfAlreadyRegistered(command)
         itemRegistrar.accept(command.link, command.userId)
-        return wishPersistenceService.persist(command).withSourcePlatform()
+        return wishPersistenceService.persist(command).withSourcePlatform().withFolderIds()
     }
 
     fun presignImageUploads(command: PresignWishImageUploadsCommand): List<PresignedRawUpload> {
@@ -76,8 +80,11 @@ class WishlistService(
     fun confirmImageRegistration(command: ConfirmWishImageRegistrationCommand): List<WishResult> {
         requireMember(command.userId)
         if (command.imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        command.folderId?.let { wishFolderLinker.requireOwned(command.userId, it) }
         imagePresignService.verifyUploaded(command.imageKeys)
-        return wishPersistenceService.registerImages(command).map { it.withSourcePlatform() }
+        val results = wishPersistenceService.registerImages(command)
+        val foldersByWish = wishFolderPort.folderIdsOf(results.map { it.wish.getId() })
+        return results.map { it.withSourcePlatform().copy(folderIds = foldersByWish[it.wish.getId()].orEmpty()) }
     }
 
     // 폴더·제외 폴더·검색어로 거른다. 제외와 검색어는 페이지를 읽은 뒤 거르므로, 한 페이지가 찰 때까지 다음 묶음을 더 읽는다.

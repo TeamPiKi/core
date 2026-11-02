@@ -62,6 +62,10 @@ class FolderWishRepositoryImpl(
         return folderWishJpaRepository.deleteByFolderIdAndWishIdIn(folderId, wishIds)
     }
 
+    override fun findFolderIdsByWishId(wishId: Long): List<Long> = folderWishJpaRepository.findFolderIdsByWishId(wishId)
+
+    override fun deleteAllByWishId(wishId: Long): Int = folderWishJpaRepository.deleteAllByWishId(wishId)
+
     override fun deleteAllByFolderId(folderId: Long): Int = folderWishJpaRepository.deleteAllByFolderId(folderId)
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = folderWishJpaRepository.hardDeleteAllByUserId(userId)

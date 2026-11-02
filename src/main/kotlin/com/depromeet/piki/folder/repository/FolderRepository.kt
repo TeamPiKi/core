@@ -17,6 +17,9 @@ interface FolderRepository {
         userId: UUID,
     ): Folder?
 
+    // id 순으로 잠근다
+    fun findAllByIdsForUpdate(ids: Collection<Long>): List<Folder>
+
     // 생성순
     fun findAllByUserId(userId: UUID): List<Folder>
 
