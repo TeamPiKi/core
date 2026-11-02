@@ -354,6 +354,24 @@ class FolderIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `폴더에 남은 지운 위시를 옮기면 403 WISH-002 로 거절하고 대상 폴더에 연결이 생기지 않는다`() {
+        val userId = member()
+        val bag = createFolder(userId, "가방")
+        val gift = createFolder(userId, "선물")
+        val deleted = readyWish(userId, "https://img.example.com/a.png")
+        put(userId, bag, deleted)
+        mockMvc().perform(delete("/api/v1/wishlists/$deleted").by(userId)).andExpect(status().isOk)
+
+        mockMvc()
+            .perform(post("/api/v1/folders/$bag/wishes/move").by(userId).json(mapOf("wishIds" to listOf(deleted), "targetFolderId" to gift)))
+            .andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value(WishErrorCode.FORBIDDEN_WISH_ITEMS.code))
+
+        entityManager.flush()
+        assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, gift))
+    }
+
+    @Test
     fun `남의 폴더로 옮기면 404 FOLDER-001 이 반환되고 원래 폴더는 그대로다`() {
         val userId = member()
         val bag = createFolder(userId, "가방")

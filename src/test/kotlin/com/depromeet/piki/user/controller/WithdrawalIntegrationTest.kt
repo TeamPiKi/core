@@ -213,6 +213,20 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
             folderId,
             wishId,
         )
+        // 삭제 조건이 빠지면 남의 폴더까지 지워진다. 남아야 하는 행이 있어야 그 회귀를 잡는다
+        val otherUserId = UUID.randomUUID()
+        insertUser(otherUserId, "다른닉네임", IdentityType.MEMBER)
+        val otherWishId = insertWish(otherUserId)
+        jdbcTemplate.update(
+            "INSERT INTO folders (user_id, name, created_at, updated_at) VALUES (?, '선물', NOW(6), NOW(6))",
+            uuidToBytes(otherUserId),
+        )
+        val otherFolderId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long::class.java)!!
+        jdbcTemplate.update(
+            "INSERT INTO folder_wishes (folder_id, wish_id, created_at, updated_at) VALUES (?, ?, NOW(6), NOW(6))",
+            otherFolderId,
+            otherWishId,
+        )
         val notificationId = insertNotification(userId)
 
         mockMvc()
@@ -265,6 +279,10 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
         assertEquals(0L, folderCount, "폴더가 하드삭제되어야 한다")
         val folderWishCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, folderId)
         assertEquals(0L, folderWishCount, "폴더 연결이 하드삭제되어야 한다")
+        val otherFolderCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folders WHERE id = ?", Long::class.java, otherFolderId)
+        assertEquals(1L, otherFolderCount, "다른 회원의 폴더는 남아야 한다")
+        val otherFolderWishCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, otherFolderId)
+        assertEquals(1L, otherFolderWishCount, "다른 회원의 폴더 연결은 남아야 한다")
 
         // notifications 하드삭제
         val notiCount =

@@ -95,6 +95,7 @@ class FolderApiExamples(
                     add(FolderException.sameFolderMove(), name = "이 폴더와 대상 폴더가 같음")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트 거부 (회원 전용)")
+                    add(WishException.forbiddenWishItems(), name = "남의 위시나 지운 위시 포함")
                     add(FolderException.notFound(), name = "이 폴더나 대상 폴더가 없음 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }

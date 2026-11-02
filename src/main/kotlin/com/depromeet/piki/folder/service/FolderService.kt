@@ -35,12 +35,18 @@ class FolderService(
         if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
     }
 
+    // 쓰기는 user 행을 첫 락으로 잡아 탈퇴 cascade 와 줄 세운다. 안 잡으면 탈퇴가 폴더를 지운 뒤 만들기가 끼어들어 폴더가 남는다
+    private fun requireMemberForUpdate(userId: UUID) {
+        val user = userService.findActiveByIdForUpdate(userId)
+        if (user.identityType != IdentityType.MEMBER) throw WishException.guestCannotUseWishlist()
+    }
+
     @Transactional
     fun create(
         userId: UUID,
         name: FolderName,
     ): FolderResult {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         val folder = folderRepository.save(Folder(userId = userId, name = name))
         return FolderResult(folder = folder, wishCount = 0, coverImageUrls = emptyList())
     }
@@ -57,7 +63,7 @@ class FolderService(
         folderId: Long,
         name: FolderName,
     ): FolderResult {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
         folder.rename(name)
         return resultsOf(listOf(folder)).single()
@@ -69,7 +75,7 @@ class FolderService(
         userId: UUID,
         folderId: Long,
     ) {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
         folderWishRepository.deleteAllByFolderId(folder.getId())
         folder.delete()
@@ -81,7 +87,7 @@ class FolderService(
         folderId: Long,
         wishIds: FolderWishIds,
     ): FolderWishCountResult {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
         verifyLiveWishesOf(userId, wishIds.values)
         val adding = contentsOf(folder).put(wishIds.values)
@@ -96,7 +102,7 @@ class FolderService(
         folderId: Long,
         wishIds: FolderWishIds,
     ): FolderWishCountResult {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
         folderWishRepository.deleteByFolderIdAndWishIds(folder.getId(), contentsOf(folder).takeOut(wishIds.values))
         return countOf(folder)
@@ -110,7 +116,7 @@ class FolderService(
         targetFolderId: Long,
         wishIds: FolderWishIds,
     ): FolderMoveResult {
-        requireMember(userId)
+        requireMemberForUpdate(userId)
         // 두 폴더를 같은 순서로 잠가 반대 방향 이동이 동시에 와도 서로를 기다리며 멈추지 않게 한다
         val locked =
             listOf(folderId, targetFolderId).distinct().sorted().associateWith {
@@ -118,6 +124,8 @@ class FolderService(
             }
         val source = locked.getValue(folderId)
         val target = locked.getValue(targetFolderId)
+        // 옮기기는 빼기 뒤 넣기라 넣기와 같은 규칙을 쓴다. 안 거르면 원래 폴더에 남은 지운 위시의 연결이 대상으로 넘어간다
+        verifyLiveWishesOf(userId, wishIds.values)
         val move = contentsOf(source).moveTo(contentsOf(target), wishIds.values)
         folderWishRepository.deleteByFolderIdAndWishIds(source.getId(), move.takeOut)
         folderWishRepository.saveAll(move.putIntoTarget.map { FolderWish(folderId = target.getId(), wishId = it) })
@@ -138,7 +146,7 @@ class FolderService(
 
     private fun countOf(folder: Folder): FolderWishCountResult = FolderWishCountResult(folderId = folder.getId(), wishCount = folderWishRepository.countLiveByFolderId(folder.getId()))
 
-    // 표지는 최근 넣은 위시부터 이미지가 있는 것만 최대 3장. 앞쪽 후보만 카드를 계산해 폴더가 커도 비용이 늘지 않는다
+    // 표지는 최근 넣은 위시부터 이미지가 있는 것만 최대 3장. 연결 id 는 전부 읽지만(개수에도 쓰임) 비싼 카드 계산은 폴더당 앞쪽 후보로 묶는다
     private fun resultsOf(folders: List<Folder>): List<FolderResult> {
         val wishIdsByFolder = folderWishRepository.findLiveWishIdsByFolderIds(folders.map { it.getId() })
         val candidatesByFolder = wishIdsByFolder.mapValues { (_, ids) -> ids.take(COVER_CANDIDATE_COUNT) }

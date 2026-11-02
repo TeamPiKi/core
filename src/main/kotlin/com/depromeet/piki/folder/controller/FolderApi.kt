@@ -154,7 +154,8 @@ interface FolderApi {
         description = """
             이 폴더에서 빼고 대상 폴더에 넣는 것을 한 번에 처리한다. 빼기와 넣기를 따로 부르면 중간에 끊길 때
             위시가 두 폴더에 다 있거나 어디에도 없는 상태가 남는다. 이 폴더에 들어 있는 위시만 옮기고,
-            대상 폴더에 이미 있는 위시는 이 폴더에서 빼기만 한다.
+            대상 폴더에 이미 있는 위시는 이 폴더에서 빼기만 한다. 넣기와 같이 남의 위시나 지운 위시가 하나라도 섞여 있으면
+            요청 전체를 거절한다.
         """,
     )
     @ApiResponses(
@@ -166,7 +167,11 @@ interface FolderApi {
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
             ApiResponse(responseCode = "401", description = UNAUTHORIZED, content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))]),
-            ApiResponse(responseCode = "403", description = GUEST, content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))]),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST — code: WISH-001 · 남의 위시나 지운 위시 포함 — code: WISH-002)",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
+            ),
             ApiResponse(
                 responseCode = "404",
                 description = "폴더 없음 (이 폴더나 대상 폴더가 없음 · 지움 · 남의 폴더 · targetFolderId 누락 — code: FOLDER-001)",
