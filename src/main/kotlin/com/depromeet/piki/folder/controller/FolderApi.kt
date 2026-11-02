@@ -23,6 +23,8 @@ private const val DELETED_USER = "탈퇴한 계정 (JWT 는 아직 유효하나 
 private const val NOT_FOUND = "폴더 없음 (없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)"
 private const val INVALID_NAME = "잘못된 이름 (앞뒤 공백을 뺀 이름이 비었거나 20자 초과. 이모지·결합 문자는 1자로 센다 — code: FOLDER-002)"
 private const val INVALID_WISH_COUNT = "wishIds 가 비었거나 100개 초과 (중복은 하나로 센다 — code: FOLDER-003)"
+private const val INVALID_SELECTION =
+    "잘못된 요청 (all 없이 wishIds 가 비었거나 100개 초과 — code: FOLDER-003 · all 과 wishIds 를 함께 보냄 — code: FOLDER-005)"
 
 @Tag(name = "Folder", description = "위시 폴더 만들기·조회·이름 바꾸기·지우기, 폴더에 위시 넣기·빼기·옮기기 API")
 interface FolderApi {
@@ -364,6 +366,8 @@ interface FolderApi {
         description = """
             넣기와 대칭이다. wishIds 는 DELETE body 를 버리는 게이트웨이가 있어 query 로 받는다(?wishIds=101&wishIds=102).
             들어 있지 않은 위시는 건너뛴다. 위시 자체는 지워지지 않고 전체 위시와 다른 폴더에 남는다.
+            폴더 편집의 "전체 선택" 은 all=true 로 보낸다(?all=true). 개수 제한 없이 이 폴더의 위시를 전부 뺀다.
+            all 과 wishIds 는 정확히 하나만 보낸다.
         """,
     )
     @ApiResponses(
@@ -380,7 +384,7 @@ interface FolderApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = INVALID_WISH_COUNT,
+                description = INVALID_SELECTION,
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -434,9 +438,11 @@ interface FolderApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "폴더 id", example = "12") folderId: Long,
         @Parameter(
-            description = "뺄 위시 id. 1-100개, 중복은 하나로 센다. query 로 반복해 보낸다(?wishIds=101&wishIds=102). 폴더에 없는 위시는 건너뛴다",
+            description = "뺄 위시 id. 1-100개, 중복은 하나로 센다. query 로 반복해 보낸다(?wishIds=101&wishIds=102). 폴더에 없는 위시는 건너뛴다. all 과 함께 보내지 않는다",
             example = "101",
         ) wishIds: List<Long>?,
+        @Parameter(description = "true 면 이 폴더의 위시를 전부 뺀다(전체 선택, 개수 제한 없음). wishIds 와 함께 보내지 않는다", example = "true")
+        all: Boolean?,
     ): ApiResponseBody<FolderWishCountResponse>
 
     @Operation(
@@ -446,6 +452,8 @@ interface FolderApi {
             위시가 두 폴더에 다 있거나 어디에도 없는 상태가 남는다. 이 폴더에 들어 있는 위시만 옮기고,
             대상 폴더에 이미 있는 위시는 이 폴더에서 빼기만 한다. 넣기와 같이 남의 위시나 지운 위시가 하나라도 섞여 있으면
             요청 전체를 거절한다.
+            폴더 편집의 "전체 선택" 은 all=true 로 보낸다. 개수 제한 없이 이 폴더의 위시를 전부 옮긴다.
+            all 과 wishIds 는 정확히 하나만 보낸다.
         """,
     )
     @ApiResponses(
@@ -462,7 +470,9 @@ interface FolderApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "잘못된 요청 (wishIds 가 비었거나 100개 초과 — code: FOLDER-003 · 이 폴더와 대상 폴더가 같음 — code: FOLDER-004)",
+                description =
+                    "잘못된 요청 (wishIds 가 비었거나 100개 초과 — code: FOLDER-003 · 이 폴더와 대상 폴더가 같음 — code: FOLDER-004 · " +
+                        "all 과 wishIds 를 함께 보냄 — code: FOLDER-005)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
