@@ -22,6 +22,11 @@ class FolderWishRepositoryImpl(
 
     override fun countLiveByFolderId(folderId: Long): Int = folderWishJpaRepository.countLiveByFolderId(folderId).toInt()
 
+    override fun countLiveByFolderIdExcluding(
+        folderId: Long,
+        excludeFolderId: Long,
+    ): Long = folderWishJpaRepository.countLiveByFolderIdExcluding(folderId, excludeFolderId)
+
     override fun findLivePositions(
         folderId: Long,
         afterPosition: Long?,

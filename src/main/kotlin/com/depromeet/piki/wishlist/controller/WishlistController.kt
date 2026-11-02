@@ -7,6 +7,7 @@ import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.metrics.registration.WishExternalEntryRecorder
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
@@ -105,6 +106,27 @@ class WishlistController(
             data = data,
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
         )
+    }
+
+    @GetMapping("/count")
+    override fun countWishes(
+        @AuthenticationPrincipal userId: UUID,
+        @RequestParam(required = false) folderId: Long?,
+        @RequestParam(required = false) excludeFolderId: Long?,
+        @RequestParam(required = false) q: String?,
+    ): ApiResponseBody<WishCountResponse> {
+        val count =
+            wishlistService.countWishes(
+                GetWishlistQuery(
+                    userId = userId,
+                    cursor = null,
+                    size = WishlistSize.of(null),
+                    folderId = folderId,
+                    excludeFolderId = excludeFolderId,
+                    search = WishSearchQuery.of(q),
+                ),
+            )
+        return ApiResponseBody.ok(WishCountResponse(count))
     }
 
     @GetMapping("/{wishId}")

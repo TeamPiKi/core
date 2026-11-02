@@ -6,6 +6,7 @@ import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
@@ -258,6 +259,88 @@ interface WishlistApi {
         @Parameter(description = "상품명 검색어. 화면에 보이는 이름과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상", example = "에코백")
         q: String?,
     ): ApiResponseBody<List<WishItemResponse>>
+
+    @Operation(
+        summary = "위시 개수 조회",
+        description = """
+            내 위시 수를 돌려준다. 위시리스트 조회(다건)와 같은 거르기 파라미터를 받고, 셋 다 없으면 전체 위시 수다.
+            "상품 999+" 와 "검색 결과 N개" 를 그릴 때 쓴다. 지운 위시는 세지 않는다.
+            q 가 있으면 화면에 보이는 상품명으로 세야 해 내 위시를 끝까지 읽는다. 검색을 제출할 때 한 번만 부른다.
+        """,
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "개수 조회 성공",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (q 가 비었거나 공백뿐 — code: WISH-011)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId · excludeFolderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun countWishes(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "이 폴더에 든 위시만", example = "12")
+        folderId: Long?,
+        @Parameter(description = "이 폴더에 없는 위시만", example = "15")
+        excludeFolderId: Long?,
+        @Parameter(description = "상품명 검색어. 화면에 보이는 이름과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상", example = "에코백")
+        q: String?,
+    ): ApiResponseBody<WishCountResponse>
 
     @Operation(
         summary = "위시리스트 조회 (단건)",

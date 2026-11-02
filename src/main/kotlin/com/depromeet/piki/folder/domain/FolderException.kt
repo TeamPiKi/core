@@ -22,5 +22,7 @@ class FolderException private constructor(
         fun invalidWishCount(): FolderException = FolderException(FolderErrorCode.INVALID_WISH_COUNT)
 
         fun sameFolderMove(): FolderException = FolderException(FolderErrorCode.SAME_FOLDER_MOVE)
+
+        fun invalidSelection(): FolderException = FolderException(FolderErrorCode.INVALID_SELECTION)
     }
 }

@@ -35,6 +35,17 @@ class WishFolderAdapter(
         return folderWishRepository.findWishIdsByFolderIdAmong(folderId, among)
     }
 
+    override fun countInFolder(
+        userId: UUID,
+        folderId: Long,
+        excludeFolderId: Long?,
+    ): Long {
+        requireOwned(userId, folderId)
+        excludeFolderId ?: return folderWishRepository.countLiveByFolderId(folderId).toLong()
+        requireOwned(userId, excludeFolderId)
+        return folderWishRepository.countLiveByFolderIdExcluding(folderId, excludeFolderId)
+    }
+
     override fun folderIdsOf(wishIds: Collection<Long>): Map<Long, List<Long>> = folderWishRepository.findFolderIdsByWishIds(wishIds)
 
     private fun requireOwned(

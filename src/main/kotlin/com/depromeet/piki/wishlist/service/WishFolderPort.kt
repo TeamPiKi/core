@@ -20,6 +20,13 @@ interface WishFolderPort {
         among: Collection<Long>,
     ): Set<Long>
 
+    // 폴더에 든 살아 있는 위시 수. excludeFolderId 를 주면 그 폴더에도 든 위시는 뺀다
+    fun countInFolder(
+        userId: UUID,
+        folderId: Long,
+        excludeFolderId: Long?,
+    ): Long
+
     // 위시마다 들어 있는 폴더 id. 폴더가 없는 위시는 맵에 없다
     fun folderIdsOf(wishIds: Collection<Long>): Map<Long, List<Long>>
 }

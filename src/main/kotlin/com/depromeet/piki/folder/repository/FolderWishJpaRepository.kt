@@ -45,6 +45,16 @@ interface FolderWishJpaRepository : JpaRepository<FolderWish, Long> {
         limit: Limit,
     ): List<FolderWishPositionView>
 
+    @Query(
+        "SELECT COUNT(fw) FROM FolderWish fw, Wish w " +
+            "WHERE w.id = fw.wishId AND w.deletedAt IS NULL AND fw.folderId = :folderId " +
+            "AND NOT EXISTS (SELECT 1 FROM FolderWish x WHERE x.folderId = :excludeFolderId AND x.wishId = fw.wishId)",
+    )
+    fun countLiveByFolderIdExcluding(
+        @Param("folderId") folderId: Long,
+        @Param("excludeFolderId") excludeFolderId: Long,
+    ): Long
+
     // 주어진 위시 중 이 폴더에 든 것. 유니크 키(folder_id, wish_id)로 찾는다
     @Query("SELECT fw.wishId FROM FolderWish fw WHERE fw.folderId = :folderId AND fw.wishId IN :wishIds")
     fun findWishIdsByFolderIdAndWishIdIn(

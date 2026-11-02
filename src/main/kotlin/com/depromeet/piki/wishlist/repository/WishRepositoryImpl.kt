@@ -31,6 +31,8 @@ class WishRepositoryImpl(
         )
     }
 
+    override fun countByUserId(userId: UUID): Long = wishJpaRepository.countByUserIdAndDeletedAtIsNull(userId)
+
     override fun findById(id: Long): Wish? = wishJpaRepository.findByIdAndDeletedAtIsNull(id)
 
     override fun findByIdForUpdate(id: Long): Wish? = wishJpaRepository.findByIdForUpdate(id)

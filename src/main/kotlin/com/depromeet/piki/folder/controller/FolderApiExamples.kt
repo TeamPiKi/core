@@ -25,7 +25,7 @@ class FolderApiExamples(
     fun folderOpenApiExamples(): OperationCustomizer =
         OperationCustomizer { operation, handlerMethod ->
             // 위시 목록의 폴더 거르기가 내는 404. 위시 쪽 문서가 폴더 예외를 참조하지 않게 폴더 쪽에서 예시를 더한다
-            if (handlerMethod.binds(WishlistController::getWishlist)) {
+            if (handlerMethod.binds(WishlistController::getWishlist) || handlerMethod.binds(WishlistController::countWishes)) {
                 operation.examples(openApiObjectMapper.delegate) {
                     add(FolderException.notFound(), name = "folderId · excludeFolderId 가 없는 폴더 · 남의 폴더")
                 }
@@ -81,7 +81,9 @@ class FolderApiExamples(
             if (handlerMethod.binds(FolderController::takeOutWishes)) {
                 operation.examples(openApiObjectMapper.delegate) {
                     add(status = HttpStatus.OK, name = "빼기 성공", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 8)))
+                    add(status = HttpStatus.OK, name = "전체 선택 빼기 성공 (all=true)", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 0)))
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
+                    add(FolderException.invalidSelection(), name = "all 과 wishIds 를 함께 보냄")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
@@ -100,6 +102,7 @@ class FolderApiExamples(
                     )
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
                     add(FolderException.sameFolderMove(), name = "이 폴더와 대상 폴더가 같음")
+                    add(FolderException.invalidSelection(), name = "all 과 wishIds 를 함께 보냄")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(WishException.forbiddenWishItems(), name = "남의 위시나 지운 위시 포함")
