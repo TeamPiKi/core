@@ -1,5 +1,7 @@
 package com.depromeet.piki.user.service
 
+import com.depromeet.piki.folder.repository.FolderRepository
+import com.depromeet.piki.folder.repository.FolderWishRepository
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.user.domain.UserException
@@ -22,6 +24,8 @@ class WithdrawalPersistenceService(
     private val userDeviceRepository: UserDeviceRepository,
     private val wishRepository: WishRepository,
     private val wishMemoRepository: WishMemoRepository,
+    private val folderRepository: FolderRepository,
+    private val folderWishRepository: FolderWishRepository,
     private val notificationRepository: NotificationRepository,
     private val defaultProfileImages: DefaultProfileImages,
 ) {
@@ -62,6 +66,9 @@ class WithdrawalPersistenceService(
 
         // 4. wishes 하드삭제 — 개인 데이터 즉시 파기(PIPA "지체없이 파기"). 위시는 다른 데이터가 참조하지 않아
         //    즉시 지워도 무결성 문제가 없다(공유 참조 보존은 tombstone users 행이 담당).
+        //    폴더와 그 연결도 같은 개인 데이터라 함께 파기한다(연결 → 폴더 순)
+        folderWishRepository.hardDeleteAllByUserId(userId)
+        folderRepository.hardDeleteAllByUserId(userId)
         wishMemoRepository.hardDeleteAllByUserId(userId)
         val wishes = wishRepository.hardDeleteAllByUserId(userId)
 

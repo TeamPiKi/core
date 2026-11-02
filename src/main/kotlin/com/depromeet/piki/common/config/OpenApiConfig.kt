@@ -75,7 +75,7 @@ class OpenApiConfig {
     companion object {
         private const val SECURITY_SCHEME_NAME = "bearerAuth"
 
-        // 사이드바 그룹 순서: 인증·내 정보(진입) → 핵심 도메인(위시 → 토너먼트 → 토너먼트 아이템) →
+        // 사이드바 그룹 순서: 인증·내 정보(진입) → 핵심 도메인(위시 → 위시 폴더 → 토너먼트 → 토너먼트 아이템) →
         // 알림(SSE·FCM) → 개발 전용. health-controller 는 @Tag 미선언 자동 태그라 spec 의 top-level
         // tags[] 에 없어 여기 둘 필요가 없고, Stoplight Elements 가 사이드바 맨 뒤에 자동 배치한다.
         private val TAG_ORDER =
@@ -83,6 +83,7 @@ class OpenApiConfig {
                 "Auth",
                 "User",
                 "Wishlist",
+                "Folder",
                 "Tournament",
                 "Tournament Item",
                 "Notification",

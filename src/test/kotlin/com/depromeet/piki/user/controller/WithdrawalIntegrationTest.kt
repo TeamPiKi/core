@@ -203,6 +203,16 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
             "INSERT INTO wish_memos (wish_id, content, written_at, created_at, updated_at) VALUES (?, '메모', NOW(6), NOW(6), NOW(6))",
             wishId,
         )
+        jdbcTemplate.update(
+            "INSERT INTO folders (user_id, name, created_at, updated_at) VALUES (?, '가방', NOW(6), NOW(6))",
+            uuidToBytes(userId),
+        )
+        val folderId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long::class.java)!!
+        jdbcTemplate.update(
+            "INSERT INTO folder_wishes (folder_id, wish_id, created_at, updated_at) VALUES (?, ?, NOW(6), NOW(6))",
+            folderId,
+            wishId,
+        )
         val notificationId = insertNotification(userId)
 
         mockMvc()
@@ -249,6 +259,12 @@ class WithdrawalIntegrationTest : IntegrationTestSupport() {
                 wishId,
             )
         assertEquals(0L, memoCount, "위시 메모가 하드삭제되어야 한다")
+
+        // 폴더와 연결 하드삭제
+        val folderCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folders WHERE id = ?", Long::class.java, folderId)
+        assertEquals(0L, folderCount, "폴더가 하드삭제되어야 한다")
+        val folderWishCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, folderId)
+        assertEquals(0L, folderWishCount, "폴더 연결이 하드삭제되어야 한다")
 
         // notifications 하드삭제
         val notiCount =
