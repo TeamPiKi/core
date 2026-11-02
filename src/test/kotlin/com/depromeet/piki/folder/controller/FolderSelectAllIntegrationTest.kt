@@ -90,6 +90,33 @@ class FolderSelectAllIntegrationTest : IntegrationTestSupport() {
             wishId
         }
 
+    private fun deletedWishIn(
+        userId: UUID,
+        folderId: Long,
+    ): Long {
+        jdbcTemplate.update("INSERT INTO wishes (user_id, created_at, updated_at, deleted_at) VALUES (?, NOW(6), NOW(6), NOW(6))", uuidToBytes(userId))
+        val wishId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long::class.java)!!
+        jdbcTemplate.update(
+            "INSERT INTO folder_wishes (folder_id, wish_id, created_at, updated_at) VALUES (?, ?, NOW(6), NOW(6))",
+            folderId,
+            wishId,
+        )
+        return wishId
+    }
+
+    private fun isLinked(
+        folderId: Long,
+        wishId: Long,
+    ): Boolean {
+        entityManager.flush()
+        return jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ? AND wish_id = ?",
+            Long::class.java,
+            folderId,
+            wishId,
+        )!! > 0
+    }
+
     private fun linkCount(folderId: Long): Long {
         entityManager.flush()
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, folderId)!!
@@ -127,6 +154,23 @@ class FolderSelectAllIntegrationTest : IntegrationTestSupport() {
 
         assertEquals(0L, linkCount(bag))
         assertEquals(101L, linkCount(gift))
+    }
+
+    @Test
+    fun `전체 선택으로 옮겨도 지운 위시의 연결은 원래 폴더에 남는다`() {
+        val userId = member()
+        val bag = createFolder(userId, "가방")
+        val gift = createFolder(userId, "선물")
+        val live = fillFolder(userId, bag, 1).single()
+        val deleted = deletedWishIn(userId, bag)
+
+        mockMvc()
+            .perform(post("/api/v1/folders/$bag/wishes/move").by(userId).json(mapOf("all" to true, "targetFolderId" to gift)))
+            .andExpect(status().isOk)
+
+        assertEquals(true, isLinked(gift, live))
+        assertEquals(true, isLinked(bag, deleted))
+        assertEquals(false, isLinked(gift, deleted))
     }
 
     @Test

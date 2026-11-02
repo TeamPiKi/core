@@ -174,6 +174,23 @@ class WishCountIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `검색어와 폴더 · 제외 폴더를 함께 주면 세 조건을 모두 건다`() {
+        val userId = member()
+        val bag = createFolder(userId, "가방")
+        val gift = createFolder(userId, "선물")
+        val inBoth = readyWish(userId, "에코백 둘 다")
+        val bagOnly = readyWish(userId, "에코백 가방만")
+        val bagOther = readyWish(userId, "운동화 가방만")
+        readyWish(userId, "에코백 어디에도 없음")
+        put(userId, bag, inBoth, bagOnly, bagOther)
+        put(userId, gift, inBoth)
+
+        assertEquals(2L, count(userId, "q" to "에코", "folderId" to bag.toString()))
+        assertEquals(2L, count(userId, "q" to "에코", "excludeFolderId" to gift.toString()))
+        assertEquals(1L, count(userId, "q" to "에코", "folderId" to bag.toString(), "excludeFolderId" to gift.toString()))
+    }
+
+    @Test
     fun `검색어가 공백뿐이면 400 WISH-011 이고 남의 폴더면 404 FOLDER-001 이다`() {
         val userId = member()
         val othersFolder = createFolder(member(), "남의 폴더")

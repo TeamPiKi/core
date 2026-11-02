@@ -133,9 +133,9 @@ class WishlistService(
 
     private fun countWithoutSearch(query: GetWishlistQuery): Long {
         query.folderId?.let { return wishFolderPort.countInFolder(query.userId, it, query.excludeFolderId) }
-        val excluded = query.excludeFolderId?.let { wishFolderPort.countInFolder(query.userId, it, excludeFolderId = null) } ?: 0
-        // 폴더에는 내 위시만 들어가므로 전체에서 그 폴더의 위시 수를 빼면 된다
-        return wishRepository.countByUserId(query.userId) - excluded
+        // 쿼리 하나로 센다. 전체 수와 폴더 수를 따로 세어 빼면 사이에 지워진 위시로 음수가 될 수 있다(#1273 리뷰)
+        query.excludeFolderId?.let { return wishFolderPort.countOutsideFolder(query.userId, it) }
+        return wishRepository.countByUserId(query.userId)
     }
 
     // 거르기(제외 폴더 · 검색어)를 통과한 위시를 순서대로 넘긴다. onMatch 가 false 를 돌려주면 멈춘다

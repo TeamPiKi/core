@@ -27,6 +27,11 @@ class FolderWishRepositoryImpl(
         excludeFolderId: Long,
     ): Long = folderWishJpaRepository.countLiveByFolderIdExcluding(folderId, excludeFolderId)
 
+    override fun countLiveOutsideFolder(
+        userId: UUID,
+        excludeFolderId: Long,
+    ): Long = folderWishJpaRepository.countLiveOutsideFolder(userId, excludeFolderId)
+
     override fun findLivePositions(
         folderId: Long,
         afterPosition: Long?,

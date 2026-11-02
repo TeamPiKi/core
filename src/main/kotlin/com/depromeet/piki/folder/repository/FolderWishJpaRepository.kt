@@ -55,6 +55,16 @@ interface FolderWishJpaRepository : JpaRepository<FolderWish, Long> {
         @Param("excludeFolderId") excludeFolderId: Long,
     ): Long
 
+    // 내 살아 있는 위시 중 이 폴더에 없는 것의 수. 전체 수와 폴더 수를 따로 세어 빼면 사이에 지워진 위시로 어긋난다(#1273 리뷰)
+    @Query(
+        "SELECT COUNT(w) FROM Wish w WHERE w.userId = :userId AND w.deletedAt IS NULL " +
+            "AND NOT EXISTS (SELECT 1 FROM FolderWish x WHERE x.folderId = :excludeFolderId AND x.wishId = w.id)",
+    )
+    fun countLiveOutsideFolder(
+        @Param("userId") userId: UUID,
+        @Param("excludeFolderId") excludeFolderId: Long,
+    ): Long
+
     // 주어진 위시 중 이 폴더에 든 것. 유니크 키(folder_id, wish_id)로 찾는다
     @Query("SELECT fw.wishId FROM FolderWish fw WHERE fw.folderId = :folderId AND fw.wishId IN :wishIds")
     fun findWishIdsByFolderIdAndWishIdIn(
