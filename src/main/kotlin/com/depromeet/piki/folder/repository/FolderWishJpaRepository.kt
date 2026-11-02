@@ -39,6 +39,17 @@ interface FolderWishJpaRepository : JpaRepository<FolderWish, Long> {
         @Param("wishIds") wishIds: Collection<Long>,
     ): Int
 
+    @Query("SELECT fw.folderId FROM FolderWish fw WHERE fw.wishId = :wishId")
+    fun findFolderIdsByWishId(
+        @Param("wishId") wishId: Long,
+    ): List<Long>
+
+    @Modifying
+    @Query("DELETE FROM FolderWish fw WHERE fw.wishId = :wishId")
+    fun deleteAllByWishId(
+        @Param("wishId") wishId: Long,
+    ): Int
+
     @Modifying
     @Query("DELETE FROM FolderWish fw WHERE fw.folderId = :folderId")
     fun deleteAllByFolderId(

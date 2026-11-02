@@ -39,6 +39,7 @@ class WishPersistenceService(
     private val userInputRecorder: UserInputRecorder,
     private val parsingEnqueuer: ParsingEnqueuer,
     private val userService: UserService,
+    private val wishFolderLinker: WishFolderLinker,
 ) {
     // 이미 담은 상품이면 한도를 깎기 전에 409 로 끊는다(#973)
     @Transactional(readOnly = true)
@@ -46,12 +47,29 @@ class WishPersistenceService(
         rejectIfRegistered(command.userId, command.link)
     }
 
+    // 폴더를 지정해 이미 담은 링크를 다시 담으면 거절하지 않고 그 위시를 폴더에 넣는다(#1266, 디자인 기준).
+    // 등록 한도를 깎기 전에 부른다 — 새로 담는 것이 아니라 한도를 쓰지 않는다. 폴더를 안 주면 null 이라 409 경로로 간다
+    @Transactional
+    fun linkIfAlreadyRegistered(command: RegisterWishFromUrlCommand): WishResult? {
+        val folderId = command.folderId ?: return null
+        lockRegistrant(command.userId)
+        val existingId = registeredWishId(command.userId, command.link) ?: return null
+        return linkExisting(command.userId, folderId, existingId)
+    }
+
     // 이미 아는 링크여도 아이템 없이 담고 새로 파싱한다. 성공하면 정체 URL 이 같은 아이템에 붙는다
     @Transactional
     fun persist(command: RegisterWishFromUrlCommand): WishResult {
         lockRegistrant(command.userId)
-        rejectIfRegistered(command.userId, command.link)
-        return createPending(command.userId, ParseInput.Link(command.link))
+        val existingId = registeredWishId(command.userId, command.link)
+        // 한도 확인과 이 잠금 사이에 같은 링크가 담기면, 폴더를 준 요청은 409 대신 그 위시를 폴더에 넣는다
+        existingId?.let { id ->
+            val folderId = command.folderId ?: throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, id)
+            return linkExisting(command.userId, folderId, id)
+        }
+        val created = createPending(command.userId, ParseInput.Link(command.link))
+        command.folderId?.let { wishFolderLinker.link(command.userId, it, created.wish.getId()) }
+        return created
     }
 
     // 같은 업로드를 두 번 확정하면 두 번째는 건너뛴다. 여러 장을 한 번에 확정하므로 링크처럼 거부하지 않는다
@@ -59,7 +77,19 @@ class WishPersistenceService(
     fun registerImages(command: ConfirmWishImageRegistrationCommand): List<WishResult> {
         lockRegistrant(command.userId)
         val newKeys = command.imageKeys.distinct() - wishRepository.findRequestedImageKeys(command.userId, command.imageKeys)
-        return newKeys.map { createPending(command.userId, ParseInput.Image(it)) }
+        val created = newKeys.map { createPending(command.userId, ParseInput.Image(it)) }
+        command.folderId?.let { folderId -> created.forEach { wishFolderLinker.link(command.userId, folderId, it.wish.getId()) } }
+        return created
+    }
+
+    private fun linkExisting(
+        userId: UUID,
+        folderId: Long,
+        wishId: Long,
+    ): WishResult {
+        val result = wishFolderLinker.link(userId, folderId, wishId)
+        val wish = wishRepository.findById(wishId) ?: error("위시 $wishId 가 없다")
+        return WishResult(wish = wish, card = itemCardService.cardOf(wish.cardQuery()), folderResult = result)
     }
 
     // 트랜잭션의 첫 문장이어야 한다. 일반 읽기가 먼저 오면 REPEATABLE READ 스냅샷이 잠금 전에 고정돼 앞선 등록을 못 본다
@@ -81,9 +111,13 @@ class WishPersistenceService(
         userId: UUID,
         link: ProductLink,
     ) {
-        val existing = wishOfSameItem(userId, link) ?: wishRequestedWith(userId, ParseInput.Link(link))
-        existing?.let { throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it) }
+        registeredWishId(userId, link)?.let { throw AlreadyRegisteredException.wish(WishErrorCode.ALREADY_EXISTS, it) }
     }
+
+    private fun registeredWishId(
+        userId: UUID,
+        link: ProductLink,
+    ): Long? = wishOfSameItem(userId, link) ?: wishRequestedWith(userId, ParseInput.Link(link))
 
     private fun wishOfSameItem(
         userId: UUID,

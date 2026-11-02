@@ -1,12 +1,12 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
-import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
+import com.depromeet.piki.wishlist.controller.dto.WishImageConfirmRequest
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
@@ -46,13 +46,19 @@ interface WishlistApi {
             백그라운드 파싱이 성공하면 상품이 확정돼 READY 또는 INCOMPLETE, 실패하면 FAILED 가 된다.
             확정된 상품을 내 다른 위시가 이미 갖고 있으면 이 위시는 그 위시에 합쳐져 사라지고(메모는 옮겨진다) ITEM_PARSING_MERGED 알림이 온다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 알림을 받고 위시리스트를 재조회해 확인한다. URL 형식 오류는 등록 전에 400 으로 거른다.
+            folderId 를 주면 담으면서 그 폴더에도 넣는다(폴더 상세에서 담기). 이미 담은 링크를 folderId 와 함께 보내면 409 대신
+            그 기존 위시를 폴더에 넣고 201 로 돌려준다 — 이때 folderResult 가 ADDED(넣음) 또는 ALREADY_IN_FOLDER(이미 있음)이고
+            wish.id 는 기존 위시의 id 다. 새로 담는 것이 아니라 등록 한도를 쓰지 않는다. folderId 없이 이미 담은 링크를 보내면 지금처럼 409 다.
+            파싱 뒤 같은 상품의 다른 위시에 합쳐지면 폴더 연결도 남는 위시로 옮겨진다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "201",
-                description = "위시리스트 등록 접수 (item.status=PARSING, item.id=null, 파싱은 백그라운드)",
+                description =
+                    "위시리스트 등록 접수 (item.status=PARSING, item.id=null, 파싱은 백그라운드) · " +
+                        "folderId 와 함께 이미 담은 링크를 보낸 경우 기존 위시를 그 폴더에 넣은 결과 (folderResult=ADDED·ALREADY_IN_FOLDER)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -86,6 +92,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001). 등록 전체를 거절한다",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -788,6 +804,7 @@ interface WishlistApi {
             결과 모양(WishItemResponse)은 URL 등록과 동일하다 — 다만 URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 사용자 입력 API(PATCH)로 복구한다.
             남아 있는 위시로 이미 확정한 imageKey 는 다시 등록하지 않고 응답에서도 빠진다. 그래서 요청보다 적은 항목이나 빈 목록이 올 수 있다.
+            folderId 를 주면 새로 등록한 위시를 모두 그 폴더에도 넣는다. 이미 확정한 imageKey 의 위시는 폴더에 넣지 않는다.
         """,
     )
     @ApiResponses(
@@ -835,6 +852,16 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001). 등록 전체를 거절한다",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "409",
                 description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
@@ -858,6 +885,6 @@ interface WishlistApi {
     )
     fun confirmImageRegistration(
         @Parameter(hidden = true) userId: UUID,
-        request: ConfirmImageUploadRequest,
+        request: WishImageConfirmRequest,
     ): ApiResponseBody<List<WishItemResponse>>
 }

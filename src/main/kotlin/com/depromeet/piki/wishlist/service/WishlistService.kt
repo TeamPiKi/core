@@ -46,6 +46,7 @@ class WishlistService(
     private val userService: UserService,
     private val sourcePlatformResolver: SourcePlatformResolver,
     private val tournamentWinnerReader: TournamentWinnerReader,
+    private val wishFolderLinker: WishFolderLinker,
 ) {
     private fun WishResult.withSourcePlatform(): WishResult = copy(sourcePlatform = sourcePlatformResolver.resolve(card.sourceLink))
 
@@ -57,6 +58,9 @@ class WishlistService(
 
     fun registerFromUrl(command: RegisterWishFromUrlCommand): WishResult {
         requireMember(command.userId)
+        // 없는 폴더면 한도를 깎기 전에 등록 전체를 거절한다
+        command.folderId?.let { wishFolderLinker.requireOwned(command.userId, it) }
+        wishPersistenceService.linkIfAlreadyRegistered(command)?.let { return it.withSourcePlatform() }
         wishPersistenceService.rejectIfAlreadyRegistered(command)
         itemRegistrar.accept(command.link, command.userId)
         return wishPersistenceService.persist(command).withSourcePlatform()
@@ -72,6 +76,7 @@ class WishlistService(
     fun confirmImageRegistration(command: ConfirmWishImageRegistrationCommand): List<WishResult> {
         requireMember(command.userId)
         if (command.imageKeys.size !in MIN_IMAGE_COUNT..MAX_IMAGE_COUNT) throw WishException.invalidImageCount()
+        command.folderId?.let { wishFolderLinker.requireOwned(command.userId, it) }
         imagePresignService.verifyUploaded(command.imageKeys)
         return wishPersistenceService.registerImages(command).map { it.withSourcePlatform() }
     }

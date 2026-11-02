@@ -3,6 +3,7 @@ package com.depromeet.piki.wishlist.controller.dto
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.domain.WishFolderResult
 import com.depromeet.piki.wishlist.service.dto.WishResult
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
@@ -21,6 +22,15 @@ data class WishItemResponse(
         example = "[1402, 1397]",
     )
     val winnerTournamentIds: List<Long> = emptyList(),
+    @field:Schema(
+        description =
+            "폴더를 지정해 담은 링크가 이미 내 위시였을 때의 결과 — ADDED(그 위시를 이 폴더에 넣음, \"이 폴더에 담았어요\")/" +
+                "ALREADY_IN_FOLDER(이미 이 폴더에 있어 바뀐 것 없음, 그 카드로 스크롤·하이라이트). " +
+                "새로 담긴 위시와 폴더를 지정하지 않은 응답은 null 이다. 값이 있으면 wish.id 는 기존 위시의 id 다.",
+        example = "ADDED",
+        nullable = true,
+    )
+    val folderResult: WishFolderResult? = null,
 ) {
     companion object {
         fun from(
@@ -30,6 +40,7 @@ data class WishItemResponse(
                 wish = WishView.from(result.wish),
                 item = ItemView.from(result),
                 winnerTournamentIds = result.winnerTournamentIds,
+                folderResult = result.folderResult,
             )
     }
 

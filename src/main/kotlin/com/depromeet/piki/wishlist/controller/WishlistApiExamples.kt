@@ -10,6 +10,7 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
@@ -24,6 +25,7 @@ import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
+import com.depromeet.piki.wishlist.domain.WishFolderResult
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -48,6 +50,17 @@ class WishlistApiExamples(
                         name = "등록 접수 (파싱 중 — PARSING)",
                         payload = ApiResponseBody.created(pendingSampleEntry),
                     )
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "폴더를 지정해 이미 담은 링크를 담음 (기존 위시를 폴더에 넣음 — ADDED)",
+                        payload = ApiResponseBody.created(sampleEntry.copy(folderResult = WishFolderResult.ADDED)),
+                    )
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "폴더를 지정해 이미 담은 링크를 담음 (이미 그 폴더에 있음 — ALREADY_IN_FOLDER)",
+                        payload = ApiResponseBody.created(sampleEntry.copy(folderResult = WishFolderResult.ALREADY_IN_FOLDER)),
+                    )
+                    add(FolderException.notFound(), name = "folderId 가 없는 폴더 · 남의 폴더")
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
@@ -251,6 +264,7 @@ class WishlistApiExamples(
                     add(ImageUploadException.invalidKey(), name = "발급 형식이 아닌 key")
                     add(ImageUploadException.notUploaded(), name = "아직 업로드되지 않은 이미지")
                     add(ImageStorageException.existsCheckFailed(), name = "이미지 존재 확인 실패 (스토리지 장애)")
+                    add(FolderException.notFound(), name = "folderId 가 없는 폴더 · 남의 폴더")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
