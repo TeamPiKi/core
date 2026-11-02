@@ -158,7 +158,7 @@ class FolderConcurrencyIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `두 기기가 두 폴더 사이에서 반대 방향으로 동시에 옮겨도 멈추지 않고 위시마다 한 폴더에만 남는다`() {
-        // 두 폴더를 요청 순서대로 잠그면 A 는 가방 다음 선물, B 는 선물 다음 가방을 기다리며 교착에 빠진다
+        // 두 요청은 회원 행 잠금에서 먼저 줄을 서므로 폴더 잠금 순서는 검증하지 않는다. 둘 다 끝나는지와 최종 연결만 본다
         val userId = member()
         try {
             val bag = createFolder(userId, "가방")

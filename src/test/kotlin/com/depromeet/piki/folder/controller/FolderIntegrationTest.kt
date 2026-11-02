@@ -369,6 +369,8 @@ class FolderIntegrationTest : IntegrationTestSupport() {
 
         entityManager.flush()
         assertEquals(0L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ?", Long::class.java, gift))
+        // 거절 전에 원래 폴더의 연결을 지우는 순서 회귀를 잡는다
+        assertEquals(1L, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM folder_wishes WHERE folder_id = ? AND wish_id = ?", Long::class.java, bag, deleted))
     }
 
     @Test
