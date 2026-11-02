@@ -1,6 +1,7 @@
 package com.depromeet.piki.folder.repository
 
 import com.depromeet.piki.folder.domain.FolderWish
+import org.springframework.data.domain.Limit
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -22,6 +23,32 @@ interface FolderWishJpaRepository : JpaRepository<FolderWish, Long> {
     )
     fun findLiveEntriesByFolderIds(
         @Param("folderIds") folderIds: Collection<Long>,
+    ): List<FolderWishEntryView>
+
+    // 폴더 안 위시 목록 한 페이지. 연결 id 가 넣은 순서라(자동 증가) 그대로 커서로 쓴다
+    @Query(
+        "SELECT fw.id AS position, fw.wishId AS wishId FROM FolderWish fw, Wish w " +
+            "WHERE w.id = fw.wishId AND w.deletedAt IS NULL AND fw.folderId = :folderId ORDER BY fw.id DESC",
+    )
+    fun findLivePositionsByFolderId(
+        @Param("folderId") folderId: Long,
+        limit: Limit,
+    ): List<FolderWishPositionView>
+
+    @Query(
+        "SELECT fw.id AS position, fw.wishId AS wishId FROM FolderWish fw, Wish w " +
+            "WHERE w.id = fw.wishId AND w.deletedAt IS NULL AND fw.folderId = :folderId AND fw.id < :after ORDER BY fw.id DESC",
+    )
+    fun findLivePositionsByFolderIdAfter(
+        @Param("folderId") folderId: Long,
+        @Param("after") after: Long,
+        limit: Limit,
+    ): List<FolderWishPositionView>
+
+    // 위시마다 들어 있는 폴더. 폴더를 지우면 연결도 지우므로 연결만 보면 된다
+    @Query("SELECT fw.folderId AS folderId, fw.wishId AS wishId FROM FolderWish fw WHERE fw.wishId IN :wishIds ORDER BY fw.folderId ASC")
+    fun findByWishIdIn(
+        @Param("wishIds") wishIds: Collection<Long>,
     ): List<FolderWishEntryView>
 
     @Query(

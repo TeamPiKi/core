@@ -13,6 +13,15 @@ interface FolderWishRepository {
 
     fun countLiveByFolderId(folderId: Long): Int
 
+    // 폴더 안 살아 있는 위시 한 페이지. 최근 넣은 순
+    fun findLivePositions(
+        folderId: Long,
+        afterPosition: Long?,
+        limit: Int,
+    ): List<FolderWishPositionView>
+
+    fun findFolderIdsByWishIds(wishIds: Collection<Long>): Map<Long, List<Long>>
+
     fun deleteByFolderIdAndWishIds(
         folderId: Long,
         wishIds: Collection<Long>,

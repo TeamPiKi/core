@@ -8,4 +8,5 @@ data class WishResult(
     val card: ItemCard,
     val sourcePlatform: String? = null,
     val winnerTournamentIds: List<Long> = emptyList(),
+    val folderIds: List<Long> = emptyList(),
 )

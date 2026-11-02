@@ -1,6 +1,7 @@
 package com.depromeet.piki.folder.repository
 
 import com.depromeet.piki.folder.domain.FolderWish
+import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Repository
 import java.util.UUID
 
@@ -20,6 +21,20 @@ class FolderWishRepositoryImpl(
     }
 
     override fun countLiveByFolderId(folderId: Long): Int = folderWishJpaRepository.countLiveByFolderId(folderId).toInt()
+
+    override fun findLivePositions(
+        folderId: Long,
+        afterPosition: Long?,
+        limit: Int,
+    ): List<FolderWishPositionView> {
+        afterPosition ?: return folderWishJpaRepository.findLivePositionsByFolderId(folderId, Limit.of(limit))
+        return folderWishJpaRepository.findLivePositionsByFolderIdAfter(folderId, afterPosition, Limit.of(limit))
+    }
+
+    override fun findFolderIdsByWishIds(wishIds: Collection<Long>): Map<Long, List<Long>> {
+        if (wishIds.isEmpty()) return emptyMap()
+        return folderWishJpaRepository.findByWishIdIn(wishIds).groupBy({ it.wishId }, { it.folderId })
+    }
 
     override fun deleteByFolderIdAndWishIds(
         folderId: Long,
