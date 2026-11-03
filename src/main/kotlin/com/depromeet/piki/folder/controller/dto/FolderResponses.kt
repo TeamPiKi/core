@@ -19,12 +19,14 @@ data class FolderResponse(
         arraySchema =
             Schema(
                 description =
-                    "표지 이미지 URL. 최근 넣은 위시부터 이미지가 있는 것만 최대 3장. 파싱 중·실패 위시는 이미지가 없어 건너뛴다. " +
-                        "폴더가 비었거나 이미지가 있는 위시가 없으면 빈 배열",
-                example = "[\"https://cdn.example.com/p/701.jpg\", \"https://cdn.example.com/p/698.jpg\"]",
+                    "표지 칸. 최근 넣은 위시 최대 3개의 이미지 URL 을 그 순서로 준다. " +
+                        "이미지가 없는 위시(파싱 중·실패)의 칸은 null 이고 앱이 기본 이미지로 채운다. " +
+                        "위시가 3개보다 적으면 배열도 그만큼 짧고, 모자란 칸은 빈 표지로 채운다. 폴더가 비면 빈 배열",
+                example = "[\"https://cdn.example.com/p/701.jpg\", null, \"https://cdn.example.com/p/690.jpg\"]",
             ),
+        schema = Schema(type = "string", nullable = true),
     )
-    val coverImageUrls: List<String>,
+    val coverImageUrls: List<String?>,
     @field:Schema(description = "폴더를 만든 시각. 목록은 이 순서(먼저 만든 폴더가 앞)", example = "2026-10-20T13:02:11")
     val createdAt: LocalDateTime,
 ) {

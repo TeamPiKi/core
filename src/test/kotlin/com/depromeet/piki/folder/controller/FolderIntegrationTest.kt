@@ -14,6 +14,7 @@ import com.depromeet.piki.wishlist.service.WishPersistenceService
 import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import jakarta.persistence.EntityManager
 import org.hamcrest.Matchers.contains
+import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.hasSize
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
@@ -166,7 +167,7 @@ class FolderIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `폴더 목록은 내 폴더만 생성순으로 주고 표지는 최근 넣은 위시부터 이미지 있는 것만 3장이다`() {
+    fun `폴더 목록은 내 폴더만 생성순으로 주고 표지는 최근 넣은 위시 3개이며 이미지 없는 위시 칸은 null 이다`() {
         val userId = member()
         val other = member()
         createFolder(other, "남의 폴더")
@@ -187,7 +188,8 @@ class FolderIntegrationTest : IntegrationTestSupport() {
             .andExpect(
                 jsonPath(
                     "$.data[0].coverImageUrls",
-                    contains("https://img.example.com/4.png", "https://img.example.com/3.png", "https://img.example.com/2.png"),
+                    // 가장 최근에 넣은 파싱 중 위시도 칸을 차지한다. 건너뛰고 2.png 로 채우지 않는다
+                    contains(nullValue(), equalTo("https://img.example.com/4.png"), equalTo("https://img.example.com/3.png")),
                 ),
             ).andExpect(jsonPath("$.data[1].wishCount").value(0))
     }
