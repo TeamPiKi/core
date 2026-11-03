@@ -161,17 +161,17 @@ class FolderService(
 
     private fun countOf(folder: Folder): FolderWishCountResult = FolderWishCountResult(folderId = folder.getId(), wishCount = folderWishRepository.countLiveByFolderId(folder.getId()))
 
-    // 표지는 최근 넣은 위시부터 이미지가 있는 것만 최대 3장. 연결 id 는 전부 읽지만(개수에도 쓰임) 비싼 카드 계산은 폴더당 앞쪽 후보로 묶는다
+    // 표지는 최근 넣은 위시 최대 3개. 이미지가 없는 위시(파싱 중·실패)도 칸을 차지하고 null 로 둔다 — 앱이 그 칸을 기본 이미지로 채운다(정책 5장).
+    // 연결 id 는 전부 읽지만(개수에도 쓰임) 비싼 카드 계산은 폴더당 표지 칸만큼만 한다
     private fun resultsOf(folders: List<Folder>): List<FolderResult> {
         val wishIdsByFolder = folderWishRepository.findLiveWishIdsByFolderIds(folders.map { it.getId() })
-        val candidatesByFolder = wishIdsByFolder.mapValues { (_, ids) -> ids.take(COVER_CANDIDATE_COUNT) }
-        val imageByWish = imageUrlsOf(candidatesByFolder.values.flatten().distinct())
+        val coverWishesByFolder = wishIdsByFolder.mapValues { (_, ids) -> ids.take(COVER_IMAGE_COUNT) }
+        val imageByWish = imageUrlsOf(coverWishesByFolder.values.flatten().distinct())
         return folders.map { folder ->
-            val candidates = candidatesByFolder[folder.getId()].orEmpty()
             FolderResult(
                 folder = folder,
                 wishCount = wishIdsByFolder[folder.getId()].orEmpty().size,
-                coverImageUrls = candidates.mapNotNull { imageByWish[it] }.take(COVER_IMAGE_COUNT),
+                coverImageUrls = coverWishesByFolder[folder.getId()].orEmpty().map { imageByWish[it] },
             )
         }
     }
@@ -187,8 +187,5 @@ class FolderService(
 
     companion object {
         private const val COVER_IMAGE_COUNT = 3
-
-        // 이미지가 없는 위시(파싱 중·실패)를 건너뛸 여유. 앞의 12개가 모두 이미지가 없으면 표지가 3장보다 적다
-        private const val COVER_CANDIDATE_COUNT = 12
     }
 }

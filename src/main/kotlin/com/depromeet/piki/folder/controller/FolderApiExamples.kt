@@ -118,10 +118,11 @@ class FolderApiExamples(
             id = COAT_FOLDER_ID,
             name = "겨울 아우터",
             wishCount = 7,
+            // 두 번째 칸은 파싱 중인 위시라 이미지가 없다
             coverImageUrls =
                 listOf(
                     "https://cdn.example.com/p/701.jpg",
-                    "https://cdn.example.com/p/698.jpg",
+                    null,
                     "https://cdn.example.com/p/690.jpg",
                 ),
             createdAt = LocalDateTime.of(2026, 10, 20, 13, 2, 11),
