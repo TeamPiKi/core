@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>추출 신원 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; --ok:#15803d; --ok-soft:#dcfce7; }
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:720px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .ok{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+
+    .guide{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .guide>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:9px;}
+    .guide>summary::-webkit-details-marker{display:none;}
+    .guide>summary::before{content:"\25B8";display:inline-block;color:var(--accent);font-size:15px;line-height:1;transition:transform .15s;}
+    .guide[open]>summary::before{transform:rotate(90deg);}
+    .guide>summary:hover{background:var(--accent-soft);}
+    .gbody{border-top:1px solid var(--border);}
+    .gtable{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .gtable th{width:104px;text-align:left;vertical-align:top;padding:11px 15px;border-bottom:1px solid #f1f3f5;color:#384049;font-size:12px;font-weight:700;white-space:nowrap;}
+    .gtable td{padding:11px 15px 11px 0;border-bottom:1px solid #f1f3f5;color:var(--muted);line-height:1.65;}
+    .gtable tr:last-child th,.gtable tr:last-child td{border-bottom:none;}
+
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
+    .card h2{font-size:14px;font-weight:800;margin:0 0 3px;}
+    .desc{font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 14px;}
+
+    .field{margin-bottom:12px;}
+    .field label{display:block;font-size:12px;font-weight:700;margin-bottom:5px;}
+    .field input{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:ui-monospace,Menlo,monospace;}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .actions button{border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;background:var(--accent);color:#fff;border:none;}
+    .base{display:inline-block;font-size:11.5px;font-weight:700;color:var(--muted);background:#f3f4f6;border-radius:999px;padding:2px 9px;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
+  <div class="wrap">
+    <h1>추출 신원</h1>
+    <p class="lede">상품 페이지를 가져올 때 쇼핑몰에 밝히는 <b>이름</b>을 바꿉니다.</p>
+
+    <details class="guide">
+      <summary>동작 방식</summary>
+      <div class="gbody">
+        <table class="gtable">
+          <tbody>
+            <tr>
+              <th>어디에 실리나</th>
+              <td>User-Agent 헤더 끝에 값 전체가 실립니다. 브라우저 렌더에서는 Sec-CH-UA 헤더에도 <b>/ 앞 이름</b>이 실립니다.</td>
+            </tr>
+            <tr>
+              <th>입력 규칙</th>
+              <td>이름 또는 이름/버전 형식입니다. 영문, 숫자, 점, 밑줄, 하이픈만 쓸 수 있고 40자 이내입니다.<br>공백, 괄호, URL 은 쓸 수 없고 bot, crawler, spider 가 든 이름도 쓸 수 없습니다.</td>
+            </tr>
+            <tr>
+              <th>빈 칸</th>
+              <td>비우고 저장하면 <b>서버 기본 이름</b>으로 돌아갑니다.</td>
+            </tr>
+            <tr>
+              <th>바꾸기 전에</th>
+              <td>이름에 따라 쇼핑몰이 요청을 막을 수 있습니다. dev 에서 먼저 바꾸고 실제 링크로 확인한 뒤 prod 에 적용합니다.</td>
+            </tr>
+            <tr>
+              <th>반영 시점</th>
+              <td>저장 즉시 이 서버에 적용되고, 다른 서버에는 <b>최대 5분</b> 안에 퍼집니다.</td>
+            </tr>
+            <tr>
+              <th>적용 범위</th>
+              <td>이 설정은 이 환경에만 적용됩니다. dev 에서 바꿔도 prod 는 그대로입니다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="ok" th:if="${param.updated}">저장했습니다. 이 서버에 즉시 적용됐고 다른 서버에는 최대 5분 안에 퍼집니다.</div>
+    <div class="err" th:if="${error}" th:text="${error}"></div>
+
+    <div class="card">
+      <h2>쇼핑몰에 밝히는 이름</h2>
+      <p class="desc">비우고 저장하면 서버 기본 이름으로 돌아갑니다.</p>
+      <form method="post" th:action="@{/admin/extraction-identity}">
+        <div class="field">
+          <label for="identity">이름</label>
+          <input id="identity" name="identity" th:maxlength="${T(com.depromeet.piki.product.service.remote.ExtractionIdentityRule).MAX_LENGTH}" placeholder="서버 기본 이름 사용"
+                 th:value="${draftIdentity != null} ? ${draftIdentity} : (${current != null} ? ${current.identity} : null)">
+        </div>
+        <div class="actions">
+          <button type="submit">저장</button>
+          <span class="base" th:if="${current}" th:text="'마지막 변경 ' + ${#temporals.format(current.updatedAt, 'yyyy-MM-dd HH:mm')}"></span>
+          <span class="base" th:unless="${current}">서버 기본 이름으로 동작 중</span>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

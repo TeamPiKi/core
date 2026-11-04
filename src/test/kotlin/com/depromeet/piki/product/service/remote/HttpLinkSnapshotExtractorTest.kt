@@ -52,9 +52,16 @@ class HttpLinkSnapshotExtractorTest {
         override fun modelOverrideOf(target: ParseInputType): String? = model?.takeIf { target == axis }
     }
 
+    private class FakeIdentitySettings(
+        private val identity: String?,
+    ) : ExtractionIdentitySettings {
+        override fun identityOverride(): String? = identity
+    }
+
     private fun extractorWith(
         access: DomainAccess? = null,
         model: String? = null,
+        identity: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpLinkSnapshotExtractor {
         val builder =
@@ -68,6 +75,7 @@ class HttpLinkSnapshotExtractorTest {
             builder.build(),
             FakeAccessPolicy(access),
             FakeModelSettings(ParseInputType.LINK, model),
+            FakeIdentitySettings(identity),
         )
     }
 
@@ -401,6 +409,43 @@ class HttpLinkSnapshotExtractorTest {
                 server
                     .expect(requestTo("http://extractor.test/internal/extractions/link"))
                     .andExpect(jsonPath("$.model").value("gemini-3-flash"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
+    }
+
+    @Test
+    fun `지정된 신원을 요청에 싣는다`() {
+        val extractor =
+            extractorWith(identity = "Foo/2.0") { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.identity").value("Foo/2.0"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
+    }
+
+    // 빈 값이 추출 계약의 기본 신원이다. 받는 쪽이 자기 기본값을 탄다.
+    @Test
+    fun `지정이 없으면 신원을 채우지 않는다`() {
+        val extractor =
+            extractorWith { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.identity").value(""))
                     .andRespond(
                         withSuccess(
                             """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
