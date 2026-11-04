@@ -16,6 +16,7 @@ class HttpLinkSnapshotExtractor(
     @Qualifier("remoteExtractionRestClient") private val restClient: RestClient,
     private val accessPolicy: DomainAccessPolicy,
     private val modelSettings: ExtractionModelSettings,
+    private val identitySettings: ExtractionIdentitySettings,
 ) : LinkSnapshotExtractor {
     override fun extract(link: ProductLink): ProductSnapshot {
         // 등록 경계도 막지만 이미 담긴 아이템의 재파싱·새로고침은 여기가 유일한 출구
@@ -28,6 +29,8 @@ class HttpLinkSnapshotExtractor(
                 .setAuthorized(accessPolicy.authorizedFor(link))
         // extractor 박스를 여러 환경이 공유해 저쪽 환경변수로 모델을 잡으면 dev 실험이 prod 를 덮음
         modelSettings.modelOverrideOf(ParseInputType.LINK)?.let(request::setModel)
+        // 신원도 같은 이유로 요청마다 실음
+        identitySettings.identityOverride()?.let(request::setIdentity)
         return RemoteExtractionContract.postForSnapshot(
             restClient = restClient,
             path = ExtractionEndpoints.LINK_EXTRACTION,
