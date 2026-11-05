@@ -192,6 +192,7 @@ class ItemVersionsTest {
                 name = "상품 $id",
                 imageUrl = "https://cdn.example.com/$id.jpg",
                 price = if (ready) 10_000 else null,
+                originalPrice = null,
                 currency = "KRW",
                 method = null,
                 userInput = userInput,

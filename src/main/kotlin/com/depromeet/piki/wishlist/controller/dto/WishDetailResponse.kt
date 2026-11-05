@@ -1,6 +1,7 @@
 package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.wishlist.service.dto.WishDetailResult
 import io.swagger.v3.oas.annotations.media.Schema
@@ -57,6 +58,10 @@ data class WishDetailResponse(
     data class PriceHistoryEntry(
         @field:Schema(description = "그 시점의 판매가", example = "119000")
         val price: Int,
+        @field:Schema(description = "그 시점의 할인 전 정가. 모르면 null", example = "139000", nullable = true)
+        val originalPrice: Int?,
+        @field:Schema(description = "그 시점의 할인율(%, 내림). originalPrice 가 null 이면 null", example = "14", nullable = true)
+        val discountRate: Int?,
         @field:Schema(
             description = "기록된 시각 — 관측값은 추출이 완료된 시각, 본인 입력값은 입력한 시각이다.",
             example = "2026-06-18T10:00:00",
@@ -88,6 +93,8 @@ data class WishDetailResponse(
                 val snapshotId = snapshot.getId()
                 return PriceHistoryEntry(
                     price = requireNotNull(snapshot.price) { "가격 이력 snapshot $snapshotId 의 price 가 없다" },
+                    originalPrice = snapshot.originalPrice,
+                    discountRate = DiscountRate.of(snapshot.price, snapshot.originalPrice),
                     extractedAt = snapshot.createdAt,
                     method = snapshot.method,
                     userInput = snapshot.userInput,

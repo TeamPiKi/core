@@ -1,6 +1,7 @@
 package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.WishFolderResult
 import com.depromeet.piki.wishlist.service.dto.WishResult
@@ -97,6 +98,18 @@ data class WishItemResponse(
         val name: String?,
         @field:Schema(description = "스냅샷 시점의 현재 판매가 (PARSING·FAILED 시 null)", example = "119000", nullable = true)
         val price: Int?,
+        @field:Schema(
+            description = "할인 전 정가. 몰이 정가를 노출하지 않거나 사용자가 입력하지 않으면 null(모름). 할인 없는 상품은 price 와 같다",
+            example = "139000",
+            nullable = true,
+        )
+        val originalPrice: Int?,
+        @field:Schema(
+            description = "정가 대비 할인율(%, 내림). originalPrice 가 null 이면 null, 할인 없으면 0",
+            example = "14",
+            nullable = true,
+        )
+        val discountRate: Int?,
         @field:Schema(description = "통화 코드 (ISO 4217, PARSING·FAILED 시 null)", example = "KRW", nullable = true)
         val currency: String?,
         @field:Schema(
@@ -131,6 +144,8 @@ data class WishItemResponse(
                     userInput = result.card.display?.userInput,
                     name = result.card.display?.name,
                     price = result.card.display?.price,
+                    originalPrice = result.card.display?.originalPrice,
+                    discountRate = DiscountRate.of(result.card.display?.price, result.card.display?.originalPrice),
                     currency = result.card.display?.currency,
                     imageUrl = result.card.display?.imageUrl,
                     sourceUrl = result.card.sourceLink?.toString(),

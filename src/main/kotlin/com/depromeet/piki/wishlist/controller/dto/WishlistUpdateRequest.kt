@@ -16,6 +16,9 @@ data class WishlistUpdateRequest(
     @field:Schema(description = "수정할 현재 판매가", example = "119000", nullable = true)
     @field:Min(value = 0, message = PRICE_MIN_MESSAGE)
     val price: Int? = null,
+    @field:Schema(description = "수정할 할인 전 정가 — 판매가 이상이어야 한다", example = "139000", nullable = true)
+    @field:Min(value = 0, message = ORIGINAL_PRICE_MIN_MESSAGE)
+    val originalPrice: Int? = null,
     @field:Schema(description = "수정할 통화 코드 (ISO 4217)", example = "KRW", nullable = true)
     @field:Size(max = 8, message = CURRENCY_MAX_MESSAGE)
     val currency: String? = null,
@@ -37,6 +40,7 @@ data class WishlistUpdateRequest(
             wishId = wishId,
             name = name,
             price = price,
+            originalPrice = originalPrice,
             currency = currency,
             image = image?.let { ProductImage.of(it.bytes, it.contentType) },
             memo = memo,
@@ -45,6 +49,7 @@ data class WishlistUpdateRequest(
     companion object {
         const val NAME_MAX_MESSAGE = "상품명은 512자까지 입력할 수 있어요."
         const val PRICE_MIN_MESSAGE = "가격은 0원 이상으로 입력해 주세요."
+        const val ORIGINAL_PRICE_MIN_MESSAGE = "정가는 0원 이상으로 입력해 주세요."
         const val CURRENCY_MAX_MESSAGE = "통화 코드는 8자까지 입력할 수 있어요."
         const val MEMO_MAX_MESSAGE = "메모는 100자까지 입력할 수 있어요."
     }

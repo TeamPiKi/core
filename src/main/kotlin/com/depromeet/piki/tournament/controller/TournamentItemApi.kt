@@ -50,6 +50,7 @@ interface TournamentItemApi {
             링크·이미지로 아이템을 추가하면 비동기 파싱이 진행되므로,
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 완료·실패를 통보받고, 이 조회로 최신 status 와 값을 확인한다.
             - PARSING: 상품 확정 전 파싱 중 (itemId·name·price·imageUrl 은 null)
+            - originalPrice(할인 전 정가)·discountRate(%)는 정가를 알 때만 있고 모르면 응답에서 빠진다
             - READY: 이름·가격·이미지가 모두 있음
             - INCOMPLETE: 일부만 있음 (사용자 입력으로 채우면 READY)
             - FAILED: 상품을 확정하지 못하고 파싱 실패 (상품 페이지 아님 또는 추출 불가)
@@ -561,7 +562,7 @@ interface TournamentItemApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청 (바꿀 값이 하나도 없음 — code: ITEM-009 · 합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
-                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · 이름 1자 미만 512자 초과 · 가격 음수 · 가격단위 8자 초과 · " +
+                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · 정가가 판매가보다 낮음 — code: ITEM-010 · 이름 1자 미만 512자 초과 · 가격·정가 음수 · 가격단위 8자 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 타입 미지정 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003 · " +
                         "요청 값 형식 검증 실패 — COMMON-INVALID-INPUT)",

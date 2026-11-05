@@ -368,7 +368,7 @@ interface WishlistApi {
               값이 비어 있으면 status 로 갈린다 (PARSING 은 대기, FAILED 는 사용자 입력 유도이며 새로고침이 거부된다).
               상태 전이 통보는 SSE(`/api/v1/notifications/subscribe`)로 받는다.
             - priceHistory: 이 상품의 가격 기록을 최신순 최대 50건. 서버 추출값과 사용자 입력값이 함께 들어가고
-              userInput·editedByMe 로 구분한다.
+              userInput·editedByMe 로 구분한다. 각 점의 originalPrice(할인 전 정가)·discountRate(%)는 그 시점에 정가를 알 때만 있고 모르면 null.
             - **지금 보이는 값은 항상 item 에서 읽는다.** priceHistory 는 표시값 선택 규칙을 타지 않아 첫 항목이 item 과 다를 수 있다.
             - memo: 본인만 보는 개인 메모(최대 100자). 같은 상품을 담은 다른 사용자와 공유되지 않으며,
               상세 응답에만 내려간다(목록 응답에는 없다). 수정은 사용자 입력 API(PATCH)의 memo 필드로 한다.
@@ -475,7 +475,7 @@ interface WishlistApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청 (바꿀 값이 하나도 없음(메모도 없음) — code: ITEM-009 · 합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
-                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · price 음수 · name/currency/memo 길이 초과 · " +
+                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · 정가가 판매가보다 낮음 — code: ITEM-010 · price/originalPrice 음수 · name/currency/memo 길이 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 Content-Type 없음 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [

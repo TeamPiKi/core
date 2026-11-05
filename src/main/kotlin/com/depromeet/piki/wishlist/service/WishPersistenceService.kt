@@ -152,7 +152,7 @@ class WishPersistenceService(
     fun validateUserInput(command: RecoverWishItemCommand) {
         val wish = wishRepository.findById(command.wishId) ?: throw WishException.notFound()
         wish.verifyOwnedBy(command.userId)
-        itemCardService.cardOf(wish.cardQuery()).userInputValues(UserInput.beforeImageUpload(command.name, command.price, command.currency))
+        itemCardService.cardOf(wish.cardQuery()).userInputValues(UserInput.beforeImageUpload(command.name, command.price, command.originalPrice, command.currency))
     }
 
     // 합치기가 메모를 옮기는 동안 잠금을 기다린다. 잠그지 않으면 옮긴 뒤 사라지는 위시에 쓴 메모가 조용히 버려진다

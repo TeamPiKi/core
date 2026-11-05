@@ -55,6 +55,7 @@ sealed class TournamentDetail {
         val userId: UUID,
         val name: String?,
         val price: Int?,
+        val originalPrice: Int?,
         val currency: String?,
         val imageUrl: String?,
         val status: ItemStatus,
