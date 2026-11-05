@@ -3,6 +3,7 @@ package com.depromeet.piki.auth.infrastructure.redis
 import com.depromeet.piki.support.IntegrationTestSupport
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.redis.core.StringRedisTemplate
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -154,7 +155,7 @@ class RedisRefreshTokenStoreIntegrationTest : IntegrationTestSupport() {
         val sessionId = sid()
         store.save(userId, sessionId, "A")
         // 인덱스가 곧 만료될 상황을 만든다 (오래 살아 있는 세션에서 자연히 도달하는 상태).
-        redisTemplate.expire("refresh:idx:$userId", 2, TimeUnit.SECONDS)
+        redisTemplate.expire("refresh:idx:$userId", Duration.ofSeconds(2))
 
         store.rotateOrReplay(userId, sessionId, presented = "A", candidateRefreshToken = "B")
 

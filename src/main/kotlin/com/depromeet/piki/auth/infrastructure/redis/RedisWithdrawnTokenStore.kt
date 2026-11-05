@@ -4,7 +4,6 @@ import com.depromeet.piki.auth.infrastructure.jwt.JwtProperties
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 @Component
 class RedisWithdrawnTokenStore(
@@ -16,7 +15,7 @@ class RedisWithdrawnTokenStore(
     override fun markWithdrawn(userId: UUID) {
         redisTemplate
             .opsForValue()
-            .set(key(userId), MARKER, jwtProperties.accessTokenExpiry.toMillis(), TimeUnit.MILLISECONDS)
+            .set(key(userId), MARKER, jwtProperties.accessTokenExpiry)
     }
 
     override fun isWithdrawn(userId: UUID): Boolean = redisTemplate.hasKey(key(userId)) ?: false
