@@ -1,6 +1,5 @@
 package com.depromeet.piki.tournament.controller.dto
 
-import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.tournament.service.dto.GroupResult
 import com.fasterxml.jackson.annotation.JsonInclude
 import java.util.UUID
@@ -46,7 +45,7 @@ data class GroupResultResponse(
                         name = item.name,
                         price = item.price,
                         originalPrice = item.originalPrice,
-                        discountRate = DiscountRate.of(item.price, item.originalPrice),
+                        discountRate = item.discountRate,
                         currency = item.currency,
                         imageUrl = item.imageUrl,
                         chosenBy = item.chosenBy.map { p ->

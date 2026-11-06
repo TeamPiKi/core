@@ -1,7 +1,6 @@
 package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
-import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.wishlist.domain.WishFolderResult
 import com.depromeet.piki.wishlist.service.dto.WishResult
@@ -145,7 +144,7 @@ data class WishItemResponse(
                     name = result.card.display?.name,
                     price = result.card.display?.price,
                     originalPrice = result.card.display?.originalPrice,
-                    discountRate = DiscountRate.of(result.card.display?.price, result.card.display?.originalPrice),
+                    discountRate = result.card.display?.discountRate,
                     currency = result.card.display?.currency,
                     imageUrl = result.card.display?.imageUrl,
                     sourceUrl = result.card.sourceLink?.toString(),

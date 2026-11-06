@@ -1,7 +1,6 @@
 package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
-import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.wishlist.service.dto.WishDetailResult
 import io.swagger.v3.oas.annotations.media.Schema
@@ -94,7 +93,7 @@ data class WishDetailResponse(
                 return PriceHistoryEntry(
                     price = requireNotNull(snapshot.price) { "가격 이력 snapshot $snapshotId 의 price 가 없다" },
                     originalPrice = snapshot.originalPrice,
-                    discountRate = DiscountRate.of(snapshot.price, snapshot.originalPrice),
+                    discountRate = snapshot.discountRate,
                     extractedAt = snapshot.createdAt,
                     method = snapshot.method,
                     userInput = snapshot.userInput,

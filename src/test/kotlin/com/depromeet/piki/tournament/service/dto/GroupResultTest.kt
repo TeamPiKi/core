@@ -32,6 +32,7 @@ class GroupResultTest {
             name = "나이키 에어맥스",
             price = 129_000,
             originalPrice = null,
+            discountRate = null,
             currency = "KRW",
             imageUrl = "https://cdn.example.com/items/1.jpg",
             chosenBy = chosenBy,

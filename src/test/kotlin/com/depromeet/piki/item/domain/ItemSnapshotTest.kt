@@ -29,6 +29,21 @@ class ItemSnapshotTest {
     }
 
     @Test
+    fun `정가를 모르면 discountRate 는 null 이다`() {
+        assertNull(version(price = 90_000, originalPrice = null).discountRate)
+        assertNull(version(price = null, originalPrice = null).discountRate)
+    }
+
+    @Test
+    fun `discountRate 는 정가 대비 비율을 내림으로 계산하고 할인 없으면 0 이다`() {
+        assertEquals(10, version(price = 90_000, originalPrice = 100_000).discountRate)
+        assertEquals(33, version(price = 20_000, originalPrice = 30_000).discountRate)
+        assertEquals(0, version(price = 100_000, originalPrice = 100_000).discountRate)
+        assertEquals(100, version(price = 0, originalPrice = 100_000).discountRate)
+        assertEquals(0, version(price = 0, originalPrice = 0).discountRate)
+    }
+
+    @Test
     fun `name 이 512자를 초과하면 생성에 실패한다`() {
         assertFailsWith<IllegalArgumentException> { version(name = "가".repeat(513)) }
     }

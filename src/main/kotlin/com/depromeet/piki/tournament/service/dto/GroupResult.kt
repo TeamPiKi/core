@@ -20,6 +20,7 @@ data class GroupResultItem(
     val name: String?,
     val price: Int?,
     val originalPrice: Int?,
+    val discountRate: Int?,
     val currency: String?,
     val imageUrl: String?,
     val chosenBy: List<ParticipantSummary>,

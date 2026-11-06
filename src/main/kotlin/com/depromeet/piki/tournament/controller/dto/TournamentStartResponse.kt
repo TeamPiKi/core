@@ -1,6 +1,5 @@
 package com.depromeet.piki.tournament.controller.dto
 
-import com.depromeet.piki.item.domain.DiscountRate
 import com.depromeet.piki.tournament.service.dto.StartResult
 
 data class TournamentStartResponse(
@@ -27,7 +26,7 @@ data class TournamentStartResponse(
                         name = item.name,
                         price = item.price,
                         originalPrice = item.originalPrice,
-                        discountRate = DiscountRate.of(item.price, item.originalPrice),
+                        discountRate = item.discountRate,
                         currency = item.currency,
                         imageUrl = item.imageUrl,
                     )

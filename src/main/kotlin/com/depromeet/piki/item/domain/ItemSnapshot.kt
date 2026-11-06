@@ -27,7 +27,7 @@ class ItemSnapshot(
     @Column
     val price: Int?,
 
-    // 할인율은 저장하지 않고 price 와 함께 계산한다(DiscountRate). 정가와 할인율을 둘 다 두면 어긋날 수 있다
+    // 할인율은 저장하지 않고 discountRate 로 계산한다. 정가와 할인율을 둘 다 두면 어긋날 수 있다
     @Column
     val originalPrice: Int?,
 
@@ -51,6 +51,15 @@ class ItemSnapshot(
         require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
         require(originalPriceConsistent(price, originalPrice)) { "originalPrice 가 price 와 안 맞는다: originalPrice=$originalPrice price=$price" }
     }
+
+    // 정가를 모르면 null. 내림이라 표시 할인율이 실제보다 커지지 않는다
+    val discountRate: Int?
+        get() {
+            val originalPrice = originalPrice ?: return null
+            val price = price ?: return null
+            if (originalPrice == 0) return 0
+            return ((originalPrice - price).toLong() * 100 / originalPrice).toInt()
+        }
 
     fun isReady(): Boolean = filledFieldCount() == READY_FIELD_COUNT
 
