@@ -155,7 +155,7 @@ jobs:
   deploy:
     needs: resolve
     # arm64 네이티브 러너 — 배포 이미지가 linux/arm64(EC2 Graviton)라, x86 러너에서 QEMU 에뮬레이션으로
-    # 빌드하면 Dockerfile.ci 의 layertools extract(JVM 실행)가 에뮬돼 느리다. 네이티브 arm64 로 그 병목을 없앤다.
+    # 빌드하면 Dockerfile.ci 의 레이어 extract(JVM 실행)가 에뮬돼 느리다. 네이티브 arm64 로 그 병목을 없앤다.
     # public repo 라 GitHub-hosted arm64 러너는 무료. (QEMU setup 스텝은 이 전환으로 불필요해져 제거)
     runs-on: ubuntu-24.04-arm
     # GitHub Environment — secret 해석을 환경별로 가른다. dev env override / prod 는 repo 상속.
