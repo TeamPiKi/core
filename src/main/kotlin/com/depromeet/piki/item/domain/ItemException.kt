@@ -29,5 +29,7 @@ class ItemException private constructor(
         fun parsingInProgress(): ItemException = ItemException(ItemErrorCode.PARSING_IN_PROGRESS)
 
         fun emptyUserInput(): ItemException = ItemException(ItemErrorCode.EMPTY_USER_INPUT)
+
+        fun originalPriceBelowPrice(): ItemException = ItemException(ItemErrorCode.ORIGINAL_PRICE_BELOW_PRICE)
     }
 }

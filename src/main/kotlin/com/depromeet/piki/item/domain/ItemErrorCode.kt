@@ -15,4 +15,5 @@ enum class ItemErrorCode(
     NOT_REFRESHABLE("ITEM-007", ErrorCategory.INVALID_INPUT, "링크로 등록한 상품만 새로고침할 수 있어요."),
     PARSING_IN_PROGRESS("ITEM-008", ErrorCategory.CONFLICT, "아직 정보를 가져오는 중인 상품이에요. 끝난 뒤 다시 입력해 주세요."),
     EMPTY_USER_INPUT("ITEM-009", ErrorCategory.INVALID_INPUT, "바꿀 정보를 입력해 주세요."),
+    ORIGINAL_PRICE_BELOW_PRICE("ITEM-010", ErrorCategory.INVALID_INPUT, "정가는 판매가보다 낮을 수 없어요."),
 }

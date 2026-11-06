@@ -81,6 +81,7 @@ internal object RemoteExtractionContract {
             currency = if (hasCurrency()) currency else null,
             finalUrl = if (hasFinalUrl()) finalUrl else null,
             method = method,
+            originalPrice = if (hasOriginalPrice()) originalPrice else null,
         )
 
     private fun contractViolation(target: String): ProductExtractorException {

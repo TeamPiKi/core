@@ -35,8 +35,8 @@ class ItemCardTest {
     fun `바꿀 값이 하나도 없는 입력은 카드 상태와 무관하게 거부한다`() {
         val empties =
             listOf(
-                UserInput(name = null, price = null, imageUrl = null, currency = null),
-                UserInput(name = " ", price = null, imageUrl = null, currency = ""),
+                UserInput(name = null, price = null, imageUrl = null, currency = null, originalPrice = null),
+                UserInput(name = " ", price = null, imageUrl = null, currency = "", originalPrice = null),
             )
         val cards = listOf(ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false), ItemCard.Unresolved(failedRequest()))
 
@@ -63,7 +63,7 @@ class ItemCardTest {
     fun `실패한 요청만 있는 카드는 보낸 값에 이미지가 없으면 거부한다`() {
         val card = ItemCard.Unresolved(failedRequest())
 
-        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "직접 입력", price = 5_000, imageUrl = null, currency = null)) }
+        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "직접 입력", price = 5_000, imageUrl = null, currency = null, originalPrice = null)) }
         assertEquals(ItemErrorCode.IMAGE_REQUIRED_FOR_READY, e.errorCode)
     }
 
@@ -71,7 +71,7 @@ class ItemCardTest {
     fun `값이 다 있는 카드는 보내지 않은 필드를 지금 보이는 값으로 채운다`() {
         val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false)
 
-        val values = card.userInputValues(UserInput(name = null, price = 79_000, imageUrl = null, currency = null))
+        val values = card.userInputValues(UserInput(name = null, price = 79_000, imageUrl = null, currency = null, originalPrice = null))
 
         assertEquals("나이키 에어포스", values.name)
         assertEquals(79_000, values.price)
@@ -80,11 +80,28 @@ class ItemCardTest {
     }
 
     @Test
+    fun `정가를 판매가보다 낮게 보내면 거부한다`() {
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = false)
+
+        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = null, price = null, imageUrl = null, currency = null, originalPrice = 98_000)) }
+        assertEquals(ItemErrorCode.ORIGINAL_PRICE_BELOW_PRICE, e.errorCode)
+    }
+
+    @Test
+    fun `정가를 보내지 않으면 지금 값의 정가를 이어 쓰되 새 판매가보다 낮아지면 모름으로 되돌린다`() {
+        val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(originalPrice = 120_000), refreshing = false)
+
+        assertEquals(120_000, card.userInputValues(UserInput(name = "바꾼 이름", price = null, imageUrl = null, currency = null, originalPrice = null)).originalPrice)
+        assertEquals(120_000, card.userInputValues(UserInput(name = null, price = 110_000, imageUrl = null, currency = null, originalPrice = null)).originalPrice)
+        assertNull(card.userInputValues(UserInput(name = null, price = 130_000, imageUrl = null, currency = null, originalPrice = null)).originalPrice)
+    }
+
+    @Test
     fun `미완성 카드는 비어 있는 필드를 보내지 않으면 거부한다`() {
         val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(price = null), refreshing = false)
 
         assertEquals(ItemStatus.INCOMPLETE, card.status)
-        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "이름만", price = null, imageUrl = null, currency = null)) }
+        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "이름만", price = null, imageUrl = null, currency = null, originalPrice = null)) }
         assertEquals(ItemErrorCode.PRICE_REQUIRED_FOR_READY, e.errorCode)
     }
 
@@ -92,7 +109,7 @@ class ItemCardTest {
     fun `미완성 카드는 비어 있는 필드만 보내도 나머지를 지금 값으로 채운다`() {
         val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(price = null), refreshing = false)
 
-        assertEquals(10_000, card.userInputValues(UserInput(name = null, price = 10_000, imageUrl = null, currency = null)).price)
+        assertEquals(10_000, card.userInputValues(UserInput(name = null, price = 10_000, imageUrl = null, currency = null, originalPrice = null)).price)
     }
 
     @Test
@@ -100,7 +117,7 @@ class ItemCardTest {
         val card = ItemCard.Resolved(item = linkItem(ITEM_URL), display = version(), refreshing = true)
 
         assertEquals(ItemStatus.READY, card.status)
-        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "바꾼 이름", price = null, imageUrl = null, currency = null)) }
+        val e = assertFailsWith<ItemException> { card.userInputValues(UserInput(name = "바꾼 이름", price = null, imageUrl = null, currency = null, originalPrice = null)) }
         assertEquals(ItemErrorCode.PARSING_IN_PROGRESS, e.errorCode)
     }
 
@@ -123,14 +140,18 @@ class ItemCardTest {
 
     private fun failedRequest(): ItemParseOutbox = request().failedBeforeSave()
 
-    private fun fullInput(): UserInput = UserInput(name = "직접 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW")
+    private fun fullInput(): UserInput = UserInput(name = "직접 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW", originalPrice = null)
 
-    private fun version(price: Int? = 99_000): ItemSnapshot =
+    private fun version(
+        price: Int? = 99_000,
+        originalPrice: Int? = null,
+    ): ItemSnapshot =
         ItemSnapshot(
             itemId = 1L,
             name = "나이키 에어포스",
             imageUrl = "https://img.example.com/a.png",
             price = price,
+            originalPrice = originalPrice,
             currency = "KRW",
             method = ExtractionMethod.STRUCTURED,
             userInput = false,
