@@ -8,6 +8,7 @@ import org.springframework.boot.data.redis.autoconfigure.DataRedisProperties
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -27,8 +28,13 @@ class RedisConfigTest {
     }
 
     @Test
-    fun `응답 없는 연결을 닫는 시간 한도가 켜진다`() {
-        assertTrue(clientOptions().socketOptions.isEnableTcpUserTimeout)
+    fun `네이티브 전송이 있으면 응답 없는 연결을 닫는 시간 한도가 켜진다`() {
+        assertTrue(RedisConfig().socketOptions(DataRedisProperties(), nativeTransportAvailable = true).isEnableTcpUserTimeout)
+    }
+
+    @Test
+    fun `네이티브 전송이 없으면 시간 한도 없이 연결한다`() {
+        assertFalse(RedisConfig().socketOptions(DataRedisProperties(), nativeTransportAvailable = false).isEnableTcpUserTimeout)
     }
 
     @Test
