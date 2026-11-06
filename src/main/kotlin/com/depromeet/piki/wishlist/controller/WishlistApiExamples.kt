@@ -190,6 +190,7 @@ class WishlistApiExamples(
                     add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
                     add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
                     add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
+                    add(ItemException.originalPriceBelowPrice(), name = "정가가 판매가보다 낮음")
                     add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
                     add(ItemException.parsingInProgress(), name = "파싱 중이거나 새로고침 중인 항목")
                     // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
@@ -324,6 +325,8 @@ class WishlistApiExamples(
                     userInput = false,
                     name = "에어 조던 1 미드",
                     price = 109_000,
+                    originalPrice = 119_900,
+                    discountRate = 9,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
@@ -334,6 +337,8 @@ class WishlistApiExamples(
                 listOf(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 109_000,
+                        originalPrice = 119_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
                         method = ExtractionMethod.STRUCTURED,
                         userInput = false,
@@ -342,6 +347,8 @@ class WishlistApiExamples(
                     // 같은 상품을 담은 다른 사용자가 넣은 값 — 어떤 조건에서 본 가격인지 알 수 없어 구분해 다룬다.
                     WishDetailResponse.PriceHistoryEntry(
                         price = 89_000,
+                        originalPrice = 97_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 10, 9, 0, 0),
                         method = null,
                         userInput = true,
@@ -349,6 +356,8 @@ class WishlistApiExamples(
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 115_000,
+                        originalPrice = 126_500,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
                         method = ExtractionMethod.LLM,
                         userInput = false,
@@ -356,6 +365,8 @@ class WishlistApiExamples(
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 119_000,
+                        originalPrice = 130_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                         method = ExtractionMethod.STRUCTURED,
                         userInput = false,
@@ -374,11 +385,15 @@ class WishlistApiExamples(
                     method = null,
                     userInput = true,
                     price = 99_000,
+                    originalPrice = 108_900,
+                    discountRate = 9,
                 ),
             priceHistory =
                 listOf(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 99_000,
+                        originalPrice = 108_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
                         method = null,
                         userInput = true,
@@ -406,6 +421,8 @@ class WishlistApiExamples(
                     userInput = null,
                     name = null,
                     price = null,
+                    originalPrice = null,
+                    discountRate = null,
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
@@ -431,6 +448,8 @@ class WishlistApiExamples(
                     userInput = false,
                     name = "에어 조던 1 미드",
                     price = 119_000,
+                    originalPrice = 130_900,
+                    discountRate = 9,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
@@ -456,6 +475,8 @@ class WishlistApiExamples(
                     userInput = null,
                     name = null,
                     price = null,
+                    originalPrice = null,
+                    discountRate = null,
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
@@ -514,6 +535,8 @@ class WishlistApiExamples(
                         userInput = null,
                         name = null,
                         price = null,
+                        originalPrice = null,
+                        discountRate = null,
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
@@ -535,6 +558,8 @@ class WishlistApiExamples(
                         userInput = null,
                         name = null,
                         price = null,
+                        originalPrice = null,
+                        discountRate = null,
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,

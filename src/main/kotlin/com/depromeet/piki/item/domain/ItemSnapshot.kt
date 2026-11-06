@@ -27,6 +27,10 @@ class ItemSnapshot(
     @Column
     val price: Int?,
 
+    // 할인율은 저장하지 않고 discountRate 로 계산한다. 정가와 할인율을 둘 다 두면 어긋날 수 있다
+    @Column
+    val originalPrice: Int?,
+
     @Column(length = CURRENCY_MAX_LENGTH)
     val currency: String?,
 
@@ -45,7 +49,17 @@ class ItemSnapshot(
         require(filledFieldCount(name, price, imageUrl) > 0) { "값이 하나도 없는 버전은 만들 수 없다" }
         require(fitsColumns(name, imageUrl, currency)) { "칸 길이를 넘는 값이다" }
         require((price ?: 0) >= 0) { "price 는 음수일 수 없다: $price" }
+        require(originalPriceConsistent(price, originalPrice)) { "originalPrice 가 price 와 안 맞는다: originalPrice=$originalPrice price=$price" }
     }
+
+    // 정가를 모르면 null. 내림이라 표시 할인율이 실제보다 커지지 않는다
+    val discountRate: Int?
+        get() {
+            val originalPrice = originalPrice ?: return null
+            val price = price ?: return null
+            if (originalPrice == 0) return 0
+            return ((originalPrice - price).toLong() * 100 / originalPrice).toInt()
+        }
 
     fun isReady(): Boolean = filledFieldCount() == READY_FIELD_COUNT
 
@@ -73,6 +87,16 @@ class ItemSnapshot(
             imageUrl: String?,
         ): Int = listOfNotNull(name?.takeIf { it.isNotBlank() }, price, imageUrl).size
 
+        // 정가만 있고 현재가가 없거나 현재가보다 낮으면 할인율이 뜻을 잃는다. 입력 경계가 걸러 여기 닿으면 버그다
+        private fun originalPriceConsistent(
+            price: Int?,
+            originalPrice: Int?,
+        ): Boolean {
+            originalPrice ?: return true
+            price ?: return false
+            return originalPrice >= 0 && originalPrice >= price
+        }
+
         private fun fitsColumns(
             name: String?,
             imageUrl: String?,
@@ -92,6 +116,7 @@ class ItemSnapshot(
                 name = extracted.name,
                 imageUrl = extracted.imageUrl,
                 price = extracted.price,
+                originalPrice = extracted.originalPrice,
                 currency = extracted.currency,
                 method = extracted.method,
                 userInput = false,
@@ -108,6 +133,7 @@ class ItemSnapshot(
                 name = values.name,
                 imageUrl = values.imageUrl,
                 price = values.price,
+                originalPrice = values.originalPrice,
                 currency = values.currency,
                 method = null,
                 userInput = true,

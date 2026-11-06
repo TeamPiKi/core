@@ -6,16 +6,20 @@ data class UserInputValues(
     val price: Int,
     val imageUrl: String,
     val currency: String?,
+    val originalPrice: Int?,
 ) {
     companion object {
         fun of(input: UserInput): UserInputValues {
             val name = input.name
             if (name.isNullOrBlank()) throw ItemException.nameRequiredForReady()
+            val price = input.price ?: throw ItemException.priceRequiredForReady()
+            input.originalPrice?.let { if (it < price) throw ItemException.originalPriceBelowPrice() }
             return UserInputValues(
                 name = name,
-                price = input.price ?: throw ItemException.priceRequiredForReady(),
+                price = price,
                 imageUrl = input.imageUrl ?: throw ItemException.imageRequiredForReady(),
                 currency = input.currency,
+                originalPrice = input.originalPrice,
             )
         }
     }

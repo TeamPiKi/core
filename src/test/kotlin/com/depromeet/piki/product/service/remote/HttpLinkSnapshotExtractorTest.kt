@@ -103,6 +103,7 @@ class HttpLinkSnapshotExtractorTest {
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
         assertEquals(99_000, snapshot.price)
         assertEquals("KRW", snapshot.currency)
+        assertNull(snapshot.originalPrice, "originalPrice 를 생략하면 모름(null)이다")
     }
 
     @Test
@@ -210,6 +211,24 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.failureReasonOf(e).metricLabel)
+    }
+
+    @Test
+    fun `200 의 originalPrice 는 정가로 매핑된다`() {
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"originalPrice":129000,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val snapshot = extractor.extract(link)
+
+        assertEquals(99_000, snapshot.price)
+        assertEquals(129_000, snapshot.originalPrice)
     }
 
     @Test
