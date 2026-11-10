@@ -112,6 +112,49 @@ class DomainAccessPolicyIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `차단 목록에는 BLOCKED 만 담기고 아래에 ALLOWED 가 있는 BLOCKED 는 빠진다`() {
+        val id = UUID.randomUUID()
+        val blocked = "list-blocked-$id.example.com"
+        val allowed = "list-allowed-$id.example.com"
+        val nameSuffixOfBlocked = "shop$blocked"
+        val parent = "list-parent-$id.example.com"
+        val allowedSub = "m.$parent"
+        val allowedParent = "list-open-$id.example.com"
+        val blockedSub = "m.$allowedParent"
+        val rows =
+            listOf(
+                blocked to DomainAccess.BLOCKED,
+                allowed to DomainAccess.ALLOWED,
+                nameSuffixOfBlocked to DomainAccess.ALLOWED,
+                parent to DomainAccess.BLOCKED,
+                allowedSub to DomainAccess.ALLOWED,
+                allowedParent to DomainAccess.ALLOWED,
+                blockedSub to DomainAccess.BLOCKED,
+            )
+        try {
+            rows.forEach { (domain, access) ->
+                val permissionRef = if (access == DomainAccess.ALLOWED) "test permission" else null
+                policyRepository.save(DomainAccessPolicyEntity(domain = domain, access = access.name, reason = null, permissionRef = permissionRef))
+            }
+            accessPolicy.reload()
+
+            val list = accessPolicy.blockedDomains()
+
+            assertTrue(blocked in list, "이름 뒤쪽만 겹치는 ALLOWED 는 서브도메인이 아니다")
+            assertFalse(allowed in list)
+            assertFalse(parent in list, "목록에 두면 저쪽이 허락한 서브도메인까지 막는다")
+            assertFalse(allowedSub in list)
+            assertTrue(blockedSub in list, "ALLOWED 부모 아래의 BLOCKED 는 그대로 담긴다")
+            assertTrue(accessPolicy.blocked(ProductLink.parse("https://$parent/p/1")), "목록에서 빠져도 입력 링크 차단은 그대로다")
+        } finally {
+            rows.forEach { (domain, _) ->
+                policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            }
+            accessPolicy.reload()
+        }
+    }
+
+    @Test
     fun `BLOCKED 정책을 추가하면 등록이 400 으로 거부되고, 삭제하면 같은 URL 이 다시 통과한다`() {
         val mockMvc = mockMvc()
         val userId = UUID.randomUUID()
