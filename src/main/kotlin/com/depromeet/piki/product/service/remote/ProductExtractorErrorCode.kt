@@ -1,12 +1,13 @@
 package com.depromeet.piki.product.service.remote
 
 import com.depromeet.piki.common.exception.ErrorCategory
+import com.depromeet.piki.product.domain.ProductLinkErrorCode
 import com.depromeet.piki.product.service.ExtractionFailureBucket
 import com.depromeet.piki.product.service.ExtractionFailureCode
 
 // ProductExtractorException 의 code 배정표(에픽 #728). 번호는 append-only — 재배치·결번 침범 금지.
 // 소비처가 파서뿐이라 응답 code 로 나가지 않아 ErrorCodeRegistry 에 등록하지 않음
-// 두 사유가 message 를 공유함. 원격 실패 이유는 사용자 관심사가 아니고 구분은 category·bucket·로그가 맡음
+// 원격 실패 이유는 사용자 관심사가 아니라 문구를 나누지 않고 구분은 category·bucket·로그가 맡음. 차단만 등록 경계와 같은 문구
 // 일시 실패(TRANSIENT_FAILURE)는 종결 사유가 아니라 bucket 없음
 enum class ProductExtractorErrorCode(
     override val code: String,
@@ -29,4 +30,12 @@ enum class ProductExtractorErrorCode(
     ),
 
     // EXTRACTOR-003 은 결번 — 대상 차단(4xx·5xx)이 일시 실패로 바뀌며 소멸(infra#145).
+
+    // 원격의 422 BLOCKED_DOMAIN 과 core 가 입력 링크에서 먼저 막은 경우를 한 reason 으로 셈
+    BLOCKED_DOMAIN(
+        "EXTRACTOR-004",
+        ErrorCategory.INVALID_INPUT,
+        ProductLinkErrorCode.UNSUPPORTED_PLATFORM.message,
+        ExtractionFailureBucket.BLOCKED,
+    ),
 }
