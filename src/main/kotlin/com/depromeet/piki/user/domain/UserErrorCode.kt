@@ -26,4 +26,5 @@ enum class UserErrorCode(
     MALFORMED_PROFILE_IMAGE("USER-011", ErrorCategory.INVALID_INPUT, "이미지 파일이 손상되었거나 형식이 맞지 않아요."),
     NICKNAME_TOO_LONG("USER-012", ErrorCategory.INVALID_INPUT, "닉네임은 ${User.NICKNAME_MAX_LENGTH}자까지 입력할 수 있어요."),
     NICKNAME_RESERVED("USER-013", ErrorCategory.INVALID_INPUT, "사용할 수 없는 닉네임이에요."),
+    GUEST_CANNOT_UPDATE_PROFILE_VISIBILITY("USER-014", ErrorCategory.FORBIDDEN, "프로필 공개 설정은 회원만 바꿀 수 있어요."),
 }

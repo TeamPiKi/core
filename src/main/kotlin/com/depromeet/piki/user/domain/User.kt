@@ -40,6 +40,11 @@ class User(
     var identityType: IdentityType = identityType
         protected set
 
+    // 끄면 폴더 설정과 관계없이 다른 사람에게 폴더·위시를 보이지 않는다. 닉네임·프로필 이미지는 늘 보인다(#1285)
+    @Column(name = "is_profile_public", nullable = false)
+    var isProfilePublic: Boolean = true
+        protected set
+
     fun promoteToMember() {
         if (identityType != IdentityType.GUEST) throw UserException.alreadyMember()
         identityType = IdentityType.MEMBER
@@ -52,6 +57,12 @@ class User(
     fun updateNickname(newNickname: String) {
         validateNickname(newNickname)
         nickname = newNickname
+    }
+
+    // 게스트는 공개할 폴더가 없어 바꿀 수 없다
+    fun changeProfileVisibility(isPublic: Boolean) {
+        if (identityType != IdentityType.MEMBER) throw UserException.guestCannotUpdateProfileVisibility()
+        isProfilePublic = isPublic
     }
 
     fun softDelete() {

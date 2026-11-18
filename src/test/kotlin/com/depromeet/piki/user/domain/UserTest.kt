@@ -24,6 +24,28 @@ class UserTest {
     }
 
     @Test
+    fun `회원은 프로필 공개를 껐다 켤 수 있고 기본값은 공개다`() {
+        val user = guest().also { it.promoteToMember() }
+        assertEquals(true, user.isProfilePublic)
+
+        user.changeProfileVisibility(false)
+        assertEquals(false, user.isProfilePublic)
+
+        user.changeProfileVisibility(true)
+        assertEquals(true, user.isProfilePublic)
+    }
+
+    @Test
+    fun `게스트가 프로필 공개 설정을 바꾸면 USER-014 예외가 나고 값은 그대로다`() {
+        val user = guest()
+
+        val e = assertFailsWith<UserException> { user.changeProfileVisibility(false) }
+
+        assertEquals(UserErrorCode.GUEST_CANNOT_UPDATE_PROFILE_VISIBILITY, e.errorCode)
+        assertEquals(true, user.isProfilePublic)
+    }
+
+    @Test
     fun `이미 MEMBER 인 유저를 다시 승격하면 예외가 발생한다`() {
         val user = guest()
         user.promoteToMember()

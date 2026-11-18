@@ -70,6 +70,18 @@ class FolderService(
         return resultsOf(listOf(folder)).single()
     }
 
+    @Transactional
+    fun changeVisibility(
+        userId: UUID,
+        folderId: Long,
+        isPublic: Boolean,
+    ): FolderResult {
+        requireMemberForUpdate(userId)
+        val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
+        folder.changeVisibility(isPublic)
+        return resultsOf(listOf(folder)).single()
+    }
+
     // 폴더와 연결만 지운다. 위시는 전체 위시에 남는다
     @Transactional
     fun delete(

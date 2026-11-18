@@ -6,6 +6,7 @@ import com.depromeet.piki.folder.domain.FolderWishIds
 import com.depromeet.piki.folder.domain.FolderWishSelection
 import io.swagger.v3.oas.annotations.media.ArraySchema
 import io.swagger.v3.oas.annotations.media.Schema
+import jakarta.validation.constraints.NotNull
 
 // 이름·개수 규칙은 값 객체가 맡아 FOLDER code 로 거절한다. Bean Validation 을 두지 않는 이유는
 // 같은 규칙이 COMMON-INVALID-INPUT 과 FOLDER code 로 갈려 나가지 않게 하기 위해서다
@@ -19,6 +20,24 @@ data class FolderNameRequest(
     val name: String?,
 ) {
     fun toFolderName(): FolderName = FolderName.of(name)
+}
+
+@Schema(description = "폴더 공개 여부 바꾸기 요청")
+data class FolderVisibilityRequest(
+    @field:NotNull(message = IS_PUBLIC_REQUIRED_MESSAGE)
+    @field:Schema(
+        description = "true 면 공개, false 면 비공개. 비공개 폴더는 다른 사람 프로필·탐색에 보이지 않는다",
+        example = "false",
+        requiredMode = Schema.RequiredMode.REQUIRED,
+    )
+    val isPublic: Boolean?,
+) {
+    // @NotNull 이 걸러 여기서는 null 이 아니다
+    fun toIsPublic(): Boolean = requireNotNull(isPublic)
+
+    companion object {
+        const val IS_PUBLIC_REQUIRED_MESSAGE = "공개 여부를 선택해 주세요."
+    }
 }
 
 @Schema(description = "폴더에 위시 넣기 요청")

@@ -371,11 +371,17 @@ class UserService(
         userId: UUID,
         nickname: String?,
         profileImageUrl: String?,
+        isProfilePublic: Boolean? = null,
     ): User {
         val user = findActiveByIdForUpdate(userId)
         // 무엇이 바뀌었는지만 남긴다 — 닉네임 원문은 PII 라 값이 아니라 "어떤 필드가 변경됐나"만 로깅한다.
         val changedFields =
             buildList {
+                // 게스트 거절(403)이 닉네임 변경보다 먼저 나도록 맨 앞에 둔다
+                isProfilePublic?.let {
+                    user.changeProfileVisibility(it)
+                    add("isProfilePublic")
+                }
                 nickname?.let {
                     if (userRepository.existsByNicknameAndIdNot(it, userId)) throw UserException.duplicateNickname()
                     // 프로필 닉도 토너먼트 참여 닉 풀과 겹치면 안 된다(#1018 전역 유일 — 반대 방향). 자기 참여 닉은 제외.

@@ -22,13 +22,17 @@ class Folder(
     var name: String = name.value
         protected set
 
-    // 공개 프로필 작업(정책 1장)에서 노출한다. 지금은 바꾸는 경로가 없고 기본값 공개로만 만든다
+    // 비공개 폴더는 다른 사람 프로필·탐색에 보이지 않는다. 판정은 ProfileExposure 가 맡는다(#1285 노출 규칙)
     @Column(name = "is_public", nullable = false)
     var isPublic: Boolean = true
         protected set
 
     fun rename(name: FolderName) {
         this.name = name.value
+    }
+
+    fun changeVisibility(isPublic: Boolean) {
+        this.isPublic = isPublic
     }
 
     fun delete() {
