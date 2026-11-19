@@ -20,4 +20,18 @@ resource "grafana_notification_policy" "root" {
       value = "dev"
     }
   }
+  # LLM 호출 신고(#1294)는 몰·사유마다 메시지 1건이고, 계속 불려도 하루에 한 번만 다시 온다.
+  policy {
+    contact_point   = grafana_contact_point.discord_prod.name
+    group_by        = ["alertname", "host", "reason", "result", "discounted"]
+    group_wait      = "30s"
+    group_interval  = "5m"
+    repeat_interval = "24h"
+
+    matcher {
+      label = "signal"
+      match = "="
+      value = "llm-call"
+    }
+  }
 }

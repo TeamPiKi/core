@@ -930,3 +930,247 @@ resource "grafana_rule_group" "health" {
     }
   }
 }
+
+# LLM 호출은 실패가 아니라 "결정론 경로(정적 fetch·렌더)가 이 페이지를 못 뽑았다" 는 신고다 (#1294).
+# 같은 몰·같은 사유는 24시간 창에 한 인스턴스로 남아, 첫 호출 때 한 번 그리고 계속되면 하루에 한 번만 온다
+# (반복 주기는 notification_policy.tf 의 llm-call 경로). 이미지 추출은 LLM 외 수단이 없어 넣지 않는다.
+# Gemini 실패는 사용자에게 실제 실패가 내려가는 장애라 signal 라벨 없이 루트 경로로 즉시 보낸다.
+# extractor 는 이 실패를 WARN 으로 남겨 서버 로그(ERROR) 룰에 안 걸린다.
+resource "grafana_rule_group" "llm" {
+  name               = "llm"
+  folder_uid         = grafana_folder.piki_alerts.uid
+  interval_seconds   = 60
+  disable_provenance = true
+
+  rule {
+    name           = "LLM 추출 호출 (구조화 실패)"
+    condition      = "B"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    is_paused      = false
+    annotations = {
+      logs_url = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-extractor%5C%22%7D%20%7C%3D%20%5C%22{{ $labels.host }}%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
+      summary  = "LLM 추출 호출 - {{ $labels.host }} (구조화 실패 사유 {{ $labels.reason }}), 24시간 {{ if $values.A }}{{ printf \"%.0f\" $values.A.Value }}{{ else }}?{{ end }}건"
+    }
+    labels = {
+      signal = "llm-call"
+    }
+    data {
+      ref_id         = "A"
+      query_type     = "instant"
+      datasource_uid = "grafanacloud-logs"
+      relative_time_range {
+        from = 86400
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "expr": "sum by (host, reason) (count_over_time({service=\"piki-extractor\"} |= \"extract via=llm\" | regexp \"reason=(?P<reason>\\\\S+)\" | regexp \"url=(?P<host>[^/ ]+)\" [24h]))",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "queryType": "instant",
+        "refId": "A"
+      }
+      EOT
+    }
+    data {
+      ref_id         = "B"
+      query_type     = ""
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "last"
+            }
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "expression": "A",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "refId": "B",
+        "type": "threshold"
+      }
+      EOT
+    }
+  }
+  rule {
+    name           = "LLM 정가 보강 호출"
+    condition      = "B"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    is_paused      = false
+    annotations = {
+      logs_url = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-extractor%5C%22%7D%20%7C%3D%20%5C%22{{ $labels.host }}%5C%22%20%7C%3D%20%5C%22originalPrice%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
+      summary  = "LLM 정가 보강 호출 - {{ $labels.host }} (결과 {{ $labels.result }}, 할인 {{ $labels.discounted }}), 24시간 {{ if $values.A }}{{ printf \"%.0f\" $values.A.Value }}{{ else }}?{{ end }}건"
+    }
+    labels = {
+      signal = "llm-call"
+    }
+    data {
+      ref_id         = "A"
+      query_type     = "instant"
+      datasource_uid = "grafanacloud-logs"
+      relative_time_range {
+        from = 86400
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "expr": "sum by (host, result, discounted) (count_over_time({service=\"piki-extractor\"} |= \"extract originalPrice via=llm\" |~ \"result=(filled|null|rejected|unverified_single) \" | regexp \"result=(?P<result>\\\\w+)\" | regexp \"discounted=(?P<discounted>\\\\w+)\" | regexp \"url=(?P<host>[^/ ]+)\" [24h]))",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "queryType": "instant",
+        "refId": "A"
+      }
+      EOT
+    }
+    data {
+      ref_id         = "B"
+      query_type     = ""
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "last"
+            }
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "expression": "A",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "refId": "B",
+        "type": "threshold"
+      }
+      EOT
+    }
+  }
+  rule {
+    name           = "Gemini 호출 실패"
+    condition      = "B"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    is_paused      = false
+    annotations = {
+      logs_url = "https://piki.grafana.net/explore?schemaVersion=1&panes=%7B%22lg%22%3A%7B%22datasource%22%3A%22grafanacloud-logs%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bservice%3D%5C%22piki-extractor%5C%22%7D%20%7C~%20%5C%22Gemini%5C%22%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22__FROM__%22%2C%22to%22%3A%22__TO__%22%7D%7D%7D"
+      summary  = "Gemini 호출 실패{{ if $labels.status }} - status {{ $labels.status }}{{ end }}, 10분 {{ if $values.A }}{{ printf \"%.0f\" $values.A.Value }}{{ else }}?{{ end }}건. LLM 이 필요한 추출이 실패하고 있습니다."
+    }
+    labels = {
+      service = "piki-extractor"
+    }
+    data {
+      ref_id         = "A"
+      query_type     = "instant"
+      datasource_uid = "grafanacloud-logs"
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "expr": "sum by (status) (count_over_time({service=\"piki-extractor\"} |~ \"Gemini 응답 오류|Gemini 호출 재시도\" | regexp \"status=(?P<status>\\\\d+)\" [10m]))",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "queryType": "instant",
+        "refId": "A"
+      }
+      EOT
+    }
+    data {
+      ref_id         = "B"
+      query_type     = ""
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = <<-EOT
+      {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "last"
+            }
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "expression": "A",
+        "intervalMs": 1000,
+        "maxDataPoints": 43200,
+        "refId": "B",
+        "type": "threshold"
+      }
+      EOT
+    }
+  }
+}
