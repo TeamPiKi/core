@@ -92,6 +92,21 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `링크로 위시를 담으면 파싱 요청 사실이 릴레이 앞으로 발행 기록에 남는다`() {
+        wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse("https://www.musinsa.com/products/8100021")))
+
+        assertEquals(listOf(ItemParseRequestRelay.LISTENER_ID), publicationListenersOf(ItemParseRequested::class.java))
+    }
+
+    @Test
+    fun `최소 1번 전달을 약속하지 않은 리스너가 받는 파싱 완료 사실은 발행 기록에 남지 않는다`() {
+        registerParsed(newMember(), "https://www.musinsa.com/products/8100022")
+
+        assertEquals(1, applicationEvents.stream(ItemParsingCompleted::class.java).count())
+        assertEquals(emptyList(), publicationListenersOf(ItemParsingCompleted::class.java))
+    }
+
+    @Test
     fun `같은 새 링크를 두 사람이 등록하면 진행 중 파싱에 합류하지 않고 각자 파싱을 요청한다`() {
         val url = "https://www.musinsa.com/products/8100002"
 
@@ -320,6 +335,9 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
     private fun versionCountOf(itemId: Long): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?", Int::class.java, itemId) ?: 0
+
+    private fun publicationListenersOf(eventType: Class<*>): List<String> =
+        jdbcTemplate.queryForList("SELECT LISTENER_ID FROM EVENT_PUBLICATION WHERE EVENT_TYPE = ?", String::class.java, eventType.name).filterNotNull()
 
     private fun latestOutboxIdOf(slot: ItemSlot): Long {
         entityManager.flush()

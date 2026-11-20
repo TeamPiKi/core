@@ -1,5 +1,4 @@
--- Spring Modulith 의 이벤트 발행 기록. 모양의 정본은 spring-modulith-events-jdbc 의 schemas/v2/schema-mysql.sql.
--- 라이브러리의 쿼리가 대문자 이름을 쓰고 리눅스 MySQL 은 테이블명의 대소문자를 구분한다.
+-- Spring Modulith 의 쿼리가 대문자 이름을 쓰고 리눅스 MySQL 은 테이블명의 대소문자를 구분함
 CREATE TABLE EVENT_PUBLICATION
 (
     ID                     VARCHAR(36)  NOT NULL,

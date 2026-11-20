@@ -114,10 +114,6 @@ spring:
     # 키는 lowercase 로 둔다 — camelCase 는 Spring relaxed-binding 정규화로 Flyway 에 전달이 어긋난다.
     placeholders:
       s3publicbaseurl: ${s3.public-base-url}
-  modulith:
-    events:
-      # 발행 기록은 전달이 끝나면 쓸모가 없다. 남기면 상태로 찾는 조회(인덱스 없음)가 표 전체를 훑는다.
-      completion-mode: delete
   data:
     redis:
       host: ${REDIS_HOST:localhost}
