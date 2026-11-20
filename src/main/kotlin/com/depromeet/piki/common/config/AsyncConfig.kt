@@ -4,6 +4,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.task.support.ContextPropagatingTaskDecorator
+import org.springframework.scheduling.annotation.AsyncConfigurer
 import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import java.util.concurrent.Executor
@@ -11,8 +12,23 @@ import java.util.concurrent.ThreadPoolExecutor
 
 @Configuration
 @EnableAsync
-class AsyncConfig {
+class AsyncConfig : AsyncConfigurer {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    // 실행기를 지정하지 않은 @Async 가 여기서 돎. Modulith 의 ApplicationModuleListener 가 그 경우
+    override fun getAsyncExecutor(): Executor = eventPublicationExecutor()
+
+    @Bean(EVENT_PUBLICATION_EXECUTOR)
+    fun eventPublicationExecutor(): ThreadPoolTaskExecutor =
+        ThreadPoolTaskExecutor().apply {
+            corePoolSize = 2
+            maxPoolSize = 2
+            queueCapacity = 100
+            setThreadNamePrefix("event-publication-")
+            setTaskDecorator(ContextPropagatingTaskDecorator())
+            setRejectedExecutionHandler(ThreadPoolExecutor.AbortPolicy())
+            initialize()
+        }
 
     @Bean(ITEM_PARSING_EXECUTOR)
     fun itemParsingExecutor(): ThreadPoolTaskExecutor =
@@ -48,6 +64,7 @@ class AsyncConfig {
 
     companion object {
         const val ITEM_PARSING_EXECUTOR = "itemParsingExecutor"
+        const val EVENT_PUBLICATION_EXECUTOR = "eventPublicationExecutor"
         const val NOTIFICATION_EXECUTOR = "notificationExecutor"
     }
 }
