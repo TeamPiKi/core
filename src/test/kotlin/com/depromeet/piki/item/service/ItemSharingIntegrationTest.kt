@@ -99,7 +99,7 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `최소 1번 전달을 약속하지 않은 리스너가 받는 파싱 완료 사실은 발행 기록에 남지 않는다`() {
+    fun `ApplicationModuleListener 가 아닌 리스너가 받는 파싱 완료 사실은 발행 기록에 남지 않는다`() {
         registerParsed(newMember(), "https://www.musinsa.com/products/8100022")
 
         assertEquals(1, applicationEvents.stream(ItemParsingCompleted::class.java).count())
