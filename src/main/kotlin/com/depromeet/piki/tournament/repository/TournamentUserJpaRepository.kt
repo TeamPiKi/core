@@ -24,17 +24,33 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
     fun countByTournamentIdAndDeletedAtIsNull(tournamentId: Long): Int
 
     // 참여 닉네임은 그 토너먼트 안에서만 유일하다(#1287). 전역 유일(#1018)은 걷어냈다 — 구분이 필요한 범위가
-    // 한 토너먼트의 대기실·진행·결과 화면이기 때문이다. NULL(레거시)은 = 비교라 자동 제외된다.
-    fun existsByTournamentIdAndNicknameAndDeletedAtIsNull(
-        tournamentId: Long,
-        nickname: String,
+    // 한 토너먼트의 대기실·진행·결과 화면이기 때문이다.
+    //
+    // 비교 대상은 저장된 nickname 이 아니라 **화면에 뜨는 표시명**이다. 레거시 참여 행은 nickname 이 NULL 이고
+    // 표시 때 users.nickname 으로 폴백하므로(TournamentDetail.ParticipantDetail), 저장값만 비교하면 그 행의
+    // 표시명과 겹치는 값이 통과해 같은 판에 같은 이름 둘이 생긴다. COALESCE 로 폴백까지 같은 기준에 넣는다.
+    //
+    // FK·연관관계를 두지 않는 규약이라 암시적 조인으로 users 를 엮는다.
+    @Query(
+        "SELECT COUNT(tu) > 0 FROM TournamentUser tu, User u " +
+            "WHERE tu.tournamentId = :tournamentId AND tu.deletedAt IS NULL " +
+            "AND u.id = tu.userId AND COALESCE(tu.nickname, u.nickname) = :nickname",
+    )
+    fun existsDisplayNameInTournament(
+        @Param("tournamentId") tournamentId: Long,
+        @Param("nickname") nickname: String,
     ): Boolean
 
     // 위와 같되 자기 자신은 제외한다 — 자기 참여 닉과 같은 값으로 다시 설정하는 흐름이 통과해야 한다.
-    fun existsByTournamentIdAndNicknameAndDeletedAtIsNullAndUserIdNot(
-        tournamentId: Long,
-        nickname: String,
-        userId: UUID,
+    @Query(
+        "SELECT COUNT(tu) > 0 FROM TournamentUser tu, User u " +
+            "WHERE tu.tournamentId = :tournamentId AND tu.deletedAt IS NULL AND tu.userId <> :excludeUserId " +
+            "AND u.id = tu.userId AND COALESCE(tu.nickname, u.nickname) = :nickname",
+    )
+    fun existsDisplayNameInTournamentExcludingUser(
+        @Param("tournamentId") tournamentId: Long,
+        @Param("nickname") nickname: String,
+        @Param("excludeUserId") excludeUserId: UUID,
     ): Boolean
 
     @Query("SELECT tu FROM TournamentUser tu WHERE tu.tournamentId IN :tournamentIds AND tu.deletedAt IS NULL")

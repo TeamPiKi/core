@@ -1859,6 +1859,31 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
             ).andExpect(status().isOk)
     }
 
+    // 레거시 참여 행(nickname NULL)은 표시 때 프로필 닉으로 폴백한다. 저장값만 비교하면 그 표시명과 겹치는
+    // 값이 통과해 같은 판에 같은 이름 둘이 생긴다 — 전역 교차 검사를 걷어내며(#1287) 열린 구멍이라
+    // 중복 검사를 표시명(COALESCE) 기준으로 바꿔 막았다.
+    @Test
+    fun `PATCH tournaments-id-nickname 은 레거시 참여자의 폴백 표시명과 겹치면 409 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val tournamentId = createTournament(mockMvc)
+        // 레거시 참여자: 참여 닉이 NULL 이라 화면엔 프로필 닉("라떼왕")이 뜬다.
+        val legacyUserId = UUID.randomUUID()
+        saveUser(legacyUserId, "https://cdn.example.com/legacy.jpg", "라떼왕")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = tournamentId, userId = legacyUserId, nickname = null),
+        )
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"라떼왕"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
     @Test
     fun `PATCH tournaments-id-nickname 은 다른 토너먼트 참여자의 참여 닉과 겹쳐도 통과한다`() {
         // 같은 토너먼트 안 충돌만 막는다(#1287). 다른 판의 참여 닉은 같은 값이어도 구분이 필요 없다.

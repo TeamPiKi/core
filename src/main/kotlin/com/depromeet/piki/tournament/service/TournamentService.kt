@@ -152,6 +152,14 @@ class TournamentService(
                 ?.sourceTournamentId
                 ?.also { recordCloneResolved() }
                 ?: tournamentId
+        // 중복 검사 전에 ROOT 행을 잠근다. 게스트 합류(createGuestAndJoin)가 같은 행을 잠그므로, 두 경로가
+        // 같은 토너먼트에서 같은 닉네임을 동시에 들고 와도 직렬화된다. 잠금 없이 검사하면 둘 다 "없다" 로
+        // 판정해 같은 판에 같은 이름 둘이 남는다 — (tournament_id, nickname) 유니크가 없어 DB 가 못 막는다.
+        // 잠금을 검사보다 먼저 얻는 이유: 뒤에 두면 비잠금 읽기의 스냅샷으로 판정해 상대가 커밋한 행을 놓친다.
+        //
+        // 결과를 쓰지 않고 버린다 — 미존재 토너먼트에 404 를 새로 만들지 않기 위해서다. 잠글 행이 없으면
+        // 아래 참여 행 조회가 비어 기존대로 403 이 나간다(이 메서드의 기존 계약).
+        tournamentRepository.findTournamentByIdForUpdate(effectiveTournamentId)
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(effectiveTournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()

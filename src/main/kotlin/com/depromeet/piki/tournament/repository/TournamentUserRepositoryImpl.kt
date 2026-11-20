@@ -30,14 +30,14 @@ class TournamentUserRepositoryImpl(
     override fun existsNicknameInTournament(
         tournamentId: Long,
         nickname: String,
-    ): Boolean = tournamentUserJpaRepository.existsByTournamentIdAndNicknameAndDeletedAtIsNull(tournamentId, nickname)
+    ): Boolean = tournamentUserJpaRepository.existsDisplayNameInTournament(tournamentId, nickname)
 
     override fun existsNicknameInTournamentExcludingUser(
         tournamentId: Long,
         nickname: String,
         excludeUserId: UUID,
     ): Boolean =
-        tournamentUserJpaRepository.existsByTournamentIdAndNicknameAndDeletedAtIsNullAndUserIdNot(
+        tournamentUserJpaRepository.existsDisplayNameInTournamentExcludingUser(
             tournamentId,
             nickname,
             excludeUserId,
