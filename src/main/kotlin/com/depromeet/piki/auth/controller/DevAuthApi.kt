@@ -53,16 +53,6 @@ interface DevAuthApi {
                     ),
                 ],
             ),
-            ApiResponse(
-                responseCode = "409",
-                description = "이미 사용 중인 닉네임",
-                content = [
-                    Content(
-                        mediaType = MediaType.APPLICATION_JSON_VALUE,
-                        schema = Schema(implementation = ApiResponseBody::class),
-                    ),
-                ],
-            ),
         ],
     )
     @Parameter(

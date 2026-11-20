@@ -39,6 +39,7 @@ import com.depromeet.piki.tournament.service.dto.TournamentItemDetail
 import com.depromeet.piki.tournament.service.dto.TournamentStartResult
 import com.depromeet.piki.tournament.service.dto.TournamentSummary
 import com.depromeet.piki.user.domain.IdentityType
+import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.DefaultProfileImages
@@ -97,6 +98,8 @@ class TournamentService(
         val tournamentUser =
             tournamentUserRepository.save(
                 // 토너먼트 닉네임은 생성 시점 프로필 닉네임으로 채운다(#1018) — 이후 프로필 수정과 분리.
+                // 여기는 participantNicknameFor 를 거치지 않는다 — 방금 만든 판이라 다른 참여자가 없어
+                // 겹칠 대상이 없고, 질의 한 번을 아낀다. 뒤따르는 참여(join·joinAsPlayer)가 그 구분을 맡는다.
                 TournamentUser(tournament.getId(), userId, nicknameOf(userId)),
             )
         tournament.assignOwner(tournamentUser.getId())
@@ -109,6 +112,31 @@ class TournamentService(
 
     // 토너먼트 닉네임 fill 용 — 참여 시점의 프로필 닉네임을 스냅샷한다(#1018). 유저가 없으면(이례) null → 표시 시 폴백.
     private fun nicknameOf(userId: UUID): String? = userRepository.findById(userId)?.nickname
+
+    // 참여 행에 박을 표시명을 정한다. 프로필 닉네임을 그대로 쓰되, 같은 판에 그 표시명이 이미 있으면
+    // 뒤에 숫자를 붙여 구분한다(#1287).
+    //
+    // 왜 필요한가: 프로필 닉네임 중복이 허용되면서 "이름이 같은 두 사람이 한 판에 들어오면 둘 다 같은
+    // 이름으로 보이는" 경로가 열렸다. 참여자가 고른 이름이 아니라 프로필 이름이 복사되는 자리라,
+    // 참여를 409 로 막는 대신 서버가 구분해 준다 — 이름 때문에 막히지 않는 것이 중복 허용의 취지다.
+    // 마음에 안 들면 대기실에서 PATCH /nickname 으로 바꾼다(그쪽은 명시 입력이라 충돌 시 409).
+    //
+    // 접미사가 한 자리로 끝나는 근거: 참가자 상한이 8명이라 같은 base 가 최대 8개다. 호출 시점에
+    // 기존 참여자는 7명 이하이므로(정원 검사가 먼저 걸린다) base 와 2..8 중 하나는 반드시 빈다.
+    // 길이 상한(10자)을 넘지 않게 base 를 잘라 붙인다.
+    private fun participantNicknameFor(
+        tournamentId: Long,
+        userId: UUID,
+    ): String? {
+        val base = nicknameOf(userId) ?: return null
+        if (!tournamentUserRepository.existsNicknameInTournament(tournamentId, base)) return base
+        (2..TOURNAMENT_MAX_PARTICIPANT_COUNT).forEach { n ->
+            val suffix = n.toString()
+            val candidate = base.take(User.NICKNAME_MAX_LENGTH - suffix.length) + suffix
+            if (!tournamentUserRepository.existsNicknameInTournament(tournamentId, candidate)) return candidate
+        }
+        error("참여 표시명 후보 소진 — 정원 검사가 먼저 걸려야 한다. tournamentId=$tournamentId")
+    }
 
     // 리다이렉트 shim(#1027 Phase 3) — 클론 id 로 온 요청을 ROOT 로 해소한다. Phase 2 백필로 모든 플레이가 ROOT
     // 참여 행으로 평탄화됐고, 클론 행은 4-2단계 제거 전까지 리다이렉트 껍데기로만 남는다. 클라이언트가 공유·이전
@@ -152,27 +180,34 @@ class TournamentService(
                 ?.sourceTournamentId
                 ?.also { recordCloneResolved() }
                 ?: tournamentId
+        // 중복 검사 전에 ROOT 행을 잠근다. 게스트 합류(createGuestAndJoin)가 같은 행을 잠그므로, 두 경로가
+        // 같은 토너먼트에서 같은 닉네임을 동시에 들고 와도 직렬화된다. 잠금 없이 검사하면 둘 다 "없다" 로
+        // 판정해 같은 판에 같은 이름 둘이 남는다 — (tournament_id, nickname) 유니크가 없어 DB 가 못 막는다.
+        // 잠금을 검사보다 먼저 얻는 이유: 뒤에 두면 비잠금 읽기의 스냅샷으로 판정해 상대가 커밋한 행을 놓친다.
+        //
+        // 결과를 쓰지 않고 버린다 — 미존재 토너먼트에 404 를 새로 만들지 않기 위해서다. 잠글 행이 없으면
+        // 아래 참여 행 조회가 비어 기존대로 403 이 나간다(이 메서드의 기존 계약).
+        tournamentRepository.findTournamentByIdForUpdate(effectiveTournamentId)
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(effectiveTournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
-        ensureNicknameAvailable(nickname, userId)
+        ensureNicknameAvailable(effectiveTournamentId, nickname, userId)
         tournamentUser.rename(nickname)
         tournamentUserRepository.save(tournamentUser)
     }
 
-    // 참여 닉네임은 "모든 표시명 전역 유일"(#1018) — 프로필 닉 풀(users)과 참여 닉 풀(tournament_users) 어느 쪽과도
-    // 겹치면 안 된다. 자기 자신(자기 프로필·자기 다른 참여 닉)은 제외해 프리필·재설정이 자연스럽게 통과한다.
-    // 교차 테이블 UNIQUE 는 MySQL 로 못 걸어 앱 레이어 검사다(프로필 닉과 같은 방식, 좁은 race 창 감수).
+    // 참여 닉네임은 그 토너먼트 안에서만 유일하다(#1287). 프로필 닉네임 풀(users)과도, 다른 토너먼트의 참여
+    // 닉네임과도 겹쳐도 된다 — 구분이 필요한 범위가 한 토너먼트의 대기실·진행·결과 화면이기 때문이다.
+    // 자기 자신은 제외해 자기 닉네임으로 다시 설정하는 흐름이 통과한다.
+    //
+    // UNIQUE 로 걸지 않고 앱 레이어 검사로 둔다 — 레거시 행의 nickname 이 NULL 이고(프로필 닉으로 폴백),
+    // (tournament_id, nickname) 유니크는 그 NULL 들을 중복으로 세지 않아 보호가 고르지 않다. 좁은 race 창은 감수한다.
     private fun ensureNicknameAvailable(
+        tournamentId: Long,
         nickname: String,
         requesterId: UUID,
     ) {
-        if (userRepository.existsByNicknameAndIdNot(nickname, requesterId)) throw UserException.duplicateNickname()
-        if (tournamentUserRepository.existsByNicknameExcludingUser(
-                nickname,
-                requesterId,
-            )
-        ) {
+        if (tournamentUserRepository.existsNicknameInTournamentExcludingUser(tournamentId, nickname, requesterId)) {
             throw UserException.duplicateNickname()
         }
     }
@@ -193,7 +228,7 @@ class TournamentService(
         if (tournamentUserRepository.countByTournamentId(tournamentId) >= TOURNAMENT_MAX_PARTICIPANT_COUNT) {
             throw TournamentException.participantLimitExceeded()
         }
-        tournamentUserRepository.save(TournamentUser(tournamentId, userId, nicknameOf(userId)))
+        tournamentUserRepository.save(TournamentUser(tournamentId, userId, participantNicknameFor(tournamentId, userId)))
         // 참여가 커밋된 뒤에만 구독자에게 전달되도록 트랜잭션 안에서 발행한다 (롤백 시 미발행).
         eventPublisher.publishEvent(TournamentJoined(tournamentId = tournamentId, actorId = userId))
     }
@@ -1099,7 +1134,7 @@ class TournamentService(
             throw TournamentException.participantLimitExceeded()
         }
         // 참여 행은 PENDING 으로 붙인다 — 이후 start(startAsMember)가 플레이 시작으로 전이한다.
-        tournamentUserRepository.save(TournamentUser(rootId, userId, nicknameOf(userId)))
+        tournamentUserRepository.save(TournamentUser(rootId, userId, participantNicknameFor(rootId, userId)))
         // 새로 참여해 플레이를 시작한 사실을 ROOT 주최자에게 알린다(#473). 신규 생성 분기에서만 발행한다.
         eventPublisher.publishEvent(TournamentPlayedFromLink(rootTournamentId = rootId, actorId = userId))
         return rootId

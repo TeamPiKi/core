@@ -124,7 +124,6 @@ class UserApiExamples(
                         // 둘 다 User.validateNickname 이 잡아 400 으로 나간다.
                         add(UserException.nicknameBlank(), name = "공백만 있는 닉네임")
                         add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
-                        add(UserException.duplicateNickname(), name = "닉네임 중복")
                         add(UserException.deletedUser(), name = "탈퇴한 유저")
                         unauthorized()
                         add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 수정 거부")
