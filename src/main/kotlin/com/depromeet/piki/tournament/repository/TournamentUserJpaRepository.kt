@@ -23,12 +23,16 @@ interface TournamentUserJpaRepository : JpaRepository<TournamentUser, Long> {
 
     fun countByTournamentIdAndDeletedAtIsNull(tournamentId: Long): Int
 
-    // 참여 닉네임 전역 유일성 검사용(#1018). 모든 표시명(프로필+참여)이 하나의 전역 네임스페이스라, 활성 TU 중
-    // 같은 닉이 이미 있으면 새 참여 닉으로 못 쓴다. NULL(레거시)은 = 비교라 자동 제외된다.
-    fun existsByNicknameAndDeletedAtIsNull(nickname: String): Boolean
+    // 참여 닉네임은 그 토너먼트 안에서만 유일하다(#1287). 전역 유일(#1018)은 걷어냈다 — 구분이 필요한 범위가
+    // 한 토너먼트의 대기실·진행·결과 화면이기 때문이다. NULL(레거시)은 = 비교라 자동 제외된다.
+    fun existsByTournamentIdAndNicknameAndDeletedAtIsNull(
+        tournamentId: Long,
+        nickname: String,
+    ): Boolean
 
-    // 위와 같되 자기 자신은 제외한다 — 자기 프로필/자기 다른 토너먼트 참여 닉과 같은 값은 허용(#1018 "자기 이름은 항상 허용").
-    fun existsByNicknameAndDeletedAtIsNullAndUserIdNot(
+    // 위와 같되 자기 자신은 제외한다 — 자기 참여 닉과 같은 값으로 다시 설정하는 흐름이 통과해야 한다.
+    fun existsByTournamentIdAndNicknameAndDeletedAtIsNullAndUserIdNot(
+        tournamentId: Long,
         nickname: String,
         userId: UUID,
     ): Boolean

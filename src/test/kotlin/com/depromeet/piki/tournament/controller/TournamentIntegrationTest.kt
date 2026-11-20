@@ -1842,8 +1842,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH tournaments-id-nickname 은 다른 유저의 프로필 닉과 겹치면 409 를 반환한다`() {
-        // 토너먼트 외부(전역 유저 프로필 닉)와도 유일화(#1018). 참여하지 않은 제3자의 프로필 닉으로 충돌.
+    fun `PATCH tournaments-id-nickname 은 다른 유저의 프로필 닉과 겹쳐도 통과한다`() {
+        // 유일 범위가 한 토너먼트로 좁아졌다(#1287) — 참여하지 않은 제3자의 프로필 닉과 겹쳐도 된다.
+        // 이전엔 전역 유일(#1018)이라 409 USER-004 였다.
         val mockMvc = buildMockMvc()
         saveUser(userId, userProfileImage, "주최자")
         val tournamentId = createTournament(mockMvc)
@@ -1855,8 +1856,27 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"nickname":"제3자"}"""),
-            ).andExpect(status().isConflict)
-            .andExpect(jsonPath("$.code").value("USER-004"))
+            ).andExpect(status().isOk)
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 다른 토너먼트 참여자의 참여 닉과 겹쳐도 통과한다`() {
+        // 같은 토너먼트 안 충돌만 막는다(#1287). 다른 판의 참여 닉은 같은 값이어도 구분이 필요 없다.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val otherTournamentId = createTournament(mockMvc, name = "남의 판")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = otherTournamentId, userId = UUID.randomUUID(), nickname = "겹치는닉"),
+        )
+        val tournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"겹치는닉"}"""),
+            ).andExpect(status().isOk)
     }
 
     @Test

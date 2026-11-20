@@ -155,24 +155,23 @@ class TournamentService(
         val tournamentUser =
             tournamentUserRepository.findByTournamentIdAndUserId(effectiveTournamentId, userId)
                 ?: throw TournamentException.forbiddenTournament()
-        ensureNicknameAvailable(nickname, userId)
+        ensureNicknameAvailable(effectiveTournamentId, nickname, userId)
         tournamentUser.rename(nickname)
         tournamentUserRepository.save(tournamentUser)
     }
 
-    // 참여 닉네임은 "모든 표시명 전역 유일"(#1018) — 프로필 닉 풀(users)과 참여 닉 풀(tournament_users) 어느 쪽과도
-    // 겹치면 안 된다. 자기 자신(자기 프로필·자기 다른 참여 닉)은 제외해 프리필·재설정이 자연스럽게 통과한다.
-    // 교차 테이블 UNIQUE 는 MySQL 로 못 걸어 앱 레이어 검사다(프로필 닉과 같은 방식, 좁은 race 창 감수).
+    // 참여 닉네임은 그 토너먼트 안에서만 유일하다(#1287). 프로필 닉네임 풀(users)과도, 다른 토너먼트의 참여
+    // 닉네임과도 겹쳐도 된다 — 구분이 필요한 범위가 한 토너먼트의 대기실·진행·결과 화면이기 때문이다.
+    // 자기 자신은 제외해 자기 닉네임으로 다시 설정하는 흐름이 통과한다.
+    //
+    // UNIQUE 로 걸지 않고 앱 레이어 검사로 둔다 — 레거시 행의 nickname 이 NULL 이고(프로필 닉으로 폴백),
+    // (tournament_id, nickname) 유니크는 그 NULL 들을 중복으로 세지 않아 보호가 고르지 않다. 좁은 race 창은 감수한다.
     private fun ensureNicknameAvailable(
+        tournamentId: Long,
         nickname: String,
         requesterId: UUID,
     ) {
-        if (userRepository.existsByNicknameAndIdNot(nickname, requesterId)) throw UserException.duplicateNickname()
-        if (tournamentUserRepository.existsByNicknameExcludingUser(
-                nickname,
-                requesterId,
-            )
-        ) {
+        if (tournamentUserRepository.existsNicknameInTournamentExcludingUser(tournamentId, nickname, requesterId)) {
             throw UserException.duplicateNickname()
         }
     }

@@ -613,7 +613,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH users me - 이미 사용 중인 닉네임으로 변경하면 409 가 반환된다`() {
+    fun `PATCH users me - 다른 사람이 쓰는 닉네임으로 변경해도 200 이 반환된다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -624,30 +624,32 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
         val myUserId = UUID.randomUUID()
         insertUser(myUserId, nickname = "내닉네임")
 
+        // 중복 허용(#1287) — 같은 닉네임을 여러 사람이 쓸 수 있다. 이전엔 409 USER-004 였다.
         mockMvc
             .perform(patchMe("""{"nickname":"점유닉네임"}""", token(myUserId)))
-            .andExpect(status().isConflict)
-            .andExpect(jsonPath("$.code").value("USER-004"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.nickname").value("점유닉네임"))
     }
 
     @Test
-    fun `PATCH users me - 영속화가 409 로 떨어져도 올린 이미지는 남아 같은 imageKey 로 다시 확정된다`() {
+    fun `PATCH users me - 영속화가 400 으로 떨어져도 올린 이미지는 남아 같은 imageKey 로 다시 확정된다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
                 .apply<DefaultMockMvcBuilder>(springSecurity())
                 .build()
-        val otherUserId = UUID.randomUUID()
-        insertUser(otherUserId, nickname = "점유닉네임", identityType = IdentityType.MEMBER)
         val myUserId = UUID.randomUUID()
         insertUser(myUserId, nickname = "내닉네임", identityType = IdentityType.MEMBER)
         stubImageStorage.downloadBehavior = { jpegBytes() }
         val imageKey = profileImageKey(myUserId, "jpg")
 
+        // 실패를 '탈퇴' 예약 접두사(400 USER-013)로 유발한다. 닉네임 중복은 중복 허용(#1287) 이후
+        // 실패가 아니므로 이 시나리오의 트리거가 될 수 없다. 검증하려는 것은 그대로다 — 이미지 검증을
+        // 통과한 뒤 영속화에서 떨어져도 올린 객체는 회수되지 않아 같은 imageKey 로 다시 확정된다.
         mockMvc
-            .perform(patchMe("""{"nickname":"점유닉네임","imageKey":"$imageKey"}""", token(myUserId, IdentityType.MEMBER)))
-            .andExpect(status().isConflict)
-            .andExpect(jsonPath("$.code").value("USER-004"))
+            .perform(patchMe("""{"nickname":"탈퇴테스트","imageKey":"$imageKey"}""", token(myUserId, IdentityType.MEMBER)))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("USER-013"))
         assertFalse(stubImageStorage.deletedKeys.contains(imageKey))
 
         mockMvc
@@ -735,7 +737,7 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `GET users nickname check - 다른 user 가 이미 점유한 닉네임이면 available false 가 반환된다`() {
+    fun `GET users nickname check - 다른 user 가 쓰는 닉네임이어도 available true 가 반환된다`() {
         val mockMvc =
             MockMvcBuilders
                 .webAppContextSetup(webApplicationContext)
@@ -752,7 +754,8 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
                     .param("nickname", "점유닉네임")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer ${token(myUserId)}"),
             ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.available").value(false))
+            // 중복 허용(#1287) — 형식만 보므로 남이 쓰는 값이어도 사용 가능이다. 이전엔 false 였다.
+            .andExpect(jsonPath("$.data.available").value(true))
     }
 
     @Test

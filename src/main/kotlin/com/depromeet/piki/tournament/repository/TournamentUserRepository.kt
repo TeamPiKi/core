@@ -21,10 +21,14 @@ interface TournamentUserRepository {
 
     fun countByTournamentId(tournamentId: Long): Int
 
-    // 참여 닉네임 전역 유일성 검사(#1018) — 활성 TU 중 같은 닉이 있는지. userId 오버로드는 자기 자신을 제외한다.
-    fun existsByNickname(nickname: String): Boolean
+    // 참여 닉네임은 그 토너먼트 안에서만 유일하다(#1287). excludeUserId 오버로드는 자기 자신을 제외한다.
+    fun existsNicknameInTournament(
+        tournamentId: Long,
+        nickname: String,
+    ): Boolean
 
-    fun existsByNicknameExcludingUser(
+    fun existsNicknameInTournamentExcludingUser(
+        tournamentId: Long,
         nickname: String,
         excludeUserId: UUID,
     ): Boolean

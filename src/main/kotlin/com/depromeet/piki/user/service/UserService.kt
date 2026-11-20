@@ -7,10 +7,8 @@ import com.depromeet.piki.user.event.UserCreated
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.dto.UserProfile
-import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronizationManager
@@ -22,8 +20,6 @@ class UserService(
     private val userDetailRepository: UserDetailRepository,
     private val defaultProfileImages: DefaultProfileImages,
     private val eventPublisher: ApplicationEventPublisher,
-    // 프로필 닉이 토너먼트 참여 닉 풀과도 겹치지 않게 검사(#1018 "모든 표시명 전역 유일"). tournament 모듈이 구현.
-    private val nicknameReservationChecker: NicknameReservationChecker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -167,124 +163,52 @@ class UserService(
         internal val NICKNAME_POOL: List<String> by lazy {
             NICKNAME_PREFIXES.flatMap { prefix -> NICKNAME_ANIMALS.map { animal -> "$prefix $animal" } }
         }
-
-        // 닉네임 unique 제약 이름(V20260521234243 의 uq_users_nickname). DataIntegrityViolationException 중
-        // 이 제약 위반만 닉네임 중복으로 다룬다 — 다른 DB 오류(NOT NULL·길이 등)를 409 로 숨기지 않기 위해.
-        private const val USERS_NICKNAME_CONSTRAINT = "uq_users_nickname"
-
-        // 게스트 닉네임 자동 생성 시 save 직전 race 로 unique 충돌이 나면 닉네임을 다시 뽑아 재시도하는 최대 횟수.
-        private const val GUEST_NICKNAME_MAX_ATTEMPTS = 5
-
-        // 게스트 닉네임 자동 생성 시 4096 풀 전체를 IN 조회하지 않고 랜덤 64개 subset 만 조회한다(#685).
-        // 실측(Testcontainers MySQL): 호출당 ~6–8ms → ~0.2–1ms (풀 소진도에 따라 8–29×). 풀이 텅 빈 상태에서도
-        // IN(4096)은 4096 인덱스 probe 로 ~6ms 고정인데, subset 은 그 확인을 ~0.2ms 에 끝낸다.
-        // 64: 흔한 경우 subset 1회로 끝난다. subset 이 전부 taken(near-exhaustion)일 때만 전체 풀을 한 번 더
-        // 조회해 진짜 소진을 확인하므로(generateUniqueGuestNickname 의 fallback), 샘플 고갈을 풀 고갈로 오인한 실패는 없다.
-        private const val GUEST_NICKNAME_SAMPLE_SIZE = 64
-
-        // 풀(4096)이 소진되면 조합 뒤에 숫자를 붙여 확장한다(#920). 여기가 그 자릿수 상한 — 최단 조합에 붙일 수
-        // 있는 최대 자릿수다. 조합이 길수록 여유가 좁아 자릿수 단계마다 basesFor 가 걸러낸다.
-        internal val NICKNAME_SUFFIX_MAX_WIDTH: Int by lazy {
-            User.NICKNAME_MAX_LENGTH - NICKNAME_POOL.minOf { it.length }
-        }
-
-        // 자릿수 width 가 표현하는 숫자 범위 — 앞자리 0 없이 정확히 그 자릿수다. 1→1..9, 2→10..99, 3→100..999.
-        // 단계마다 범위가 겹치지 않아, 좁은 자릿수에서 이미 소진된 숫자를 다음 단계가 다시 뽑는 헛일이 없다.
-        internal fun suffixRange(width: Int): IntRange {
-            var first = 1
-            repeat(width - 1) { first *= 10 }
-            return first..(first * 10 - 1)
-        }
-
-        // 그 자릿수를 붙여도 닉네임 길이 제한을 넘지 않는 조합만 남긴다. 길이 검증을 분기로 흩지 않고
-        // 후보 생성 단계에서 한 번에 거른다 — 9자 조합은 1자리 단계에만, 8자는 2자리까지만 후보가 된다.
-        internal fun basesFor(width: Int): List<String> = NICKNAME_POOL.filter { it.length + width <= User.NICKNAME_MAX_LENGTH }
     }
 
-    // 게스트는 닉네임을 자동 생성하므로 '닉네임 중복' 이라는 사용자 입력 오류가 없다. 다만 generateUniqueGuestNickname()
-    // 와 save 사이 race 로 다른 요청이 같은 닉네임을 선점하면 unique 충돌이 날 수 있어, 닉네임을 다시 뽑아 재시도한다.
-    // @Transactional 을 두지 않아 각 save 가 독립 트랜잭션으로 돈다 — 한 시도의 충돌이 다음 시도를 오염시키지 않게.
-    fun createGuest(): User {
-        repeat(GUEST_NICKNAME_MAX_ATTEMPTS) {
-            try {
-                // saveAndFlush — 충돌을 이 try 안에서 결정적으로 끌어올려(비트랜잭션이라 save 만 해도 즉시 커밋되지만,
-                // 명시 flush 로 시점을 못 박는다) 재시도 분기가 항상 동작하게 한다.
-                return userRepository.saveAndFlush(
-                    User(
-                        id = UUID.randomUUID(),
-                        nickname = generateUniqueGuestNickname(),
-                        profileImage = defaultProfileImages.random(),
-                        identityType = IdentityType.GUEST,
-                    ),
-                ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
-            } catch (e: DataIntegrityViolationException) {
-                if (!isNicknameUniqueViolation(e)) throw e
-                // 닉네임 unique 충돌(race) → 닉네임을 다시 뽑아 재시도
-            }
-        }
-        throw UserException.nicknameGenerationFailed()
-    }
+    // 게스트 닉네임은 풀에서 뽑는다. 중복 허용(#1287)이라 유일성 확인도, 충돌 재시도도 없다.
+    // 같은 조합이 여러 게스트에게 나가도 되고, 토너먼트 안 구분은 참여 닉네임이 그 안에서만 유일하면 충족된다.
+    fun createGuest(): User =
+        userRepository
+            .save(
+                User(
+                    id = UUID.randomUUID(),
+                    nickname = randomPoolNickname(),
+                    profileImage = defaultProfileImages.random(),
+                    identityType = IdentityType.GUEST,
+                ),
+            ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
 
     @Transactional
     fun createGuestWithNickname(nickname: String): User =
         saveNewUser(nickname, defaultProfileImages.random(), IdentityType.GUEST)
 
     @Transactional
-    fun createMember(nickname: String): User {
-        if (userRepository.existsByNickname(nickname)) throw UserException.duplicateNickname()
-        return saveNewUser(nickname, defaultProfileImages.random(), IdentityType.MEMBER)
-    }
+    fun createMember(nickname: String): User = saveNewUser(nickname, defaultProfileImages.random(), IdentityType.MEMBER)
 
-    // 소셜 신규 가입용 MEMBER 생성. 닉네임은 게스트와 동일하게 자동 생성하고 사용자가 나중에 수정한다.
+    // 소셜 신규 가입용 MEMBER 생성. 닉네임은 게스트와 동일하게 풀에서 뽑고 사용자가 나중에 수정한다.
     // 프로필 이미지는 provider 가 준 게 있으면 쓰고, 없으면(동의 거부 등) 기본 아바타 중 랜덤.
-    //
-    // saveNewUser 를 쓰지 않는다 — 그쪽은 닉네임 unique 충돌을 duplicateNickname(409, "다른 걸 입력해 주세요")으로
-    // 바꾸는데, 여기 닉네임은 사용자가 입력한 게 아니라 서버가 뽑은 값이라 그 문구가 거짓이 된다. 자동 생성 경로의
-    // 충돌은 race 일 뿐이므로 원본 예외를 그대로 올려, 호출부(SocialAccountService)가 닉네임을 다시 뽑아 재시도한다.
-    // createGuest 가 같은 이유로 saveNewUser 를 우회하는 것과 같은 결.
     @Transactional
     fun createSocialUser(profileImage: String?): User =
-        userRepository.saveAndFlush(
-            User(
-                id = UUID.randomUUID(),
-                nickname = generateUniqueGuestNickname(),
-                profileImage = profileImage ?: defaultProfileImages.random(),
-                identityType = IdentityType.MEMBER,
-            ),
-        ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
+        userRepository
+            .save(
+                User(
+                    id = UUID.randomUUID(),
+                    nickname = randomPoolNickname(),
+                    profileImage = profileImage ?: defaultProfileImages.random(),
+                    identityType = IdentityType.MEMBER,
+                ),
+            ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
 
-    // 신규 user 영속화 공통 경로. 닉네임 unique 충돌(uq_users_nickname)만 duplicateNickname 으로 변환하고,
-    // 그 외 DB 제약 위반(NOT NULL·길이 등)은 원본 예외를 그대로 던져 500 으로 드러나게 한다.
+    // 신규 user 영속화 공통 경로. 중복 허용(#1287) 이후 닉네임이 제약을 걸지 않으므로 충돌 변환이 없다.
     private fun saveNewUser(
         nickname: String,
         profileImage: String,
         identityType: IdentityType,
     ): User =
-        try {
-            // saveAndFlush — @Transactional 호출자(createMember 등) 안에서 save 만 하면 클라 할당 UUID 라 INSERT 가
-            // 커밋 시점까지 미뤄져, unique 충돌이 이 catch 밖(커밋)에서 터져 409 변환을 못 한다(→ 500). flush 로 같은
-            // 메서드 안에서 제약 위반을 끌어올려, 닉네임 충돌을 여기서 잡아 duplicateNickname(409)으로 변환한다.
-            userRepository.saveAndFlush(
+        userRepository
+            .save(
                 User(id = UUID.randomUUID(), nickname = nickname, profileImage = profileImage, identityType = identityType),
             ).also { eventPublisher.publishEvent(UserCreated(it.getId())) }
-        } catch (e: DataIntegrityViolationException) {
-            if (isNicknameUniqueViolation(e)) throw UserException.duplicateNickname()
-            throw e
-        }
-
-    // 닉네임 unique 충돌 판별을 소셜 가입 경로(SocialAccountService)와 공유한다 — 그쪽은 트랜잭션 밖에서
-    // 재시도해야 해(안에서 재시도하면 rollback-only 로 마킹돼 무의미) 이 판별이 서비스 밖에서도 필요하다.
-    internal fun isNicknameConflict(e: DataIntegrityViolationException): Boolean = isNicknameUniqueViolation(e)
-
-    // DataIntegrityViolationException 이 닉네임 unique 제약(uq_users_nickname) 위반인지 판별한다.
-    // cause 체인을 끝까지 훑는다 — PersistenceException 같은 래퍼가 한 겹 더 끼면 e.cause 만 봐서는 ConstraintViolationException
-    // 을 놓쳐 닉네임 충돌이 409 대신 500 으로 샐 수 있다. 각 단계에서 ConstraintViolationException 의 constraintName(Hibernate 가
-    // 못 채우면 null)과 예외 메시지(드라이버가 제약명을 담는다) 둘 다 본다.
-    private fun isNicknameUniqueViolation(e: DataIntegrityViolationException): Boolean =
-        generateSequence(e as Throwable) { it.cause }.any { t ->
-            (t as? ConstraintViolationException)?.constraintName?.contains(USERS_NICKNAME_CONSTRAINT, ignoreCase = true) == true ||
-                t.message?.contains(USERS_NICKNAME_CONSTRAINT, ignoreCase = true) == true
-        }
 
     // tombstone(탈퇴) 유저도 그대로 반환한다. 탈퇴 상태 자체를 읽어야 하는 경로 — 재로그인 판정(죽은 계정을
     // 되살리지 않기), 멱등 탈퇴, refresh 거부(409 가 아니라 401 로 응답) — 전용이다.
@@ -349,19 +273,18 @@ class UserService(
         return UserProfile(user, email)
     }
 
-    // 본인 닉네임은 중복으로 잡지 않는다 (#230). 게스트가 자기 닉네임 그대로 유지하거나, 본인이
-    // 자기 닉네임으로 다시 변경하는 흐름이 자연스럽게 통과되도록 본인 제외 후 검사.
-    @Transactional(readOnly = true)
+    // 중복 허용(#1287) 이후 프로필 닉네임에 "이미 쓰는 사람이 있다" 는 사유가 없다. 형식이 맞으면 항상 사용 가능이다.
+    // 엔드포인트는 앱이 아직 호출하므로 남긴다 - 형식 검증은 요청 DTO(NicknameCheckRequest)와 예약 접두사 검사가
+    // 담당하고, 이 메서드는 그 뒤에 남는 판정이 없음을 뜻한다. 앱이 호출을 멈추면 엔드포인트째 제거한다.
+    //
+    // DB 를 보지 않으므로 @Transactional 도 두지 않는다.
     fun isNicknameAvailable(
         nickname: String,
         userId: UUID?,
-    ): Boolean =
-        !nicknameReservationChecker.isTakenByOtherTournamentUser(nickname, userId) &&
-            (
-                userId
-                    ?.let { !userRepository.existsByNicknameAndIdNot(nickname, it) }
-                    ?: !userRepository.existsByNickname(nickname)
-            )
+    ): Boolean {
+        User.checkNicknameFormat(nickname)
+        return true
+    }
 
     // 내 정보(닉네임·프로필 이미지) 부분 수정 영속화 — 들어온 필드만 갱신한다. 둘을 한 트랜잭션에 묶어
     // "닉네임은 됐는데 이미지는 실패" 같은 부분 성공을 막는다. 이미지 S3 업로드(외부 호출)는 ProfileUpdateService 가
@@ -377,9 +300,7 @@ class UserService(
         val changedFields =
             buildList {
                 nickname?.let {
-                    if (userRepository.existsByNicknameAndIdNot(it, userId)) throw UserException.duplicateNickname()
-                    // 프로필 닉도 토너먼트 참여 닉 풀과 겹치면 안 된다(#1018 전역 유일 — 반대 방향). 자기 참여 닉은 제외.
-                    if (nicknameReservationChecker.isTakenByOtherTournamentUser(it, userId)) throw UserException.duplicateNickname()
+                    // 중복 검사가 없다(#1287) — 같은 닉네임을 여러 사람이 쓸 수 있다. 형식·예약 접두사는 updateNickname 이 본다.
                     user.updateNickname(it)
                     add("nickname")
                 }
@@ -388,18 +309,8 @@ class UserService(
                     add("profileImage")
                 }
             }
-        // existsByNicknameAndIdNot 체크와 saveAndFlush 사이에 다른 트랜잭션이 같은 nickname 으로 update / insert
-        // 하면 DB unique constraint (uq_users_nickname) 위반이 떠 race 케이스가 생긴다. saveNewUser 와 같은 패턴 —
-        // save 만 하면 UPDATE 가 커밋까지 미뤄져 위반이 이 catch 밖(커밋)에서 터지므로 saveAndFlush 로 끌어와 잡는다.
-        // 닉네임 unique 충돌만 duplicateNickname(409)으로 변환하고, 그 외 DB 위반(NOT NULL·길이 등)은 원본 예외를
-        // 그대로 던져 진짜 서버 버그가 500 으로 드러나게 한다.
-        val saved =
-            try {
-                userRepository.saveAndFlush(user)
-            } catch (e: DataIntegrityViolationException) {
-                if (isNicknameUniqueViolation(e)) throw UserException.duplicateNickname()
-                throw e
-            }
+        // 닉네임에 유일 제약이 없어(#1287) 검사와 저장 사이의 race 창도 사라졌다. 충돌 변환 없이 그대로 저장한다.
+        val saved = userRepository.save(user)
         log.info("내 정보 수정 userId={} 변경필드={}", userId, changedFields)
         return saved
     }
@@ -432,30 +343,7 @@ class UserService(
         userRepository.save(user)
     }
 
-    private fun generateUniqueGuestNickname(): String {
-        val sample = NICKNAME_POOL.shuffled().take(GUEST_NICKNAME_SAMPLE_SIZE)
-        val takenInSample = userRepository.findNicknamesIn(sample).toSet()
-        (sample - takenInSample).randomOrNull()?.let { return it }
-
-        // subset 이 전부 taken(near-exhaustion)이면 진짜 소진인지 전체 풀로 확인한다 — 샘플 고갈을 풀 고갈로
-        // 오인해, 사용 가능한 닉네임이 남았는데도 재생성 실패로 던지는 것을 막는다.
-        val takenInPool = userRepository.findNicknamesIn(NICKNAME_POOL).toSet()
-        return (NICKNAME_POOL - takenInPool).randomOrNull() ?: generateSuffixedNickname()
-    }
-
-    // 풀(4096)이 소진된 뒤의 확장 경로(#920) — 조합 뒤에 숫자를 붙여 발급한다. 여기 닿기 전까지는 동작이
-    // 이전과 완전히 같다(위 두 단계가 먼저 처리하므로 4096명 이전 사용자는 영향을 받지 않는다).
-    //
-    // 자릿수를 1부터 넓히며 각 단계에서 subset 조회를 한 번씩 한다 — 위 정상 경로와 같은 모양이라
-    // 조회 비용 특성이 같고, 작은 숫자부터 소비해 발급되는 닉네임이 필요 이상으로 길어지지 않는다.
-    private fun generateSuffixedNickname(): String {
-        (1..NICKNAME_SUFFIX_MAX_WIDTH).forEach { width ->
-            val range = suffixRange(width)
-            val candidates = basesFor(width).shuffled().take(GUEST_NICKNAME_SAMPLE_SIZE).map { "$it${range.random()}" }
-            val taken = userRepository.findNicknamesIn(candidates).toSet()
-            (candidates - taken).randomOrNull()?.let { return it }
-        }
-        // 최대 자릿수까지 소진 — 용량이 사실상 무한(수백만)이라 도달할 수 없지만, 무한 재시도 대신 실패로 끝낸다.
-        throw UserException.nicknameGenerationFailed()
-    }
+    // 풀에서 하나 뽑는다. 중복 허용(#1287)이라 소진 개념이 없어 조회도 확장도 필요 없다.
+    // 이전에는 풀 소진 대비로 숫자 접미사를 붙이는 단계(#920)가 있었는데, 중복이 허용되면서 그 전제가 사라졌다.
+    private fun randomPoolNickname(): String = NICKNAME_POOL.random()
 }

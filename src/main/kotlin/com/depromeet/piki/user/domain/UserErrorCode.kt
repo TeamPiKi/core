@@ -8,6 +8,9 @@ import com.depromeet.piki.common.exception.ErrorCode
 // 응답 detail·로그·OpenAPI 문서·코드 카탈로그는 message 로 파생된다.
 // 구 invalidNickname(reason) 동적 message 는 유한한 3케이스(blank/tooLong/reserved)라 3코드로 정적화한다.
 // USER-006 은 blank 가 승계하고, 나머지 둘은 뒤에 append(USER-012·013).
+//
+// **결번**: USER-005(NICKNAME_GENERATION_FAILED)는 중복 허용(#1287)으로 던지는 곳이 사라져 폐기했다.
+// 닉네임 풀 소진은 유일성을 요구할 때만 생기는 실패였다. 번호는 재사용하지 않는다.
 enum class UserErrorCode(
     override val code: String,
     override val category: ErrorCategory,
@@ -16,8 +19,9 @@ enum class UserErrorCode(
     NOT_FOUND("USER-001", ErrorCategory.NOT_FOUND, "존재하지 않는 계정이에요."),
     ALREADY_MEMBER("USER-002", ErrorCategory.CONFLICT, "이미 가입된 계정이에요."),
     DELETED_USER("USER-003", ErrorCategory.CONFLICT, "탈퇴한 계정이에요."),
+    // 중복 허용(#1287) 이후 이 코드가 뜨는 곳은 한 토너먼트 안의 참여 닉네임 충돌뿐이다.
+    // 프로필 닉네임은 겹쳐도 되므로 더 이상 이 코드를 쓰지 않는다.
     DUPLICATE_NICKNAME("USER-004", ErrorCategory.CONFLICT, "이미 누군가 쓰고 있는 닉네임이에요. 다른 걸 입력해 주세요."),
-    NICKNAME_GENERATION_FAILED("USER-005", ErrorCategory.SERVER_ERROR, "닉네임을 만들지 못했어요. 잠시 후 다시 시도해 주세요."),
     NICKNAME_BLANK("USER-006", ErrorCategory.INVALID_INPUT, "닉네임을 입력해 주세요."),
     GUEST_CANNOT_WITHDRAW("USER-007", ErrorCategory.FORBIDDEN, "게스트는 탈퇴할 수 없어요."),
     GUEST_CANNOT_UPDATE_PROFILE_IMAGE("USER-008", ErrorCategory.FORBIDDEN, "프로필 이미지는 회원만 바꿀 수 있어요."),
