@@ -59,6 +59,7 @@ dependencies {
     runtimeOnly("com.mysql:mysql-connector-j")
 
     implementation("org.springframework.modulith:spring-modulith-events-api")
+    implementation("org.springframework.modulith:spring-modulith-events-core")
     runtimeOnly("org.springframework.modulith:spring-modulith-events-jdbc")
     runtimeOnly("org.springframework.modulith:spring-modulith-events-jackson")
 

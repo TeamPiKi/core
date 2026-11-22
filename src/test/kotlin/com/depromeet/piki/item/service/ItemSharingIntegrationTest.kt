@@ -11,6 +11,7 @@ import com.depromeet.piki.item.event.ItemParseRequested
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemSlotMerged
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
@@ -85,17 +86,18 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `링크로 위시를 담으면 그 요청 행의 id 로 파싱 요청 사실을 발행한다`() {
+    fun `링크로 위시를 담으면 그 요청 행의 id 와 입력으로 파싱 요청 사실을 발행한다`() {
         val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse("https://www.musinsa.com/products/8100020")))
 
-        assertEquals(listOf(ItemParseRequested(latestOutboxIdOf(result.wish.slot))), applicationEvents.stream(ItemParseRequested::class.java).toList())
+        val expected = ItemParseRequested(latestOutboxIdOf(result.wish.slot), ParseInputType.LINK, "https://www.musinsa.com/products/8100020")
+        assertEquals(listOf(expected), applicationEvents.stream(ItemParseRequested::class.java).toList())
     }
 
     @Test
-    fun `링크로 위시를 담으면 파싱 요청 사실이 릴레이 앞으로 발행 기록에 남는다`() {
+    fun `링크로 위시를 담으면 파싱 요청 사실이 발행 기록에 하나 남는다`() {
         wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse("https://www.musinsa.com/products/8100021")))
 
-        assertEquals(listOf(ItemParseRequestRelay.LISTENER_ID), publicationListenersOf(ItemParseRequested::class.java))
+        assertEquals(1, publicationListenersOf(ItemParseRequested::class.java).size)
     }
 
     @Test

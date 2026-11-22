@@ -23,7 +23,7 @@ class ParsingEnqueuer(
         input: ParseInput,
     ): ItemParseOutbox {
         val request = itemParseOutboxRepository.save(ItemParseOutbox.of(slot, purpose, input))
-        eventPublisher.publishEvent(ItemParseRequested(request.getId()))
+        eventPublisher.publishEvent(ItemParseRequested.of(request))
         return request
     }
 }
