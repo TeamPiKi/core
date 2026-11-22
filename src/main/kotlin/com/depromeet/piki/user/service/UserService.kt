@@ -294,11 +294,17 @@ class UserService(
         userId: UUID,
         nickname: String?,
         profileImageUrl: String?,
+        isProfilePublic: Boolean? = null,
     ): User {
         val user = findActiveByIdForUpdate(userId)
         // 무엇이 바뀌었는지만 남긴다 — 닉네임 원문은 PII 라 값이 아니라 "어떤 필드가 변경됐나"만 로깅한다.
         val changedFields =
             buildList {
+                // 게스트 거절(403)이 닉네임 변경보다 먼저 나도록 맨 앞에 둔다
+                isProfilePublic?.let {
+                    user.changeProfileVisibility(it)
+                    add("isProfilePublic")
+                }
                 nickname?.let {
                     // 중복 검사가 없다(#1287) — 같은 닉네임을 여러 사람이 쓸 수 있다. 형식·예약 접두사는 updateNickname 이 본다.
                     user.updateNickname(it)

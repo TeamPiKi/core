@@ -410,6 +410,57 @@ class UserControllerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `PATCH users me - 회원이 프로필 공개를 끄면 200 이고 내 정보 조회에 꺼진 값이 나온다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId, nickname = "공개회원", identityType = IdentityType.MEMBER)
+        val bearer = token(userId, IdentityType.MEMBER)
+
+        // 새 회원은 기본 공개
+        mockMvc
+            .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer $bearer"))
+            .andExpect(jsonPath("$.data.isProfilePublic").value(true))
+
+        mockMvc
+            .perform(patchMe("""{"isProfilePublic":false}""", bearer))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.nickname").value("공개회원"))
+
+        mockMvc
+            .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer $bearer"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.isProfilePublic").value(false))
+    }
+
+    @Test
+    fun `PATCH users me - 게스트가 프로필 공개 설정을 보내면 USER-014 로 403 이 반환되고 닉네임도 그대로다`() {
+        val mockMvc =
+            MockMvcBuilders
+                .webAppContextSetup(webApplicationContext)
+                .apply<DefaultMockMvcBuilder>(springSecurity())
+                .build()
+        val userId = UUID.randomUUID()
+        insertUser(userId, nickname = "게스트닉네임", identityType = IdentityType.GUEST)
+        val bearer = token(userId, IdentityType.GUEST)
+
+        mockMvc
+            .perform(patchMe("""{"nickname":"새닉네임","isProfilePublic":false}""", bearer))
+            .andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.detail").value("프로필 공개 설정은 회원만 바꿀 수 있어요."))
+            .andExpect(jsonPath("$.code").value("USER-014"))
+
+        mockMvc
+            .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer $bearer"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.nickname").value("게스트닉네임"))
+            .andExpect(jsonPath("$.data.isProfilePublic").value(true))
+    }
+
+    @Test
     fun `PATCH users me - 게스트가 imageKey 를 보내면 403 이 반환된다`() {
         val mockMvc =
             MockMvcBuilders

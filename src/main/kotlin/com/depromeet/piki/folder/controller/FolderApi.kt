@@ -5,6 +5,7 @@ import com.depromeet.piki.folder.controller.dto.FolderMoveRequest
 import com.depromeet.piki.folder.controller.dto.FolderMoveResponse
 import com.depromeet.piki.folder.controller.dto.FolderNameRequest
 import com.depromeet.piki.folder.controller.dto.FolderResponse
+import com.depromeet.piki.folder.controller.dto.FolderVisibilityRequest
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishesRequest
 import io.swagger.v3.oas.annotations.Operation
@@ -22,6 +23,7 @@ private const val GUEST = "권한 없음 (GUEST 권한으로 접근 불가 · ME
 private const val DELETED_USER = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)"
 private const val NOT_FOUND = "폴더 없음 (없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)"
 private const val INVALID_NAME = "잘못된 이름 (앞뒤 공백을 뺀 이름이 비었거나 20자 초과. 이모지·결합 문자는 1자로 센다 — code: FOLDER-002)"
+private const val INVALID_VISIBILITY = "isPublic 이 빠짐 (code: COMMON-INVALID-INPUT)"
 private const val INVALID_WISH_COUNT = "wishIds 가 비었거나 100개 초과 (중복은 하나로 센다 — code: FOLDER-003)"
 private const val INVALID_SELECTION =
     "잘못된 요청 (all 없이 wishIds 가 비었거나 100개 초과 — code: FOLDER-003 · all 과 wishIds 를 함께 보냄 — code: FOLDER-005)"
@@ -219,6 +221,83 @@ interface FolderApi {
         @Parameter(hidden = true) userId: UUID,
         @Parameter(description = "폴더 id", example = "12") folderId: Long,
         request: FolderNameRequest,
+    ): ApiResponseBody<FolderResponse>
+
+    @Operation(
+        summary = "폴더 공개 여부 변경",
+        description =
+            "폴더를 공개·비공개로 바꾼다. 확인 없이 즉시 반영한다. 지금과 같은 값으로 바꿔도 성공한다. " +
+                "비공개 폴더는 다른 사람 프로필·탐색에 보이지 않는다. 비공개 폴더에만 든 위시도 보이지 않는다. " +
+                "내 프로필 공개 설정이 꺼져 있으면 폴더 설정과 관계없이 모두 보이지 않는다.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "변경 성공 (바뀐 폴더)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = INVALID_VISIBILITY,
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED,
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = GUEST,
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = NOT_FOUND,
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = DELETED_USER,
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun changeVisibility(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "폴더 id", example = "12") folderId: Long,
+        request: FolderVisibilityRequest,
     ): ApiResponseBody<FolderResponse>
 
     @Operation(

@@ -41,6 +41,9 @@ class UserException private constructor(
         // 프로필 이미지 수정은 MEMBER 전용 — 게스트가 이미지 파트를 담아 PATCH /me 를 호출하면 닿는 계약 응답(403).
         fun guestCannotUpdateProfileImage(): UserException = UserException(UserErrorCode.GUEST_CANNOT_UPDATE_PROFILE_IMAGE)
 
+        // 프로필 공개 설정은 MEMBER 전용 — 게스트가 isProfilePublic 을 담아 PATCH /me 를 호출하면 닿는 계약 응답(403).
+        fun guestCannotUpdateProfileVisibility(): UserException = UserException(UserErrorCode.GUEST_CANNOT_UPDATE_PROFILE_VISIBILITY)
+
         fun emptyProfileImage(): UserException = UserException(UserErrorCode.EMPTY_PROFILE_IMAGE)
 
         fun unsupportedProfileImageType(): UserException = UserException(UserErrorCode.UNSUPPORTED_PROFILE_IMAGE_TYPE)

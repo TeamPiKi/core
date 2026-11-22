@@ -174,7 +174,7 @@ interface UserApi {
     @Operation(
         summary = "내 정보 수정",
         description =
-            "내 정보(`nickname` · 프로필 이미지)를 한 요청(JSON)으로 **부분 수정**한다. " +
+            "내 정보(`nickname` · 프로필 이미지 · 프로필 공개 설정)를 한 요청(JSON)으로 **부분 수정**한다. " +
                 "들어온 필드만 갱신하며, 둘 다 보내면 한 트랜잭션에 묶여 함께 반영되고, 아무 필드도 안 보내면 변화 없이 200 으로 통과한다.\n\n" +
                 "**이미지는 이 요청에 바이트로 싣지 않는다.** `POST /users/me/profile-image` 로 발급받은 URL 에 클라가 " +
                 "S3 로 직접 올린 뒤, 그 `imageKey` 만 여기에 보낸다. 서버는 그 객체를 읽어 형식을 검증하고 그 URL 로 `profileImage` 를 바꾼다.\n\n" +
@@ -182,8 +182,9 @@ interface UserApi {
                 "| 필드 | 권한 | 동작 |\n" +
                 "|---|---|---|\n" +
                 "| `nickname` | GUEST·MEMBER | 닉네임 변경 |\n" +
-                "| `imageKey` | **MEMBER 전용** | 올린 객체의 형식 검증 뒤 그 URL 로 `profileImage` 갱신 |\n\n" +
-                "- GUEST 가 `imageKey` 를 담아 호출하면 **403** 으로 거부한다 (닉네임 동반 여부와 무관하게 요청 전체 거부).\n" +
+                "| `imageKey` | **MEMBER 전용** | 올린 객체의 형식 검증 뒤 그 URL 로 `profileImage` 갱신 |\n" +
+                "| `isProfilePublic` | **MEMBER 전용** | 내 프로필 공개 설정 변경. 끄면 폴더 설정과 관계없이 다른 사람에게 폴더·위시가 보이지 않음 |\n\n" +
+                "- GUEST 가 `imageKey` 나 `isProfilePublic` 을 담아 호출하면 **403** 으로 거부한다 (다른 필드 동반 여부와 무관하게 요청 전체 거부).\n" +
                 "- 이미지 허용 형식: `png` / `jpeg` / `webp` / `heic` / `heif` (그 외는 발급 단계에서 400).",
     )
     @ApiResponses(
@@ -226,7 +227,9 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "403",
-                description = "권한 없음 (GUEST 가 프로필 이미지 수정을 시도 — 이미지 수정은 MEMBER 전용) — code: USER-008",
+                description =
+                    "권한 없음 (GUEST 가 회원 전용 필드 수정을 시도)\n\n" +
+                        "- 프로필 이미지 수정 (USER-008) · 프로필 공개 설정 수정 (USER-014)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,

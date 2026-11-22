@@ -50,9 +50,10 @@ class ProfileUpdateService(
         userId: UUID,
         nickname: String?,
         imageKey: String?,
+        isProfilePublic: Boolean? = null,
     ): User {
-        // 이미지가 없으면 외부 호출이 없으므로 곧장 영속화로 — 닉네임만 갱신하거나(게스트도 가능), 둘 다 비면 무동작으로 통과한다.
-        imageKey ?: return userService.updateProfile(userId, nickname, null)
+        // 이미지가 없으면 외부 호출이 없으므로 곧장 영속화로 — 닉네임·공개 설정만 갱신하거나(닉네임은 게스트도 가능), 모두 비면 무동작으로 통과한다.
+        imageKey ?: return userService.updateProfile(userId, nickname, null, isProfilePublic)
         // 권한을 내려받기·검증보다 먼저 본다 — 게스트의 요청은 내용과 무관하게 403 으로 끊는다
         // (authorization before payload processing). 발급 단계에서 이미 막지만, 확정도 스스로 방어한다.
         requireMemberForProfileImage(userId)
@@ -64,7 +65,7 @@ class ProfileUpdateService(
             .onFailure { deleteQuietly(key.value) }
             .getOrThrow()
         // 저장이 실패해도 객체는 남긴다. 같은 키로 다시 확정할 수 있어야 하고 탈퇴 때 접두째 지워진다
-        return userService.updateProfile(userId, nickname, imageStorage.urlOf(key.value))
+        return userService.updateProfile(userId, nickname, imageStorage.urlOf(key.value), isProfilePublic)
     }
 
     // 프로필 이미지 변경은 MEMBER 전용 — 게스트는 PII 를 갖지 않는다.

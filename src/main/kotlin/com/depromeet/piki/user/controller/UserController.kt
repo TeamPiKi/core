@@ -59,7 +59,7 @@ class UserController(
         // 서버가 raw 를 읽어 검증한 뒤 확정 경로에 저장한다(ProfileUpdateService). 외부 호출은 트랜잭션 밖에서,
         // 영속화는 짧은 단일 트랜잭션으로 처리해 부분 성공을 막는다.
         // email 은 수정 대상이 아니므로 수정 응답엔 담지 않는다 (PII 표면 최소화). 마이페이지 email 은 GET /me 가 제공.
-        val user = profileUpdateService.updateMe(userId, request.nickname, request.imageKey)
+        val user = profileUpdateService.updateMe(userId, request.nickname, request.imageKey, request.isProfilePublic)
         return ApiResponseBody.ok(UserResponse.from(user))
     }
 

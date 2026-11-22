@@ -3,9 +3,11 @@ package com.depromeet.piki.folder.controller
 import com.depromeet.piki.common.openapi.OpenApiObjectMapper
 import com.depromeet.piki.common.openapi.binds
 import com.depromeet.piki.common.openapi.examples
+import com.depromeet.piki.common.exception.CommonErrorCode
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.folder.controller.dto.FolderMoveResponse
 import com.depromeet.piki.folder.controller.dto.FolderResponse
+import com.depromeet.piki.folder.controller.dto.FolderVisibilityRequest
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.user.domain.UserException
@@ -45,6 +47,20 @@ class FolderApiExamples(
                     add(status = HttpStatus.OK, name = "폴더 없음", payload = ApiResponseBody.ok(emptyList<FolderResponse>()))
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
+                }
+            }
+            if (handlerMethod.binds(FolderController::changeVisibility)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(status = HttpStatus.OK, name = "비공개로 변경", payload = ApiResponseBody.ok(coatFolder.copy(isPublic = false)))
+                    add(
+                        status = HttpStatus.BAD_REQUEST,
+                        name = "isPublic 이 빠짐",
+                        payload = ApiResponseBody.fail<Unit>(CommonErrorCode.INVALID_INPUT, detail = FolderVisibilityRequest.IS_PUBLIC_REQUIRED_MESSAGE),
+                    )
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
                 }
             }
@@ -125,6 +141,7 @@ class FolderApiExamples(
                     null,
                     "https://cdn.example.com/p/690.jpg",
                 ),
+            isPublic = true,
             createdAt = LocalDateTime.of(2026, 10, 20, 13, 2, 11),
         )
 
@@ -135,6 +152,8 @@ class FolderApiExamples(
             name = "선물",
             wishCount = 1,
             coverImageUrls = listOf("https://cdn.example.com/p/655.jpg"),
+            // 비공개 폴더. 앱이 자물쇠를 표시한다
+            isPublic = false,
             createdAt = LocalDateTime.of(2026, 10, 21, 9, 10, 0),
         )
 
@@ -144,6 +163,7 @@ class FolderApiExamples(
             name = "가방 위시템",
             wishCount = 0,
             coverImageUrls = emptyList(),
+            isPublic = true,
             createdAt = LocalDateTime.of(2026, 11, 2, 10, 52, 31),
         )
 

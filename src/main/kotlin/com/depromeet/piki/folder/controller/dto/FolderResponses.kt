@@ -27,6 +27,8 @@ data class FolderResponse(
         schema = Schema(type = "string", nullable = true),
     )
     val coverImageUrls: List<String?>,
+    @field:Schema(description = "공개 여부. false 면 다른 사람 프로필·탐색에 보이지 않는다. 앱이 썸네일·상품 수 앞에 자물쇠를 표시한다", example = "true")
+    val isPublic: Boolean,
     @field:Schema(description = "폴더를 만든 시각. 목록은 이 순서(먼저 만든 폴더가 앞)", example = "2026-10-20T13:02:11")
     val createdAt: LocalDateTime,
 ) {
@@ -37,6 +39,7 @@ data class FolderResponse(
                 name = result.folder.name,
                 wishCount = result.wishCount,
                 coverImageUrls = result.coverImageUrls,
+                isPublic = result.folder.isPublic,
                 createdAt = result.folder.createdAt,
             )
     }

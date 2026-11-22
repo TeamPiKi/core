@@ -18,6 +18,12 @@ data class UserUpdateRequest(
         nullable = true,
     )
     val imageKey: String? = null,
+    @field:Schema(
+        description = "내 프로필 공개 여부 (선택, 회원 전용). false 면 다른 사람에게 폴더·위시가 보이지 않는다. 게스트가 보내면 403",
+        example = "false",
+        nullable = true,
+    )
+    val isProfilePublic: Boolean? = null,
 ) {
     // Bean Validation 위반 메시지의 single source. OpenAPI example(UserApiExamples)이 같은 상수를 참조해
     // "필드 검증 문구가 @field 와 example 두 곳에서 따로 노는" 어긋남을 컴파일 타임에 막는다.
