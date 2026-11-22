@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.domain
 
 import com.depromeet.piki.common.outbox.Outbox
+import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import jakarta.persistence.Column
@@ -41,6 +42,15 @@ class ItemParseOutbox(
     val input: ParseInput get() = ParseInput.of(inputType, inputValue)
 
     fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
+
+    fun succeed() = close(OutboxStatus.SUCCEEDED)
+
+    fun fail() = close(OutboxStatus.FAILED)
+
+    private fun close(to: OutboxStatus) {
+        check(isInProgress()) { "파싱 요청 ${getIdOrNull()} 은 $status 라 $to 로 갈 수 없다" }
+        status = to
+    }
 
     companion object {
         fun of(

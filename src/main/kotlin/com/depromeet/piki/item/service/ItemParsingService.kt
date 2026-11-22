@@ -41,19 +41,50 @@ class ItemParsingService(
         extracted: ProductSnapshot,
     ): ExtractionSettlement {
         val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
+        return settleExtracted(outbox, extracted, Closing({ outbox.succeed(attempt) }, { outbox.fail(attempt) }))
+    }
+
+    @Transactional
+    fun markFailed(attempt: OutboxAttempt): Boolean {
+        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return false
+        settleFailed(outbox, Closing({ outbox.succeed(attempt) }, { outbox.fail(attempt) }))
+        return true
+    }
+
+    @Transactional
+    fun applyExtracted(
+        requestId: Long,
+        extracted: ProductSnapshot,
+    ): ExtractionSettlement {
+        val request = itemParseOutboxRepository.findInProgressForUpdate(requestId) ?: return ExtractionSettlement.Superseded
+        return settleExtracted(request, extracted, Closing(request::succeed, request::fail))
+    }
+
+    @Transactional
+    fun applyFailed(requestId: Long): Boolean {
+        val request = itemParseOutboxRepository.findInProgressForUpdate(requestId) ?: return false
+        settleFailed(request, Closing(request::succeed, request::fail))
+        return true
+    }
+
+    private fun settleExtracted(
+        outbox: ItemParseOutbox,
+        extracted: ProductSnapshot,
+        closing: Closing,
+    ): ExtractionSettlement {
         val slot =
             when (val state = itemSlots.find(outbox.slot)) {
                 is ItemSlotState.Present -> state
-                ItemSlotState.Gone -> return discard(outbox, attempt)
+                ItemSlotState.Gone -> return discard(closing)
             }
         if (!ItemSnapshot.accepts(extracted)) {
-            closeAfterExtraction(outbox, attempt, slot)
+            closeAfterExtraction(outbox, closing, slot)
             return ExtractionSettlement.Applied(ItemStatus.FAILED)
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
         val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, slot.owner))
         val fill = itemSlots.fill(outbox.slot, item.getId())
-        outbox.succeed(attempt)
+        closing.succeed()
         when (fill) {
             ItemSlotFill.Filled -> eventPublisher.publishEvent(parsingFact(outbox, slot, version))
             // 합침 사실은 ItemSlots 가 발행한다
@@ -62,14 +93,14 @@ class ItemParsingService(
         return ExtractionSettlement.Applied(if (version.isReady()) ItemStatus.READY else ItemStatus.INCOMPLETE)
     }
 
-    @Transactional
-    fun markFailed(attempt: OutboxAttempt): Boolean {
-        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return false
+    private fun settleFailed(
+        outbox: ItemParseOutbox,
+        closing: Closing,
+    ) {
         when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> closeAfterExtraction(outbox, attempt, state)
-            ItemSlotState.Gone -> discard(outbox, attempt)
+            is ItemSlotState.Present -> closeAfterExtraction(outbox, closing, state)
+            ItemSlotState.Gone -> discard(closing)
         }
-        return true
     }
 
     // 회수 상한 실패는 원인이 서버 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
@@ -82,11 +113,8 @@ class ItemParsingService(
     }
 
     // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
-    private fun discard(
-        outbox: ItemParseOutbox,
-        attempt: OutboxAttempt,
-    ): ExtractionSettlement.Discarded {
-        outbox.fail(attempt)
+    private fun discard(closing: Closing): ExtractionSettlement.Discarded {
+        closing.fail()
         return ExtractionSettlement.Discarded
     }
 
@@ -104,10 +132,10 @@ class ItemParsingService(
 
     private fun closeAfterExtraction(
         outbox: ItemParseOutbox,
-        attempt: OutboxAttempt,
+        closing: Closing,
         slot: ItemSlotState.Present,
     ) {
-        outbox.fail(attempt)
+        closing.fail()
         publishFailed(outbox, slot)
         if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
     }
@@ -150,4 +178,9 @@ class ItemParsingService(
             ItemParsingIncomplete(outbox.slot, slot.owner, version.itemId, version.getId(), refresh)
         }
     }
+
+    private class Closing(
+        val succeed: () -> Unit,
+        val fail: () -> Unit,
+    )
 }

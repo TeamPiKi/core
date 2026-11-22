@@ -13,6 +13,9 @@ class ItemParseOutboxRepositoryImpl(
     ItemParseOutboxRepository {
     override fun findById(id: Long): ItemParseOutbox? = itemParseOutboxJpaRepository.findByIdAndDeletedAtIsNull(id)
 
+    override fun findInProgressForUpdate(id: Long): ItemParseOutbox? =
+        itemParseOutboxJpaRepository.findByIdForUpdate(id)?.takeIf { it.isInProgress() }
+
     override fun findLatestBySlots(
         type: ItemSlotType,
         ids: Collection<Long>,
