@@ -105,6 +105,10 @@ enum class GrantDest(
     val issueSession: Boolean,
 ) {
     ADMIN("/admin", true),
+    // 신고 알림을 받고 바로 그 화면으로 들어가는 경로(#1291). 백오피스라 ADMIN 과 같이 세션을 발급한다 —
+    // 목적지만 다르다. 특정 신고로 직행하지 않고 목록으로 보낸다(최근순이라 방금 온 신고가 맨 위다):
+    // 임의 경로를 토큰에 실으면 서명된 오픈 리다이렉트가 되고, 목적지 집합이 enum 이라는 성질이 깨진다.
+    REPORTS("/admin/reports", true),
     DOCS("/docs/index.html", false),
     SPEC("/v3/api-docs", false),
 }

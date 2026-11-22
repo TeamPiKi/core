@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>신고 상세 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; }
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:720px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+    .card h2{font-size:14px;font-weight:800;margin:0;padding:13px 16px;border-bottom:1px solid var(--border);}
+    .cnt{font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);}
+    .cnt.many{background:var(--danger-soft);color:var(--danger);}
+    .gone{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;background:#e2e8f0;color:#475569;}
+
+    /* 요약은 라벨 + 값 2열. 값끼리 세로로 맞아 다른 대상과 눈으로 비교된다. */
+    .sum{width:100%;border-collapse:collapse;font-size:12.5px;}
+    .sum th{width:108px;text-align:left;padding:11px 15px;border-bottom:1px solid #f1f3f5;color:#384049;font-size:12px;font-weight:700;white-space:nowrap;}
+    .sum td{padding:11px 15px 11px 0;border-bottom:1px solid #f1f3f5;color:var(--muted);font-variant-numeric:tabular-nums;}
+    .sum tr:last-child th,.sum tr:last-child td{border-bottom:none;}
+    .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#384049;}
+
+    /* 신고 한 건 — 상세 내용이 길 수 있어 줄바꿈을 허용한다(목록과 달리 한 줄로 자르지 않는다). */
+    .entry{padding:12px 16px;border-bottom:1px solid #f1f3f5;}
+    .entry:last-child{border-bottom:none;}
+    .entry .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+    .entry .why{font-size:13px;font-weight:700;}
+    .entry .at{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+    .entry .by{font-size:11.5px;color:var(--muted);}
+    .entry .txt{margin-top:6px;font-size:12.5px;color:#384049;line-height:1.65;}
+    .empty{padding:13px 16px;font-size:12.5px;color:var(--muted);}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin/reports', '← 신고 목록')}"></div>
+  <div class="wrap">
+    <h1>
+      <span th:text="${detail.reported.name}"></span>
+      <span class="gone" th:if="${detail.reported.withdrawn}">탈퇴</span>
+      <span class="cnt" th:classappend="${detail.reported.reportCount > 1} ? 'many' : ''"
+            th:text="|누적 ${detail.reported.reportCount}건|"></span>
+    </h1>
+    <p class="lede">이 사용자가 받은 신고 전체입니다. 제재 조치는 아직 이 화면에 없습니다.</p>
+
+    <div class="card">
+      <h2>신고된 사용자</h2>
+      <table class="sum">
+        <tbody>
+          <tr><th>사용자 id</th><td class="mono" th:text="${detail.reported.userId}"></td></tr>
+          <tr><th>가입일</th><td th:text="${#temporals.format(detail.reported.joinedAt, 'yyyy-MM-dd HH:mm')}"></td></tr>
+          <tr><th>회원 여부</th><td th:text="${detail.reported.member} ? '회원' : '게스트'"></td></tr>
+          <tr><th>폴더 · 위시</th><td th:text="|${detail.reported.folderCount} · ${detail.reported.wishCount}|"></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>신고 내역</h2>
+      <div class="entry" th:each="e : ${detail.entries}">
+        <div class="top">
+          <span class="why" th:text="${e.reasonLabel}"></span>
+          <span class="at" th:text="${#temporals.format(e.reportedAt, 'yyyy-MM-dd HH:mm')} + ' KST'"></span>
+          <span class="by" th:text="|신고한 사용자: ${e.reporterName}|"></span>
+        </div>
+        <div class="txt" th:if="${e.detail != null}" th:text="${e.detail}"></div>
+      </div>
+      <div class="empty" th:if="${#lists.isEmpty(detail.entries)}">신고 내역이 없습니다.</div>
+    </div>
+  </div>
+</body>
+</html>

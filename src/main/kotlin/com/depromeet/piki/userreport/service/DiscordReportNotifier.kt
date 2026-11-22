@@ -31,7 +31,9 @@ class DiscordReportNotifier(
     }
 
     // 환경명은 배포가 넣는다(ADMIN_ENVIRONMENT). 로컬은 비어 있어 local 로 둔다 — 이름이 비면 디스코드가 거부한다
-    private fun usernameOf(): String = "${adminProperties.environment.ifBlank { "local" }}-신고알림"
+    private fun usernameOf(): String = "${envLabel()}-신고알림"
+
+    private fun envLabel(): String = adminProperties.environment.ifBlank { "local" }
 
     // 알림을 못 보낸 사실은 남긴다 — 운영이 "신고가 없었다" 와 "알림이 안 왔다" 를 구분할 수 있어야 한다
     private fun logSkip(
@@ -53,6 +55,10 @@ class DiscordReportNotifier(
                         field("사유", notification.reason.name),
                         field("신고 시각 (KST)", kstOf(notification.reportedAt), inline = false),
                         field("상세", notification.detail?.takeIf { it.isNotBlank() } ?: "없음", inline = false),
+                        // 진입 방법을 메시지에 싣는다 — 웹훅 메시지에는 버튼을 붙일 수 없고(디스코드가 앱 소유
+                        // 웹훅에만 허용), 평문 링크는 채널 전원이 눌러 들어가므로 관리자 확인이 사라진다.
+                        // 커맨드는 실행자가 허용 관리자인지 확인한 뒤 본인에게만 보이는 원타임 링크를 준다.
+                        field("백오피스", "`/piki-admin env:${envLabel()} dest:reports`", inline = false),
                     ),
             ),
         )
