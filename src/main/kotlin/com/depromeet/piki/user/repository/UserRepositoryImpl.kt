@@ -15,6 +15,7 @@ class UserRepositoryImpl(
 
     override fun findByIdForUpdate(id: UUID): User? = userJpaRepository.findByIdForUpdate(id)
 
-    override fun findByIds(ids: Collection<UUID>): List<User> = userJpaRepository.findAllById(ids)
+    override fun findAllByIdsForUpdate(ids: Collection<UUID>): List<User> = userJpaRepository.findAllByIdsForUpdate(ids)
 
+    override fun findByIds(ids: Collection<UUID>): List<User> = userJpaRepository.findAllById(ids)
 }
