@@ -1,7 +1,6 @@
 package com.depromeet.piki.userreport.service
 
 import com.depromeet.piki.block.service.UserBlockService
-import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
@@ -11,7 +10,6 @@ import com.depromeet.piki.userreport.domain.UserReport
 import com.depromeet.piki.userreport.domain.UserReportException
 import com.depromeet.piki.userreport.repository.UserReportRepository
 import com.depromeet.piki.userreport.service.dto.ReportNotification
-import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -30,8 +28,6 @@ class UserReportPersistenceService(
     private val userReportRepository: UserReportRepository,
     private val userBlockService: UserBlockService,
     private val userService: UserService,
-    private val folderRepository: FolderRepository,
-    private val wishRepository: WishRepository,
 ) {
     @Transactional
     fun saveAndBlock(
@@ -46,43 +42,34 @@ class UserReportPersistenceService(
             if (!reason.allowsDetail()) throw UserReportException.detailNotAllowed()
         }
         requireMember(userService.findActiveById(reporterId))
-        val reported = activeTarget(reportedId)
+        requireActiveTarget(reportedId)
 
-        userReportRepository.save(
-            UserReport(
-                reporterId = reporterId,
-                reportedId = reportedId,
-                reason = reason,
-                detail = detail?.takeIf { it.isNotBlank() },
-            ),
-        )
+        val saved =
+            userReportRepository.save(
+                UserReport(
+                    reporterId = reporterId,
+                    reportedId = reportedId,
+                    reason = reason,
+                    detail = detail?.takeIf { it.isNotBlank() },
+                ),
+            )
         // 신고는 차단을 동반한다(기획 확정). 이미 차단했으면 그 서비스가 멱등으로 통과시킨다
         userBlockService.block(reporterId, reportedId)
 
-        return notificationOf(reporterId, reported, reason, detail)
+        return notificationOf(saved)
     }
 
-    // 알림에 실을 값을 트랜잭션 안에서 모은다 — 밖에서 모으면 그 사이 탈퇴로 조회가 404 가 될 수 있다.
-    // 폴더·위시 수는 운영이 보는 지표라 공개 여부를 가리지 않고 전체를 센다(프로필 화면의 공개 집계와 다르다).
-    private fun notificationOf(
-        reporterId: UUID,
-        reported: User,
-        reason: ReportReason,
-        detail: String?,
-    ): ReportNotification {
-        val reportedId = reported.id
-        return ReportNotification(
-            reportedId = reportedId,
-            reportCountOfReported = userReportRepository.countByReportedId(reportedId),
-            reportedJoinedAt = reported.createdAt,
-            reportedIsMember = reported.identityType == IdentityType.MEMBER,
-            reportedFolderCount = folderRepository.findAllByUserId(reportedId).size,
-            reportedWishCount = wishRepository.countByUserId(reportedId),
-            reporterId = reporterId,
-            reason = reason,
-            detail = detail?.takeIf { it.isNotBlank() },
+    // 알림에 실을 값을 트랜잭션 안에서 모은다 — 누적 수는 방금 저장한 행까지 센 값이어야 한다.
+    // 시각은 저장된 행의 created_at 을 쓴다(UTC). 표시용 KST 변환은 알림기가 맡는다.
+    private fun notificationOf(saved: UserReport): ReportNotification =
+        ReportNotification(
+            reporterId = saved.reporterId,
+            reportedId = saved.reportedId,
+            reason = saved.reason,
+            reportCountOfReported = userReportRepository.countByReportedId(saved.reportedId),
+            detail = saved.detail,
+            reportedAt = saved.createdAt,
         )
-    }
 
     // 게스트는 신고할 수 없다. 친구·차단과 같은 결이다
     private fun requireMember(user: User) {
@@ -91,8 +78,7 @@ class UserReportPersistenceService(
     }
 
     // 상대의 부재와 탈퇴를 같은 404 로 묶는다 — 가르면 "그 계정이 있었다" 가 드러난다
-    private fun activeTarget(reportedId: UUID): User {
-        val user = userService.findActiveByIds(listOf(reportedId)).firstOrNull() ?: throw UserException.notFound()
-        return user
+    private fun requireActiveTarget(reportedId: UUID) {
+        userService.findActiveByIds(listOf(reportedId)).firstOrNull() ?: throw UserException.notFound()
     }
 }

@@ -56,4 +56,8 @@ class IntegrationStubs {
     @Bean
     @Primary
     fun discordMessageSender(): StubDiscordMessageSender = StubDiscordMessageSender()
+
+    @Bean
+    @Primary
+    fun discordWebhookSender(): StubDiscordWebhookSender = StubDiscordWebhookSender()
 }

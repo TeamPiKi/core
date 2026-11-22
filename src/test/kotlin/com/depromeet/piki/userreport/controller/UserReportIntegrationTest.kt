@@ -3,9 +3,8 @@ package com.depromeet.piki.userreport.controller
 import com.depromeet.piki.admin.config.AdminProperties
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
 import com.depromeet.piki.common.exception.CommonErrorCode
-import com.depromeet.piki.metrics.report.DiscordMessageSender
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubDiscordMessageSender
+import com.depromeet.piki.support.StubDiscordWebhookSender
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.UserErrorCode
@@ -16,8 +15,6 @@ import com.depromeet.piki.userreport.domain.UserReportErrorCode
 import com.depromeet.piki.userreport.service.DiscordReportNotifier
 import com.depromeet.piki.userreport.service.dto.ReportNotification
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.NoSuchBeanDefinitionException
-import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -50,7 +47,7 @@ class UserReportIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var jwtProvider: JwtProvider
 
-    @Autowired private lateinit var stubSender: StubDiscordMessageSender
+    @Autowired private lateinit var stubSender: StubDiscordWebhookSender
 
     @Test
     fun `신고하면 접수되고 그 상대가 차단된다`() {
@@ -194,97 +191,77 @@ class UserReportIntegrationTest : IntegrationTestSupport() {
 
     // 채널에 있는 사람 모두가 보는 메시지라 닉네임을 담지 않는다. 사용자 특정은 id 까지만
     @Test
-    fun `알림 payload 는 사유와 누적 수를 담고 닉네임은 담지 않는다`() {
+    fun `알림 payload 는 두 사용자 id 와 사유 누적 수 시각을 담고 닉네임은 담지 않는다`() {
         val reportedId = UUID.randomUUID()
         val reporterId = UUID.randomUUID()
         stubSender.result = true // 공유 stub — 게시 성공 시나리오를 명시 세팅
-        val notifier = notifier(channelId = "report-channel")
+        val notifier = notifier(webhookUrl = "https://discord.test/webhook", environment = "prod")
 
         notifier.notify(
             ReportNotification(
-                reportedId = reportedId,
-                reportCountOfReported = 3,
-                reportedJoinedAt = LocalDateTime.of(2026, 1, 2, 3, 4),
-                reportedIsMember = true,
-                reportedFolderCount = 2,
-                reportedWishCount = 9,
                 reporterId = reporterId,
+                reportedId = reportedId,
                 reason = ReportReason.IMPERSONATION,
+                reportCountOfReported = 3,
                 detail = null,
+                // 저장값은 UTC 다. KST 로 9시간 더해 찍혀야 한다
+                reportedAt = LocalDateTime.of(2026, 1, 2, 3, 4, 5),
             ),
         )
 
         val sent = stubSender.sent.last()
-        assertEquals("report-channel", sent.channelId, "주간 리포트 채널과 분리돼야 한다")
+        assertEquals("https://discord.test/webhook", sent.webhookUrl, "주간 리포트 채널과 분리돼야 한다")
+        // 보내는 이름이 환경을 드러내야 한다 — 두 환경이 같은 이름이면 어느 쪽 신고인지 구분이 안 된다
+        assertEquals("prod-신고알림", sent.username)
         val rendered = objectMapper.writeValueAsString(sent.embeds)
         assertTrue(rendered.contains("누적 3건"), "누적 신고 수가 실려야 한다: $rendered")
         assertTrue(rendered.contains(ReportReason.IMPERSONATION.name), "사유가 실려야 한다: $rendered")
         assertTrue(rendered.contains(reportedId.toString()), "신고된 사용자 id 가 실려야 한다")
         assertTrue(rendered.contains(reporterId.toString()), "신고한 사용자 id 가 실려야 한다")
+        assertTrue(rendered.contains("2026-01-02 12:04:05"), "시각이 KST 로 실려야 한다: $rendered")
     }
 
-    // 채널을 안 정했어도 신고는 돌아야 한다 — dev 는 채널을 비워 두는 운영 방식이다
+    // 웹훅을 안 정했어도 신고는 돌아야 한다
     @Test
-    fun `채널이 설정되지 않으면 게시하지 않고 조용히 넘어간다`() {
+    fun `웹훅이 설정되지 않으면 게시하지 않고 조용히 넘어간다`() {
         val before = stubSender.sent.size
-        val notifier = notifier(channelId = "")
+        val notifier = notifier(webhookUrl = "", environment = "prod")
 
-        notifier.notify(
-            ReportNotification(
-                reportedId = UUID.randomUUID(),
-                reportCountOfReported = 1,
-                reportedJoinedAt = LocalDateTime.now(),
-                reportedIsMember = true,
-                reportedFolderCount = 0,
-                reportedWishCount = 0,
-                reporterId = UUID.randomUUID(),
-                reason = ReportReason.SPAM_OR_AD,
-                detail = null,
-            ),
-        )
+        notifier.notify(notificationOf())
 
-        assertEquals(before, stubSender.sent.size, "채널이 없으면 아무것도 보내지 않는다")
+        assertEquals(before, stubSender.sent.size, "웹훅이 없으면 아무것도 보내지 않는다")
     }
 
-    // admin 이 꺼진 환경엔 전송기 빈이 아예 없다. 그때 컨텍스트가 뜨고 알림만 건너뛰어야 한다
+    // 로컬은 ADMIN_ENVIRONMENT 가 비어 있다. 이름이 빈 문자열이면 디스코드가 게시를 거부한다
     @Test
-    fun `전송기가 없으면 예외 없이 건너뛴다`() {
-        val notifier = notifier(channelId = "report-channel", sender = null)
+    fun `환경명이 비면 보내는 이름을 local 로 둔다`() {
+        val notifier = notifier(webhookUrl = "https://discord.test/webhook", environment = "")
 
-        notifier.notify(
-            ReportNotification(
-                reportedId = UUID.randomUUID(),
-                reportCountOfReported = 1,
-                reportedJoinedAt = LocalDateTime.of(2026, 1, 2, 3, 4),
-                reportedIsMember = false,
-                reportedFolderCount = 0,
-                reportedWishCount = 0,
-                reporterId = UUID.randomUUID(),
-                reason = ReportReason.OTHER,
-                detail = "상세",
-            ),
-        )
+        notifier.notify(notificationOf())
+
+        assertEquals("local-신고알림", stubSender.sent.last().username)
     }
 
     // ── 헬퍼 ───────────────────────────────────────────────────────────────
 
-    // 알림기는 전송기를 ObjectProvider 로 받는다(admin 꺼짐 대응). 테스트가 채널·전송기 유무를 직접 조립한다
+    // 보내는 이름은 환경에서 파생되므로, 테스트가 웹훅 주소와 환경명을 직접 조립한다
     private fun notifier(
-        channelId: String,
-        sender: DiscordMessageSender? = stubSender,
-    ) = DiscordReportNotifier(providerOf(sender), AdminProperties(discordReportChannelId = channelId))
+        webhookUrl: String,
+        environment: String,
+    ) = DiscordReportNotifier(
+        stubSender,
+        AdminProperties(discordReportWebhookUrl = webhookUrl, environment = environment),
+    )
 
-    private fun providerOf(sender: DiscordMessageSender?): ObjectProvider<DiscordMessageSender> =
-        object : ObjectProvider<DiscordMessageSender> {
-            override fun getObject(): DiscordMessageSender =
-                sender ?: throw NoSuchBeanDefinitionException(DiscordMessageSender::class.java)
-
-            override fun getObject(vararg args: Any?): DiscordMessageSender = getObject()
-
-            override fun getIfAvailable(): DiscordMessageSender? = sender
-
-            override fun getIfUnique(): DiscordMessageSender? = sender
-        }
+    private fun notificationOf() =
+        ReportNotification(
+            reporterId = UUID.randomUUID(),
+            reportedId = UUID.randomUUID(),
+            reason = ReportReason.SPAM_OR_AD,
+            reportCountOfReported = 1,
+            detail = null,
+            reportedAt = LocalDateTime.of(2026, 1, 2, 3, 4, 5),
+        )
 
     private fun mockMvc(): MockMvc =
         MockMvcBuilders
