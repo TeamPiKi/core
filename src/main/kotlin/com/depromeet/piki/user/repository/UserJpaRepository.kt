@@ -18,15 +18,4 @@ interface UserJpaRepository : JpaRepository<User, UUID> {
         @Param("id") id: UUID,
     ): User?
 
-    fun existsByNickname(nickname: String): Boolean
-
-    fun existsByNicknameAndIdNot(
-        nickname: String,
-        id: UUID,
-    ): Boolean
-
-    @Query("SELECT u.nickname FROM User u WHERE u.nickname IN :nicknames")
-    fun findNicknamesIn(
-        @Param("nicknames") nicknames: Collection<String>,
-    ): List<String>
 }

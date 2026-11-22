@@ -56,7 +56,6 @@ class AuthApiExamples(
                                     ),
                                 ),
                         )
-                        add(UserException.nicknameGenerationFailed(), name = "닉네임 풀 소진")
                     }
 
                 handlerMethod.binds(AuthController::refresh) ->
@@ -129,7 +128,6 @@ class AuthApiExamples(
                         add(UserException.nicknameTooLong(), name = "닉네임 10자 초과")
                         add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
                         unauthorized()
-                        add(UserException.duplicateNickname(), name = "이미 사용 중인 닉네임")
                     }
 
                 handlerMethod.binds(DevAuthController::issueTokenForUser) ->
@@ -163,5 +161,4 @@ class AuthApiExamples(
             }
             operation
         }
-
 }

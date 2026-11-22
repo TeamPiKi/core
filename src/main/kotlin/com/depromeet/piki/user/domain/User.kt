@@ -78,14 +78,24 @@ class User(
     companion object {
         const val NICKNAME_MAX_LENGTH = 10
 
-        // 탈퇴 tombstone 닉네임 예약 prefix. 활성 유저가 이 형태를 선점하면 탈퇴 시 anonymizedNickname 과
-        // uq_users_nickname(UNIQUE) 충돌이 날 수 있으므로, 입력 경계(validateNickname)에서 미리 거부해 선점 자체를 막는다.
+        // 탈퇴 tombstone 닉네임 예약 prefix.
+        //
+        // 원래 근거는 유일 제약 충돌 회피였다 — 활성 유저가 이 형태를 선점하면 탈퇴 시 anonymizedNickname 이
+        // uq_users_nickname 과 충돌했다. 중복 허용(#1287)으로 그 제약이 사라져 충돌 근거는 소멸했다.
+        // 그래도 금지를 유지한다(#1287 에서 확정). "탈퇴xxxxxxxx" 는 서버가 탈퇴 계정에 붙이는 시스템 표식이라,
+        // 활성 유저가 그 모양을 쓰면 탈퇴한 계정으로 보인다. 사용자끼리의 닉네임 중복은 이제 설계상 허용이지만
+        // 시스템 표식 흉내는 다른 문제다 — 금지의 근거가 제약 충돌에서 이 사칭 방지로 옮겨 간 것이고,
+        // 유니크 제약이 사라졌다는 이유로 이 검사를 걷어내면 안 된다.
         const val WITHDRAWN_NICKNAME_PREFIX = "탈퇴"
 
         // 탈퇴 tombstone 닉네임. uq_users_nickname(UNIQUE) 충돌을 피하려 본인 UUID 에서 파생한다.
         // "탈퇴"(2) + UUID 앞 8 hex = 10자로 NICKNAME_MAX_LENGTH 를 넘지 않는다.
         private fun anonymizedNickname(id: UUID): String =
             WITHDRAWN_NICKNAME_PREFIX + id.toString().replace("-", "").take(8)
+
+        // 형식·예약 접두사 검사. 엔티티 밖에서도 "이 닉네임이 형식으로 가능한가" 를 물을 수 있게 열어 둔다
+        // (닉네임 중복 체크 API 가 중복 판정 없이 형식만 보게 된 뒤로 그 판정이 필요해졌다, #1287).
+        fun checkNicknameFormat(nickname: String) = validateNickname(nickname)
 
         private fun validateNickname(nickname: String) {
             if (nickname.isBlank()) throw UserException.nicknameBlank()
