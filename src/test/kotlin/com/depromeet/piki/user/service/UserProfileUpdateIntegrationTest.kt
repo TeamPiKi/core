@@ -3,25 +3,27 @@ package com.depromeet.piki.user.service
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.tournament.domain.TournamentUser
 import com.depromeet.piki.tournament.repository.TournamentUserRepository
-import com.depromeet.piki.user.domain.UserException
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
-import kotlin.test.assertFailsWith
+import kotlin.test.assertEquals
 
-// #690 의 핵심 검증: 프로필 수정에서 닉네임과 무관한 DB 위반은 거짓 409(닉네임 중복)로 숨기지 않고
-// 원본 예외 그대로(→500) 드러낸다. 이전엔 catch 가 모든 DataIntegrityViolationException 을 duplicateNickname
-// 으로 바꿔, 닉네임 무관 위반이 나도 거짓 사유가 나가고 진짜 서버 버그가 500 으로 안 드러났다.
+// 프로필 닉네임 중복 허용(#1287)의 계약을 고정한다. 이전엔 전역 유일(#1018)이라 프로필 닉 변경이 다른 사람의
+// 프로필 닉·토너먼트 참여 닉 양쪽과 겹치면 409 였다. 이제 어느 쪽과 겹쳐도 통과한다.
 //
-// profile_image 컬럼은 VARCHAR(2048)이고 updateProfileImage 는 도메인 검증이 없어, 2048자를 넘는 URL 이
-// saveAndFlush 에서 닉네임 unique 가 아닌 DataIntegrityViolationException("Data too long")을 일으킨다.
-// 정상 경로에선 이 URL 이 우리 S3 업로드 결과라 클라가 길이를 못 정하므로, 이 위반이 나면 서버 버그(불변식)다
-// — guard 가 이를 409 로 숨기지 않고 500 으로 드러내야 한다.
+// 참여 닉 풀과의 교차 검사가 사라진 것을 따로 보는 이유: 그 검사는 user 모듈이 소유한 포트를
+// tournament 모듈이 구현하는 구조(NicknameReservationChecker)로 들어가 있어, 포트째 지웠다는 사실이
+// 동작으로 드러나야 한다.
 //
-// 이 테스트는 fix 의 negative control 이다: guard(isNicknameUniqueViolation 판별)를 무조건 409 로 되돌리면
-// updateProfile 이 DataIntegrityViolationException 대신 UserException 을 던져 아래 assertFailsWith 가 깨진다.
+// #690 이 두던 테스트(닉네임 무관 DB 위반을 409 로 오분류하지 않는다)는 함께 지웠다. 그 오분류는
+// "모든 DataIntegrityViolationException 을 duplicateNickname 으로 바꾸던" 변환에서 나왔고,
+// 중복 허용으로 그 변환 자체가 사라져 오분류할 대상이 없다.
+//
+// **이 파일이 검증하는 것은 애플리케이션 검사의 소멸까지다.** 클래스 레벨 @Transactional 자동 롤백이라
+// UPDATE 가 flush 되지 않아 DB 제약은 건드리지 않는다 — 실측으로 확인했다(마이그레이션을 빼도 이 두 건은
+// 통과한다). uq_users_nickname 이 정말 사라졌는지는 커밋을 내는
+// UserProfileUpdateConcurrencyIntegrationTest 가 가드한다.
 @Transactional
 class UserProfileUpdateIntegrationTest : IntegrationTestSupport() {
     @Autowired
@@ -31,29 +33,26 @@ class UserProfileUpdateIntegrationTest : IntegrationTestSupport() {
     private lateinit var tournamentUserRepository: TournamentUserRepository
 
     @Test
-    fun `프로필 닉네임을 다른 사람의 토너먼트 참여 닉과 같게 바꾸면 409(닉네임 중복)로 막힌다`() {
-        // 전역 유일(#1018)의 반대 방향: 프로필 닉 변경도 참여 닉 풀(tournament_users)과 겹치면 안 된다.
-        // "라떼왕"은 어느 유저 프로필에도 없는 참여 닉 전용 값이라, users 풀이 아니라 참여 닉 풀 검사가 막는 것을 격리한다.
+    fun `프로필 닉네임을 다른 사람의 토너먼트 참여 닉과 같게 바꿔도 통과한다`() {
+        // "라떼왕"은 어느 유저 프로필에도 없는 참여 닉 전용 값이라, users 풀이 아니라 참여 닉 풀 검사가
+        // 사라졌음을 격리해 본다.
         val other = UUID.randomUUID()
         tournamentUserRepository.save(TournamentUser(tournamentId = 1L, userId = other, nickname = "라떼왕"))
         val me = userService.createGuestWithNickname("q${UUID.randomUUID().toString().take(4)}").id
 
-        assertFailsWith<UserException> {
-            userService.updateProfile(me, "라떼왕", null)
-        }
+        val updated = userService.updateProfile(me, "라떼왕", null)
+
+        assertEquals("라떼왕", updated.nickname)
     }
 
     @Test
-    fun `닉네임 무관 DB 위반(profileImage 길이 초과)은 409 로 오분류되지 않고 원본 예외로 드러난다`() {
-        val userId = userService.createGuestWithNickname("q${UUID.randomUUID().toString().take(4)}").id
-        // profile_image VARCHAR(2048) 초과 → 닉네임 unique 가 아닌 DB 제약 위반
-        val tooLongUrl = "https://x/" + "a".repeat(2048)
+    fun `프로필 닉네임을 다른 사람의 프로필 닉과 같게 바꿔도 통과한다`() {
+        val taken = "q${UUID.randomUUID().toString().take(4)}"
+        userService.createGuestWithNickname(taken)
+        val me = userService.createGuestWithNickname("q${UUID.randomUUID().toString().take(4)}").id
 
-        // 닉네임 unique 위반이 아니므로 duplicateNickname(409, UserException)으로 변환되지 않고
-        // 원본 DataIntegrityViolationException 이 그대로 전파돼야 한다. guard 를 무조건 409 로 되돌리면
-        // 여기서 UserException 이 던져져 이 단언이 실패한다.
-        assertFailsWith<DataIntegrityViolationException> {
-            userService.updateProfile(userId, null, tooLongUrl)
-        }
+        val updated = userService.updateProfile(me, taken, null)
+
+        assertEquals(taken, updated.nickname)
     }
 }

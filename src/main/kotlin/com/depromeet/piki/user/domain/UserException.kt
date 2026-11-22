@@ -25,7 +25,6 @@ class UserException private constructor(
 
         fun duplicateNickname(): UserException = UserException(UserErrorCode.DUPLICATE_NICKNAME)
 
-        fun nicknameGenerationFailed(): UserException = UserException(UserErrorCode.NICKNAME_GENERATION_FAILED)
 
         // 구 invalidNickname(reason) 을 3케이스로 분리(에픽 #728). reason 은 User.validateNickname 이 넘기던
         // 3개 고정 문구뿐이었으므로, 코드↔문구 1:1 로 정적화한다.

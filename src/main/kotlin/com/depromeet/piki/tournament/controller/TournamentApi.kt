@@ -391,7 +391,7 @@ interface TournamentApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "닉네임 중복 USER-004 (다른 참여자 · 다른 유저 프로필 닉과 겹침 — 모든 표시명은 전역에서 유일)",
+                description = "닉네임 중복 USER-004 (이 토너먼트의 다른 참여자와 겹침. 프로필 닉네임·다른 토너먼트와는 겹쳐도 된다)",
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiResponseBody::class))],
             ),
         ],

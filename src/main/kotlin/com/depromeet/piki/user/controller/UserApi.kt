@@ -249,7 +249,7 @@ interface UserApi {
             ),
             ApiResponse(
                 responseCode = "409",
-                description = "상태 충돌 (닉네임 중복 USER-004 · 탈퇴한 유저 USER-003)",
+                description = "상태 충돌 (탈퇴한 유저 USER-003)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -334,10 +334,12 @@ interface UserApi {
     ): ApiResponseBody<Unit>
 
     @Operation(
-        summary = "닉네임 중복 체크",
+        summary = "닉네임 사용 가능 확인",
         description =
-            "닉네임이 이미 다른 유저에게 점유됐는지 확인한다. 회원 전환 / 닉네임 수정 전 사전 확인용.\n\n" +
-                "- 본인의 현재 닉네임은 중복으로 잡지 않는다 — 자기 닉네임 유지 / 자기 닉네임으로 재확인 흐름이 자연스럽게 통과한다.",
+            "닉네임을 쓸 수 있는지 확인한다. 회원 전환 / 닉네임 수정 전 사전 확인용.\n\n" +
+                "- 프로필 닉네임은 중복을 허용한다(#1287). 다른 사람이 쓰는 닉네임이어도 available=true 다.\n" +
+                "- 형식만 본다 — 빈 값(USER-006) · 10자 초과(USER-012) · '탈퇴' 예약 prefix(USER-013) 는 400 이다.\n" +
+                "- 앱 호출이 남아 유지하는 엔드포인트다. 호출이 멈추면 제거한다.",
     )
     @ApiResponses(
         value = [
