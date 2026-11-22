@@ -2,6 +2,7 @@ package com.depromeet.piki.user.service
 
 import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.folder.repository.FolderWishRepository
+import com.depromeet.piki.friendship.repository.FriendshipRepository
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.user.domain.UserException
@@ -27,6 +28,7 @@ class WithdrawalPersistenceService(
     private val folderRepository: FolderRepository,
     private val folderWishRepository: FolderWishRepository,
     private val notificationRepository: NotificationRepository,
+    private val friendshipRepository: FriendshipRepository,
     private val defaultProfileImages: DefaultProfileImages,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -75,6 +77,16 @@ class WithdrawalPersistenceService(
         // 5. notifications 하드삭제 — 수신자 알림 즉시 파기.
         val notifications = notificationRepository.hardDeleteAllByUserId(userId)
 
-        log.info("회원 탈퇴 cascade 완료 userId={} wishes={} notifications={}", userId, wishes, notifications)
+        // 6. friendships 하드삭제 — 양방향(#1288). 내가 추가한 행과 나를 추가한 행을 모두 지운다.
+        //    단방향이라 한쪽만 지우면 남의 친구 목록에 탈퇴자가 계속 남는다.
+        val friendships = friendshipRepository.hardDeleteAllInvolving(userId)
+
+        log.info(
+            "회원 탈퇴 cascade 완료 userId={} wishes={} notifications={} friendships={}",
+            userId,
+            wishes,
+            notifications,
+            friendships,
+        )
     }
 }
