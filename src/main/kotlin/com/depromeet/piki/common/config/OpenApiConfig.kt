@@ -86,6 +86,8 @@ class OpenApiConfig {
                 "Friendship",
                 // 차단은 친구와 같은 관계 축이라 바로 뒤
                 "Block",
+                // 다른 사람 프로필은 관계(친구·차단) 다음에 오는 화면이라 그 뒤
+                "Profile",
                 "Wishlist",
                 "Folder",
                 "Tournament",

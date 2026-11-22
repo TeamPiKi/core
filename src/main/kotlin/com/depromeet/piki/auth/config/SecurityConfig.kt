@@ -119,6 +119,10 @@ class SecurityConfig(
                     // 코드 입력 미리보기: 미인증 상태에서 6자리 코드만으로 토너먼트 정보 확인
                     .requestMatchers(HttpMethod.GET, "/api/v1/tournaments/by-invite-code")
                     .permitAll()
+                    // 다른 사람 프로필·공개 폴더 조회: 비로그인도 본다(#1290). 노출 판정은 서비스가 하고,
+                    // 토큰이 있으면 principal 이 채워져 관계(친구·차단)가 반영된다
+                    .requestMatchers(HttpMethod.GET, "/api/v1/profiles/*", "/api/v1/profiles/*/folders/*")
+                    .permitAll()
                     // 플레이 링크 정보 조회: 미인증 상태에서 링크 진입 시 토너먼트 정보 확인
                     .requestMatchers(HttpMethod.GET, "/api/v1/tournaments/*/play-link-info")
                     .permitAll()

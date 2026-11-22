@@ -12,12 +12,9 @@ import java.util.UUID
 @Entity
 @Table(name = "wishes")
 class Wish(
-
     @Column(nullable = false, columnDefinition = "BINARY(16)")
     val userId: UUID,
-
     itemId: Long?,
-
 ) : LongBaseEntity() {
     @Column
     var itemId: Long? = itemId
@@ -43,6 +40,9 @@ class Wish(
         require(itemId > 0) { "itemId 는 양수여야 한다: $itemId" }
         this.itemId = itemId
     }
+
+    // 지워지지 않은 위시인지. 목록을 묶음으로 읽는 경로가 삭제분을 거를 때 쓴다(#1290)
+    fun isActive(): Boolean = deletedAt?.let { false } ?: true
 
     fun delete() {
         deletedAt = LocalDateTime.now()
