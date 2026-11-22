@@ -39,6 +39,7 @@ class OpenApiDocsIntegrationTest : IntegrationTestSupport() {
                 "Auth",
                 "User",
                 "Friendship",
+                "Block",
                 "Wishlist",
                 "Folder",
                 "Tournament",

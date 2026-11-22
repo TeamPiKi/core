@@ -1,5 +1,6 @@
 package com.depromeet.piki.friendship.service
 
+import com.depromeet.piki.block.repository.UserBlockRepository
 import com.depromeet.piki.friendship.domain.Friendship
 import com.depromeet.piki.friendship.domain.FriendshipException
 import com.depromeet.piki.friendship.repository.FriendshipRepository
@@ -23,6 +24,7 @@ import java.util.UUID
 @Service
 class FriendshipService(
     private val friendshipRepository: FriendshipRepository,
+    private val userBlockRepository: UserBlockRepository,
     private val userService: UserService,
     private val profileCountReader: ProfileCountReader,
 ) {
@@ -43,6 +45,10 @@ class FriendshipService(
      *
      * 상대가 없거나 탈퇴했으면 **404** 다. 탈퇴를 409 로 알리면 "그 계정이 있었다" 는 사실이 드러나고,
      * 요청자 입장에선 그냥 찾을 수 없는 상대다. 409 는 내 계정이 탈퇴 상태일 때의 응답으로 남긴다.
+     *
+     * **어느 한쪽이라도 차단했으면 같은 404 다**(#1289). 차단한 쪽이든 당한 쪽이든 응답이 같아야 한다 —
+     * 다른 응답을 주면 "저 사람이 나를 차단했다" 가 드러난다. 차단한 쪽은 자기가 건 것을 이미 알고,
+     * 화면에도 친구 추가 대신 차단 해제가 뜬다.
      */
     @Transactional
     fun add(
@@ -54,6 +60,8 @@ class FriendshipService(
         val locked = userService.lockPairForUpdate(userId, friendId)
         requireMember(locked[userId] ?: throw UserException.notFound())
         requireActiveTarget(locked[friendId])
+        // 차단은 부재·탈퇴와 같은 404 로 묶는다. 위 KDoc 참고
+        if (userBlockRepository.existsBetween(userId, friendId)) throw UserException.notFound()
         if (friendshipRepository.exists(userId, friendId)) return
         friendshipRepository.save(Friendship(userId = userId, friendId = friendId))
     }
