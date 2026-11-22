@@ -66,8 +66,9 @@ class HttpDiscordWebhookSender : DiscordWebhookSender {
                 .toBodilessEntity()
             true
         } catch (e: Exception) {
-            // 외부 의존성 실패 — 호출자가 삼킨다. URL 은 남기지 않고 보내는 이름만 남겨 어느 환경인지 드러낸다
-            log.warn("디스코드 웹훅 게시 실패 username={} error={}", username, e.message)
+            // 외부 의존성 실패 — 호출자가 삼킨다. 예외 **메시지**는 남기지 않는다: RestClient 가 요청 URL 을
+            // 메시지에 담아, 웹훅 토큰(= 게시 권한)이 그대로 로그에 찍힌다. 종류만 남겨도 원인 분류는 된다
+            log.warn("디스코드 웹훅 게시 실패 username={} errorType={}", username, e.javaClass.simpleName)
             false
         }
 

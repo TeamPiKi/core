@@ -41,8 +41,15 @@ class UserReportPersistenceService(
         detail?.takeIf { it.isNotBlank() }?.let {
             if (!reason.allowsDetail()) throw UserReportException.detailNotAllowed()
         }
-        requireMember(userService.findActiveById(reporterId))
-        requireActiveTarget(reportedId)
+        // 두 행을 먼저 잠근 뒤 그 값으로 검사한다(차단 경로와 같은 순서, #776).
+        //
+        // 잠금을 검사 뒤로 미루면 두 가지가 어긋난다. (1) 먼저 읽은 객체가 영속성 컨텍스트에 남아, 그 사이
+        // 커밋된 탈퇴를 뒤의 잠금이 반영해 주지 않는다 — 탈퇴한 계정에 신고·차단 행이 남는다. (2) REPEATABLE
+        // READ 에서 첫 일반 읽기가 스냅샷을 고정해, 아래 누적 수 집계가 그 뒤 커밋된 신고를 세지 않는다
+        // (동시 신고 때 "누적 1건" 이 나간다). 잠금 읽기를 맨 앞에 두면 둘 다 닫힌다.
+        val locked = userService.lockPairForUpdate(reporterId, reportedId)
+        requireMember(locked[reporterId] ?: throw UserException.notFound())
+        requireActiveTarget(locked[reportedId])
 
         val saved =
             userReportRepository.save(
@@ -78,7 +85,8 @@ class UserReportPersistenceService(
     }
 
     // 상대의 부재와 탈퇴를 같은 404 로 묶는다 — 가르면 "그 계정이 있었다" 가 드러난다
-    private fun requireActiveTarget(reportedId: UUID) {
-        userService.findActiveByIds(listOf(reportedId)).firstOrNull() ?: throw UserException.notFound()
+    private fun requireActiveTarget(target: User?) {
+        val user = target ?: throw UserException.notFound()
+        if (!user.isActive()) throw UserException.notFound()
     }
 }

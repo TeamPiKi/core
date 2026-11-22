@@ -94,7 +94,11 @@ class ReportGrantEntryIntegrationTest : IntegrationTestSupport() {
         // 링크가 채널에 새면 관리자 확인이 무의미해진다
         assertEquals(64, data["flags"], "응답은 ephemeral(본인만 보임)이어야 한다")
         val rendered = objectMapper.writeValueAsString(data)
-        assertContains(rendered, "https://dev.test.local/admin-access/grant?token=", message = "그 환경의 원타임 grant 링크가 실려야 한다")
+        assertContains(
+            rendered,
+            "https://dev.test.local/admin-access/grant?token=",
+            message = "그 환경의 원타임 grant 링크가 실려야 한다",
+        )
         // 토큰만 싣는다 — 대상 id 를 URL 에 직접 실으면 링크를 주운 사람이 목적지를 바꿔 볼 수 있다
         assertFalse(rendered.contains("/admin/reports/$reportedId"), "목적지 경로를 URL 로 노출하지 않는다")
     }
