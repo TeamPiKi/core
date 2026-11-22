@@ -86,6 +86,8 @@ class OpenApiConfig {
                 "Friendship",
                 // 차단은 친구와 같은 관계 축이라 바로 뒤
                 "Block",
+                // 신고는 차단을 동반하는 같은 축의 기능이라 그 뒤
+                "Report",
                 "Wishlist",
                 "Folder",
                 "Tournament",

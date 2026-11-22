@@ -24,6 +24,8 @@ import java.time.Duration
  * @property scheduleGraceWindow 예약 발송 유예시간. 예약시각을 이 시간보다 더 넘겨 도래하면(다운타임 등) 발송하지 않고 MISSED 로 정리한다.
  * @property discordBotToken Discord Bot API 인증 토큰(민감). 주간 지표 리포트를 채널에 게시할 때 Authorization: Bot 헤더로 쓴다. 비면 게시 skip.
  * @property discordMetricsChannelId 주간 지표 리포트를 게시할 Discord 채널 id. 비면 게시 skip(fail-safe).
+ * @property discordReportChannelId 사용자 신고 알림을 게시할 Discord 채널 id(#1291). 주간 리포트와 다른 채널이다 —
+ *   운영이 신고만 보는 자리라 섞지 않는다. 비면 게시 skip(fail-safe)이고 신고 자체는 정상 접수된다.
  */
 @ConfigurationProperties(prefix = "admin")
 data class AdminProperties(
@@ -41,6 +43,7 @@ data class AdminProperties(
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
     val discordBotToken: String = "",
     val discordMetricsChannelId: String = "",
+    val discordReportChannelId: String = "",
     val userMilestoneInterval: Long = 1000,
 ) {
     // 공개키·채널·호스트는 민감치 않아 노출하되 userId 는 개수만. grantSigningKey·discordBotToken 은 크리덴셜이라 set 여부만 마스킹한다.

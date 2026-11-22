@@ -46,6 +46,9 @@ admin:
   discord-admin-channel-id: ${DISCORD_ADMIN_CHANNEL_ID:}
   # 주간 지표 리포트를 게시할 Discord 채널 id(비민감 — 채널 id 는 secret 아님).
   discord-metrics-channel-id: ${DISCORD_METRICS_CHANNEL_ID:}
+  # 사용자 신고 알림을 게시할 Discord 채널 id(#1291 — 비민감, 채널 id 는 secret 아님).
+  # 주간 리포트 채널과 분리한다. 비면 게시 skip 이고 신고 접수는 정상 동작한다(dev 는 비워 두는 쪽).
+  discord-report-channel-id: ${DISCORD_REPORT_CHANNEL_ID:}
   # Discord Bot API 인증 토큰(민감 — GitHub secret). 주간 리포트 채널 게시에 사용. 비면 게시 skip.
   discord-bot-token: ${DISCORD_BOT_TOKEN:}
   # 이 앱이 도는 환경(dev/prod). grant 토큰 env 바인딩 검증용.
