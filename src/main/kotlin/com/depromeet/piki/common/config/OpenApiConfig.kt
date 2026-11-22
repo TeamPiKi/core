@@ -84,6 +84,8 @@ class OpenApiConfig {
                 "User",
                 // 사람 사이의 관계라 내 정보 바로 뒤. 콘텐츠 도메인(위시 이하)보다 앞에 둔다
                 "Friendship",
+                // 차단은 친구와 같은 관계 축이라 바로 뒤
+                "Block",
                 "Wishlist",
                 "Folder",
                 "Tournament",

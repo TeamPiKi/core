@@ -1,5 +1,6 @@
 package com.depromeet.piki.user.service
 
+import com.depromeet.piki.block.repository.UserBlockRepository
 import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.folder.repository.FolderWishRepository
 import com.depromeet.piki.friendship.repository.FriendshipRepository
@@ -29,6 +30,7 @@ class WithdrawalPersistenceService(
     private val folderWishRepository: FolderWishRepository,
     private val notificationRepository: NotificationRepository,
     private val friendshipRepository: FriendshipRepository,
+    private val userBlockRepository: UserBlockRepository,
     private val defaultProfileImages: DefaultProfileImages,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -81,12 +83,17 @@ class WithdrawalPersistenceService(
         //    단방향이라 한쪽만 지우면 남의 친구 목록에 탈퇴자가 계속 남는다.
         val friendships = friendshipRepository.hardDeleteAllInvolving(userId)
 
+        // 7. user_blocks 하드삭제 — 양방향(#1289). 내가 건 차단과 나를 향한 차단을 모두 지운다.
+        //    남겨 두면 남의 차단 목록에 탈퇴자가 남고, 노출 판정이 없는 사람을 계속 막는다.
+        val blocks = userBlockRepository.hardDeleteAllInvolving(userId)
+
         log.info(
-            "회원 탈퇴 cascade 완료 userId={} wishes={} notifications={} friendships={}",
+            "회원 탈퇴 cascade 완료 userId={} wishes={} notifications={} friendships={} blocks={}",
             userId,
             wishes,
             notifications,
             friendships,
+            blocks,
         )
     }
 }
