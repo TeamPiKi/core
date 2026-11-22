@@ -8,6 +8,7 @@ class StubDiscordWebhookSender : DiscordWebhookSender {
         val webhookUrl: String,
         val username: String,
         val embeds: List<Map<String, Any>>,
+        val components: List<Map<String, Any>>,
     )
 
     val sent = mutableListOf<Sent>()
@@ -19,8 +20,9 @@ class StubDiscordWebhookSender : DiscordWebhookSender {
         webhookUrl: String,
         username: String,
         embeds: List<Map<String, Any>>,
+        components: List<Map<String, Any>>,
     ): Boolean {
-        sent += Sent(webhookUrl, username, embeds)
+        sent += Sent(webhookUrl, username, embeds, components)
         return result
     }
 }

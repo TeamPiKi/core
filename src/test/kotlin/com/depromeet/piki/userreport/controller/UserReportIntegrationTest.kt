@@ -33,7 +33,9 @@ import org.springframework.web.context.WebApplicationContext
 import tools.jackson.databind.ObjectMapper
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 // 사용자 신고(#1291). 핵심은 "신고가 차단을 동반한다" 와 "알림 실패가 신고를 실패시키지 않는다" 이다.
@@ -219,6 +221,20 @@ class UserReportIntegrationTest : IntegrationTestSupport() {
         assertTrue(rendered.contains(reportedId.toString()), "신고된 사용자 id 가 실려야 한다")
         assertTrue(rendered.contains(reporterId.toString()), "신고한 사용자 id 가 실려야 한다")
         assertTrue(rendered.contains("2026-01-02 12:04:05"), "시각이 KST 로 실려야 한다: $rendered")
+    }
+
+    // 버튼이 "어느 환경의 누구" 를 되돌려줘야 운영자가 그 신고 상세로 직행한다
+    @Test
+    fun `알림 버튼은 환경과 신고된 사람을 custom_id 에 싣는다`() {
+        val notification = notificationOf()
+        val notifier = notifier(webhookUrl = "https://discord.test/webhook", environment = "prod")
+
+        notifier.notify(notification)
+
+        val rendered = objectMapper.writeValueAsString(stubSender.sent.last().components)
+        assertContains(rendered, "report-grant:prod:${notification.reportedId}", message = "버튼 custom_id: $rendered")
+        // Link 버튼(url)이면 채널 전원이 눌러 관리자 확인 없이 들어간다
+        assertFalse(rendered.contains("\"url\""), "URL 직행 버튼이면 안 된다: $rendered")
     }
 
     // 웹훅을 안 정했어도 신고는 돌아야 한다

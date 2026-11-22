@@ -1,5 +1,6 @@
 package com.depromeet.piki.userreport.service
 
+import com.depromeet.piki.admin.access.ReportGrantComponentHandler
 import com.depromeet.piki.admin.config.AdminProperties
 import com.depromeet.piki.userreport.service.dto.ReportNotification
 import org.slf4j.LoggerFactory
@@ -26,7 +27,7 @@ class DiscordReportNotifier(
     override fun notify(notification: ReportNotification) {
         val webhookUrl = adminProperties.discordReportWebhookUrl
         if (webhookUrl.isBlank()) return logSkip("신고 알림 웹훅 미설정", notification)
-        runCatching { webhookSender.send(webhookUrl, usernameOf(), embedOf(notification)) }
+        runCatching { webhookSender.send(webhookUrl, usernameOf(), embedOf(notification), componentsOf(notification)) }
             .onFailure { log.warn("신고 알림 게시 실패 reportedId={}", notification.reportedId, it) }
     }
 
@@ -55,10 +56,8 @@ class DiscordReportNotifier(
                         field("사유", notification.reason.name),
                         field("신고 시각 (KST)", kstOf(notification.reportedAt), inline = false),
                         field("상세", notification.detail?.takeIf { it.isNotBlank() } ?: "없음", inline = false),
-                        // 진입 방법을 메시지에 싣는다 — 웹훅 메시지에는 버튼을 붙일 수 없고(디스코드가 앱 소유
-                        // 웹훅에만 허용), 평문 링크는 채널 전원이 눌러 들어가므로 관리자 확인이 사라진다.
-                        // 커맨드는 실행자가 허용 관리자인지 확인한 뒤 본인에게만 보이는 원타임 링크를 준다.
-                        field("백오피스", "`/piki-admin env:${envLabel()} dest:reports`", inline = false),
+                        // 버튼이 안 실리는 웹훅(사람이 콘솔에서 만든 것)에서도 진입 경로가 보이게 커맨드를 함께 적는다
+                        field("백오피스", "아래 버튼 또는 `/piki-admin env:${envLabel()} dest:reports`", inline = false),
                     ),
             ),
         )
@@ -71,6 +70,32 @@ class DiscordReportNotifier(
             .withZoneSameInstant(KST)
             .format(KST_FORMAT)
 
+    /**
+     * `백오피스에서 보기` 버튼. 누른 사람이 허용 관리자인지 확인한 뒤 본인에게만 보이는 원타임 링크를 준다
+     * ([com.depromeet.piki.admin.access.ReportGrantComponentHandler]).
+     *
+     * Link 버튼(URL 직행)이 아니라 인터랙션 버튼이다 — URL 을 그대로 실으면 채널에 있는 누구나 눌러
+     * 관리자 확인 없이 들어간다. 그래서 신원 확인을 한 단계 앞에 둔다.
+     *
+     * 앱이 만든 웹훅이 아니면 디스코드가 이 필드를 거부한다. 그 경우에도 알림 자체는 나가야 하므로,
+     * 전송기가 실패를 삼키고 위의 커맨드 안내가 대체 경로가 된다.
+     */
+    private fun componentsOf(notification: ReportNotification): List<Map<String, Any>> =
+        listOf(
+            mapOf(
+                "type" to ACTION_ROW,
+                "components" to
+                    listOf(
+                        mapOf(
+                            "type" to BUTTON,
+                            "style" to BUTTON_PRIMARY,
+                            "label" to "백오피스에서 보기",
+                            "custom_id" to ReportGrantComponentHandler.customIdOf(envLabel(), notification.reportedId),
+                        ),
+                    ),
+            ),
+        )
+
     private fun field(
         name: String,
         value: String,
@@ -80,6 +105,9 @@ class DiscordReportNotifier(
     companion object {
         // 주의를 끄는 붉은 계열 — 주간 리포트와 색으로도 구분된다
         private const val EMBED_COLOR = 0xE5484D
+        private const val ACTION_ROW = 1
+        private const val BUTTON = 2
+        private const val BUTTON_PRIMARY = 1
         private val KST: ZoneId = ZoneId.of("Asia/Seoul")
         private val KST_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     }

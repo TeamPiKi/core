@@ -15,12 +15,16 @@ import java.time.Duration
  * 환경별로 다른 이름(`dev-신고알림` · `prod-신고알림`)을 띄울 수 있다. 운영이 쓰는 Grafana 알림도 같은 방식이다.
  *
  * 웹훅 URL 은 그 자체가 게시 권한이다 — 로그에 절대 남기지 않는다.
+ *
+ * components(버튼)는 **앱이 만든 웹훅에서만** 실린다. 콘솔에서 사람이 만든 웹훅으로 보내면 디스코드가 그 필드를
+ * 거부하므로, 버튼을 쓰려면 봇 API 로 만든 웹훅 URL 을 넣어야 한다.
  */
 interface DiscordWebhookSender {
     fun send(
         webhookUrl: String,
         username: String,
         embeds: List<Map<String, Any>>,
+        components: List<Map<String, Any>> = emptyList(),
     ): Boolean
 }
 
@@ -43,13 +47,21 @@ class HttpDiscordWebhookSender : DiscordWebhookSender {
         webhookUrl: String,
         username: String,
         embeds: List<Map<String, Any>>,
+        components: List<Map<String, Any>>,
     ): Boolean =
         try {
+            // 빈 배열을 보내지 않는다 — 사람이 만든 웹훅은 components 필드 자체를 거부한다
+            val payload =
+                buildMap<String, Any> {
+                    put("username", username)
+                    put("embeds", embeds)
+                    if (components.isNotEmpty()) put("components", components)
+                }
             client
                 .post()
                 .uri(webhookUrl)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(mapOf("username" to username, "embeds" to embeds))
+                .body(payload)
                 .retrieve()
                 .toBodilessEntity()
             true

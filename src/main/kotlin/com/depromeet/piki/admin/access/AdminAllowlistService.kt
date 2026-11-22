@@ -4,6 +4,7 @@ import com.depromeet.piki.admin.config.AdminProperties
 import com.depromeet.piki.admin.config.ConditionalOnAdminEnabled
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
+import java.util.UUID
 import java.time.Duration
 
 // 슬랙으로 등록한 "접근 허용 IP" 를 Redis 에 둔다. 이 한 allowlist 가 두 게이트를 다 받친다 —
@@ -53,7 +54,9 @@ class AdminAllowlistService(
         name: String,
         env: String,
         dest: GrantDest = GrantDest.ADMIN,
-    ): String = grantTokenCodec.issue(userId, name, env, dest)
+        // 목적지 안에서 가리키는 대상(신고된 사용자 id). 신고 알림 버튼이 그 사람의 상세로 직행할 때 쓴다(#1291)
+        target: UUID? = null,
+    ): String = grantTokenCodec.issue(userId, name, env, dest, target)
 
     // 토큰 소비(1회) — 서명·만료 검증 후 (1) 토큰의 env 가 이 환경과 같고 (2) 처음 쓰는 토큰이면 신원 반환, 아니면 null.
     // one-time 은 nonce 를 SET NX(setIfAbsent)로 심어 보장한다 — 이미 있으면(재사용·동시 재클릭) false 라 거부(TOCTOU 차단).
@@ -65,7 +68,7 @@ class AdminAllowlistService(
         if (claims.env != currentEnv) return null
         val fresh = redis.opsForValue().setIfAbsent(usedKey(claims.nonce), "1", adminProperties.grantTokenTtl) ?: false
         if (!fresh) return null
-        return GrantIdentity(userId = claims.userId, name = claims.name, dest = claims.dest)
+        return GrantIdentity(userId = claims.userId, name = claims.name, dest = claims.dest, target = claims.target)
     }
 
     private fun allowKey(ip: String) = "$ALLOW_PREFIX$ip"
@@ -80,4 +83,9 @@ class AdminAllowlistService(
 
 data class AllowedIp(val ip: String, val name: String)
 
-data class GrantIdentity(val userId: String, val name: String, val dest: GrantDest)
+data class GrantIdentity(
+    val userId: String,
+    val name: String,
+    val dest: GrantDest,
+    val target: UUID? = null,
+)

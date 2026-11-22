@@ -24,6 +24,9 @@ import java.time.Duration
  * @property scheduleGraceWindow 예약 발송 유예시간. 예약시각을 이 시간보다 더 넘겨 도래하면(다운타임 등) 발송하지 않고 MISSED 로 정리한다.
  * @property discordBotToken Discord Bot API 인증 토큰(민감). 주간 지표 리포트를 채널에 게시할 때 Authorization: Bot 헤더로 쓴다. 비면 게시 skip.
  * @property discordMetricsChannelId 주간 지표 리포트를 게시할 Discord 채널 id. 비면 게시 skip(fail-safe).
+ * @property discordReportChannelId 신고 알림이 게시되는 Discord 채널 id(#1291). 그 채널의 버튼 클릭만 받아들이는
+ *   게이트에 쓴다 — admin 채널 하나만 허용하면 신고 채널의 버튼이 거부된다. 비면 버튼 클릭 전부 거부(fail-closed)고,
+ *   알림 게시와 슬래시커맨드 진입은 그대로 동작한다.
  * @property discordReportWebhookUrl 사용자 신고 알림을 게시할 Discord 웹훅 URL(#1291, 민감 — URL 자체가 게시 권한).
  *   봇 토큰 대신 웹훅을 쓰는 이유는 보내는 이름을 메시지마다 지정할 수 있어서다(dev-신고알림 · prod-신고알림).
  *   주간 리포트와 다른 채널이다 — 운영이 신고만 보는 자리라 섞지 않는다. 비면 게시 skip(fail-safe)이고 신고 자체는 정상 접수된다.
@@ -44,6 +47,7 @@ data class AdminProperties(
     val scheduleGraceWindow: Duration = Duration.ofHours(1),
     val discordBotToken: String = "",
     val discordMetricsChannelId: String = "",
+    val discordReportChannelId: String = "",
     val discordReportWebhookUrl: String = "",
     val userMilestoneInterval: Long = 1000,
 ) {
@@ -55,6 +59,7 @@ data class AdminProperties(
             "discordAdminUserIds=${discordAdminUserIds.size} ids, discordAdminChannelId=$discordAdminChannelId, " +
             "discordMetricsChannelId=$discordMetricsChannelId, " +
             "discordBotToken=${if (discordBotToken.isBlank()) "<none>" else "<set>"}, " +
+            "discordReportChannelId=$discordReportChannelId, " +
             "discordReportWebhookUrl=${if (discordReportWebhookUrl.isBlank()) "<none>" else "<set>"}, " +
             "grantSigningKey=${if (grantSigningKey.isBlank()) "<none>" else "<set>"}, " +
             "userMilestoneInterval=$userMilestoneInterval, " +

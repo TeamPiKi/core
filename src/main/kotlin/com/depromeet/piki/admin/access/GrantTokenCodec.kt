@@ -28,13 +28,24 @@ class GrantTokenCodec(
         name: String,
         env: String,
         dest: GrantDest = GrantDest.ADMIN,
+        target: UUID? = null,
     ): String {
         val exp = Instant.now().epochSecond + adminProperties.grantTokenTtl.seconds
         val nonce = UUID.randomUUID().toString().replace("-", "")
-        // exp 는 문자열로 담아 파싱 API 불확실성을 피한다(asString 만 사용). d = grant 목적지(admin/docs/spec).
+        // exp 는 문자열로 담아 파싱 API 불확실성을 피한다(asString 만 사용). d = grant 목적지(admin/reports/docs/spec).
+        // t = 목적지 안에서 가리키는 대상 id(신고된 사용자). 경로 문자열이 아니라 UUID 만 싣는다 —
+        // 임의 경로를 서명해 주면 서명된 오픈 리다이렉트가 된다.
         val payload =
             objectMapper.writeValueAsString(
-                mapOf("u" to userId, "n" to name, "e" to env, "d" to dest.name, "x" to exp.toString(), "id" to nonce),
+                buildMap {
+                    put("u", userId)
+                    put("n", name)
+                    put("e", env)
+                    put("d", dest.name)
+                    put("x", exp.toString())
+                    put("id", nonce)
+                    target?.let { put("t", it.toString()) }
+                },
             )
         val payloadB64 = B64.encodeToString(payload.toByteArray(Charsets.UTF_8))
         return "$payloadB64.${hmacHex(payloadB64)}"
@@ -71,6 +82,17 @@ class GrantTokenCodec(
                                 ?.let { runCatching { GrantDest.valueOf(it) }.getOrNull() } ?: return null
                         }
                     },
+                // t 가 없으면 목적지 기본 경로다. 있으면 UUID 로만 파싱한다 — 파싱 실패는 폴백 없이 토큰 거부다
+                // (경로를 만드는 값이라 느슨하게 받으면 조립 결과를 예측할 수 없다).
+                target =
+                    json.path("t").let { t ->
+                        if (t.isMissingNode) {
+                            null
+                        } else {
+                            t.takeIf { it.isString }?.asString()
+                                ?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return null
+                        }
+                    },
             )
         }.getOrElse { e ->
             log.debug("grant 토큰 검증 실패", e)
@@ -96,6 +118,8 @@ data class GrantClaims(
     val env: String,
     val nonce: String,
     val dest: GrantDest,
+    // 목적지 안에서 가리키는 대상(신고된 사용자 id). 목적지 기본 화면이면 없다
+    val target: UUID? = null,
 )
 
 // grant 링크의 목적지 — 클릭 시 어디로 리다이렉트하고 admin 세션을 발급하는지. 토큰에 서명돼 위조 불가.
@@ -105,10 +129,23 @@ enum class GrantDest(
     val issueSession: Boolean,
 ) {
     ADMIN("/admin", true),
-    // 신고 알림을 받고 바로 그 화면으로 들어가는 경로(#1291). 백오피스라 ADMIN 과 같이 세션을 발급한다 —
-    // 목적지만 다르다. 특정 신고로 직행하지 않고 목록으로 보낸다(최근순이라 방금 온 신고가 맨 위다):
-    // 임의 경로를 토큰에 실으면 서명된 오픈 리다이렉트가 되고, 목적지 집합이 enum 이라는 성질이 깨진다.
+    // 신고 알림을 받고 바로 그 화면으로 들어가는 경로(#1291). 백오피스라 ADMIN 과 같이 세션을 발급한다 — 목적지만 다르다.
     REPORTS("/admin/reports", true),
     DOCS("/docs/index.html", false),
     SPEC("/v3/api-docs", false),
+    ;
+
+    /**
+     * 실제 리다이렉트 경로. 대상 id 가 있으면 그 사람의 신고 상세로 직행한다.
+     *
+     * 경로를 토큰이 아니라 **여기서 조립**한다 — 토큰에 담는 것은 UUID 하나뿐이라, 서명된 값으로 임의 경로를
+     * 만들 수 없다(오픈 리다이렉트 차단). REPORTS 밖의 목적지는 대상 개념이 없어 target 을 무시한다.
+     */
+    fun pathFor(target: UUID?): String {
+        target ?: return redirectPath
+        return when (this) {
+            REPORTS -> "$redirectPath/$target"
+            else -> redirectPath
+        }
+    }
 }
