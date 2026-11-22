@@ -18,6 +18,51 @@ class DiscordInteractionsTest {
     }
 
     @Test
+    fun `버튼 custom_id 와 인터랙션 type 을 뽑는다`() {
+        val root = mapper.readTree("""{"type":3,"channel_id":"c1","data":{"custom_id":"report-grant:prod:abc"}}""")
+
+        assertEquals(3, DiscordInteractions.interactionType(root))
+        assertEquals("report-grant:prod:abc", DiscordInteractions.customId(root))
+        assertEquals("c1", DiscordInteractions.channelId(root))
+    }
+
+    // 버튼은 신고 채널, 커맨드는 admin 채널에서만. 기준을 섞으면 버튼이 늘 거부되거나 커맨드가 신고 채널로 샌다
+    @Test
+    fun `채널 게이트는 커맨드와 버튼에 다른 채널을 요구한다`() {
+        fun allowed(
+            channel: String,
+            type: Int,
+        ) = DiscordInteractions.isAllowedChannel(
+            channelId = channel,
+            interactionType = type,
+            adminChannelId = "admin-ch",
+            reportChannelId = "report-ch",
+        )
+
+        assertEquals(true, allowed("admin-ch", DiscordInteractions.TYPE_APPLICATION_COMMAND))
+        assertEquals(false, allowed("report-ch", DiscordInteractions.TYPE_APPLICATION_COMMAND))
+        assertEquals(true, allowed("report-ch", DiscordInteractions.TYPE_MESSAGE_COMPONENT))
+        assertEquals(false, allowed("admin-ch", DiscordInteractions.TYPE_MESSAGE_COMPONENT))
+    }
+
+    // 설정 실수가 "아무 채널에서나 열림" 이 되지 않게 빈 설정은 거부다
+    @Test
+    fun `채널이 설정되지 않으면 모두 거부한다`() {
+        fun allowed(
+            adminChannelId: String,
+            reportChannelId: String,
+        ) = DiscordInteractions.isAllowedChannel(
+            channelId = "any",
+            interactionType = DiscordInteractions.TYPE_MESSAGE_COMPONENT,
+            adminChannelId = adminChannelId,
+            reportChannelId = reportChannelId,
+        )
+
+        assertEquals(false, allowed(adminChannelId = "admin-ch", reportChannelId = ""))
+        assertEquals(false, allowed(adminChannelId = "", reportChannelId = ""))
+    }
+
+    @Test
     fun `커맨드 이름을 뽑는다`() {
         val root = mapper.readTree("""{"data":{"name":"piki-admin"}}""")
         assertEquals("piki-admin", DiscordInteractions.commandName(root))

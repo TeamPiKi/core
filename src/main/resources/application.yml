@@ -46,6 +46,15 @@ admin:
   discord-admin-channel-id: ${DISCORD_ADMIN_CHANNEL_ID:}
   # 주간 지표 리포트를 게시할 Discord 채널 id(비민감 — 채널 id 는 secret 아님).
   discord-metrics-channel-id: ${DISCORD_METRICS_CHANNEL_ID:}
+  # 신고 알림이 게시되는 Discord 채널 id(#1291 — 비민감, 채널 id 는 secret 아님).
+  # 그 채널에서 눌린 버튼만 받아들이는 게이트에 쓴다. 비면 버튼 클릭 전부 거부(fail-closed)고,
+  # 알림 게시와 슬래시커맨드 진입은 그대로 동작한다.
+  discord-report-channel-id: ${DISCORD_REPORT_CHANNEL_ID:}
+  # 사용자 신고 알림을 게시할 Discord 웹훅 URL(#1291 — 민감, URL 자체가 게시 권한이라 SSM SecureString).
+  # 봇 토큰이 아니라 웹훅을 쓰는 이유: 보내는 이름을 메시지마다 지정할 수 있어 환경별로 다르게 띄운다
+  # (dev-신고알림 · prod-신고알림). 환경마다 다른 웹훅을 넣으면 채널도 환경별로 갈린다.
+  # 비면 게시 skip 이고 신고 접수는 정상 동작한다.
+  discord-report-webhook-url: ${DISCORD_REPORT_WEBHOOK_URL:}
   # Discord Bot API 인증 토큰(민감 — GitHub secret). 주간 리포트 채널 게시에 사용. 비면 게시 skip.
   discord-bot-token: ${DISCORD_BOT_TOKEN:}
   # 이 앱이 도는 환경(dev/prod). grant 토큰 env 바인딩 검증용.
