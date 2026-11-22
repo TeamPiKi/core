@@ -27,8 +27,8 @@ class FriendshipApiExamples(
                     add(FriendshipException.selfNotAllowed(), name = "자기 자신을 추가")
                     unauthorized()
                     add(FriendshipException.guestCannotUse(), name = "게스트의 친구 기능 이용 거부")
-                    add(UserException.notFound(), name = "없는 사용자")
-                    add(UserException.deletedUser(), name = "탈퇴한 계정 (요청자 또는 상대)")
+                    add(UserException.notFound(), name = "없는 사용자 · 탈퇴한 상대")
+                    add(UserException.deletedUser(), name = "요청자 본인이 탈퇴한 계정")
                 }
             }
             if (handlerMethod.binds(FriendshipController::removeFriend)) {

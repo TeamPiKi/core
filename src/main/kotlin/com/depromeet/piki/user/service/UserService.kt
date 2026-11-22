@@ -239,6 +239,22 @@ class UserService(
         return userRepository.findByIds(userIds).filter { it.isActive() }
     }
 
+    // 두 사용자 행을 함께 잠근다(#1288 친구 추가). 활성 판정은 하지 않고 찾은 것만 돌려준다 —
+    // 같은 "탈퇴함" 이라도 경로마다 응답이 달라서다(요청자 본인은 409, 상대는 404).
+    // 없는 id 는 결과에 없다.
+    //
+    // 잠금 순서는 질의가 id 오름차순으로 고정한다 — A→B 와 B→A 가 동시에 와도 같은 순서로 잡아 교착하지 않는다.
+    // 탈퇴 cascade 도 user 행을 먼저 잠그므로 이 순서와 맞물린다.
+    //
+    // 반드시 트랜잭션 안에서 호출한다 — 락은 트랜잭션 경계까지만 유지된다.
+    fun lockPairForUpdate(
+        first: UUID,
+        second: UUID,
+    ): Map<UUID, User> {
+        checkInTransaction()
+        return userRepository.findAllByIdsForUpdate(setOf(first, second)).associateBy { it.id }
+    }
+
     // 잠긴 활성 조회 — 활성 확인과 쓰기를 같은 트랜잭션에서 원자화해야 하는 쓰기 경로 전용(#776).
     // findActiveById(비잠금)와 달리 user 행을 FOR UPDATE 로 잠가, 확인~쓰기 사이에 탈퇴 cascade 가 끼어들어
     // tombstone 위에 쓰기가 반영되는(계정 부활·PII 복원·orphan 자식 행) 경합을 닫는다. 탈퇴 cascade 도 user 행

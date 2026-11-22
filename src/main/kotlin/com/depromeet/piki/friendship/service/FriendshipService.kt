@@ -8,6 +8,7 @@ import com.depromeet.piki.friendship.service.dto.FriendSummary
 import com.depromeet.piki.profile.service.ProfileCountReader
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
+import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.service.UserService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -28,16 +29,31 @@ class FriendshipService(
     /**
      * 친구 추가. 이미 친구면 아무것도 하지 않고 성공한다.
      *
-     * 상대가 없거나 탈퇴했으면 404 — [UserService.findActiveById] 가 그 판정을 들고 있다.
+     * **두 사용자 행을 먼저 잠근다.** 잠금 없이 확인하고 저장하면 두 가지가 깨진다.
+     *  - 확인과 저장 사이에 상대(또는 나)가 탈퇴를 커밋하면, 탈퇴 cascade 가 먼저 돌고 저장이 뒤에 붙어
+     *    탈퇴자가 들어간 친구 행이 영영 남는다. 목록 조회가 가려 주지만 "탈퇴 시 양방향 삭제" 가 깨진 상태다.
+     *  - 같은 A→B 요청 둘이 동시에 `exists=false` 를 읽으면 뒤쪽 INSERT 가 유니크 위반으로 떨어져,
+     *    멱등이어야 할 재요청이 오류를 받는다.
+     *
+     * 잠금 순서는 [UserService.lockPairForUpdate] 가 id 오름차순으로 고정한다 — A→B 와 B→A 가 동시에
+     * 와도 교착하지 않는다. 탈퇴 cascade 도 user 행을 먼저 잠그므로 그쪽과도 맞물린다.
+     *
+     * save 를 try/catch 로 감싸 중복만 삼키는 방법은 쓰지 않는다. 같은 트랜잭션에서 난 예외가 트랜잭션을
+     * 롤백 전용으로 표시해, 삼켜도 커밋에서 터진다.
+     *
+     * 상대가 없거나 탈퇴했으면 **404** 다. 탈퇴를 409 로 알리면 "그 계정이 있었다" 는 사실이 드러나고,
+     * 요청자 입장에선 그냥 찾을 수 없는 상대다. 409 는 내 계정이 탈퇴 상태일 때의 응답으로 남긴다.
      */
     @Transactional
     fun add(
         userId: UUID,
         friendId: UUID,
     ) {
-        requireMember(userId)
+        // 잠그기 전에 거른다 — 자기 자신이면 잠글 쌍이 아니고, 입력만 보고 판정할 수 있다
         if (userId == friendId) throw FriendshipException.selfNotAllowed()
-        userService.findActiveById(friendId)
+        val locked = userService.lockPairForUpdate(userId, friendId)
+        requireMember(locked[userId] ?: throw UserException.notFound())
+        requireActiveTarget(locked[friendId])
         if (friendshipRepository.exists(userId, friendId)) return
         friendshipRepository.save(Friendship(userId = userId, friendId = friendId))
     }
@@ -53,7 +69,7 @@ class FriendshipService(
         userId: UUID,
         friendId: UUID,
     ) {
-        requireMember(userId)
+        requireMember(userService.findActiveById(userId))
         friendshipRepository.delete(userId, friendId)
     }
 
@@ -71,7 +87,7 @@ class FriendshipService(
     fun list(userId: UUID): FriendList {
         // 추가·삭제와 같은 게이트를 건다. 게스트에게 빈 목록을 돌려주면 "친구가 없다" 로 읽혀,
         // 로그인하면 쓸 수 있는 기능이라는 사실이 응답에서 사라진다
-        requireMember(userId)
+        requireMember(userService.findActiveById(userId))
         val friendIds = friendshipRepository.findAllByUserId(userId).map { it.friendId }
         val usersById = userService.findActiveByIds(friendIds).associateBy { it.id }
         // 추가순을 유지한 채 탈퇴자만 떨군다
@@ -94,8 +110,15 @@ class FriendshipService(
     }
 
     // 게스트는 친구를 만들 수 없다(#1285). 앱은 이 403 을 받아 로그인 안내 모달을 띄운다.
-    private fun requireMember(userId: UUID) {
-        val user: User = userService.findActiveById(userId)
+    // 이미 읽은(또는 잠근) user 를 받는다 — 같은 행을 두 번 읽지 않기 위해서다.
+    private fun requireMember(user: User) {
+        user.deletedAt?.let { throw UserException.deletedUser() }
         if (user.identityType != IdentityType.MEMBER) throw FriendshipException.guestCannotUse()
+    }
+
+    // 상대의 부재와 탈퇴를 같은 404 로 묶는다. 둘을 가르면 "그 계정이 있었다" 가 드러난다.
+    private fun requireActiveTarget(target: User?) {
+        val user = target ?: throw UserException.notFound()
+        if (!user.isActive()) throw UserException.notFound()
     }
 }

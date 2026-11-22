@@ -118,6 +118,21 @@ class FriendshipIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.code").value(UserErrorCode.NOT_FOUND.code))
     }
 
+    // 상대의 부재와 탈퇴를 같은 404 로 묶는다 — 가르면 "그 계정이 있었다" 가 응답으로 드러난다.
+    // 409(USER-003)는 요청자 본인이 탈퇴 상태일 때의 응답으로 남긴다.
+    @Test
+    fun `탈퇴한 상대를 친구로 추가하면 409 가 아니라 404 다`() {
+        val mockMvc = mockMvc()
+        val me = member()
+        val withdrawn = member()
+        jdbcTemplate.update("UPDATE users SET deleted_at = NOW(6) WHERE id = ?", uuidToBytes(withdrawn))
+
+        mockMvc
+            .perform(post("/api/v1/friends/$withdrawn").by(me))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value(UserErrorCode.NOT_FOUND.code))
+    }
+
     @Test
     fun `게스트는 친구 기능을 쓸 수 없다`() {
         val mockMvc = mockMvc()
@@ -226,7 +241,10 @@ class FriendshipIntegrationTest : IntegrationTestSupport() {
     private fun readyWish(userId: UUID): Long {
         val result =
             wishPersistenceService.persist(
-                RegisterWishFromUrlCommand(userId, ProductLink.parse("https://shop.example.com/p/${UUID.randomUUID()}")),
+                RegisterWishFromUrlCommand(
+                    userId,
+                    ProductLink.parse("https://shop.example.com/p/${UUID.randomUUID()}"),
+                ),
             )
         itemParsingService.completeLatest(
             entityManager,
@@ -244,11 +262,14 @@ class FriendshipIntegrationTest : IntegrationTestSupport() {
             mockMvc()
                 .perform(
                     post("/api/v1/folders").by(userId).json(mapOf("name" to name)),
-                )
-                .andExpect(status().isCreated)
+                ).andExpect(status().isCreated)
                 .andReturn()
                 .response.contentAsString
-        return objectMapper.readTree(response).path("data").path("id").asLong()
+        return objectMapper
+            .readTree(response)
+            .path("data")
+            .path("id")
+            .asLong()
     }
 
     private fun putWish(

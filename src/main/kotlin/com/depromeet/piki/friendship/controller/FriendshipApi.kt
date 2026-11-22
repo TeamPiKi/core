@@ -14,9 +14,11 @@ import java.util.UUID
 
 private const val UNAUTHORIZED = "미인증 (JWT 토큰 없음 또는 유효하지 않음)"
 private const val GUEST = "권한 없음 (게스트는 친구 기능을 쓸 수 없음 — code: FRIENDSHIP-001)"
-private const val DELETED_USER = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)"
+private const val DELETED_USER = "요청자 본인이 탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태 — code: USER-003)"
 private const val SELF = "자기 자신을 친구로 추가 (code: FRIENDSHIP-002)"
-private const val TARGET_NOT_FOUND = "상대를 찾을 수 없음 (없는 사용자 · 탈퇴한 사용자 — code: USER-001 · USER-003)"
+
+// 상대의 부재와 탈퇴를 가르지 않는다 — 가르면 "그 계정이 있었다" 가 드러난다
+private const val TARGET_NOT_FOUND = "상대를 찾을 수 없음 (없는 사용자 · 탈퇴한 사용자 — code: USER-001)"
 
 @Tag(name = "Friendship", description = "단방향 친구 추가·삭제·목록 API")
 interface FriendshipApi {
@@ -25,7 +27,8 @@ interface FriendshipApi {
         description =
             "상대를 내 친구 목록에 넣는다. 요청·수락이 없는 단방향이라 상대의 목록은 바뀌지 않고 알림도 가지 않는다.\n\n" +
                 "- 이미 친구면 아무것도 바꾸지 않고 그대로 성공한다(멱등). 같은 탭을 두 번 눌러도 실패가 아니다.\n" +
-                "- 상대가 나를 추가했는지와 무관하다. 서로 추가하면 각자 목록에 한 줄씩 생긴다.",
+                "- 상대가 나를 추가했는지와 무관하다. 서로 추가하면 각자 목록에 한 줄씩 생긴다.\n" +
+                "- 상대가 없거나 탈퇴했으면 404 로 같다. 둘을 가르지 않는다.",
     )
     @ApiResponses(
         value = [
