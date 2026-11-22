@@ -33,6 +33,7 @@ internal object RemoteExtractionContract {
             ExtractionErrorCode.INVALID_URL to { ProductSnapshotException.notProductPage() },
             ExtractionErrorCode.IMAGE_UNSUPPORTED to { ProductSnapshotException.untrustworthyValue() },
             ExtractionErrorCode.BLOCKED_HOST to { ProductExtractorException.permanentFailure() },
+            ExtractionErrorCode.BLOCKED_DOMAIN to { ProductExtractorException.blockedDomain() },
         )
 
     // target 에 URL 을 실을 때는 호출자가 따옴표로 감싼다(logfmt)
@@ -81,6 +82,7 @@ internal object RemoteExtractionContract {
             currency = if (hasCurrency()) currency else null,
             finalUrl = if (hasFinalUrl()) finalUrl else null,
             method = method,
+            originalPrice = if (hasOriginalPrice()) originalPrice else null,
         )
 
     private fun contractViolation(target: String): ProductExtractorException {

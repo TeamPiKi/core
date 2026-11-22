@@ -90,20 +90,21 @@ class TournamentItemService(
         tournamentItemId: Long,
         name: String?,
         price: Int?,
+        originalPrice: Int?,
         currency: String?,
         image: MultipartFile?,
     ) {
         val productImage = image?.let { ProductImage.of(it.bytes, it.contentType) }
         productImage?.let {
             tournamentItemPersistenceService
-                .validateUserInput(userId, tournamentId, tournamentItemId, name, price, currency)
+                .validateUserInput(userId, tournamentId, tournamentItemId, name, price, originalPrice, currency)
         }
         val imageUrl =
             productImage?.let {
                 imageStorage.upload(it.bytes, "tournament-items/${UUID.randomUUID()}.${it.extension}", it.mimeType)
             }
         UniqueConflictRetry.once("tournamentItem=$tournamentItemId") {
-            tournamentItemPersistenceService.applyUserInput(userId, tournamentId, tournamentItemId, name, price, imageUrl, currency)
+            tournamentItemPersistenceService.applyUserInput(userId, tournamentId, tournamentItemId, name, price, originalPrice, imageUrl, currency)
         }
     }
 

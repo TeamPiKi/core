@@ -14,6 +14,8 @@ data class GroupResultResponse(
         val itemId: Long,
         val name: String?,
         val price: Int?,
+        val originalPrice: Int?,
+        val discountRate: Int?,
         val currency: String?,
         val imageUrl: String?,
         val chosenBy: List<ParticipantSummaryResponse>,
@@ -42,6 +44,8 @@ data class GroupResultResponse(
                         itemId = item.itemId,
                         name = item.name,
                         price = item.price,
+                        originalPrice = item.originalPrice,
+                        discountRate = item.discountRate,
                         currency = item.currency,
                         imageUrl = item.imageUrl,
                         chosenBy = item.chosenBy.map { p ->

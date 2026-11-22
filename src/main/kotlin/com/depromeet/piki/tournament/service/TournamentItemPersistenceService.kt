@@ -127,6 +127,7 @@ class TournamentItemPersistenceService(
         tournamentItemId: Long,
         name: String?,
         price: Int?,
+        originalPrice: Int?,
         imageUrl: String?,
         currency: String?,
     ) {
@@ -134,7 +135,8 @@ class TournamentItemPersistenceService(
         val tournament = verifyEditable(userId, tournamentId)
         val tournamentItem = locked ?: throw TournamentException.notFoundTournamentItem()
         verifyEditor(tournamentItem, tournamentId, userId)
-        val values = itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency))
+        val input = UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency, originalPrice = originalPrice)
+        val values = itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(input)
         userInputRecorder.record(tournamentItem.slot, tournamentItem.itemId, values, createdBy = userId)
     }
 
@@ -146,12 +148,15 @@ class TournamentItemPersistenceService(
         tournamentItemId: Long,
         name: String?,
         price: Int?,
+        originalPrice: Int?,
         currency: String?,
     ) {
         val tournament = verifyEditable(userId, tournamentId)
         val tournamentItem = tournamentItemRepository.findById(tournamentItemId) ?: throw TournamentException.notFoundTournamentItem()
         verifyEditor(tournamentItem, tournamentId, userId)
-        itemCardService.cardOf(tournamentItem.cardQuery(tournament)).userInputValues(UserInput.beforeImageUpload(name, price, currency))
+        itemCardService
+            .cardOf(tournamentItem.cardQuery(tournament))
+            .userInputValues(UserInput.beforeImageUpload(name, price, originalPrice, currency))
     }
 
     private fun verifyEditable(

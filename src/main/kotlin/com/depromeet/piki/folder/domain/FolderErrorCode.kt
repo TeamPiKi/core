@@ -31,4 +31,10 @@ enum class FolderErrorCode(
         ErrorCategory.INVALID_INPUT,
         "다른 폴더를 선택해 주세요.",
     ),
+    // 전체 선택(all)과 개별 선택(wishIds)을 함께 보냄
+    INVALID_SELECTION(
+        "FOLDER-005",
+        ErrorCategory.INVALID_INPUT,
+        "선택한 위시를 다시 확인해 주세요.",
+    ),
 }

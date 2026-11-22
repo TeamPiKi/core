@@ -17,6 +17,33 @@ class ItemSnapshotTest {
     }
 
     @Test
+    fun `originalPrice 가 price 보다 낮거나 price 없이 있거나 음수면 생성에 실패한다`() {
+        assertFailsWith<IllegalArgumentException> { version(price = 10_000, originalPrice = 9_999) }
+        assertFailsWith<IllegalArgumentException> { version(price = null, originalPrice = 10_000) }
+        assertFailsWith<IllegalArgumentException> { version(price = 0, originalPrice = -1) }
+    }
+
+    @Test
+    fun `originalPrice 가 price 와 같으면 할인 없음으로 생성된다`() {
+        assertEquals(10_000, version(price = 10_000, originalPrice = 10_000).originalPrice)
+    }
+
+    @Test
+    fun `정가를 모르면 discountRate 는 null 이다`() {
+        assertNull(version(price = 90_000, originalPrice = null).discountRate)
+        assertNull(version(price = null, originalPrice = null).discountRate)
+    }
+
+    @Test
+    fun `discountRate 는 정가 대비 비율을 내림으로 계산하고 할인 없으면 0 이다`() {
+        assertEquals(10, version(price = 90_000, originalPrice = 100_000).discountRate)
+        assertEquals(33, version(price = 20_000, originalPrice = 30_000).discountRate)
+        assertEquals(0, version(price = 100_000, originalPrice = 100_000).discountRate)
+        assertEquals(100, version(price = 0, originalPrice = 100_000).discountRate)
+        assertEquals(0, version(price = 0, originalPrice = 0).discountRate)
+    }
+
+    @Test
     fun `name 이 512자를 초과하면 생성에 실패한다`() {
         assertFailsWith<IllegalArgumentException> { version(name = "가".repeat(513)) }
     }
@@ -145,7 +172,7 @@ class ItemSnapshotTest {
         val base = version(name = "나이키", price = 99_000, currency = "KRW")
         val editor = UUID.randomUUID()
 
-        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 79_000, imageUrl = null, currency = null).filledFrom(base)), createdBy = editor)
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 79_000, imageUrl = null, currency = null, originalPrice = null).filledFrom(base)), createdBy = editor)
 
         assertTrue(userVersion.isReady())
         assertEquals("나이키", userVersion.name)
@@ -163,7 +190,7 @@ class ItemSnapshotTest {
     fun `INCOMPLETE base 의 빈 필드를 채우면 추출이 건진 값과 합친 READY 버전이 된다`() {
         val base = version(name = "몬치치 인형", price = null)
 
-        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 25_000, imageUrl = null, currency = "KRW").filledFrom(base)), createdBy = UUID.randomUUID())
+        val userVersion = ItemSnapshot.userInput(1L, UserInputValues.of(UserInput(name = null, price = 25_000, imageUrl = null, currency = "KRW", originalPrice = null).filledFrom(base)), createdBy = UUID.randomUUID())
 
         assertTrue(userVersion.isReady())
         assertEquals("몬치치 인형", userVersion.name)
@@ -176,7 +203,7 @@ class ItemSnapshotTest {
         val userVersion =
             ItemSnapshot.userInput(
                 1L,
-                UserInputValues.of(UserInput(name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW")),
+                UserInputValues.of(UserInput(name = "수기 입력", price = 5_000, imageUrl = "https://img.example.com/m.png", currency = "KRW", originalPrice = null)),
                 createdBy = UUID.randomUUID(),
             )
 
@@ -195,7 +222,7 @@ class ItemSnapshotTest {
 
         inputs.forEach { (name, price, imageUrl) ->
             assertFailsWith<ItemException> {
-                UserInputValues.of(UserInput(name = name, price = price, imageUrl = imageUrl, currency = "KRW"))
+                UserInputValues.of(UserInput(name = name, price = price, imageUrl = imageUrl, currency = "KRW", originalPrice = null))
             }
         }
     }
@@ -203,6 +230,7 @@ class ItemSnapshotTest {
     private fun version(
         name: String? = "나이키 에어포스",
         price: Int? = 99_000,
+        originalPrice: Int? = null,
         imageUrl: String? = "https://img.example.com/a.png",
         currency: String? = "KRW",
         userInput: Boolean = false,
@@ -213,6 +241,7 @@ class ItemSnapshotTest {
             name = name,
             imageUrl = imageUrl,
             price = price,
+            originalPrice = originalPrice,
             currency = currency,
             method = method,
             userInput = userInput,

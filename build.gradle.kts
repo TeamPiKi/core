@@ -1,8 +1,8 @@
 plugins {
-    kotlin("jvm") version "2.3.20"
-    kotlin("plugin.spring") version "2.3.20"
-    kotlin("plugin.jpa") version "2.3.20"
-    id("org.springframework.boot") version "4.0.5"
+    kotlin("jvm") version "2.3.21"
+    kotlin("plugin.spring") version "2.3.21"
+    kotlin("plugin.jpa") version "2.3.21"
+    id("org.springframework.boot") version "4.1.2"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.2"
     id("com.google.protobuf") version "0.10.0"
@@ -25,9 +25,8 @@ repositories {
     mavenCentral()
 }
 
-// Spring Boot 4.0.5 의 platform 은 testcontainers 코어 2.0.x 만 포함하고
-// junit-jupiter / mysql 모듈은 1.21.x 라인이 최신이라 BOM 불일치가 난다.
-// 모듈이 따라올 때까지 testcontainers BOM 을 1.21.4 로 명시 고정.
+// Spring Boot platform 은 testcontainers 2.x 를 관리하지만, 우리가 쓰는 junit-jupiter / mysql 모듈 이름은
+// 1.21.x 가 마지막이다(2.x 는 testcontainers-mysql 처럼 접두 붙은 이름). 모듈 이름을 옮길 때까지 BOM 을 1.21.4 로 고정.
 val testcontainersVersion = "1.21.4"
 val awsSdkVersion = "2.44.11"
 
@@ -55,8 +54,9 @@ dependencies {
     implementation("org.flywaydb:flyway-mysql")
     runtimeOnly("com.mysql:mysql-connector-j")
 
-    // Spring Boot 4.0.5 / Jackson 3 호환 라인. Swagger UI 없이 /v3/api-docs 만 제공 (UI는 Stoplight Elements 사용)
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-api:3.0.3")
+    // springdoc 은 Boot 마이너 버전마다 라인이 갈린다. Boot 를 올릴 땐 springdoc pom 의 parent(Boot) 버전으로 라인을 맞춘다.
+    // Swagger UI 없이 /v3/api-docs 만 제공 (UI는 Stoplight Elements 사용)
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-api:3.2.0")
 
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
@@ -76,7 +76,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-session-data-redis")
 
     // Discord 슬래시커맨드(admin 접근 #654) 인터랙션의 Ed25519 서명 검증용. raw 32B 공개키를 BouncyCastle 로 다룬다
-    // (JDK EdEC raw-key 디코딩이 까다로움). Spring Boot 4.0.5 BOM 미관리라 버전 명시(Maven Central 최신 안정).
+    // (JDK EdEC raw-key 디코딩이 까다로움). Spring Boot BOM 미관리라 버전 명시(Maven Central 최신 안정).
     implementation("org.bouncycastle:bcprov-jdk18on:1.84")
 
     // admin 백오피스 SSR 뷰(로그인·관리 화면). #505 가 옛 dev 백오피스와 함께 제거했고, prod 운영 백오피스(#249)로 재도입.

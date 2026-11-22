@@ -22,6 +22,11 @@ class Folder(
     var name: String = name.value
         protected set
 
+    // 공개 프로필 작업(정책 1장)에서 노출한다. 지금은 바꾸는 경로가 없고 기본값 공개로만 만든다
+    @Column(name = "is_public", nullable = false)
+    var isPublic: Boolean = true
+        protected set
+
     fun rename(name: FolderName) {
         this.name = name.value
     }

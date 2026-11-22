@@ -92,7 +92,16 @@ class TournamentItemController(
         @PathVariable tournamentItemId: Long,
         @Valid @ModelAttribute request: UpdateTournamentItemRequest,
     ): ApiResponseBody<Unit> {
-        tournamentItemService.updateItem(userId, tournamentId, tournamentItemId, request.name, request.price, request.currency, request.image)
+        tournamentItemService.updateItem(
+            userId,
+            tournamentId,
+            tournamentItemId,
+            request.name,
+            request.price,
+            request.originalPrice,
+            request.currency,
+            request.image,
+        )
         return ApiResponseBody.ok()
     }
 

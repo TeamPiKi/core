@@ -21,6 +21,9 @@ interface WishRepository {
     ): List<Wish>
 
     // 삭제되지 않은 단건 조회. 없으면 null.
+    // 지운 위시는 세지 않는다
+    fun countByUserId(userId: UUID): Long
+
     fun findById(id: Long): Wish?
 
     // 새로고침·사용자 입력·메모를 직렬화한다. 삭제된 행은 제외(없으면 null).

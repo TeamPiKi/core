@@ -35,5 +35,7 @@ class WishException private constructor(
 
         fun failedNotRefreshable(): WishException = WishException(WishErrorCode.FAILED_NOT_REFRESHABLE)
 
+        fun invalidSearchQuery(): WishException = WishException(WishErrorCode.INVALID_SEARCH_QUERY)
+
     }
 }

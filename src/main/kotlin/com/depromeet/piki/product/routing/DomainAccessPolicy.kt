@@ -25,6 +25,10 @@ interface DomainAccessPolicy {
     // 내보내지 않는다 — 차단당했다고 판단한 곳에 매번 다시 두드리지 않는다는 계약이다.
     fun blocked(link: ProductLink): Boolean = accessOf(link) == DomainAccess.BLOCKED
 
+    // 옮겨 가는 주소는 extractor·renderer 가 이 목록으로 거름. 저쪽은 서브도메인을 일괄로 막아서
+    // 아래에 ALLOWED 가 있는 BLOCKED 는 빠지고, 그 도메인에는 입력 링크 차단만 남음
+    fun blockedDomains(): List<String>
+
     // 등록 입력 경계 전용 — 차단 도메인이면 등록을 거른다(400). parse(형식 불변식)와 분리된 정책 계약이라
     // 등록 경계가 진다: 차단이 풀리면 백오피스에서 행만 지운다.
     fun verifyRegistrable(link: ProductLink) {
@@ -79,6 +83,15 @@ class DbDomainAccessPolicy(
     override fun accessOf(link: ProductLink): DomainAccess? = matched(link)?.access
 
     override fun authorizedFor(link: ProductLink): Boolean = accessOf(link) == DomainAccess.ALLOWED
+
+    override fun blockedDomains(): List<String> {
+        val snapshot = policies
+        val allowed = snapshot.filter { it.access == DomainAccess.ALLOWED }.map { it.domain }
+        return snapshot
+            .filter { it.access == DomainAccess.BLOCKED }
+            .map { it.domain }
+            .filterNot { blocked -> allowed.any { it.endsWith(".$blocked") } }
+    }
 
     // 길이 내림차순 목록의 첫 매치 = 가장 구체적인 정책. domain 이 PK 라 같은 도메인 문자열의 중복은 없고,
     // 길이가 같은 서로 다른 도메인을 한 host 가 동시에 suffix 로 가질 수 없어 동률도 없다.

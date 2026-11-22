@@ -20,6 +20,11 @@ class FolderRepositoryImpl(
         userId: UUID,
     ): Folder? = folderJpaRepository.findOwnedForUpdate(id, userId)
 
+    override fun findAllByIdsForUpdate(ids: Collection<Long>): List<Folder> {
+        if (ids.isEmpty()) return emptyList()
+        return folderJpaRepository.findAllByIdsForUpdate(ids)
+    }
+
     override fun findAllByUserId(userId: UUID): List<Folder> = folderJpaRepository.findByUserIdAndDeletedAtIsNullOrderByIdAsc(userId)
 
     override fun hardDeleteAllByUserId(userId: UUID): Int = folderJpaRepository.hardDeleteAllByUserId(userId)

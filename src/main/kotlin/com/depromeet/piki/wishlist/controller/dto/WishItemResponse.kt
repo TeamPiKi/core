@@ -2,7 +2,7 @@ package com.depromeet.piki.wishlist.controller.dto
 
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.item.domain.ItemStatus
-import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.domain.WishFolderResult
 import com.depromeet.piki.wishlist.service.dto.WishResult
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.LocalDateTime
@@ -21,15 +21,25 @@ data class WishItemResponse(
         example = "[1402, 1397]",
     )
     val winnerTournamentIds: List<Long> = emptyList(),
+    @field:Schema(
+        description =
+            "폴더를 지정해 담은 링크가 이미 내 위시였을 때의 결과 — ADDED(그 위시를 이 폴더에 넣음, \"이 폴더에 담았어요\")/" +
+                "ALREADY_IN_FOLDER(이미 이 폴더에 있어 바뀐 것 없음, 그 카드로 스크롤·하이라이트). " +
+                "새로 담긴 위시와 폴더를 지정하지 않은 응답은 null 이다. 값이 있으면 wish.id 는 기존 위시의 id 다.",
+        example = "ADDED",
+        nullable = true,
+    )
+    val folderResult: WishFolderResult? = null,
 ) {
     companion object {
         fun from(
             result: WishResult,
         ): WishItemResponse =
             WishItemResponse(
-                wish = WishView.from(result.wish),
+                wish = WishView.from(result),
                 item = ItemView.from(result),
                 winnerTournamentIds = result.winnerTournamentIds,
+                folderResult = result.folderResult,
             )
     }
 
@@ -39,12 +49,18 @@ data class WishItemResponse(
         val id: Long,
         @field:Schema(description = "위시리스트에 담은 시각", example = "2026-05-21T10:00:00")
         val createdAt: LocalDateTime,
+        @field:Schema(
+            description = "이 위시가 들어 있는 내 폴더 id. 폴더 id 오름차순이고, 폴더에 없으면 빈 배열",
+            example = "[12, 15]",
+        )
+        val folderIds: List<Long> = emptyList(),
     ) {
         companion object {
-            fun from(wish: Wish): WishView =
+            fun from(result: WishResult): WishView =
                 WishView(
-                    id = wish.getId(),
-                    createdAt = wish.createdAt,
+                    id = result.wish.getId(),
+                    createdAt = result.wish.createdAt,
+                    folderIds = result.folderIds,
                 )
         }
     }
@@ -81,6 +97,18 @@ data class WishItemResponse(
         val name: String?,
         @field:Schema(description = "스냅샷 시점의 현재 판매가 (PARSING·FAILED 시 null)", example = "119000", nullable = true)
         val price: Int?,
+        @field:Schema(
+            description = "할인 전 정가. 몰이 정가를 노출하지 않거나 사용자가 입력하지 않으면 null(모름). 할인 없는 상품은 price 와 같다",
+            example = "139000",
+            nullable = true,
+        )
+        val originalPrice: Int?,
+        @field:Schema(
+            description = "정가 대비 할인율(%, 내림). originalPrice 가 null 이면 null, 할인 없으면 0",
+            example = "14",
+            nullable = true,
+        )
+        val discountRate: Int?,
         @field:Schema(description = "통화 코드 (ISO 4217, PARSING·FAILED 시 null)", example = "KRW", nullable = true)
         val currency: String?,
         @field:Schema(
@@ -115,6 +143,8 @@ data class WishItemResponse(
                     userInput = result.card.display?.userInput,
                     name = result.card.display?.name,
                     price = result.card.display?.price,
+                    originalPrice = result.card.display?.originalPrice,
+                    discountRate = result.card.display?.discountRate,
                     currency = result.card.display?.currency,
                     imageUrl = result.card.display?.imageUrl,
                     sourceUrl = result.card.sourceLink?.toString(),

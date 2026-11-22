@@ -26,10 +26,12 @@ class WishRepositoryImpl(
         cursor ?: return wishJpaRepository.findByUserIdAndDeletedAtIsNullOrderByIdDesc(userId, limited)
         return wishJpaRepository.findByUserIdAndIdLessThanAndDeletedAtIsNullOrderByIdDesc(
             userId,
-            cursor.lastWishId,
+            cursor.position,
             limited,
         )
     }
+
+    override fun countByUserId(userId: UUID): Long = wishJpaRepository.countByUserIdAndDeletedAtIsNull(userId)
 
     override fun findById(id: Long): Wish? = wishJpaRepository.findByIdAndDeletedAtIsNull(id)
 

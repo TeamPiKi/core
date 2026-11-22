@@ -72,3 +72,8 @@ import {
   to = grafana_rule_group.health
   id = "piki-alerts:health"
 }
+
+import {
+  to = grafana_rule_group.llm
+  id = "piki-alerts:llm"
+}

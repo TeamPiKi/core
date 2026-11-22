@@ -708,6 +708,56 @@ class WishlistCrudIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `정가를 함께 입력하면 응답에 정가와 계산한 할인율이 내려가고 가격 이력에도 남는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("price", "90000")
+                    .param("originalPrice", "100000")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.item.price").value(90000))
+            .andExpect(jsonPath("$.data.item.originalPrice").value(100000))
+            .andExpect(jsonPath("$.data.item.discountRate").value(10))
+
+        mockMvc
+            .perform(get("/api/v1/wishlists/$wishId").header(HttpHeaders.AUTHORIZATION, authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.priceHistory[0].originalPrice").value(100000))
+            .andExpect(jsonPath("$.data.priceHistory[0].discountRate").value(10))
+    }
+
+    @Test
+    fun `정가를 판매가보다 낮게 입력하면 400 과 ITEM-010 이 반환된다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val authHeader = "Bearer ${memberToken(userId)}"
+        val wishId = seedReadyWish(userId, "https://shop.example.com/products/1", "상품")
+
+        mockMvc
+            .perform(
+                multipart("/api/v1/wishlists/$wishId")
+                    .param("price", "90000")
+                    .param("originalPrice", "80000")
+                    .with {
+                        it.method = "PATCH"
+                        it
+                    }.header(HttpHeaders.AUTHORIZATION, authHeader),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(ItemErrorCode.ORIGINAL_PRICE_BELOW_PRICE.code))
+    }
+
+    @Test
     fun `가격을 음수로 수정하면 400 BAD_REQUEST 가 반환된다`() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()

@@ -54,6 +54,19 @@ class ProductSnapshotTest {
     }
 
     @Test
+    fun `originalPrice 가 음수면 ProductSnapshotException 을 던진다`() {
+        assertFailsWith<ProductSnapshotException> { ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", originalPrice = -1) }
+    }
+
+    @Test
+    fun `originalPrice 는 price 이상일 때만 남고 낮거나 price 가 없으면 모름(null)이다`() {
+        assertEquals(1_500, ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", originalPrice = 1_500).originalPrice)
+        assertEquals(1_000, ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", originalPrice = 1_000).originalPrice)
+        assertNull(ProductSnapshot.fromExtracted("상품", null, 1_000, "KRW", originalPrice = 900).originalPrice)
+        assertNull(ProductSnapshot.fromExtracted("상품", null, null, "KRW", originalPrice = 900).originalPrice)
+    }
+
+    @Test
     fun `price 가 null 이면 예외 없이 null 로 통과한다`() {
         assertNull(ProductSnapshot.fromExtracted("상품", null, null, "KRW").price)
     }

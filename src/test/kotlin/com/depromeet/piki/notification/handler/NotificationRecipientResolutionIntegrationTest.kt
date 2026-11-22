@@ -411,7 +411,7 @@ class NotificationRecipientResolutionIntegrationTest : IntegrationTestSupport() 
         itemParsingService.completeLatest(entityManager, ItemSlot.tournamentItem(holderId), landedOn(finalUrl, "주최자 카드의 이름"))
         itemParsingService.failLatest(entityManager, ItemSlot.tournamentItem(mergedId))
 
-        tournamentItemPersistenceService.applyUserInput(adder, tournamentId, mergedId, "직접 입력한 이름", 10_000, "https://img.example.com/u.png", "KRW")
+        tournamentItemPersistenceService.applyUserInput(adder, tournamentId, mergedId, "직접 입력한 이름", 10_000, null, "https://img.example.com/u.png", "KRW")
         val event = lastEvent<ItemSlotMerged>()
 
         assertEquals(setOf(adder), mergedHandler.resolveRecipients(event))

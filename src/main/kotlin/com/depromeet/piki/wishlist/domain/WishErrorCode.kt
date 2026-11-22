@@ -53,4 +53,10 @@ enum class WishErrorCode(
         ErrorCategory.CONFLICT,
         "이미 위시리스트에 등록된 상품이에요.",
     ),
+    // WISH-010 은 ITEM-006 으로 옮겨 결번
+    INVALID_SEARCH_QUERY(
+        "WISH-011",
+        ErrorCategory.INVALID_INPUT,
+        "검색어를 입력해 주세요.",
+    ),
 }

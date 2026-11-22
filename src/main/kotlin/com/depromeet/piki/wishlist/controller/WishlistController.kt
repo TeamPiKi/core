@@ -2,20 +2,21 @@ package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
-import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.metrics.registration.WishExternalEntryRecorder
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
+import com.depromeet.piki.wishlist.controller.dto.WishImageConfirmRequest
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishCursor
 import com.depromeet.piki.wishlist.domain.WishDeleteIds
+import com.depromeet.piki.wishlist.domain.WishSearchQuery
 import com.depromeet.piki.wishlist.domain.WishlistSize
 import com.depromeet.piki.wishlist.service.WishlistService
-import com.depromeet.piki.wishlist.service.dto.ConfirmWishImageRegistrationCommand
 import com.depromeet.piki.wishlist.service.dto.DeleteWishCommand
 import com.depromeet.piki.wishlist.service.dto.DeleteWishesCommand
 import com.depromeet.piki.wishlist.service.dto.GetWishQuery
@@ -56,7 +57,8 @@ class WishlistController(
         @RequestHeader(name = ExternalEntry.HEADER, required = false) rawEntryPoint: String?,
     ): ApiResponseBody<WishItemResponse> {
         val result = wishlistService.registerFromUrl(request.toCommand(userId))
-        wishExternalEntryRecorder.record(wishId = result.wish.getId(), rawEntryPoint = rawEntryPoint)
+        // 폴더 결과가 있으면 이미 담긴 위시를 폴더에 넣은 것이라 새 유입으로 세지 않는다
+        result.folderResult ?: wishExternalEntryRecorder.record(wishId = result.wish.getId(), rawEntryPoint = rawEntryPoint)
         return ApiResponseBody.created(WishItemResponse.from(result))
     }
 
@@ -73,9 +75,9 @@ class WishlistController(
     @ResponseStatus(HttpStatus.CREATED)
     override fun confirmImageRegistration(
         @AuthenticationPrincipal userId: UUID,
-        @RequestBody request: ConfirmImageUploadRequest,
+        @RequestBody request: WishImageConfirmRequest,
     ): ApiResponseBody<List<WishItemResponse>> {
-        val results = wishlistService.confirmImageRegistration(ConfirmWishImageRegistrationCommand(userId = userId, imageKeys = request.toImageKeys()))
+        val results = wishlistService.confirmImageRegistration(request.toCommand(userId))
         return ApiResponseBody.created(results.map(WishItemResponse::from))
     }
 
@@ -84,13 +86,47 @@ class WishlistController(
         @AuthenticationPrincipal userId: UUID,
         @RequestParam(required = false) cursor: String?,
         @RequestParam(required = false) size: Int?,
+        @RequestParam(required = false) folderId: Long?,
+        @RequestParam(required = false) excludeFolderId: Long?,
+        @RequestParam(required = false) q: String?,
     ): ApiResponseBody<List<WishItemResponse>> {
-        val page = wishlistService.getWishlist(GetWishlistQuery(userId = userId, cursor = WishCursor.parse(cursor), size = WishlistSize.of(size)))
+        val page =
+            wishlistService.getWishlist(
+                GetWishlistQuery(
+                    userId = userId,
+                    cursor = WishCursor.parse(cursor),
+                    size = WishlistSize.of(size),
+                    folderId = folderId,
+                    excludeFolderId = excludeFolderId,
+                    search = WishSearchQuery.of(q),
+                ),
+            )
         val data = page.entries.map(WishItemResponse::from)
         return ApiResponseBody.ok(
             data = data,
             pageResponse = PageResponse(nextCursor = page.nextCursor, hasNext = page.hasNext),
         )
+    }
+
+    @GetMapping("/count")
+    override fun countWishes(
+        @AuthenticationPrincipal userId: UUID,
+        @RequestParam(required = false) folderId: Long?,
+        @RequestParam(required = false) excludeFolderId: Long?,
+        @RequestParam(required = false) q: String?,
+    ): ApiResponseBody<WishCountResponse> {
+        val count =
+            wishlistService.countWishes(
+                GetWishlistQuery(
+                    userId = userId,
+                    cursor = null,
+                    size = WishlistSize.of(null),
+                    folderId = folderId,
+                    excludeFolderId = excludeFolderId,
+                    search = WishSearchQuery.of(q),
+                ),
+            )
+        return ApiResponseBody.ok(WishCountResponse(count))
     }
 
     @GetMapping("/{wishId}")

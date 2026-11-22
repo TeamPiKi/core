@@ -10,6 +10,7 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.common.storage.ImageStorageException
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
+import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.image.controller.dto.PresignedImageUpload
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.image.domain.ImageUploadException
@@ -19,11 +20,13 @@ import com.depromeet.piki.item.domain.ItemException
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.domain.WishException
+import com.depromeet.piki.wishlist.domain.WishFolderResult
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -48,6 +51,17 @@ class WishlistApiExamples(
                         name = "등록 접수 (파싱 중 — PARSING)",
                         payload = ApiResponseBody.created(pendingSampleEntry),
                     )
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "폴더를 지정해 이미 담은 링크를 담음 (기존 위시를 폴더에 넣음 — ADDED)",
+                        payload = ApiResponseBody.created(sampleEntry.copy(folderResult = WishFolderResult.ADDED)),
+                    )
+                    add(
+                        status = HttpStatus.CREATED,
+                        name = "폴더를 지정해 이미 담은 링크를 담음 (이미 그 폴더에 있음 — ALREADY_IN_FOLDER)",
+                        payload = ApiResponseBody.created(sampleEntry.copy(folderResult = WishFolderResult.ALREADY_IN_FOLDER)),
+                    )
+                    add(FolderException.notFound(), name = "folderId 가 없는 폴더 · 남의 폴더")
                     add(ProductLinkException.invalidFormat(urlFormatCause), name = "유효하지 않은 URL 형식")
                     add(ProductLinkException.unsupportedScheme(), name = "https 외 스킴")
                     add(ProductLinkException.unsupportedPlatform(), name = "지원하지 않는 쇼핑몰 (차단 목록은 백오피스 도메인 접근 정책 기준)")
@@ -92,7 +106,27 @@ class WishlistApiExamples(
                                 pageResponse = PageResponse(nextCursor = null, hasNext = false),
                             ),
                     )
+                    add(
+                        status = HttpStatus.OK,
+                        name = "폴더로 거른 조회 (folderId · 폴더에 넣은 순서)",
+                        payload =
+                            ApiResponseBody.ok(
+                                data = listOf(folderedSampleEntry),
+                                pageResponse = PageResponse(nextCursor = null, hasNext = false),
+                            ),
+                    )
                     add(WishException.invalidCursor(), name = "유효하지 않은 cursor")
+                    add(WishException.invalidSearchQuery(), name = "검색어가 비었거나 공백뿐")
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
+                    add(UserException.deletedUser(), name = "탈퇴한 유저")
+                }
+            }
+            if (handlerMethod.binds(WishlistController::countWishes)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(status = HttpStatus.OK, name = "개수 조회 성공", payload = ApiResponseBody.ok(WishCountResponse(count = 128)))
+                    add(status = HttpStatus.OK, name = "검색 결과 없음", payload = ApiResponseBody.ok(WishCountResponse(count = 0)))
+                    add(WishException.invalidSearchQuery(), name = "검색어가 비었거나 공백뿐")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -156,6 +190,7 @@ class WishlistApiExamples(
                     add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
                     add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
                     add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
+                    add(ItemException.originalPriceBelowPrice(), name = "정가가 판매가보다 낮음")
                     add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
                     add(ItemException.parsingInProgress(), name = "파싱 중이거나 새로고침 중인 항목")
                     // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
@@ -251,6 +286,7 @@ class WishlistApiExamples(
                     add(ImageUploadException.invalidKey(), name = "발급 형식이 아닌 key")
                     add(ImageUploadException.notUploaded(), name = "아직 업로드되지 않은 이미지")
                     add(ImageStorageException.existsCheckFailed(), name = "이미지 존재 확인 실패 (스토리지 장애)")
+                    add(FolderException.notFound(), name = "folderId 가 없는 폴더 · 남의 폴더")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(UserException.deletedUser(), name = "탈퇴한 유저")
@@ -289,6 +325,8 @@ class WishlistApiExamples(
                     userInput = false,
                     name = "에어 조던 1 미드",
                     price = 109_000,
+                    originalPrice = 119_900,
+                    discountRate = 9,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
@@ -299,6 +337,8 @@ class WishlistApiExamples(
                 listOf(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 109_000,
+                        originalPrice = 119_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 18, 10, 0, 0),
                         method = ExtractionMethod.STRUCTURED,
                         userInput = false,
@@ -307,6 +347,8 @@ class WishlistApiExamples(
                     // 같은 상품을 담은 다른 사용자가 넣은 값 — 어떤 조건에서 본 가격인지 알 수 없어 구분해 다룬다.
                     WishDetailResponse.PriceHistoryEntry(
                         price = 89_000,
+                        originalPrice = 97_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 10, 9, 0, 0),
                         method = null,
                         userInput = true,
@@ -314,6 +356,8 @@ class WishlistApiExamples(
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 115_000,
+                        originalPrice = 126_500,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 2, 10, 0, 0),
                         method = ExtractionMethod.LLM,
                         userInput = false,
@@ -321,6 +365,8 @@ class WishlistApiExamples(
                     ),
                     WishDetailResponse.PriceHistoryEntry(
                         price = 119_000,
+                        originalPrice = 130_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 5, 21, 10, 0, 0),
                         method = ExtractionMethod.STRUCTURED,
                         userInput = false,
@@ -339,11 +385,15 @@ class WishlistApiExamples(
                     method = null,
                     userInput = true,
                     price = 99_000,
+                    originalPrice = 108_900,
+                    discountRate = 9,
                 ),
             priceHistory =
                 listOf(
                     WishDetailResponse.PriceHistoryEntry(
                         price = 99_000,
+                        originalPrice = 108_900,
+                        discountRate = 9,
                         extractedAt = LocalDateTime.of(2026, 6, 20, 14, 30, 0),
                         method = null,
                         userInput = true,
@@ -371,6 +421,8 @@ class WishlistApiExamples(
                     userInput = null,
                     name = null,
                     price = null,
+                    originalPrice = null,
+                    discountRate = null,
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
@@ -396,6 +448,8 @@ class WishlistApiExamples(
                     userInput = false,
                     name = "에어 조던 1 미드",
                     price = 119_000,
+                    originalPrice = 130_900,
+                    discountRate = 9,
                     currency = "KRW",
                     imageUrl = "https://cdn.example.com/p/512.jpg",
                     sourceUrl = "https://www.example-shop.com/products/12345",
@@ -421,6 +475,8 @@ class WishlistApiExamples(
                     userInput = null,
                     name = null,
                     price = null,
+                    originalPrice = null,
+                    discountRate = null,
                     currency = null,
                     imageUrl = null,
                     sourceUrl = "https://www.example-shop.com/products/67891",
@@ -429,6 +485,9 @@ class WishlistApiExamples(
         )
 
     private val refreshingSampleEntry = sampleEntry.copy(item = sampleEntry.item.copy(refreshing = true))
+
+    // 두 폴더에 들어 있는 위시 — folderIds 로 어느 폴더에 있는지 그린다
+    private val folderedSampleEntry = sampleEntry.copy(wish = sampleEntry.wish.copy(folderIds = listOf(12, 15)))
 
     // 우승 칩이 붙는 항목(#1236) — 두 판에서 이긴 상품이라 최신 우승이 앞에 온다. 그 토너먼트를 지우면 id 가 빠진다.
     private val winnerSampleEntry = sampleEntry.copy(winnerTournamentIds = listOf(1402, 1397))
@@ -476,6 +535,8 @@ class WishlistApiExamples(
                         userInput = null,
                         name = null,
                         price = null,
+                        originalPrice = null,
+                        discountRate = null,
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,
@@ -497,6 +558,8 @@ class WishlistApiExamples(
                         userInput = null,
                         name = null,
                         price = null,
+                        originalPrice = null,
+                        discountRate = null,
                         currency = null,
                         imageUrl = null,
                         sourceUrl = null,

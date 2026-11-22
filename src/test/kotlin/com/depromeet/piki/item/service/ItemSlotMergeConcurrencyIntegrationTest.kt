@@ -155,6 +155,7 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
                         wishId = failed.getId(),
                         name = "직접 입력한 이름",
                         price = 50_000,
+                        originalPrice = null,
                         currency = "KRW",
                         image = ProductImage.of(byteArrayOf(1, 2, 3), "image/png"),
                         memo = null,

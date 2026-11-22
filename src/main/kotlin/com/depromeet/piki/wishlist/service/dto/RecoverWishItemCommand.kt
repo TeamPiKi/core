@@ -9,16 +9,18 @@ data class RecoverWishItemCommand(
     val wishId: Long,
     val name: String?,
     val price: Int?,
+    val originalPrice: Int?,
     val currency: String?,
     val image: ProductImage?,
     val memo: String?,
 ) {
     fun memoOnly(): UpdateWishMemoCommand? {
-        if (listOfNotNull(name, price, currency, image).isNotEmpty()) return null
+        if (listOfNotNull(name, price, originalPrice, currency, image).isNotEmpty()) return null
         return memo?.let { UpdateWishMemoCommand(userId = userId, wishId = wishId, memo = it) }
     }
 
-    private fun userInput(imageUrl: String?): UserInput = UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency)
+    private fun userInput(imageUrl: String?): UserInput =
+        UserInput(name = name, price = price, imageUrl = imageUrl, currency = currency, originalPrice = originalPrice)
 
     fun toApplyUserInput(imageUrl: String?): ApplyWishUserInputCommand =
         ApplyWishUserInputCommand(

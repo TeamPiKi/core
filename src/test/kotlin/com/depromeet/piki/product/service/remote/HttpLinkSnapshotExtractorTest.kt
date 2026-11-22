@@ -5,7 +5,6 @@ import com.depromeet.piki.common.exception.ErrorCategory
 import com.depromeet.piki.item.service.ItemParsingMetrics
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.domain.ProductLinkException
 import com.depromeet.piki.product.routing.DomainAccess
 import com.depromeet.piki.product.routing.DomainAccessPolicy
 import com.depromeet.piki.product.service.ProductSnapshotException
@@ -37,10 +36,13 @@ class HttpLinkSnapshotExtractorTest {
     // 전제를 지켜야 "허락을 안 켰는데 true 로 나가는" 회귀를 잡을 수 있다.
     private class FakeAccessPolicy(
         private val access: DomainAccess? = null,
+        private val blockedDomains: List<String> = emptyList(),
     ) : DomainAccessPolicy {
         override fun accessOf(link: ProductLink): DomainAccess? = access
 
         override fun authorizedFor(link: ProductLink): Boolean = access == DomainAccess.ALLOWED
+
+        override fun blockedDomains(): List<String> = blockedDomains
     }
 
     // 지정한 축에만 값을 준다 — target 을 무시하고 늘 같은 값을 돌려주면, 링크 추출기가 IMAGE 축을 읽는
@@ -52,9 +54,17 @@ class HttpLinkSnapshotExtractorTest {
         override fun modelOverrideOf(target: ParseInputType): String? = model?.takeIf { target == axis }
     }
 
+    private class FakeIdentitySettings(
+        private val identity: String?,
+    ) : ExtractionIdentitySettings {
+        override fun identityOverride(): String? = identity
+    }
+
     private fun extractorWith(
         access: DomainAccess? = null,
+        blockedDomains: List<String> = emptyList(),
         model: String? = null,
+        identity: String? = null,
         server: (MockRestServiceServer) -> Unit,
     ): HttpLinkSnapshotExtractor {
         val builder =
@@ -66,8 +76,9 @@ class HttpLinkSnapshotExtractorTest {
         server(mockServer)
         return HttpLinkSnapshotExtractor(
             builder.build(),
-            FakeAccessPolicy(access),
+            FakeAccessPolicy(access, blockedDomains),
             FakeModelSettings(ParseInputType.LINK, model),
+            FakeIdentitySettings(identity),
         )
     }
 
@@ -95,6 +106,7 @@ class HttpLinkSnapshotExtractorTest {
         assertEquals("https://cdn.example.com/i.png", snapshot.imageUrl)
         assertEquals(99_000, snapshot.price)
         assertEquals("KRW", snapshot.currency)
+        assertNull(snapshot.originalPrice, "originalPrice 를 생략하면 모름(null)이다")
     }
 
     @Test
@@ -165,7 +177,27 @@ class HttpLinkSnapshotExtractorTest {
         // MockRestServiceServer 에 아무 기대도 걸지 않았으므로, 요청이 나가면 그 자체로 실패한다.
         val extractor = extractorWith(access = DomainAccess.BLOCKED) { }
 
-        assertFailsWith<ProductLinkException> { extractor.extract(link) }
+        val e = assertFailsWith<ProductExtractorException> { extractor.extract(link) }
+        assertEquals(ItemParsingMetrics.REASON_BLOCKED, ItemParsingMetrics.failureReasonOf(e).metricLabel)
+    }
+
+    @Test
+    fun `차단 목록을 요청에 실어 보낸다`() {
+        val extractor =
+            extractorWith(blockedDomains = listOf("blocked.example.com", "other.example.net")) { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.blockedDomains[0]").value("blocked.example.com"))
+                    .andExpect(jsonPath("$.blockedDomains[1]").value("other.example.net"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
     }
 
     @Test
@@ -202,6 +234,24 @@ class HttpLinkSnapshotExtractorTest {
 
         val e = assertFailsWith<ProductSnapshotException> { extractor.extract(link) }
         assertEquals(ItemParsingMetrics.REASON_EXTRACT_QUALITY, ItemParsingMetrics.failureReasonOf(e).metricLabel)
+    }
+
+    @Test
+    fun `200 의 originalPrice 는 정가로 매핑된다`() {
+        val extractor =
+            extractorWith { server ->
+                server.expect(requestTo("http://extractor.test/internal/extractions/link")).andRespond(
+                    withSuccess(
+                        """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"originalPrice":129000,"currency":"KRW"}""",
+                        MediaType.APPLICATION_JSON,
+                    ),
+                )
+            }
+
+        val snapshot = extractor.extract(link)
+
+        assertEquals(99_000, snapshot.price)
+        assertEquals(129_000, snapshot.originalPrice)
     }
 
     @Test
@@ -247,6 +297,7 @@ class HttpLinkSnapshotExtractorTest {
                 "INVALID_URL" to ItemParsingMetrics.REASON_NOT_PRODUCT,
                 "IMAGE_UNSUPPORTED" to ItemParsingMetrics.REASON_EXTRACT_QUALITY,
                 "BLOCKED_HOST" to ItemParsingMetrics.REASON_INTERNAL_ERROR,
+                "BLOCKED_DOMAIN" to ItemParsingMetrics.REASON_BLOCKED,
             )
 
         expected.forEach { (code, reason) ->
@@ -401,6 +452,43 @@ class HttpLinkSnapshotExtractorTest {
                 server
                     .expect(requestTo("http://extractor.test/internal/extractions/link"))
                     .andExpect(jsonPath("$.model").value("gemini-3-flash"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
+    }
+
+    @Test
+    fun `지정된 신원을 요청에 싣는다`() {
+        val extractor =
+            extractorWith(identity = "Foo/2.0") { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.identity").value("Foo/2.0"))
+                    .andRespond(
+                        withSuccess(
+                            """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",
+                            MediaType.APPLICATION_JSON,
+                        ),
+                    )
+            }
+
+        assertEquals("나이키", extractor.extract(link).name)
+    }
+
+    // 빈 값이 추출 계약의 기본 신원이다. 받는 쪽이 자기 기본값을 탄다.
+    @Test
+    fun `지정이 없으면 신원을 채우지 않는다`() {
+        val extractor =
+            extractorWith { server ->
+                server
+                    .expect(requestTo("http://extractor.test/internal/extractions/link"))
+                    .andExpect(jsonPath("$.identity").value(""))
                     .andRespond(
                         withSuccess(
                             """{"name":"나이키","imageUrl":"https://cdn.example.com/i.png","currentPrice":99000,"currency":"KRW"}""",

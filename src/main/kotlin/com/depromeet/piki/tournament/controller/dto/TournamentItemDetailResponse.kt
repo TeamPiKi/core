@@ -12,6 +12,8 @@ data class TournamentItemDetailResponse(
     val name: String?,
     val imageUrl: String?,
     val price: Int?,
+    val originalPrice: Int?,
+    val discountRate: Int?,
     val currency: String?,
     val status: ItemStatus,
     // 요청자 본인의 위시에 담긴 상품일 때만 그 위시의 개인 메모. NON_NULL 이라 없으면 필드 자체가 빠진다.
@@ -26,6 +28,8 @@ data class TournamentItemDetailResponse(
                 name = detail.name,
                 imageUrl = detail.imageUrl,
                 price = detail.price,
+                originalPrice = detail.originalPrice,
+                discountRate = detail.discountRate,
                 currency = detail.currency,
                 status = detail.status,
                 memo = detail.memo,

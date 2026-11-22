@@ -23,6 +23,13 @@ interface FolderJpaRepository : JpaRepository<Folder, Long> {
         @Param("userId") userId: UUID,
     ): Folder?
 
+    // 위시 합치기가 연결을 옮길 폴더들. id 순으로 잠가 폴더 넣기·옮기기와 같은 순서를 지킨다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT f FROM Folder f WHERE f.id IN :ids ORDER BY f.id ASC")
+    fun findAllByIdsForUpdate(
+        @Param("ids") ids: Collection<Long>,
+    ): List<Folder>
+
     fun findByUserIdAndDeletedAtIsNullOrderByIdAsc(userId: UUID): List<Folder>
 
     // 탈퇴 cascade — 그 유저의 폴더를 영구 하드삭제. 멱등(없으면 0건)

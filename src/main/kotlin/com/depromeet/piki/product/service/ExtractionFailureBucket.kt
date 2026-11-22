@@ -14,7 +14,7 @@ enum class ExtractionFailureBucket {
     // 우리 구성으로 그 페이지를 못 읽었다. 계약이 그 code 들을 일시로 돌려(infra#145) 지금은 부여 code 없음.
     UNREADABLE,
 
-    // 대상이 우리를 막았다. 계약이 그 code 들을 일시로 돌려(infra#145) 지금은 부여 code 없음.
+    // 대상이 우리를 막았거나 우리 차단 정책에 걸렸다. 어느 code 가 여기 오는지는 계약(extraction.proto)이 정본.
     BLOCKED,
 
     // 추출은 됐는데 값을 믿을 수 없다. 늘면 모델·프롬프트·검증 규칙을 본다.

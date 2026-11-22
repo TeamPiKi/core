@@ -21,7 +21,8 @@ RUN ./gradlew bootJar --no-daemon
 FROM eclipse-temurin:25-jdk AS extractor
 WORKDIR /workspace
 COPY --from=builder /workspace/build/libs/*.jar app.jar
-RUN java -Djarmode=layertools -jar app.jar extract
+# --launcher 가 없으면 아래 ENTRYPOINT 의 JarLauncher 가 아니라 java -jar 용 구조로 풀린다.
+RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
 
 # ────────────────────────────────────────────
 # Stage 3: runtime — 최소 실행 이미지
@@ -33,10 +34,10 @@ WORKDIR /app
 RUN groupadd --system appgroup && useradd --system --gid appgroup appuser
 
 # 레이어 순서대로 복사 (변경 빈도 낮은 것 → 높은 것)
-COPY --from=extractor /workspace/dependencies/ ./
-COPY --from=extractor /workspace/spring-boot-loader/ ./
-COPY --from=extractor /workspace/snapshot-dependencies/ ./
-COPY --from=extractor /workspace/application/ ./
+COPY --from=extractor /workspace/extracted/dependencies/ ./
+COPY --from=extractor /workspace/extracted/spring-boot-loader/ ./
+COPY --from=extractor /workspace/extracted/snapshot-dependencies/ ./
+COPY --from=extractor /workspace/extracted/application/ ./
 
 USER appuser
 

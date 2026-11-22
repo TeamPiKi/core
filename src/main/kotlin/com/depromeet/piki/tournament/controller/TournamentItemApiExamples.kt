@@ -160,6 +160,7 @@ class TournamentItemApiExamples(
                         add(ItemException.emptyUserInput(), name = "바꿀 값이 하나도 없음")
                         add(ItemException.nameRequiredForReady(), name = "합친 뒤에도 상품명 없음 (FAILED 항목에 일부 필드만 입력)")
                         add(ItemException.priceRequiredForReady(), name = "합친 뒤에도 가격 없음")
+                        add(ItemException.originalPriceBelowPrice(), name = "정가가 판매가보다 낮음")
                         add(ItemException.imageRequiredForReady(), name = "합친 뒤에도 이미지 없음")
                         add(ItemException.parsingInProgress(), name = "파싱 중인 항목")
                         // ProductImage.of 의 형식 검증 3종 — S3 업로드 전에 동기로 거른다.
@@ -204,6 +205,8 @@ class TournamentItemApiExamples(
                                         name = "나이키 에어맥스",
                                         imageUrl = "https://cdn.example.com/items/1.jpg",
                                         price = 129_000,
+                                        originalPrice = 141_900,
+                                        discountRate = 9,
                                         currency = "KRW",
                                         status = ItemStatus.READY,
                                         memo = "생일 선물 후보",
@@ -222,6 +225,8 @@ class TournamentItemApiExamples(
                                         name = "아디다스 울트라부스트",
                                         imageUrl = "https://cdn.example.com/items/2.jpg",
                                         price = 189_000,
+                                        originalPrice = 207_900,
+                                        discountRate = 9,
                                         currency = "KRW",
                                         status = ItemStatus.READY,
                                     ),
@@ -239,6 +244,8 @@ class TournamentItemApiExamples(
                                         name = null,
                                         imageUrl = null,
                                         price = null,
+                                        originalPrice = null,
+                                        discountRate = null,
                                         currency = null,
                                         status = ItemStatus.PARSING,
                                     ),
@@ -256,6 +263,8 @@ class TournamentItemApiExamples(
                                         name = null,
                                         imageUrl = null,
                                         price = null,
+                                        originalPrice = null,
+                                        discountRate = null,
                                         currency = null,
                                         status = ItemStatus.FAILED,
                                     ),

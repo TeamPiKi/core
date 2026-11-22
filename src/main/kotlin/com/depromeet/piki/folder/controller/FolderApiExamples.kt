@@ -9,6 +9,7 @@ import com.depromeet.piki.folder.controller.dto.FolderResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.domain.FolderException
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.wishlist.controller.WishlistController
 import com.depromeet.piki.wishlist.domain.WishException
 import org.springdoc.core.customizers.OperationCustomizer
 import org.springframework.context.annotation.Bean
@@ -23,6 +24,12 @@ class FolderApiExamples(
     @Bean
     fun folderOpenApiExamples(): OperationCustomizer =
         OperationCustomizer { operation, handlerMethod ->
+            // 위시 목록의 폴더 거르기가 내는 404. 위시 쪽 문서가 폴더 예외를 참조하지 않게 폴더 쪽에서 예시를 더한다
+            if (handlerMethod.binds(WishlistController::getWishlist) || handlerMethod.binds(WishlistController::countWishes)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(FolderException.notFound(), name = "folderId · excludeFolderId 가 없는 폴더 · 남의 폴더")
+                }
+            }
             if (handlerMethod.binds(FolderController::create)) {
                 operation.examples(openApiObjectMapper.delegate) {
                     add(status = HttpStatus.CREATED, name = "생성 성공 (빈 폴더)", payload = ApiResponseBody.created(newFolder))
@@ -74,7 +81,9 @@ class FolderApiExamples(
             if (handlerMethod.binds(FolderController::takeOutWishes)) {
                 operation.examples(openApiObjectMapper.delegate) {
                     add(status = HttpStatus.OK, name = "빼기 성공", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 8)))
+                    add(status = HttpStatus.OK, name = "전체 선택 빼기 성공 (all=true)", payload = ApiResponseBody.ok(FolderWishCountResponse(folderId = COAT_FOLDER_ID, wishCount = 0)))
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
+                    add(FolderException.invalidSelection(), name = "all 과 wishIds 를 함께 보냄")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(FolderException.notFound(), name = "없는 폴더 · 남의 폴더")
@@ -93,6 +102,7 @@ class FolderApiExamples(
                     )
                     add(FolderException.invalidWishCount(), name = "wishIds 가 비었거나 100개 초과")
                     add(FolderException.sameFolderMove(), name = "이 폴더와 대상 폴더가 같음")
+                    add(FolderException.invalidSelection(), name = "all 과 wishIds 를 함께 보냄")
                     unauthorized()
                     add(WishException.guestCannotUseWishlist(), name = "게스트의 위시리스트 이용 거부 (회원 전용)")
                     add(WishException.forbiddenWishItems(), name = "남의 위시나 지운 위시 포함")
@@ -108,10 +118,11 @@ class FolderApiExamples(
             id = COAT_FOLDER_ID,
             name = "겨울 아우터",
             wishCount = 7,
+            // 두 번째 칸은 파싱 중인 위시라 이미지가 없다
             coverImageUrls =
                 listOf(
                     "https://cdn.example.com/p/701.jpg",
-                    "https://cdn.example.com/p/698.jpg",
+                    null,
                     "https://cdn.example.com/p/690.jpg",
                 ),
             createdAt = LocalDateTime.of(2026, 10, 20, 13, 2, 11),

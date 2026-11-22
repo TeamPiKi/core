@@ -9,6 +9,7 @@ data class ProductSnapshot(
     val name: String? = null,
     val imageUrl: String? = null,
     val price: Int? = null,
+    val originalPrice: Int? = null,
     val currency: String? = null,
     // 리다이렉트를 따라간 최종 페이지 URL. 아이템 정체 URL 의 재료이고 이미지 추출에는 없다
     val finalUrl: ProductLink? = null,
@@ -24,18 +25,31 @@ data class ProductSnapshot(
             currency: String?,
             finalUrl: String? = null,
             method: ExtractionMethod? = null,
+            originalPrice: Int? = null,
         ): ProductSnapshot {
             if ((price ?: 0) < 0) throw ProductSnapshotException.untrustworthyValue()
+            if ((originalPrice ?: 0) < 0) throw ProductSnapshotException.untrustworthyValue()
             return ProductSnapshot(
                 name = name?.takeIf { it.isNotBlank() },
                 imageUrl = imageUrl?.takeIf { it.isNotBlank() && it.startsWith("https://", ignoreCase = true) },
                 price = price,
+                originalPrice = trustedOriginalPrice(price, originalPrice),
                 currency = CurrencyCode.normalizeOrNull(currency),
                 // 귀결점이 상품 주소 규칙에 안 맞으면 등록 입력이 정체가 된다
                 finalUrl = finalUrl?.let(ProductLink::parseHopOrNull),
                 // 계약 밖의 값은 기록하지 않는다
                 method = method?.takeUnless { it == ExtractionMethod.EXTRACTION_METHOD_UNSPECIFIED || it == ExtractionMethod.UNRECOGNIZED },
             )
+        }
+
+        // 현재가보다 낮은 정가는 할인 표기를 거꾸로 읽은 값이라 정가만 모름으로 내린다. 부가 정보 탓에 상품을 잃지 않는다
+        private fun trustedOriginalPrice(
+            price: Int?,
+            originalPrice: Int?,
+        ): Int? {
+            originalPrice ?: return null
+            price ?: return null
+            return originalPrice.takeIf { it >= price }
         }
     }
 }

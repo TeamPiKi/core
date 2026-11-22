@@ -33,6 +33,8 @@ interface WishJpaRepository : JpaRepository<Wish, Long> {
         limit: Limit,
     ): List<Wish>
 
+    fun countByUserIdAndDeletedAtIsNull(userId: UUID): Long
+
     fun findByIdAndDeletedAtIsNull(id: Long): Wish?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

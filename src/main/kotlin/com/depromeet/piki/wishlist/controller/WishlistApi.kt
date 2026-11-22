@@ -1,12 +1,13 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
-import com.depromeet.piki.image.controller.dto.ConfirmImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadRequest
 import com.depromeet.piki.image.controller.dto.PresignedImageUploadResponse
 import com.depromeet.piki.metrics.registration.ExternalEntry
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.wishlist.controller.dto.WishCountResponse
 import com.depromeet.piki.wishlist.controller.dto.WishDetailResponse
+import com.depromeet.piki.wishlist.controller.dto.WishImageConfirmRequest
 import com.depromeet.piki.wishlist.controller.dto.WishItemResponse
 import com.depromeet.piki.wishlist.controller.dto.WishlistRegisterRequest
 import com.depromeet.piki.wishlist.controller.dto.WishlistUpdateRequest
@@ -46,13 +47,19 @@ interface WishlistApi {
             백그라운드 파싱이 성공하면 상품이 확정돼 READY 또는 INCOMPLETE, 실패하면 FAILED 가 된다.
             확정된 상품을 내 다른 위시가 이미 갖고 있으면 이 위시는 그 위시에 합쳐져 사라지고(메모는 옮겨진다) ITEM_PARSING_MERGED 알림이 온다.
             클라이언트는 SSE(`/api/v1/notifications/subscribe`)로 알림을 받고 위시리스트를 재조회해 확인한다. URL 형식 오류는 등록 전에 400 으로 거른다.
+            folderId 를 주면 담으면서 그 폴더에도 넣는다(폴더 상세에서 담기). 이미 담은 링크를 folderId 와 함께 보내면 409 대신
+            그 기존 위시를 폴더에 넣고 201 로 돌려준다 — 이때 folderResult 가 ADDED(넣음) 또는 ALREADY_IN_FOLDER(이미 있음)이고
+            wish.id 는 기존 위시의 id 다. 새로 담는 것이 아니라 등록 한도를 쓰지 않는다. folderId 없이 이미 담은 링크를 보내면 지금처럼 409 다.
+            파싱 뒤 같은 상품의 다른 위시에 합쳐지면 폴더 연결도 남는 위시로 옮겨진다.
         """,
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "201",
-                description = "위시리스트 등록 접수 (item.status=PARSING, item.id=null, 파싱은 백그라운드)",
+                description =
+                    "위시리스트 등록 접수 (item.status=PARSING, item.id=null, 파싱은 백그라운드) · " +
+                        "folderId 와 함께 이미 담은 링크를 보낸 경우 기존 위시를 그 폴더에 넣은 결과 (folderResult=ADDED·ALREADY_IN_FOLDER)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -86,6 +93,16 @@ interface WishlistApi {
             ApiResponse(
                 responseCode = "403",
                 description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001). 등록 전체를 거절한다",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -170,6 +187,15 @@ interface WishlistApi {
             같은 상품의 다른 위시에 합쳐진 항목은 목록에서 사라진다(ITEM_PARSING_MERGED).
             item.refreshing=true 면 새로고침 중이고, 값과 status 는 새로고침 전 것이다.
             INCOMPLETE 는 추출이 일부 필드만 채운 상태다 — 빈 필드를 사용자 입력(PATCH)으로 채우면 READY 가 된다.
+            각 항목의 wish.folderIds 는 그 위시가 들어 있는 내 폴더 id 다.
+
+            거르기 (셋 다 선택, 함께 줄 수 있음. 셋 다 없으면 전체):
+            - folderId: 그 폴더에 든 위시만. 이때 순서는 폴더에 넣은 순서(최근 넣은 순)이고, cursor 도 그 순서의 위치라
+              folderId 없는 목록의 cursor 와 섞어 쓰지 않는다. 폴더 상세·토너먼트 가져오기 칩에서 쓴다.
+            - excludeFolderId: 그 폴더에 없는 위시만. 폴더에 "내 위시에서 가져오기" 화면에서 쓴다.
+            - q: 화면에 보이는 상품명(본인이 고친 이름 포함)과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상.
+              상품명이 아직 없는 항목(PARSING·FAILED)은 찾지 않는다.
+            거르기가 있어도 한 페이지는 size 개를 채워 돌려준다(마지막 페이지 제외).
         """,
     )
     @ApiResponses(
@@ -186,7 +212,7 @@ interface WishlistApi {
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "유효하지 않은 cursor 값 (숫자로 변환 불가)",
+                description = "잘못된 요청 (cursor 를 숫자로 바꿀 수 없음 — code: WISH-003 · q 가 비었거나 공백뿐 — code: WISH-011)",
                 content = [
                     Content(
                         mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -215,6 +241,16 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId · excludeFolderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "409",
                 description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
@@ -228,11 +264,99 @@ interface WishlistApi {
     )
     fun getWishlist(
         @Parameter(hidden = true) userId: UUID,
-        @Parameter(description = "직전 응답의 nextCursor (없으면 첫 페이지)", example = "1010")
+        @Parameter(description = "직전 응답의 nextCursor (없으면 첫 페이지). folderId 를 줄 때와 안 줄 때 cursor 의 의미가 달라 섞어 쓰지 않는다", example = "1010")
         cursor: String?,
         @Parameter(description = "페이지 크기 (기본 20, 최대 50)", example = "20")
         size: Int?,
+        @Parameter(description = "이 폴더에 든 위시만 (폴더에 넣은 순서)", example = "12")
+        folderId: Long?,
+        @Parameter(description = "이 폴더에 없는 위시만", example = "15")
+        excludeFolderId: Long?,
+        @Parameter(description = "상품명 검색어. 화면에 보이는 이름과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상", example = "에코백")
+        q: String?,
     ): ApiResponseBody<List<WishItemResponse>>
+
+    @Operation(
+        summary = "위시 개수 조회",
+        description = """
+            내 위시 수를 돌려준다. 위시리스트 조회(다건)와 같은 거르기 파라미터를 받고, 셋 다 없으면 전체 위시 수다.
+            "상품 999+" 와 "검색 결과 N개" 를 그릴 때 쓴다. 지운 위시는 세지 않는다.
+            q 가 있으면 화면에 보이는 상품명으로 세야 해 내 위시를 끝까지 읽는다. 검색을 제출할 때 한 번만 부른다.
+        """,
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "개수 조회 성공",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (q 가 비었거나 공백뿐 — code: WISH-011)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "미인증 (JWT 토큰 없음 또는 유효하지 않음)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "권한 없음 (GUEST 권한으로 접근 불가 · MEMBER 필요)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId · excludeFolderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "409",
+                description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun countWishes(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "이 폴더에 든 위시만", example = "12")
+        folderId: Long?,
+        @Parameter(description = "이 폴더에 없는 위시만", example = "15")
+        excludeFolderId: Long?,
+        @Parameter(description = "상품명 검색어. 화면에 보이는 이름과 대소문자 없이 부분 일치. 앞뒤 공백을 빼고 1자 이상", example = "에코백")
+        q: String?,
+    ): ApiResponseBody<WishCountResponse>
 
     @Operation(
         summary = "위시리스트 조회 (단건)",
@@ -244,7 +368,7 @@ interface WishlistApi {
               값이 비어 있으면 status 로 갈린다 (PARSING 은 대기, FAILED 는 사용자 입력 유도이며 새로고침이 거부된다).
               상태 전이 통보는 SSE(`/api/v1/notifications/subscribe`)로 받는다.
             - priceHistory: 이 상품의 가격 기록을 최신순 최대 50건. 서버 추출값과 사용자 입력값이 함께 들어가고
-              userInput·editedByMe 로 구분한다.
+              userInput·editedByMe 로 구분한다. 각 점의 originalPrice(할인 전 정가)·discountRate(%)는 그 시점에 정가를 알 때만 있고 모르면 null.
             - **지금 보이는 값은 항상 item 에서 읽는다.** priceHistory 는 표시값 선택 규칙을 타지 않아 첫 항목이 item 과 다를 수 있다.
             - memo: 본인만 보는 개인 메모(최대 100자). 같은 상품을 담은 다른 사용자와 공유되지 않으며,
               상세 응답에만 내려간다(목록 응답에는 없다). 수정은 사용자 입력 API(PATCH)의 memo 필드로 한다.
@@ -351,7 +475,7 @@ interface WishlistApi {
                 responseCode = "400",
                 description =
                     "잘못된 요청 (바꿀 값이 하나도 없음(메모도 없음) — code: ITEM-009 · 합친 뒤에도 상품명 없음 — code: ITEM-003 · 합친 뒤에도 가격 없음 — code: ITEM-004 · " +
-                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · price 음수 · name/currency/memo 길이 초과 · " +
+                        "합친 뒤에도 이미지 없음 — code: ITEM-005 · 정가가 판매가보다 낮음 — code: ITEM-010 · price/originalPrice 음수 · name/currency/memo 길이 초과 · " +
                         "빈 이미지 — code: PRODUCTIMAGE-001 · 이미지 Content-Type 없음 — code: PRODUCTIMAGE-002 · " +
                         "지원하지 않는 이미지 형식(png/jpeg/webp/heic/heif만 허용) — code: PRODUCTIMAGE-003)",
                 content = [
@@ -788,6 +912,7 @@ interface WishlistApi {
             결과 모양(WishItemResponse)은 URL 등록과 동일하다 — 다만 URL 이 없어 sourceUrl 이 null 이며,
             추출 결과는 SSE(`/api/v1/notifications/subscribe`)로 통보받아 재조회하고, 추출 실패(FAILED) 항목은 사용자 입력 API(PATCH)로 복구한다.
             남아 있는 위시로 이미 확정한 imageKey 는 다시 등록하지 않고 응답에서도 빠진다. 그래서 요청보다 적은 항목이나 빈 목록이 올 수 있다.
+            folderId 를 주면 새로 등록한 위시를 모두 그 폴더에도 넣는다. 이미 확정한 imageKey 의 위시는 폴더에 넣지 않는다.
         """,
     )
     @ApiResponses(
@@ -835,6 +960,16 @@ interface WishlistApi {
                 ],
             ),
             ApiResponse(
+                responseCode = "404",
+                description = "폴더 없음 (folderId 가 없는 폴더 · 지운 폴더 · 남의 폴더 — code: FOLDER-001). 등록 전체를 거절한다",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
                 responseCode = "409",
                 description = "탈퇴한 계정 (JWT 는 아직 유효하나 계정이 탈퇴 상태) — code: USER-003",
                 content = [
@@ -858,6 +993,6 @@ interface WishlistApi {
     )
     fun confirmImageRegistration(
         @Parameter(hidden = true) userId: UUID,
-        request: ConfirmImageUploadRequest,
+        request: WishImageConfirmRequest,
     ): ApiResponseBody<List<WishItemResponse>>
 }

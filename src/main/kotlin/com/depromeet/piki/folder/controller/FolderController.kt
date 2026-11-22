@@ -7,7 +7,7 @@ import com.depromeet.piki.folder.controller.dto.FolderNameRequest
 import com.depromeet.piki.folder.controller.dto.FolderResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishesRequest
-import com.depromeet.piki.folder.domain.FolderWishIds
+import com.depromeet.piki.folder.domain.FolderWishSelection
 import com.depromeet.piki.folder.service.FolderService
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -78,8 +78,9 @@ class FolderController(
         @AuthenticationPrincipal userId: UUID,
         @PathVariable folderId: Long,
         @RequestParam(name = "wishIds", required = false) wishIds: List<Long>?,
+        @RequestParam(name = "all", required = false) all: Boolean?,
     ): ApiResponseBody<FolderWishCountResponse> {
-        val result = folderService.takeOutWishes(userId, folderId, FolderWishIds.of(wishIds))
+        val result = folderService.takeOutWishes(userId, folderId, FolderWishSelection.of(all, wishIds))
         return ApiResponseBody.ok(FolderWishCountResponse.from(result))
     }
 
@@ -89,7 +90,7 @@ class FolderController(
         @PathVariable folderId: Long,
         @RequestBody request: FolderMoveRequest,
     ): ApiResponseBody<FolderMoveResponse> {
-        val result = folderService.moveWishes(userId, folderId, request.toTargetFolderId(), request.toFolderWishIds())
+        val result = folderService.moveWishes(userId, folderId, request.toTargetFolderId(), request.toSelection())
         return ApiResponseBody.ok(FolderMoveResponse.from(result))
     }
 }

@@ -10,6 +10,8 @@ data class TournamentStartResponse(
         val tournamentItemId: Long,
         val name: String?,
         val price: Int?,
+        val originalPrice: Int?,
+        val discountRate: Int?,
         val currency: String?,
         val imageUrl: String?,
     )
@@ -23,6 +25,8 @@ data class TournamentStartResponse(
                         tournamentItemId = item.tournamentItemId,
                         name = item.name,
                         price = item.price,
+                        originalPrice = item.originalPrice,
+                        discountRate = item.discountRate,
                         currency = item.currency,
                         imageUrl = item.imageUrl,
                     )

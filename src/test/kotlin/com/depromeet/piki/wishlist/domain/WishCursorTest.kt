@@ -22,7 +22,7 @@ class WishCursorTest {
     @ParameterizedTest
     @ValueSource(strings = ["1024", " 1024 ", "-5", "0"])
     fun `숫자로 변환 가능한 cursor 는 그 값으로 파싱된다`(raw: String) {
-        assertEquals(raw.trim().toLong(), WishCursor.parse(raw)?.lastWishId)
+        assertEquals(raw.trim().toLong(), WishCursor.parse(raw)?.position)
     }
 
     @ParameterizedTest

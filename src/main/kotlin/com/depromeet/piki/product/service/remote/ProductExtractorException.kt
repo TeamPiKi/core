@@ -6,7 +6,7 @@ import com.depromeet.piki.common.exception.ErrorCode
 import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
-// extractor 호출 실패. 일시 실패는 RETRYABLE, 확정 실패(422)는 SERVER_ERROR 로 번역함. code 별 행선지는 RemoteExtractionContract
+// extractor 호출 실패. 일시 실패는 RETRYABLE, 확정 실패(422)는 비 RETRYABLE 로 번역함. code 별 행선지는 RemoteExtractionContract
 // 소비처가 파서뿐이라 응답 code 로 나가지 않아 공개 카탈로그에 등록하지 않음
 class ProductExtractorException private constructor(
     override val errorCode: ErrorCode,
@@ -25,5 +25,7 @@ class ProductExtractorException private constructor(
         // 모르는 code 인 경우. tolerant reader — 모르는 code 라도 422 면 확정 실패다(extractor 계약 §1).
         // 재시도 무의미이므로 비 RETRYABLE.
         fun permanentFailure(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.PERMANENT_FAILURE)
+
+        fun blockedDomain(): ProductExtractorException = ProductExtractorException(ProductExtractorErrorCode.BLOCKED_DOMAIN)
     }
 }

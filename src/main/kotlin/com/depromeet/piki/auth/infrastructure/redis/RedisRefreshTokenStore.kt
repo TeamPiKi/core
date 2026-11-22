@@ -6,7 +6,6 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Component
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 private val logger = LoggerFactory.getLogger(RedisRefreshTokenStore::class.java)
 
@@ -20,14 +19,14 @@ class RedisRefreshTokenStore(
         sessionId: String,
         refreshToken: String,
     ) {
-        val ttlMillis = jwtProperties.refreshTokenExpiry.toMillis()
+        val ttl = jwtProperties.refreshTokenExpiry
         redisTemplate
             .opsForValue()
-            .set(currentKey(userId, sessionId), refreshToken, ttlMillis, TimeUnit.MILLISECONDS)
+            .set(currentKey(userId, sessionId), refreshToken, ttl)
         // 인덱스에 세션을 등록해 전 기기 무효화(탈퇴·정지)가 순회할 수 있게 한다.
         // 인덱스 TTL 을 토큰과 같이 밀어 둔다 — 마지막 세션이 만료되면 인덱스도 함께 사라져 유령 키가 안 남는다.
         redisTemplate.opsForSet().add(indexKey(userId), sessionId)
-        redisTemplate.expire(indexKey(userId), ttlMillis, TimeUnit.MILLISECONDS)
+        redisTemplate.expire(indexKey(userId), ttl)
     }
 
     override fun get(

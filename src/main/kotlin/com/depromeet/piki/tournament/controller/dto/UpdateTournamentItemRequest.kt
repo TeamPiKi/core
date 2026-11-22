@@ -13,6 +13,9 @@ data class UpdateTournamentItemRequest(
     @field:Schema(description = "수정할 현재 판매가", example = "129000", nullable = true)
     @field:Min(value = 0, message = "가격은 0원 이상으로 입력해 주세요.")
     val price: Int? = null,
+    @field:Schema(description = "수정할 할인 전 정가 — 판매가 이상이어야 한다", example = "159000", nullable = true)
+    @field:Min(value = 0, message = "정가는 0원 이상으로 입력해 주세요.")
+    val originalPrice: Int? = null,
     @field:Schema(description = "수정할 통화 코드 (ISO 4217)", example = "KRW", nullable = true)
     @field:Size(max = 8, message = "통화 코드는 8자까지 입력할 수 있어요.")
     val currency: String? = null,
