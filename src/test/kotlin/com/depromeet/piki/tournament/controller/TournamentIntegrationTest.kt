@@ -325,8 +325,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `POST tournaments-id-join-guest 는 이미 점유된 닉네임이면 409 를 반환한다`() {
-        // createGuestWithNickname 은 existsByNickname pre-check 가 없어, 충돌이 save 시점에 난다.
-        // saveAndFlush 로 그 unique 충돌을 같은 메서드 안에서 끌어올려 duplicateNickname(409)으로 변환하는지 검증한다(#636).
+        // 409 의 출처가 바뀌었다(#1287): 예전엔 users.nickname unique 충돌을 save 시점에 끌어올려 변환했고,
+        // 지금은 유일 제약이 없어 createGuestAndJoin 의 "이 토너먼트 안 표시명 중복" 검사가 던진다.
         val mockMvc = buildMockMvc()
         val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
 
@@ -338,13 +338,36 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .content("""{"inviteCode":"$inviteCode","nickname":"철수"}"""),
             ).andExpect(status().isCreated)
 
-        // 같은 닉네임으로 또 합류하면 닉네임 unique 충돌 → 409 (saveAndFlush 변환, 500 아님).
+        // 같은 판에서 같은 닉네임으로 또 합류하면 409 (500 아님).
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/join/guest")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"inviteCode":"$inviteCode","nickname":"철수"}"""),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    // 레거시 참여 행(nickname NULL)은 표시 때 프로필 닉으로 폴백한다. 게스트 합류 검사도 저장값이 아니라
+    // 표시명 기준이어야 그 행과의 충돌을 막는다 — 참여 닉 변경 경로와 같은 쿼리를 쓰므로 함께 고정한다.
+    @Test
+    fun `POST tournaments-id-join-guest 는 레거시 참여자의 폴백 표시명과 겹치면 409 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        // 레거시 참여자: 참여 닉이 NULL 이라 화면엔 프로필 닉("라떼왕")이 뜬다.
+        val legacyUserId = UUID.randomUUID()
+        saveUser(legacyUserId, "https://cdn.example.com/legacy.jpg", "라떼왕")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = tournamentId, userId = legacyUserId, nickname = null),
+        )
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join/guest")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode","nickname":"라떼왕"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
     }
 
     @Test
@@ -1942,8 +1965,13 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         saveUser(userId, userProfileImage, "주최자")
         val otherTournamentId = createTournament(mockMvc, name = "남의 판")
+        // 참여자의 User 행도 만든다 — 중복 검사 쿼리가 users 와 inner join 이라, 이 행이 없으면 그 참여자가
+        // 조인에서 통째로 빠져 "토너먼트 범위" 와 무관하게 통과한다. 그러면 범위 조건을 지워도 깨지지 않는
+        // 공회전 테스트가 된다(실측으로 확인했다).
+        val otherPlayerId = UUID.randomUUID()
+        saveUser(otherPlayerId, "https://cdn.example.com/other.jpg", "남의 판 참여자")
         tournamentUserJpaRepository.save(
-            TournamentUser(tournamentId = otherTournamentId, userId = UUID.randomUUID(), nickname = "겹치는닉"),
+            TournamentUser(tournamentId = otherTournamentId, userId = otherPlayerId, nickname = "겹치는닉"),
         )
         val tournamentId = createTournament(mockMvc)
 
