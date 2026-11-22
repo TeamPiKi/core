@@ -88,6 +88,8 @@ class OpenApiConfig {
                 "Block",
                 // 신고는 차단을 동반하는 같은 축의 기능이라 그 뒤
                 "Report",
+                // 다른 사람 프로필은 관계(친구·차단·신고) 다음에 오는 화면이라 그 뒤
+                "Profile",
                 "Wishlist",
                 "Folder",
                 "Tournament",
