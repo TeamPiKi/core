@@ -20,6 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.event.ApplicationEvents
 import org.springframework.test.context.event.RecordApplicationEvents
 import org.springframework.transaction.annotation.Transactional
+import java.time.Duration
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,6 +33,8 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var wishPersistenceService: WishPersistenceService
 
     @Autowired private lateinit var itemParsingService: ItemParsingService
+
+    @Autowired private lateinit var parseRequestDeadline: ParseRequestDeadline
 
     @Autowired private lateinit var userJpaRepository: UserJpaRepository
 
@@ -83,6 +86,27 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
 
         assertEquals(ExtractionSettlement.Superseded, settlement)
         assertEquals(OutboxStatus.FAILED, statusOf(wish))
+    }
+
+    @Test
+    fun `기한이 지나도록 결과가 없는 요청은 실패로 닫히고 파싱 실패 사실을 발행한다`() {
+        val wish = registerWish("https://www.musinsa.com/products/8300005")
+        jdbcTemplate.update("UPDATE item_parse_outbox SET created_at = created_at - INTERVAL 10 MINUTE WHERE id = ?", requestIdOf(wish))
+        entityManager.clear()
+
+        parseRequestDeadline.closeOverdue(Duration.ofMinutes(7))
+
+        assertEquals(OutboxStatus.FAILED, statusOf(wish))
+        assertEquals(listOf(wish.slot), applicationEvents.stream(ItemParsingFailed::class.java).map { it.slot }.toList())
+    }
+
+    @Test
+    fun `기한 안의 요청은 닫지 않는다`() {
+        val wish = registerWish("https://www.musinsa.com/products/8300006")
+
+        parseRequestDeadline.closeOverdue(Duration.ofMinutes(7))
+
+        assertEquals(OutboxStatus.PENDING, statusOf(wish))
     }
 
     private fun registerWish(url: String): Wish {
