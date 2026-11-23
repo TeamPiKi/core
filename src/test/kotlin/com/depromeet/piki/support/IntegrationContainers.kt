@@ -26,5 +26,5 @@ object IntegrationContainers {
     @Container
     @ServiceConnection
     @JvmStatic
-    val REDIS: GenericContainer<*> = GenericContainer("redis:7.4-alpine").withExposedPorts(6379)
+    val REDIS: GenericContainer<*> = GenericContainer("redis:8.10-alpine").withExposedPorts(6379)
 }
