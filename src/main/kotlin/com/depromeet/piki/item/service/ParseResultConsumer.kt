@@ -14,29 +14,29 @@ class ParseResultConsumer(
 ) : StreamListener<String, MapRecord<String, String, String>> {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    override fun onMessage(record: MapRecord<String, String, String>) {
-        ParseResultMessage.of(record.value)?.let(::apply) ?: log.error("item.parse.result.malformed record={} fields={}", record.id, record.value.keys)
-        redis.opsForStream<String, String>().acknowledge(ParseResultMessage.STREAM, GROUP, record.id)
+    override fun onMessage(message: MapRecord<String, String, String>) {
+        ParseResultMessage.of(message.value)?.let(::apply) ?: log.error("item.parse.result.malformed message={} fields={}", message.id, message.value.keys)
+        redis.opsForStream<String, String>().acknowledge(ParseResultMessage.STREAM, GROUP, message.id)
     }
 
-    private fun apply(message: ParseResultMessage) {
-        val extracted = message.takeIf { it.isSuccess() }?.let { runCatchingException { it.toSnapshot() }.getOrNull() }
-        extracted ?: return applyFailed(message)
-        when (val settlement = UniqueConflictRetry.once("request=${message.requestId}") { itemParsingService.applyExtracted(message.requestId, extracted) }) {
-            is ExtractionSettlement.Applied -> itemParseResultRecorder.recordSettled(message.requestId, settlement.status, "code=${message.code}")
-            ExtractionSettlement.Superseded -> logSuperseded(message)
+    private fun apply(result: ParseResultMessage) {
+        val extracted = result.takeIf { it.isSuccess() }?.let { runCatchingException { it.toSnapshot() }.getOrNull() }
+        extracted ?: return applyFailed(result)
+        when (val settlement = UniqueConflictRetry.once("request=${result.requestId}") { itemParsingService.applyExtracted(result.requestId, extracted) }) {
+            is ExtractionSettlement.Applied -> itemParseResultRecorder.recordSettled(result.requestId, settlement.status, "code=${result.code}")
+            ExtractionSettlement.Superseded -> logSuperseded(result)
             ExtractionSettlement.Discarded -> Unit
         }
     }
 
-    private fun applyFailed(message: ParseResultMessage) {
-        if (!itemParsingService.applyFailed(message.requestId)) return logSuperseded(message)
-        val reason = ItemParsingMetrics.failureReasonOf(message.toFailure())
-        itemParseResultRecorder.recordFailed(message.requestId, reason, "code=${message.code}")
+    private fun applyFailed(result: ParseResultMessage) {
+        if (!itemParsingService.applyFailed(result.requestId)) return logSuperseded(result)
+        val reason = ItemParsingMetrics.failureReasonOf(result.toFailure())
+        itemParseResultRecorder.recordFailed(result.requestId, reason, "code=${result.code}")
     }
 
-    private fun logSuperseded(message: ParseResultMessage) {
-        log.info("item.parse.result.superseded request={} 이미 닫힌 요청의 결과를 버림", message.requestId)
+    private fun logSuperseded(result: ParseResultMessage) {
+        log.info("item.parse.result.superseded request={} 이미 닫힌 요청의 결과를 버림", result.requestId)
     }
 
     companion object {
