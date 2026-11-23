@@ -17,7 +17,12 @@ import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import org.awaitility.Awaitility.await
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.Range
+import org.springframework.data.redis.connection.stream.Consumer
+import org.springframework.data.redis.connection.stream.MapRecord
+import org.springframework.data.redis.connection.stream.ReadOffset
+import org.springframework.data.redis.connection.stream.StreamOffset
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.stream.StreamMessageListenerContainer
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
@@ -37,6 +42,10 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var redis: StringRedisTemplate
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired private lateinit var parseResultReclaimer: ParseResultReclaimer
+
+    @Autowired private lateinit var parseResultListenerContainer: StreamMessageListenerContainer<String, MapRecord<String, String, String>>
 
     @Test
     fun `결과 스트림에 성공 결과가 오면 요청이 성공으로 닫히고 위시에 상품이 채워진다`() {
@@ -95,6 +104,33 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
         assertEquals(0L, pendingCount())
         assertEquals(emptyList(), streamEntriesOf(requestId))
         deleteMemberData(userId)
+    }
+
+    @Test
+    fun `다른 소비자가 꺼낸 뒤 확인 응답 없이 사라진 결과를 이어받아 반영한다`() {
+        val userId = newMember()
+        val wish = registerWish(userId, "https://www.musinsa.com/products/8400005")
+        val requestId = jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString()
+        takeWithoutAcknowledging(mapOf("requestId" to requestId, "code" to "BLOCKED_DOMAIN"))
+        assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(wish.slot))
+
+        parseResultReclaimer.reclaim(Duration.ZERO)
+
+        assertEquals(OutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(wish.slot))
+        assertEquals(emptyList(), streamEntriesOf(requestId))
+        deleteMemberData(userId)
+    }
+
+    private fun takeWithoutAcknowledging(fields: Map<String, String>) {
+        parseResultListenerContainer.stop()
+        try {
+            publishResult(fields)
+            redis
+                .opsForStream<String, String>()
+                .read(Consumer.from(ParseResultConsumer.GROUP, "gone-${UUID.randomUUID()}"), StreamOffset.create(ParseResultMessage.STREAM, ReadOffset.lastConsumed()))
+        } finally {
+            parseResultListenerContainer.start()
+        }
     }
 
     private fun publishResult(fields: Map<String, String>) {

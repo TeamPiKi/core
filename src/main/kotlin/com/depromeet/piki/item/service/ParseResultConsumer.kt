@@ -6,6 +6,7 @@ import org.springframework.data.redis.connection.stream.MapRecord
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.stream.StreamListener
 import org.springframework.stereotype.Component
+import java.util.UUID
 
 @Component
 class ParseResultConsumer(
@@ -14,6 +15,8 @@ class ParseResultConsumer(
     private val redis: StringRedisTemplate,
 ) : StreamListener<String, MapRecord<String, String, String>> {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    val name: String = "core-${UUID.randomUUID()}"
 
     override fun onMessage(message: MapRecord<String, String, String>) {
         ParseResultMessage.of(message.value)?.let(::apply) ?: log.error("item.parse.result.malformed message={} fields={}", message.id, message.value.keys)

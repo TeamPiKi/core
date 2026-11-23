@@ -12,7 +12,6 @@ import org.springframework.data.redis.connection.stream.StreamOffset
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.stream.StreamMessageListenerContainer
 import java.time.Duration
-import java.util.UUID
 
 @Configuration
 class ParseResultStreamConfig {
@@ -30,7 +29,7 @@ class ParseResultStreamConfig {
                 .build()
         return StreamMessageListenerContainer.create(connectionFactory, options).apply {
             receive(
-                Consumer.from(ParseResultConsumer.GROUP, "core-${UUID.randomUUID()}"),
+                Consumer.from(ParseResultConsumer.GROUP, consumer.name),
                 StreamOffset.create(ParseResultMessage.STREAM, ReadOffset.lastConsumed()),
                 consumer,
             )

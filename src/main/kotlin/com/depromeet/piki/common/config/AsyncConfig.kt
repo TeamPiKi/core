@@ -43,6 +43,18 @@ class AsyncConfig : AsyncConfigurer {
             initialize()
         }
 
+    @Bean(PARSE_RESULT_RECLAIM_EXECUTOR)
+    fun parseResultReclaimExecutor(): ThreadPoolTaskExecutor =
+        ThreadPoolTaskExecutor().apply {
+            corePoolSize = 1
+            maxPoolSize = 1
+            queueCapacity = 0
+            setThreadNamePrefix("parse-result-reclaim-")
+            setTaskDecorator(ContextPropagatingTaskDecorator())
+            setRejectedExecutionHandler(ThreadPoolExecutor.DiscardPolicy())
+            initialize()
+        }
+
     @Bean(NOTIFICATION_EXECUTOR)
     fun notificationExecutor(): Executor =
         ThreadPoolTaskExecutor().apply {
@@ -64,6 +76,7 @@ class AsyncConfig : AsyncConfigurer {
 
     companion object {
         const val ITEM_PARSING_EXECUTOR = "itemParsingExecutor"
+        const val PARSE_RESULT_RECLAIM_EXECUTOR = "parseResultReclaimExecutor"
         const val EVENT_PUBLICATION_EXECUTOR = "eventPublicationExecutor"
         const val NOTIFICATION_EXECUTOR = "notificationExecutor"
     }
