@@ -16,6 +16,7 @@ import com.depromeet.piki.wishlist.service.WishPersistenceService
 import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import org.awaitility.Awaitility.await
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.data.domain.Range
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
@@ -82,21 +83,31 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `처리한 결과는 확인 응답을 보내 대기 목록에 남기지 않는다`() {
+    fun `처리한 결과는 대기 목록과 스트림에서 모두 지운다`() {
         val userId = newMember()
         val wish = registerWish(userId, "https://www.musinsa.com/products/8400004")
+        val requestId = jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString()
 
-        publishResult(mapOf("requestId" to jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString(), "code" to "BLOCKED_DOMAIN"))
+        publishResult(mapOf("requestId" to requestId, "code" to "BLOCKED_DOMAIN"))
 
         await().atMost(TIMEOUT).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
-        await().atMost(TIMEOUT).until { pendingCount() == 0L }
+        await().atMost(TIMEOUT).until { pendingCount() == 0L && streamEntriesOf(requestId).isEmpty() }
         assertEquals(0L, pendingCount())
+        assertEquals(emptyList(), streamEntriesOf(requestId))
         deleteMemberData(userId)
     }
 
     private fun publishResult(fields: Map<String, String>) {
         redis.opsForStream<String, String>().add(ParseResultMessage.STREAM, fields)
     }
+
+    private fun streamEntriesOf(requestId: String): List<Map<String, String>> =
+        redis
+            .opsForStream<String, String>()
+            .range(ParseResultMessage.STREAM, Range.unbounded())
+            .orEmpty()
+            .map { it.value }
+            .filter { it["requestId"] == requestId }
 
     private fun pendingCount(): Long =
         redis.opsForStream<String, String>().pending(ParseResultMessage.STREAM, ParseResultConsumer.GROUP)?.totalPendingMessages ?: 0L

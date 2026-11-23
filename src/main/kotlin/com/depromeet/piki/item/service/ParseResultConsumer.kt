@@ -1,6 +1,7 @@
 package com.depromeet.piki.item.service
 
 import org.slf4j.LoggerFactory
+import org.springframework.data.redis.connection.RedisStreamCommands.XDelOptions
 import org.springframework.data.redis.connection.stream.MapRecord
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.stream.StreamListener
@@ -16,7 +17,7 @@ class ParseResultConsumer(
 
     override fun onMessage(message: MapRecord<String, String, String>) {
         ParseResultMessage.of(message.value)?.let(::apply) ?: log.error("item.parse.result.malformed message={} fields={}", message.id, message.value.keys)
-        redis.opsForStream<String, String>().acknowledge(ParseResultMessage.STREAM, GROUP, message.id)
+        redis.opsForStream<String, String>().acknowledgeAndDelete(GROUP, message, XDelOptions.defaults())
     }
 
     private fun apply(result: ParseResultMessage) {
