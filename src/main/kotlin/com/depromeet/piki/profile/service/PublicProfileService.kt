@@ -3,6 +3,7 @@ package com.depromeet.piki.profile.service
 import com.depromeet.piki.block.repository.UserBlockRepository
 import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.folder.repository.FolderWishRepository
+import com.depromeet.piki.folder.service.FolderCovers
 import com.depromeet.piki.friendship.repository.FriendshipRepository
 import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.product.source.SourcePlatformResolver
@@ -35,6 +36,7 @@ class PublicProfileService(
     private val userBlockRepository: UserBlockRepository,
     private val folderRepository: FolderRepository,
     private val folderWishRepository: FolderWishRepository,
+    private val folderCovers: FolderCovers,
     private val wishRepository: WishRepository,
     private val profileCountReader: ProfileCountReader,
     private val itemCardService: ItemCardService,
@@ -65,13 +67,15 @@ class PublicProfileService(
             )
         // 아무것도 못 보는 사람이면 폴더를 읽지 않고 끝낸다. **가드가 아니라 질의 절약이다** —
         // 아래 publicFoldersOf 의 필터가 같은 판정을 이미 하므로, 이 줄을 지워도 응답은 같다(실측).
-        val folders =
-            if (exposure.canSeeFolder(isFolderPublic = true)) publicFoldersOf(ownerId, exposure) else emptyList()
+        // 공개 폴더 하나라도 볼 수 있는지가 곧 "가려짐" 의 반대다. 상대가 나를 차단한 경우도 비공개 프로필과 같은 true 라 차단이 드러나지 않는다
+        val foldersHidden = !exposure.canSeeFolder(isFolderPublic = true)
+        val folders = if (foldersHidden) emptyList() else publicFoldersOf(ownerId, exposure)
         return PublicProfile(
             userId = ownerId,
             nickname = owner.nickname,
             profileImage = owner.profileImage,
             relation = relation,
+            foldersHidden = foldersHidden,
             folders = folders,
         )
     }
@@ -128,11 +132,14 @@ class PublicProfileService(
     ): List<PublicFolderSummary> {
         val visible = folderRepository.findAllByUserId(ownerId).filter { exposure.canSeeFolder(it.isPublic) }
         val wishIdsByFolder = folderWishRepository.findLiveWishIdsByFolderIds(visible.map { it.getId() })
+        // 표지는 내 폴더 목록과 같은 계산이다. 공개 폴더 안 위시는 원래 보는 사람에게 보이는 위시라 노출 규칙과 어긋나지 않는다
+        val coversByFolder = folderCovers.coversOf(wishIdsByFolder)
         return visible.map { folder ->
             PublicFolderSummary(
                 folderId = folder.getId(),
                 name = folder.name,
                 wishCount = wishIdsByFolder[folder.getId()].orEmpty().size,
+                coverImageUrls = coversByFolder[folder.getId()].orEmpty(),
             )
         }
     }

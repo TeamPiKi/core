@@ -57,6 +57,7 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
         val viewer = member()
         val owner = member()
         val open = createFolder(owner, "공개 폴더")
+        putWish(owner, open, readyWish(owner))
         val hidden = createFolder(owner, "비공개 폴더")
         hide(owner, hidden)
 
@@ -64,8 +65,12 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/profiles/$owner").by(viewer))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.relation").value(ProfileRelation.NOT_FRIEND.name))
+            .andExpect(jsonPath("$.data.foldersHidden").value(false))
             .andExpect(jsonPath("$.data.folders", hasSize<Any>(1)))
             .andExpect(jsonPath("$.data.folders[0].folderId").value(open))
+            // 표지는 내 폴더 목록과 같은 계산이다
+            .andExpect(jsonPath("$.data.folders[0].coverImageUrls", hasSize<Any>(1)))
+            .andExpect(jsonPath("$.data.folders[0].coverImageUrls[0]").value("https://img.example.com/a.png"))
     }
 
     @Test
@@ -94,6 +99,21 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.nickname").exists())
             .andExpect(jsonPath("$.data.profileImage").exists())
+            .andExpect(jsonPath("$.data.foldersHidden").value(true))
+            .andExpect(jsonPath("$.data.folders", hasSize<Any>(0)))
+    }
+
+    // 공개한 폴더가 없는 사람은 비공개 프로필과 다른 화면(2-2a)이라 foldersHidden 으로 갈린다(#1302)
+    @Test
+    fun `공개한 폴더가 없으면 폴더는 빈 배열이고 가려지지 않은 것으로 내려간다`() {
+        val mockMvc = mockMvc()
+        val owner = member()
+        hide(owner, createFolder(owner, "비공개 폴더"))
+
+        mockMvc
+            .perform(get("/api/v1/profiles/$owner").by(member()))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.foldersHidden").value(false))
             .andExpect(jsonPath("$.data.folders", hasSize<Any>(0)))
     }
 
@@ -117,6 +137,7 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             val data = objectMapper.readTree(it)["data"]
             assert(data["relation"].asText() == ProfileRelation.NOT_FRIEND.name) { "관계가 드러나면 안 된다: $data" }
             assert(data["folders"].size() == 0) { "폴더가 보이면 안 된다: $data" }
+            assert(data["foldersHidden"].asBoolean()) { "비공개 프로필과 같이 가려져야 한다: $data" }
         }
     }
 
@@ -133,6 +154,7 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/profiles/$owner").by(viewer))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.relation").value(ProfileRelation.BLOCKED.name))
+            .andExpect(jsonPath("$.data.foldersHidden").value(true))
             .andExpect(jsonPath("$.data.folders", hasSize<Any>(0)))
     }
 

@@ -31,6 +31,8 @@ class PublicProfileApiExamples(
                         name = "비공개 프로필 · 상대가 나를 차단 (구분되지 않음)",
                         payload = ApiResponseBody.ok(hiddenProfile),
                     )
+                    // 공개한 폴더가 없는 사람은 foldersHidden=false 라 비공개 프로필과 갈린다
+                    add(status = HttpStatus.OK, name = "공개한 폴더 없음", payload = ApiResponseBody.ok(openProfile.copy(folders = emptyList())))
                     add(status = HttpStatus.OK, name = "내가 차단한 사람", payload = ApiResponseBody.ok(blockedProfile))
                     add(UserException.notFound(), name = "없는 사용자 · 탈퇴한 사용자")
                 }
@@ -53,12 +55,21 @@ class PublicProfileApiExamples(
                 nickname = "난폭한 북극곰",
                 profileImage = "https://cdn.piki.day/profiles/polar-bear.png",
                 relation = ProfileRelation.NOT_FRIEND,
-                folders = listOf(PublicFolderResponse(folderId = 12, name = "겨울 대비", wishCount = 7)),
+                foldersHidden = false,
+                folders =
+                    listOf(
+                        PublicFolderResponse(
+                            folderId = 12,
+                            name = "겨울 대비",
+                            wishCount = 7,
+                            coverImageUrls = listOf("https://cdn.example.com/p/701.jpg", null, "https://cdn.example.com/p/690.jpg"),
+                        ),
+                    ),
             )
 
-        private val hiddenProfile = openProfile.copy(folders = emptyList())
+        private val hiddenProfile = openProfile.copy(foldersHidden = true, folders = emptyList())
 
-        private val blockedProfile = openProfile.copy(relation = ProfileRelation.BLOCKED, folders = emptyList())
+        private val blockedProfile = openProfile.copy(relation = ProfileRelation.BLOCKED, foldersHidden = true, folders = emptyList())
 
         private val emptyFolder = PublicFolderDetailResponse(folderId = 12, name = "겨울 대비", wishes = emptyList())
     }
