@@ -4,6 +4,7 @@ import com.depromeet.piki.auth.infrastructure.oauth.OAuthProvider
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
+import org.springframework.data.redis.core.StringRedisTemplate
 
 @TestConfiguration(proxyBeanMethods = false)
 class IntegrationStubs {
@@ -14,6 +15,13 @@ class IntegrationStubs {
     @Bean
     @Primary
     fun imageSnapshotExtractor(): StubImageSnapshotExtractor = StubImageSnapshotExtractor()
+
+    @Bean
+    fun fakeExtractor(
+        redis: StringRedisTemplate,
+        linkSnapshotExtractor: StubLinkSnapshotExtractor,
+        imageSnapshotExtractor: StubImageSnapshotExtractor,
+    ): FakeExtractor = FakeExtractor(redis, linkSnapshotExtractor, imageSnapshotExtractor)
 
     @Bean
     @Primary

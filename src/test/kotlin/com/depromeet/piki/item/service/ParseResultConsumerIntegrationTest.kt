@@ -2,7 +2,11 @@ package com.depromeet.piki.item.service
 
 import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.product.service.remote.ProductExtractorException
+import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
+import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.latestParseOutboxIdOf
 import com.depromeet.piki.support.parseOutboxStatusOf
@@ -43,9 +47,37 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var jdbcTemplate: JdbcTemplate
 
+    @Autowired private lateinit var fakeExtractor: FakeExtractor
+
+    @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
+
     @Autowired private lateinit var parseResultReclaimer: ParseResultReclaimer
 
     @Autowired private lateinit var parseResultListenerContainer: StreamMessageListenerContainer<String, MapRecord<String, String, String>>
+
+    @Test
+    fun `링크로 위시를 담으면 요청 스트림과 결과 스트림을 거쳐 상품이 채워진다`() {
+        val userId = newMember()
+        stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "왕복 상품", price = 15_000, currency = "KRW", imageUrl = "https://img.example.com/w.png") }
+        val wish = registerWish(userId, "https://www.musinsa.com/products/8400006")
+
+        fakeExtractor.awaitTicking { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.SUCCEEDED }
+
+        assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()))
+        deleteMemberData(userId)
+    }
+
+    @Test
+    fun `추출이 차단 도메인으로 실패하면 요청 스트림과 결과 스트림을 거쳐 요청이 실패로 닫힌다`() {
+        val userId = newMember()
+        stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedDomain() }
+        val wish = registerWish(userId, "https://www.musinsa.com/products/8400007")
+
+        fakeExtractor.awaitTicking { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
+
+        assertNull(jdbcTemplate.wishItemIdOf(wish.getId()))
+        deleteMemberData(userId)
+    }
 
     @Test
     fun `결과 스트림에 성공 결과가 오면 요청이 성공으로 닫히고 위시에 상품이 채워진다`() {
