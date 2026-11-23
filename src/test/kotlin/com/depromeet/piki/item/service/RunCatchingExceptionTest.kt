@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-// 파서(ItemParser)의 포획 범위를 고정한다(#941). 표준 runCatching 은 Throwable 을 전부 잡아 Error 까지 삼키는데,
+// 파싱 결과 반영 경로의 포획 범위를 고정한다(#941). 표준 runCatching 은 Throwable 을 전부 잡아 Error 까지 삼키는데,
 // 그러면 치명 오류를 받아 처리하도록 만들어 둔 바깥 층(JVM 종료·컨테이너 재시작·헬스체크)이 작동하지 못한다.
 // 여기서 잡히는 것과 통과하는 것의 경계를 못 박아, 다시 넓은 포획으로 되돌아가면 깨지게 한다.
 class RunCatchingExceptionTest {
@@ -33,10 +33,13 @@ class RunCatchingExceptionTest {
     }
 
     @Test
-    fun `파서(ItemParser)는 표준 runCatching 을 쓰지 않는다`() {
-        // 위 포획 범위는 파서가 이 함수를 쓸 때만 의미가 있다. 한 곳이라도 표준 runCatching 으로 되돌아가면
+    fun `파싱 결과 반영 경로는 표준 runCatching 을 쓰지 않는다`() {
+        // 위 포획 범위는 이 경로가 이 함수를 쓸 때만 의미가 있다. 한 곳이라도 표준 runCatching 으로 되돌아가면
         // 그 자리에서만 Error 가 다시 삼켜지는데, 그건 리뷰로만 걸러야 해서 조용히 새기 쉽다 — 기계로 못 박는다.
-        val parsers = listOf(java.io.File("src/main/kotlin/com/depromeet/piki/item/service/ItemParser.kt"))
+        val parsers =
+            listOf("ParseResultConsumer.kt", "ParseResultReclaimer.kt", "ParseRequestDeadline.kt")
+                .map { java.io.File("src/main/kotlin/com/depromeet/piki/item/service/$it") }
+        assertTrue(parsers.all { it.exists() }, "검사 대상 파일이 사라짐: ${parsers.filterNot { it.exists() }.map { it.name }}")
 
         val offenders =
             parsers.filter { file ->

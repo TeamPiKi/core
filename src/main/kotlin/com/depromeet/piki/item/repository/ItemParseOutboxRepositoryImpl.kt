@@ -1,6 +1,5 @@
 package com.depromeet.piki.item.repository
 
-import com.depromeet.piki.common.outbox.OutboxRepositoryAdapter
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSlotType
@@ -11,8 +10,9 @@ import org.springframework.stereotype.Repository
 @Repository
 class ItemParseOutboxRepositoryImpl(
     private val itemParseOutboxJpaRepository: ItemParseOutboxJpaRepository,
-) : OutboxRepositoryAdapter<ItemParseOutbox>(itemParseOutboxJpaRepository),
-    ItemParseOutboxRepository {
+) : ItemParseOutboxRepository {
+    override fun save(request: ItemParseOutbox): ItemParseOutbox = itemParseOutboxJpaRepository.save(request)
+
     override fun findById(id: Long): ItemParseOutbox? = itemParseOutboxJpaRepository.findByIdAndDeletedAtIsNull(id)
 
     override fun findInProgressForUpdate(id: Long): ItemParseOutbox? =

@@ -144,7 +144,7 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
         val wish = wishJpaRepository.save(Wish(userId = userId, itemId = null))
         val outbox =
             itemParseOutboxRepository.save(
-                ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))).apply { claim() },
+                ItemParseOutbox.of(wish.slot, ParsePurpose.REGISTER, ParseInput.Link(ProductLink.parse(url))),
             )
 
         val mockMvc =
@@ -165,8 +165,8 @@ class WishRefreshConcurrencyIntegrationTest : IntegrationTestSupport() {
             val tasks: List<() -> Boolean> =
                 listOf(
                     {
-                        itemParsingService.markExtracted(
-                            outbox.attempt(),
+                        itemParsingService.applyExtracted(
+                            outbox.getId(),
                             ProductSnapshot(
                                 name = "확정 상품",
                                 price = 10_000,

@@ -11,7 +11,7 @@ data class ParseResultMessage(
     val code: String?,
     private val fields: Map<String, String>,
 ) {
-    fun isSuccess(): Boolean = code == CODE_OK
+    fun isSuccess(): Boolean = code == CODE_OK && EXTRACTED_FIELDS.any { !fields[it].isNullOrBlank() }
 
     fun toSnapshot(): ProductSnapshot =
         ProductSnapshot.fromExtracted(
@@ -33,6 +33,7 @@ data class ParseResultMessage(
     companion object {
         const val STREAM = "parse:results"
         const val CODE_OK = "OK"
+        private val EXTRACTED_FIELDS = listOf("name", "imageUrl", "currentPrice")
 
         fun of(fields: Map<String, String>): ParseResultMessage? {
             val requestId = fields["requestId"]?.toLongOrNull() ?: return null

@@ -1,7 +1,6 @@
 package com.depromeet.piki.tournament.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.ProductImageKey
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemErrorCode
@@ -9,6 +8,7 @@ import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemSnapshotJpaRepository
@@ -22,7 +22,7 @@ import com.depromeet.piki.support.normalizedOf
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.tournament.controller.dto.UpdateTournamentNicknameRequest
 import com.depromeet.piki.tournament.domain.Tournament
@@ -2650,7 +2650,7 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
         }.first()
         assertEquals(tournamentItemId, tournamentItem.getId())
         assertNull(tournamentItem.itemId)
-        assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(tournamentItem.slot))
+        assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(tournamentItem.slot))
 
         mockMvc
             .perform(

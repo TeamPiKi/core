@@ -1,29 +1,28 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
-import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
@@ -49,7 +48,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
+// 결과 반영은 소비자 스레드의 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -76,7 +75,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private lateinit var jwtProvider: JwtProvider
 
     @Autowired
-    private lateinit var itemParsingScheduler: ItemParsingScheduler
+    private lateinit var fakeExtractor: FakeExtractor
 
     @Autowired
     private lateinit var notificationRepository: NotificationRepository
@@ -104,7 +103,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.price").value(10_000))
 
             val slot = ItemSlot.wish(wishId)
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.SUCCEEDED }
 
             val versions = versionsOf(itemId)
             assertEquals(2, versions.size)
@@ -263,7 +262,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.refreshing").value(true))
 
             assertEquals(2, countParseOutbox(slot))
-            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(slot))
         } finally {
             cleanup(userId)
         }
@@ -287,8 +286,8 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
 
-            itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
+            fakeExtractor.awaitTicking {
+                jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)) == ParseRequestStatus.SUCCEEDED
             }
             // AFTER_COMMIT 리스너가 비동기로 저장한다
             await().atMost(Duration.ofSeconds(5)).until {
@@ -328,7 +327,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("ITEM-008"))
 
             assertEquals(listOf("기계 값"), versionsOf(itemId).map { it.name })
-            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(slot))
         } finally {
             cleanup(userId)
         }

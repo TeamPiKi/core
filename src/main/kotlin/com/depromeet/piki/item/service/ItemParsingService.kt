@@ -1,11 +1,9 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.outbox.OutboxAttempt
 import com.depromeet.piki.item.domain.Item
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemStatus
-import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.item.event.ItemParsingIncomplete
@@ -17,7 +15,6 @@ import com.depromeet.piki.product.service.ProductSnapshot
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 
 @Service
@@ -31,60 +28,47 @@ class ItemParsingService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Transactional(readOnly = true)
-    fun inputOf(itemParseOutboxId: Long): ParseInput =
-        itemParseOutboxRepository.findById(itemParseOutboxId)?.input ?: error("item parse outbox $itemParseOutboxId 이 없다")
-
-    @Transactional
-    fun markExtracted(
-        attempt: OutboxAttempt,
-        extracted: ProductSnapshot,
-    ): ExtractionSettlement {
-        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return ExtractionSettlement.Superseded
-        return settleExtracted(outbox, extracted, Closing({ outbox.succeed(attempt) }, { outbox.fail(attempt) }))
-    }
-
-    @Transactional
-    fun markFailed(attempt: OutboxAttempt): Boolean {
-        val outbox = itemParseOutboxRepository.findHeldForUpdate(attempt) ?: return false
-        settleFailed(outbox, Closing({ outbox.succeed(attempt) }, { outbox.fail(attempt) }))
-        return true
-    }
-
     @Transactional
     fun applyExtracted(
         requestId: Long,
         extracted: ProductSnapshot,
     ): ExtractionSettlement {
         val request = itemParseOutboxRepository.findInProgressForUpdate(requestId) ?: return ExtractionSettlement.Superseded
-        return settleExtracted(request, extracted, Closing(request::succeed, request::fail))
+        return settleExtracted(request, extracted)
     }
 
     @Transactional
     fun applyFailed(requestId: Long): Boolean {
         val request = itemParseOutboxRepository.findInProgressForUpdate(requestId) ?: return false
-        settleFailed(request, Closing(request::succeed, request::fail))
+        settleFailed(request, observeRefresh = true)
+        return true
+    }
+
+    // 결과 없이 기한으로 닫는 경우는 원인이 전달 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
+    @Transactional
+    fun expire(requestId: Long): Boolean {
+        val request = itemParseOutboxRepository.findInProgressForUpdate(requestId) ?: return false
+        settleFailed(request, observeRefresh = false)
         return true
     }
 
     private fun settleExtracted(
         outbox: ItemParseOutbox,
         extracted: ProductSnapshot,
-        closing: Closing,
     ): ExtractionSettlement {
         val slot =
             when (val state = itemSlots.find(outbox.slot)) {
                 is ItemSlotState.Present -> state
-                ItemSlotState.Gone -> return discard(closing)
+                ItemSlotState.Gone -> return discard(outbox)
             }
         if (!ItemSnapshot.accepts(extracted)) {
-            closeAfterExtraction(outbox, closing, slot)
+            closeFailed(outbox, slot, observeRefresh = true)
             return ExtractionSettlement.Applied(ItemStatus.FAILED)
         }
         val item = itemOf(outbox, slot, extracted.finalUrl)
         val version = itemSnapshotRepository.save(ItemSnapshot.extracted(item.getId(), extracted, slot.owner))
         val fill = itemSlots.fill(outbox.slot, item.getId())
-        closing.succeed()
+        outbox.succeed()
         when (fill) {
             ItemSlotFill.Filled -> eventPublisher.publishEvent(parsingFact(outbox, slot, version))
             // 합침 사실은 ItemSlots 가 발행한다
@@ -95,26 +79,17 @@ class ItemParsingService(
 
     private fun settleFailed(
         outbox: ItemParseOutbox,
-        closing: Closing,
+        observeRefresh: Boolean,
     ) {
         when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> closeAfterExtraction(outbox, closing, state)
-            ItemSlotState.Gone -> discard(closing)
-        }
-    }
-
-    // 회수 상한 실패는 원인이 서버 중단이라 정체 URL 실패 관측(logRefreshFailure)에 남기지 않음
-    @Transactional(propagation = Propagation.MANDATORY)
-    fun notifyRecoveryExhausted(outbox: ItemParseOutbox) {
-        when (val state = itemSlots.find(outbox.slot)) {
-            is ItemSlotState.Present -> publishFailed(outbox, state)
-            ItemSlotState.Gone -> Unit
+            is ItemSlotState.Present -> closeFailed(outbox, state, observeRefresh)
+            ItemSlotState.Gone -> discard(outbox)
         }
     }
 
     // 탈퇴로 슬롯 행이 하드 삭제되면 결과를 받을 곳이 없어 알림 없이 닫는다
-    private fun discard(closing: Closing): ExtractionSettlement.Discarded {
-        closing.fail()
+    private fun discard(outbox: ItemParseOutbox): ExtractionSettlement.Discarded {
+        outbox.fail()
         return ExtractionSettlement.Discarded
     }
 
@@ -130,14 +105,14 @@ class ItemParsingService(
         return item
     }
 
-    private fun closeAfterExtraction(
+    private fun closeFailed(
         outbox: ItemParseOutbox,
-        closing: Closing,
         slot: ItemSlotState.Present,
+        observeRefresh: Boolean,
     ) {
-        closing.fail()
+        outbox.fail()
         publishFailed(outbox, slot)
-        if (outbox.isRefresh()) logRefreshFailure(outbox, slot)
+        if (observeRefresh && outbox.isRefresh()) logRefreshFailure(outbox, slot)
     }
 
     private fun publishFailed(
@@ -178,9 +153,4 @@ class ItemParsingService(
             ItemParsingIncomplete(outbox.slot, slot.owner, version.itemId, version.getId(), refresh)
         }
     }
-
-    private class Closing(
-        val succeed: () -> Unit,
-        val fail: () -> Unit,
-    )
 }

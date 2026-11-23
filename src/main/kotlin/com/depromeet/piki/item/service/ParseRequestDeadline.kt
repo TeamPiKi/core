@@ -25,7 +25,7 @@ class ParseRequestDeadline(
     }
 
     private fun close(requestId: Long) {
-        runCatchingException { itemParsingService.applyFailed(requestId) }
+        runCatchingException { itemParsingService.expire(requestId) }
             .onSuccess { closed -> if (closed) itemParseResultRecorder.recordFailed(requestId, ParseFailureReason.INTERNAL_ERROR, "deadline=exceeded") }
             .onFailure { e -> log.error("item.parse.deadline request={} 기한이 지난 요청을 닫지 못함", requestId, e) }
     }

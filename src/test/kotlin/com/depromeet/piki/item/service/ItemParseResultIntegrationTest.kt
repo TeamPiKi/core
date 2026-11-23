@@ -1,13 +1,13 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemParsingFailed
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.repository.UserJpaRepository
@@ -49,7 +49,7 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
         val settlement = itemParsingService.applyExtracted(requestIdOf(wish), snapshot())
 
         assertEquals(ExtractionSettlement.Applied(ItemStatus.READY), settlement)
-        assertEquals(OutboxStatus.SUCCEEDED, statusOf(wish))
+        assertEquals(ParseRequestStatus.SUCCEEDED, statusOf(wish))
         assertEquals(listOf(wish.slot), applicationEvents.stream(ItemParsingCompleted::class.java).map { it.slot }.toList())
     }
 
@@ -72,7 +72,7 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
         val applied = itemParsingService.applyFailed(requestIdOf(wish))
 
         assertEquals(true, applied)
-        assertEquals(OutboxStatus.FAILED, statusOf(wish))
+        assertEquals(ParseRequestStatus.FAILED, statusOf(wish))
         assertEquals(listOf(wish.slot), applicationEvents.stream(ItemParsingFailed::class.java).map { it.slot }.toList())
     }
 
@@ -85,7 +85,7 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
         val settlement = itemParsingService.applyExtracted(requestId, snapshot())
 
         assertEquals(ExtractionSettlement.Superseded, settlement)
-        assertEquals(OutboxStatus.FAILED, statusOf(wish))
+        assertEquals(ParseRequestStatus.FAILED, statusOf(wish))
     }
 
     @Test
@@ -96,7 +96,7 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
 
         parseRequestDeadline.closeOverdue(Duration.ofMinutes(7))
 
-        assertEquals(OutboxStatus.FAILED, statusOf(wish))
+        assertEquals(ParseRequestStatus.FAILED, statusOf(wish))
         assertEquals(listOf(wish.slot), applicationEvents.stream(ItemParsingFailed::class.java).map { it.slot }.toList())
     }
 
@@ -106,7 +106,7 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
 
         parseRequestDeadline.closeOverdue(Duration.ofMinutes(7))
 
-        assertEquals(OutboxStatus.PENDING, statusOf(wish))
+        assertEquals(ParseRequestStatus.PENDING, statusOf(wish))
     }
 
     private fun registerWish(url: String): Wish {
@@ -132,9 +132,9 @@ class ItemParseResultIntegrationTest : IntegrationTestSupport() {
         ) ?: error("${wish.slot} 의 파싱 요청 행이 없다")
     }
 
-    private fun statusOf(wish: Wish): OutboxStatus {
+    private fun statusOf(wish: Wish): ParseRequestStatus {
         entityManager.flush()
-        return jdbcTemplate.parseOutboxStatusOf(wish.slot)
+        return jdbcTemplate.parseRequestStatusOf(wish.slot)
     }
 
     private fun snapshot(): ProductSnapshot =

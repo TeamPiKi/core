@@ -1,6 +1,6 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.outbox.OutboxStatus
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.remote.ProductExtractorException
@@ -9,7 +9,7 @@ import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.latestParseOutboxIdOf
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.support.wishItemIdOf
 import com.depromeet.piki.user.domain.IdentityType
@@ -21,12 +21,8 @@ import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import org.awaitility.Awaitility.await
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.Range
-import org.springframework.data.redis.connection.stream.Consumer
-import org.springframework.data.redis.connection.stream.MapRecord
-import org.springframework.data.redis.connection.stream.ReadOffset
-import org.springframework.data.redis.connection.stream.StreamOffset
 import org.springframework.data.redis.core.StringRedisTemplate
-import org.springframework.data.redis.stream.StreamMessageListenerContainer
+import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
@@ -53,15 +49,13 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var parseResultReclaimer: ParseResultReclaimer
 
-    @Autowired private lateinit var parseResultListenerContainer: StreamMessageListenerContainer<String, MapRecord<String, String, String>>
-
     @Test
     fun `링크로 위시를 담으면 요청 스트림과 결과 스트림을 거쳐 상품이 채워진다`() {
         val userId = newMember()
         stubLinkSnapshotExtractor.build = { ProductSnapshot(name = "왕복 상품", price = 15_000, currency = "KRW", imageUrl = "https://img.example.com/w.png") }
         val wish = registerWish(userId, "https://www.musinsa.com/products/8400006")
 
-        fakeExtractor.awaitTicking { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.SUCCEEDED }
+        fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.SUCCEEDED }
 
         assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()))
         deleteMemberData(userId)
@@ -73,7 +67,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
         stubLinkSnapshotExtractor.build = { throw ProductExtractorException.blockedDomain() }
         val wish = registerWish(userId, "https://www.musinsa.com/products/8400007")
 
-        fakeExtractor.awaitTicking { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
+        fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.FAILED }
 
         assertNull(jdbcTemplate.wishItemIdOf(wish.getId()))
         deleteMemberData(userId)
@@ -95,7 +89,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
             ),
         )
 
-        await().atMost(TIMEOUT).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.SUCCEEDED }
+        await().atMost(TIMEOUT).until { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.SUCCEEDED }
         assertNotNull(jdbcTemplate.wishItemIdOf(wish.getId()))
         deleteMemberData(userId)
     }
@@ -107,7 +101,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
         publishResult(mapOf("requestId" to jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString(), "code" to "BLOCKED_DOMAIN"))
 
-        await().atMost(TIMEOUT).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
+        await().atMost(TIMEOUT).until { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.FAILED }
         assertNull(jdbcTemplate.wishItemIdOf(wish.getId()))
         deleteMemberData(userId)
     }
@@ -119,7 +113,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
         publishResult(mapOf("requestId" to jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString(), "name" to "code 없는 상품", "currentPrice" to "1000"))
 
-        await().atMost(TIMEOUT).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
+        await().atMost(TIMEOUT).until { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.FAILED }
         deleteMemberData(userId)
     }
 
@@ -131,10 +125,23 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
         publishResult(mapOf("requestId" to requestId, "code" to "BLOCKED_DOMAIN"))
 
-        await().atMost(TIMEOUT).until { jdbcTemplate.parseOutboxStatusOf(wish.slot) == OutboxStatus.FAILED }
+        await().atMost(TIMEOUT).until { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.FAILED }
         await().atMost(TIMEOUT).until { pendingCount() == 0L && streamEntriesOf(requestId).isEmpty() }
         assertEquals(0L, pendingCount())
         assertEquals(emptyList(), streamEntriesOf(requestId))
+        deleteMemberData(userId)
+    }
+
+    @Test
+    fun `결과 스트림이 통째로 사라져도 소비자가 그룹을 다시 만들어 이어서 반영한다`() {
+        val userId = newMember()
+        val wish = registerWish(userId, "https://www.musinsa.com/products/8400008")
+        redis.delete(ParseResultMessage.STREAM)
+        await().atMost(TIMEOUT).until { redis.hasKey(ParseResultMessage.STREAM) }
+
+        publishResult(mapOf("requestId" to jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString(), "code" to "BLOCKED_DOMAIN"))
+
+        await().atMost(TIMEOUT).until { jdbcTemplate.parseRequestStatusOf(wish.slot) == ParseRequestStatus.FAILED }
         deleteMemberData(userId)
     }
 
@@ -144,25 +151,24 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
         val wish = registerWish(userId, "https://www.musinsa.com/products/8400005")
         val requestId = jdbcTemplate.latestParseOutboxIdOf(wish.slot).toString()
         takeWithoutAcknowledging(mapOf("requestId" to requestId, "code" to "BLOCKED_DOMAIN"))
-        assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(wish.slot))
+        assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(wish.slot))
 
         parseResultReclaimer.reclaim(Duration.ZERO)
 
-        assertEquals(OutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(wish.slot))
+        assertEquals(ParseRequestStatus.FAILED, jdbcTemplate.parseRequestStatusOf(wish.slot))
         assertEquals(emptyList(), streamEntriesOf(requestId))
         deleteMemberData(userId)
     }
 
+    // 추가와 꺼내기를 한 스크립트로 묶어 살아 있는 소비자가 먼저 읽지 못하게 한다
     private fun takeWithoutAcknowledging(fields: Map<String, String>) {
-        parseResultListenerContainer.stop()
-        try {
-            publishResult(fields)
-            redis
-                .opsForStream<String, String>()
-                .read(Consumer.from(ParseResultConsumer.GROUP, "gone-${UUID.randomUUID()}"), StreamOffset.create(ParseResultMessage.STREAM, ReadOffset.lastConsumed()))
-        } finally {
-            parseResultListenerContainer.start()
-        }
+        redis.execute(
+            DefaultRedisScript(ADD_AND_TAKE, String::class.java),
+            listOf(ParseResultMessage.STREAM),
+            ParseResultConsumer.GROUP,
+            "gone-${UUID.randomUUID()}",
+            *fields.flatMap { (field, value) -> listOf(field, value) }.toTypedArray(),
+        )
     }
 
     private fun publishResult(fields: Map<String, String>) {
@@ -207,6 +213,10 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
     }
 
     companion object {
+        private const val ADD_AND_TAKE =
+            "local id = redis.call('XADD', KEYS[1], '*', unpack(ARGV, 3)) " +
+                "redis.call('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'STREAMS', KEYS[1], '>') " +
+                "return id"
         private val TIMEOUT = Duration.ofSeconds(5)
     }
 }

@@ -6,7 +6,7 @@ import com.depromeet.piki.product.service.ExtractionFailureBucket
 import com.depromeet.piki.product.service.ExtractionFailureCode
 
 // ProductExtractorException 의 code 배정표(에픽 #728). 번호는 append-only — 재배치·결번 침범 금지.
-// 소비처가 파서뿐이라 응답 code 로 나가지 않아 ErrorCodeRegistry 에 등록하지 않음
+// 소비처가 결과 소비자뿐이라 응답 code 로 나가지 않아 ErrorCodeRegistry 에 등록하지 않음
 // 원격 실패 이유는 사용자 관심사가 아니라 문구를 나누지 않고 구분은 category·bucket·로그가 맡음. 차단만 등록 경계와 같은 문구
 // 일시 실패(TRANSIENT_FAILURE)는 종결 사유가 아니라 bucket 없음
 enum class ProductExtractorErrorCode(

@@ -7,8 +7,6 @@ import com.depromeet.piki.contracts.extraction.v1.ExtractionProto
 internal object ExtractionEndpoints {
     private val service = ExtractionProto.getDescriptor().findServiceByName("ExtractionService")
 
-    val LINK_EXTRACTION: String = path("LinkExtraction")
-    val IMAGE_EXTRACTION: String = path("ImageExtraction")
     val MODEL_PROBE: String = path("ModelProbe")
 
     val CALLER_READ_TIMEOUT_MS: Int = service.options.getExtension(ExtractionProto.callerReadTimeoutSeconds) * 1_000

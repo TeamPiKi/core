@@ -1,14 +1,19 @@
 package com.depromeet.piki.item.service
 
 import com.depromeet.piki.item.domain.ItemStatus
+import com.depromeet.piki.item.repository.ItemParseOutboxRepository
+import com.depromeet.piki.product.domain.ParseInputType
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.time.Duration
+import java.time.LocalDateTime
 
 // 실패율 알림·대시보드(terraform-grafana)는 이 줄을, 메트릭은 카운터를 세므로 둘이 어긋나지 않게 결과는 여기서만 남김
 @Component
 class ItemParseResultRecorder(
     private val meterRegistry: MeterRegistry,
+    private val itemParseOutboxRepository: ItemParseOutboxRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -39,9 +44,19 @@ class ItemParseResultRecorder(
         reason: String,
         fields: String,
     ) {
-        log.info("item.parse.result outbox={} result={} reason={} {}", itemParseOutboxId, result, reason, fields)
+        log.info("item.parse.result outbox={} result={} reason={} {}{}", itemParseOutboxId, result, reason, subjectOf(itemParseOutboxId), fields)
         // 라벨 키 집합이 경로마다 다르면 Prometheus 가 뒤 시계열을 조용히 버림(#465). host 는 카디널리티가 무한이라 라벨 대신 로그로 봄
         meterRegistry.counter(METRIC, TAG_RESULT, result, TAG_REASON, reason).increment()
+    }
+
+    // latency 는 요청을 만든 때부터 결과를 반영한 때까지. 스트림에서 기다린 시간이 들어감
+    private fun subjectOf(itemParseOutboxId: Long): String {
+        val request = runCatchingException { itemParseOutboxRepository.findById(itemParseOutboxId) }.getOrNull() ?: return ""
+        val latency = "latency=${Duration.between(request.createdAt, LocalDateTime.now()).toMillis()}ms"
+        return when (request.inputType) {
+            ParseInputType.LINK -> "$latency type=link url=\"${request.inputValue}\" "
+            ParseInputType.IMAGE -> "$latency type=image key=${request.inputValue} "
+        }
     }
 
     companion object {

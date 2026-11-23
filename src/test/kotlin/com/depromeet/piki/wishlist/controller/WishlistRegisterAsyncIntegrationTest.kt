@@ -4,30 +4,27 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.item.service.ItemParseResultRecorder
-import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.product.service.ProductSnapshotException
 import com.depromeet.piki.product.service.remote.ProductExtractorException
+import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
-import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.normalizedOf
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.latestParseOutboxIdOf
-import com.depromeet.piki.support.markParseOutboxStuck
 import com.depromeet.piki.support.notificationCountOf
-import com.depromeet.piki.support.parseOutboxRecoveryCountOf
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.support.wishItemIdOf
@@ -58,7 +55,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
+// 결과 반영은 소비자 스레드의 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -85,7 +82,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
-    private lateinit var itemParsingScheduler: ItemParsingScheduler
+    private lateinit var fakeExtractor: FakeExtractor
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -141,7 +138,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val readyBefore = parseCount("ready", "none")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/42")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.SUCCEEDED }
             // 파서 비동기라 메트릭 증가도 기다린다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("ready", "none") - readyBefore >= 1.0 }
 
@@ -170,7 +167,6 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
         val mockMvc = buildMockMvc()
         val userId = UUID.randomUUID()
         insertMember(userId)
-        // 실패 라인도 latency 를 가져야 타임아웃형 실패가 로그 기반 소요 통계에서 빠지지 않는다(#916)
         val resultLogs = ListAppender<ILoggingEvent>().apply { start() }
         val resultLogger = LoggerFactory.getLogger(ItemParseResultRecorder::class.java) as Logger
         resultLogger.addAppender(resultLogs)
@@ -179,7 +175,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val notProductBefore = parseCount("failed", "not_product")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/not-a-product")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "not_product") - notProductBefore >= 1.0 }
 
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
@@ -193,10 +189,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             // 아웃박스를 고정해 앞선 테스트의 잔류 비동기 로그에 오염되지 않게 한다
             val outboxId = jdbcTemplate.latestParseOutboxIdOf(slot)
             val expectedResultLog =
-                Regex("""item\.parse\.result outbox=$outboxId result=failed reason=not_product latency=\d+ms""")
+                Regex("""item\.parse\.result outbox=$outboxId result=failed reason=not_product latency=\d+ms type=link url="https://shop\.example\.com/products/not-a-product" """)
             assertTrue(
                 resultLogs.list.any { expectedResultLog.containsMatchIn(it.formattedMessage) },
-                "확정 실패의 item.parse.result 구조화 로그도 latency 를 남겨야 한다",
+                "확정 실패의 item.parse.result 구조화 로그는 latency 와 url 을 남겨야 한다",
             )
         } finally {
             resultLogger.detachAppender(resultLogs)
@@ -214,7 +210,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val incompleteBefore = parseCount("incomplete", "none")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/no-name")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.SUCCEEDED }
             // 부분 성공은 실패에 섞지 않는다(#506)
             await().atMost(Duration.ofSeconds(2)).until { parseCount("incomplete", "none") - incompleteBefore >= 1.0 }
 
@@ -259,8 +255,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val wishId =
                 jdbcTemplate.queryForObject("SELECT id FROM wishes WHERE user_id = ?", Long::class.java, uuidToBytes(userId))
                     ?: error("위시가 없다")
-            itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
+            fakeExtractor.awaitTicking {
+                jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)) == ParseRequestStatus.SUCCEEDED
             }
 
             mockMvc
@@ -295,7 +291,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             }
             val (slot, imageKey) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.SUCCEEDED }
             val itemId = jdbcTemplate.wishItemIdOf(slot.id) ?: error("wish ${slot.id} 에 아이템이 확정되지 않았다")
             val version = versionsOf(itemId).single()
             assertTrue(version.isReady())
@@ -318,7 +314,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             stubImageSnapshotExtractor.build = { throw ProductSnapshotException.notProductPage() }
             val (slot, _) = registerImage(mockMvc, userId)
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.FAILED }
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
         } finally {
             cleanup(userId)
@@ -373,8 +369,8 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
                     )
                 }
 
-            itemParsingScheduler.awaitTicking {
-                slots.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking {
+                slots.all { jdbcTemplate.parseRequestStatusOf(it) == ParseRequestStatus.SUCCEEDED }
             }
             val itemIds = slots.map { jdbcTemplate.wishItemIdOf(it.id) ?: error("wish ${it.id} 에 아이템이 확정되지 않았다") }
             assertEquals(5, itemIds.distinct().size)
@@ -393,7 +389,7 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/blocked")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.FAILED }
             // reason 이 예외에서 파생되므로 파서에서 메트릭까지 배선을 함께 고정한다
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
@@ -413,77 +409,10 @@ class WishlistRegisterAsyncIntegrationTest : IntegrationTestSupport() {
             val internalErrorBefore = parseCount("failed", "internal_error")
             val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/transient")
 
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.FAILED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.FAILED }
             await().atMost(Duration.ofSeconds(2)).until { parseCount("failed", "internal_error") - internalErrorBefore >= 1.0 }
 
             assertNull(jdbcTemplate.wishItemIdOf(slot.id))
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `집은 지 2분 넘게 처리 중인 요청은 회수돼 다시 파싱된다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            stubLinkSnapshotExtractor.build = {
-                ProductSnapshot(name = "나이키 에어포스", price = 99_000, currency = "KRW", imageUrl = "https://img.example.com/a.png")
-            }
-            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck")
-            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(3))
-
-            itemParsingScheduler.recover()
-
-            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
-            assertEquals(1, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
-            assertNotNull(jdbcTemplate.wishItemIdOf(slot.id))
-        } finally {
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `회수한 뒤 다시 멈춘 요청은 실패로 닫고 실패 알림을 보낸다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            val internalErrorBefore = parseCount("failed", "internal_error")
-            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/stuck-again")
-            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(3), recoveryCount = 1)
-
-            itemParsingScheduler.recover()
-
-            assertEquals(OutboxStatus.FAILED, jdbcTemplate.parseOutboxStatusOf(slot))
-            assertTrue(parseCount("failed", "internal_error") - internalErrorBefore >= 1.0)
-            await().atMost(Duration.ofSeconds(2)).until { jdbcTemplate.notificationCountOf(userId, NotificationType.ITEM_PARSING_FAILED) == 1 }
-            mockMvc
-                .perform(get("/api/v1/wishlists/${slot.id}").header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("$.data.item.id").value(nullValue()))
-                .andExpect(jsonPath("$.data.item.status").value("FAILED"))
-        } finally {
-            jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
-            cleanup(userId)
-        }
-    }
-
-    @Test
-    fun `집은 지 2분이 안 된 처리 중 요청은 회수하지 않는다`() {
-        val mockMvc = buildMockMvc()
-        val userId = UUID.randomUUID()
-        insertMember(userId)
-        try {
-            val slot = registerAndGetSlot(mockMvc, userId, "https://shop.example.com/products/still-parsing")
-            jdbcTemplate.markParseOutboxStuck(slot, claimedAgo = Duration.ofMinutes(1))
-
-            itemParsingScheduler.recover()
-
-            assertEquals(OutboxStatus.PROCESSING, jdbcTemplate.parseOutboxStatusOf(slot))
-            assertEquals(0, jdbcTemplate.parseOutboxRecoveryCountOf(slot))
         } finally {
             cleanup(userId)
         }
