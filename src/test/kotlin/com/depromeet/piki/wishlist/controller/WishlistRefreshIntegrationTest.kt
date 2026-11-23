@@ -13,6 +13,10 @@ import com.depromeet.piki.item.repository.ItemSnapshotRepository
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.DbDomainAccessPolicy
+import com.depromeet.piki.product.routing.DomainAccess
+import com.depromeet.piki.product.routing.DomainAccessPolicyEntity
+import com.depromeet.piki.product.routing.DomainAccessPolicyJpaRepository
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
@@ -79,6 +83,12 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
 
     @Autowired
     private lateinit var notificationRepository: NotificationRepository
+
+    @Autowired
+    private lateinit var policyRepository: DomainAccessPolicyJpaRepository
+
+    @Autowired
+    private lateinit var accessPolicy: DbDomainAccessPolicy
 
     @Test
     fun `READY 위시를 새로고침하면 값은 그대로 refreshing 이 켜지고 성공하면 같은 아이템에 새 버전이 쌓인다`() {
@@ -264,6 +274,36 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
             assertEquals(2, countParseOutbox(slot))
             assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(slot))
         } finally {
+            cleanup(userId)
+        }
+    }
+
+    // 가짜 extractor 를 돌리지 않으므로 결과가 올 수 없다. 응답 직후의 실패는 core 가 직접 닫은 것
+    @Test
+    fun `차단 도메인이 된 상품을 새로고침하면 추출을 기다리지 않고 바로 실패로 닫는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val domain = "blocked-${UUID.randomUUID()}.example.com"
+        try {
+            val (wishId, itemId, _) = saveReadyWish(userId, "https://shop.$domain/products/1", "옛 상품", 10_000)
+            policyRepository.save(DomainAccessPolicyEntity(domain = domain, access = DomainAccess.BLOCKED.name, reason = "테스트"))
+            accessPolicy.reload()
+
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/$wishId/refresh")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(itemId))
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
+
+            assertEquals(ParseRequestStatus.FAILED, jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)))
+            assertEquals(1, versionsOf(itemId).size)
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            accessPolicy.reload()
+            jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
             cleanup(userId)
         }
     }
