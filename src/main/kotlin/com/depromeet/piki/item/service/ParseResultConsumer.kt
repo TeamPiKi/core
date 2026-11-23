@@ -1,7 +1,7 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.event.StreamRecord
 import org.slf4j.LoggerFactory
+import org.springframework.data.redis.connection.stream.MapRecord
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.stream.StreamListener
 import org.springframework.stereotype.Component
@@ -11,10 +11,10 @@ class ParseResultConsumer(
     private val itemParsingService: ItemParsingService,
     private val itemParseResultRecorder: ItemParseResultRecorder,
     private val redis: StringRedisTemplate,
-) : StreamListener<String, StreamRecord> {
+) : StreamListener<String, MapRecord<String, String, String>> {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    override fun onMessage(record: StreamRecord) {
+    override fun onMessage(record: MapRecord<String, String, String>) {
         ParseResultMessage.of(record.value)?.let(::apply) ?: log.error("item.parse.result.malformed record={} fields={}", record.id, record.value.keys)
         redis.opsForStream<String, String>().acknowledge(ParseResultMessage.STREAM, GROUP, record.id)
     }

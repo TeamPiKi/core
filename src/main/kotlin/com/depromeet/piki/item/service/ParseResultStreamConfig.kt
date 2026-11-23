@@ -1,12 +1,12 @@
 package com.depromeet.piki.item.service
 
-import com.depromeet.piki.common.event.StreamRecord
 import io.lettuce.core.RedisBusyException
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.data.redis.RedisSystemException
 import org.springframework.data.redis.connection.RedisConnectionFactory
 import org.springframework.data.redis.connection.stream.Consumer
+import org.springframework.data.redis.connection.stream.MapRecord
 import org.springframework.data.redis.connection.stream.ReadOffset
 import org.springframework.data.redis.connection.stream.StreamOffset
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -21,7 +21,7 @@ class ParseResultStreamConfig {
         connectionFactory: RedisConnectionFactory,
         redis: StringRedisTemplate,
         consumer: ParseResultConsumer,
-    ): StreamMessageListenerContainer<String, StreamRecord> {
+    ): StreamMessageListenerContainer<String, MapRecord<String, String, String>> {
         createGroupIfAbsent(redis)
         val options =
             StreamMessageListenerContainer.StreamMessageListenerContainerOptions
