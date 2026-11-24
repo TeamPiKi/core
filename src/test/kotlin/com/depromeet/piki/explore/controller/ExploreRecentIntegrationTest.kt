@@ -148,6 +148,24 @@ class ExploreRecentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `같은 상품을 가장 최근에 담은 사람이 차단 관계면 먼저 담은 사람의 카드가 나온다`() {
+        val mockMvc = mockMvc()
+        val viewer = member()
+        val earlier = member()
+        val blocked = member()
+        val link = "https://shop.example.com/p/${UUID.randomUUID()}"
+        val earlierWish = readyWish(earlier, link)
+        val blockedWish = readyWish(blocked, link)
+        mockMvc.perform(post("/api/v1/blocks/$blocked").by(viewer)).andExpect(status().isOk)
+        exploreFeedRefresher.refresh()
+
+        mockMvc
+            .perform(get("/api/v1/explore/recent").by(viewer).param("cursor", (blockedWish + 1).toString()).param("size", "1"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.wishes[0].wishId").value(earlierWish))
+    }
+
+    @Test
     fun `피드가 아직 만들어지지 않았으면 빈 목록이다`() {
         redisTemplate.delete(ExploreFeedStore.RECENT_KEY)
 

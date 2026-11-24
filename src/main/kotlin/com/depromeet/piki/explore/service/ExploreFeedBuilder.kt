@@ -24,13 +24,13 @@ class ExploreFeedBuilder(
                 val card = cards.getValue(wish.cardQuery())
                 ExploreCard.from(wish, card, sourcePlatformResolver.resolve(card.sourceLink))
             }
-        return ExploreFeed.of(candidates, FEED_SIZE, LocalDateTime.now())
+        return ExploreFeed.of(candidates, ITEM_LIMIT, LocalDateTime.now())
     }
 
     companion object {
-        private const val FEED_SIZE = 300
+        private const val ITEM_LIMIT = 300
 
-        // 미완성 카드와 같은 상품의 중복이 빠질 몫만큼 넉넉히 읽는다
+        // 미완성 카드가 빠지고 같은 상품을 여러 명이 담은 몫만큼 넉넉히 읽는다. 저장되는 카드 수의 상한이기도 하다
         private const val SCAN_SIZE = 1_000
     }
 }
