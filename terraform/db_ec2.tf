@@ -18,13 +18,19 @@
 # -----------------------------------------------------------------------------
 # DB 박스 Security Group
 #
-# 3306(MySQL)·6379(Redis) 는 prod 앱 EC2 SG 에서만 받는다(폐기된 RDS SG 가 지키던 것과 같은 규율) — DB 를
-# 인터넷에 직접 노출하지 않는다. SSH 는 SSM 경유라 22 번이 없다(#1196).
+# 3306(MySQL) 은 prod 앱 EC2 SG 에서만, 6379(Redis) 는 prod 앱과 extractor SG 에서만 받는다(폐기된 RDS SG 가
+# 지키던 것과 같은 규율) — DB 를 인터넷에 직접 노출하지 않는다. SSH 는 SSM 경유라 22 번이 없다(#1196).
 #
 # egress 는 열어 둔다. RDS 와 달리 이 박스는 스스로 바깥에 나가야 한다 — SSM 에서 DB 자격증명을
 # 읽고, 백업을 S3 에 올리고, docker 이미지를 받는다. 사설 서브넷 + NAT Gateway 로 가리는 선택지는
 # NAT 만 월 $40 이 넘어 이 이관의 절감액을 통째로 삼킨다.
 # -----------------------------------------------------------------------------
+# extractor 박스의 SG 는 그 repo 의 terraform(TeamPiKi/extractor infra/extractor)이 만든다. 여기서는 이름으로 찾기만 한다.
+data "aws_security_group" "extractor" {
+  name   = "piki-extractor"
+  vpc_id = aws_vpc.main.id
+}
+
 resource "aws_security_group" "db_ec2" {
   name = "piki-prod-db-sg"
   # description 은 바꾸면 SG 가 새로 만들어져 옛 문구 그대로 둔다.
@@ -45,6 +51,16 @@ resource "aws_security_group" "db_ec2" {
     to_port         = 6379
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2.id]
+  }
+
+  # extractor 는 몰별 추출 규칙의 배포본만 읽는다. 포트는 여기서 열고 읽을 수 있는 범위는 Redis 계정
+  # (infra/compose/db.yml 의 extraction-rules-reader)이 키 하나로 좁힌다. MySQL 은 열지 않는다.
+  ingress {
+    description     = "Redis from extractor (extraction rules, read-only account)"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [data.aws_security_group.extractor.id]
   }
 
   egress {
