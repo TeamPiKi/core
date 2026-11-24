@@ -46,7 +46,7 @@ on:
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, verify, finalize]
+        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, forward-off, verify, finalize]
 
 # 호출한 워크플로(deploy.yml)는 호출자의 권한을 넘겨받되 그보다 넓을 수 없다. 좁으면
 # "nested job is requesting X, but is only allowed none" 으로 migrate.yml 자체가 유효성 검사에서 거부된다.
@@ -135,6 +135,7 @@ jobs:
     outputs:
       ssm_prefix: ${{ steps.map.outputs.ssm_prefix }}
       db_container: ${{ steps.map.outputs.db_container }}
+      redis_container: ${{ steps.map.outputs.redis_container }}
       db_exec: ${{ steps.map.outputs.db_exec }}
       app_ip_output: ${{ steps.map.outputs.app_ip_output }}
       db_tag: ${{ steps.map.outputs.db_tag }}
@@ -170,12 +171,14 @@ jobs:
           # 그래서 변수가 아니라 여기 박는다. deploy.yml(63-70)·infra/nginx/*.conf 가 이미 같은 매핑을
           # 문자열로 갖고 있어, 셋이 같은 사실을 말한다. 도메인을 옮기는 날엔 세 곳을 함께 고친다.
           if [ "$ENV" = "prod" ]; then
+            REDIS_CONTAINER=piki-prod-redis
             DB_CONTAINER=piki-prod-mysql; DB_EXEC=ssm; APP_IP_OUTPUT=ec2_public_ip;     DB_TAG=piki-prod-db;  APP_TAG=piki-prod-app;  DOMAIN=api.piki.day
             # prod 는 provision-db.sh 가 별도 DB 박스를 띄우며 root 비번을 db-root-password 로 따로 둔다.
             ROOT_PW_PARAM=db-root-password
             # prod 이미지 버킷은 접두사 없는 var.image_bucket_name 그대로다(terraform/s3.tf).
             IMAGE_PREFIX=""
           else
+            REDIS_CONTAINER=piki-redis
             DB_CONTAINER=piki-mysql;      DB_EXEC=ssh; APP_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-app;  APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
             # dev 는 provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가
             # 곧 root 비번이고, db-root-password 라는 파라미터는 존재하지 않는다(실측).
@@ -191,6 +194,7 @@ jobs:
             echo "domain=$DOMAIN"
             echo "ssm_prefix=/piki-core/$ENV"
             echo "db_container=$DB_CONTAINER"
+            echo "redis_container=$REDIS_CONTAINER"   # Redis 는 DB 와 같은 박스(compose/db.yml · provision-runtime.sh)
             echo "db_exec=$DB_EXEC"
             echo "app_ip_output=$APP_IP_OUTPUT"
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
@@ -1189,6 +1193,13 @@ jobs:
           N=$(ssh "$SRC" 'docker ps --format "{{.Names}}" | grep -cE "^piki-core-(blue|green)$" || true')
           echo "::notice::구 앱 박스 SSH 확인 — $SRC 의 앱 컨테이너 ${N}개"
 
+      # 컷오버가 전달을 켠 뒤에는 새 DB 가 운영 중이다. 이 시점의 리허설은 낡은 구 DB 로 새 DB 를 덮는다.
+      - name: 예전 서버가 이미 전달 중인지 확인
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: bash infra/scripts/migrate-forward.sh check
+
       - name: Discord — 리허설 시작 (라이브 무영향)
         uses: ./.github/actions/discord-notify
         with:
@@ -1212,6 +1223,7 @@ jobs:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_PROFILE: piki-migrate-src
+          REDIS_CONTAINER: ${{ needs.config.outputs.redis_container }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다(bootstrap 이 공개키를 등록)
         run: |
           set -euo pipefail
@@ -1230,6 +1242,7 @@ jobs:
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
             SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
+            REDIS_CONTAINER="$REDIS_CONTAINER" \
             bash infra/scripts/migrate-db.sh
 
       # 덤프·복원이 길었으면 구 계정 자격(2시간)이 이미지 sync 중에 만료될 수 있어 다시 받는다.
@@ -1547,6 +1560,14 @@ jobs:
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
           role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
+      # 전달을 켠 뒤 DNS 를 바꾸기 전까지는 DNS 가 구 IP 라 위 점검을 통과한다. 그 구간의 재실행이
+      # 낡은 구 DB 로 운영 중인 새 DB 를 덮지 않게 구 nginx 의 상태로 한 번 더 막는다.
+      - name: 예전 서버가 이미 전달 중인지 확인
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: bash infra/scripts/migrate-forward.sh check
+
       # 이미지 벌크 sync 를 freeze *앞*에 둔다. 러너의 imgs 는 매 실행 빈 디렉터리라 s3 sync 가 버킷
       # 전량을 내려받는데(이름만 델타다), 이게 freeze 뒤에 있으면 다운타임이 곧 버킷 전체 전송 시간이
       # 된다. 여기서 대부분을 미리 받아 두고, freeze 뒤 스텝은 같은 디렉터리를 재사용해 그 사이 늘어난
@@ -1585,6 +1606,7 @@ jobs:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
           SRC_AWS_PROFILE: piki-migrate-src
+          REDIS_CONTAINER: ${{ needs.config.outputs.redis_container }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다
         run: |
           set -euo pipefail
@@ -1607,6 +1629,7 @@ jobs:
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
             SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
+            REDIS_CONTAINER="$REDIS_CONTAINER" \
             bash infra/scripts/migrate-db.sh
 
       - name: S3 이미지 최종 델타 sync → 신 계정 앱 스모크
@@ -1638,69 +1661,74 @@ jobs:
             || { echo "::error::신 계정 앱 헬스 실패 — 배포 상태 확인 후 재실행"; exit 1; }
           echo "::notice::신 계정 앱 헬스 OK"
 
-      # DNS 전환 — 가비아는 레코드 변경 API 가 없어 사람이 콘솔에서 바꿔야 한다(#1100 이 이걸 없앤다).
-      # 버튼·승인 게이트를 두지 않는다. 레코드 자체가 신호이고, "눌렸다" 가 아니라 "우리가 원한 IP 로
-      # 바뀌었다" 를 봐야 오타로 엉뚱한 값이 들어간 경우까지 걸러진다.
-      - name: DNS 전환 대기 (사람)
-        uses: ./.github/actions/wait-for
+      # 두 계정 자격 모두 시한이 있다(신 계정 역할 1시간, 구 계정 2시간). 벌크 sync·덤프가 길었으면
+      # 전달 켜기와 그 원복이 만료된 자격으로 실패할 수 있어 직전에 다시 받는다.
+      - name: 신 계정 자격 갱신 (전달 직전)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "DNS 전환이 필요합니다 — ${{ needs.config.outputs.domain }}"
-          instruction: |
-            가비아 콘솔에서 A 레코드를 바꿔 주세요. 지금 구 서비스는 정지 상태(freeze)입니다.
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
 
-            호스트: ${{ needs.config.outputs.domain }}
-            타입:   A
-            값:     ${{ steps.tf.outputs.dst_app }}   ← 이 값으로 변경
-            TTL:    600 (가비아 최소)
+      - name: 구 계정 자격 갱신 (전달 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
-            바꾸시면 자동으로 감지해 이어서 진행합니다. 따로 누르실 것은 없습니다.
-            시간이 초과되면 구 서비스를 자동으로 되살리니, 그 뒤 only=cutover 로 다시 실행하시면 됩니다.
-          # 복수 해소기를 본다 — 하나만 보면 그 resolver 만 갱신된 상태를 전파 완료로 오인한다.
-          #
-          # "신 IP 가 응답에 들어 있나" 가 아니라 "정확히 신 IP 하나만 돌아오나" 로 닫는다. 가비아에서
-          # 레코드를 편집하는 동안 구·신 A 레코드가 잠시 공존하면 응답이 2줄이 되는데, tail -1 로 보면
-          # 그 순간을 전파 완료로 오인한다. 바로 다음 스텝이 롤백 경계를 해제하므로, 그 오판은 트래픽
-          # 절반이 정지된 구 박스로 가는 채 되돌릴 수단이 사라지는 상태로 직결된다.
-          # CNAME 줄은 걸러낸다(config 의 구 계정 주소 해소와 같은 필터).
-          check: |
-            NEW="${{ steps.tf.outputs.dst_app }}"
-            for R in 1.1.1.1 8.8.8.8; do
-              GOT=$(dig +short "@$R" ${{ needs.config.outputs.domain }} | grep -E '^[0-9.]+$' | sort -u)
-              [ "$GOT" = "$NEW" ] || exit 1
-            done
-          timeout-minutes: "45"
-          interval-seconds: "20"
-          remind-minutes: "10"
-
-      - name: 롤백 경계 해제 · 마무리
+      # 롤백할 수 있는 마지막 지점이다. 전달을 켜면 새 DB 에 쓰기가 쌓여, 그 뒤 구 앱을 되살리면 데이터가 갈라진다.
+      # 그래서 전달이 확인되면 바로 롤백 경계를 푼다. DNS 변경은 forward_off job 이 기다린다(다운타임 밖).
+      - name: 예전 nginx 전달 켜기 · 롤백 경계 해제
         env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          SSH_KEY_FILE: key.pem
           DOMAIN: ${{ needs.config.outputs.domain }}
           NEW_IP: ${{ steps.tf.outputs.dst_app }}
+          OLD_IP: ${{ needs.config.outputs.src_app_host }}
         run: |
           set -euo pipefail
-          echo "::notice::DNS 전환 확인 — $DOMAIN → $NEW_IP"
-          # 여기까지 왔으면 신 계정이 트래픽을 받는다. 구 앱은 정지 상태로 두는 것이 맞고(되돌릴 여지),
-          # 상태 파일을 지워 이후 스텝이 실수로 구 앱을 되살리지 않게 한다.
+          bash infra/scripts/migrate-forward.sh on
           rm -f "$FREEZE_STATE_FILE"
-          rm -f key.pem
-          echo "::notice::cutover 완료 — 롤백 경계 해제. 구 앱은 정지 상태 유지(롤백 여지)"
+          echo "::notice::전달 시작 — $DOMAIN 요청은 예전 IP($OLD_IP)로 와도 새 계정($NEW_IP)이 처리한다. 롤백 경계 해제"
+          # 배포의 도메인 가드가 DNS 와 대상 박스를 비교하므로, DNS 를 바꾸기 전까지 이 env 의 배포는 거기서 멈춘다(안전한 실패).
+          echo "::warning::가비아에서 $DOMAIN A 레코드를 $NEW_IP 로 바꿀 때까지 이 환경의 배포는 도메인 확인에서 멈춘다"
 
       # 어느 스텝에서 어떻게 끝났든 마지막으로 한 번 더 확인한다. 위 trap 은 그 스텝 안에서만 유효하고,
       # 상태 파일이 남아 있다는 건 freeze 가 걸린 채 끝났다는 뜻이다.
       #
-      # failure() 가 아니라 always() 다 — failure() 는 취소에서 false 라, freeze 이후 가장 긴 구간인
-      # "DNS 전환 대기(45분)" 중에 사람이 Actions 에서 취소하거나 job timeout 에 걸리면 구 앱이 정지된
-      # 채 영구 방치된다. freeze 는 이 워크플로의 유일한 다운타임이라 가장 비싼 실패다.
-      # 성공 경로에서는 바로 위 스텝이 상태 파일을 지우고 migrate-unfreeze.sh 가 그걸 보고 즉시 빠져나가
-      # no-op 이므로, always() 로 둬도 되살리는 오작동이 없다.
-      # 롤백 SSH 도 구 계정 자격으로 열리므로 DNS 대기 뒤 만료됐을 수 있어 직전에 다시 받는다.
+      # failure() 가 아니라 always() 다 — failure() 는 취소에서 false 라, freeze 이후 사람이 Actions 에서
+      # 취소하거나 job timeout 에 걸리면 구 앱이 정지된 채 영구 방치된다.
+      # 성공 경로에서는 전달 스텝이 상태 파일을 지워 아래 원복·롤백이 모두 no-op 이다.
       - name: 구 계정 자격 갱신 (롤백 직전)
         if: always()
         continue-on-error: true
         uses: ./.github/actions/migrate-src-creds
         with:
           role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      - name: 신 계정 자격 갱신 (롤백 직전)
+        if: always()
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      # 전달 켜기가 취소·시간 초과로 끊기거나 그 안의 원복이 실패했을 수 있다. 구 앱을 되살리기 전에
+      # 구 nginx 를 원본으로, 새 nginx 의 신뢰를 지운 상태로 되돌린다. 멱등이라 전달을 안 켰어도 무해하다.
+      - name: 전달 원복 (롤백 경계 안에서 끝났을 때만)
+        if: always()
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          SSH_KEY_FILE: key.pem
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: |
+          [ -s "$FREEZE_STATE_FILE" ] || exit 0
+          [ -n "$SRC_APP_HOST" ] && [ -n "$DST_APP_HOST" ] || exit 0
+          bash infra/scripts/migrate-forward.sh revert \
+            || echo "::error::전달 원복 실패 — 구 nginx 링크와 새 박스의 piki-migrate-realip.conf 를 손으로 되돌릴 것"
 
       - name: freeze 롤백 (최종 안전망 — 실패·취소 공통)
         if: always()
@@ -1730,6 +1758,139 @@ jobs:
           # 그 경우 실행 로그에 롤백 실패 error 가 남으므로, 사람이 그걸 보고 판단하도록 안내한다.
           detail: "실패 시 freeze 롤백이 자동으로 돈다. 실행 로그에서 '롤백 완료' 를 확인할 것 — '롤백 실패' 가 보이면 구 서비스가 내려간 채이므로 구 계정 박스에서 직접 docker start 해야 한다. 원인 해소 후 only=cutover 로 재실행."
 
+  # ── migrate-6a: DNS 전환 뒤 전달 걷어내기. 다운타임 밖이라 서두를 일이 없다. ──
+  # 컷오버가 켠 전달(예전 nginx → 새 서버)과 새 nginx 의 예전 IP 신뢰는 DNS 가 넘어가고 캐시가 빠진 뒤 걷어낸다.
+  # 신뢰를 남겨 두면 예전 계정 EIP 가 반납돼 남에게 간 뒤 그쪽이 X-Forwarded-For 로 IP 를 꾸밀 수 있다.
+  # 2시간 안에 DNS 를 못 바꿨으면 바꾼 뒤 only=forward-off 로 이 job 만 다시 돌린다. 오래 붙잡으면 같은 계정의
+  # 다음 이관 실행(보통 prod)이 concurrency 로 그만큼 기다린다.
+  forward_off:
+    needs: [guard, config, cutover]
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'forward-off' || (inputs.only == 'all' && needs.cutover.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 신 계정 앱 박스 주소
+        id: ip
+        env:
+          APP_TAG: ${{ needs.config.outputs.app_tag }}
+        run: |
+          set -euo pipefail
+          NEW_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$APP_TAG" Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].PublicIpAddress' --output text)
+          echo "$NEW_IP" | grep -Eq '^[0-9.]+$' || { echo "::error::$APP_TAG 의 공인 IP 를 못 찾았다"; exit 1; }
+          echo "new=$NEW_IP" >> "$GITHUB_OUTPUT"
+
+      - name: DNS 전환 대기 (사람, 급하지 않음)
+        uses: ./.github/actions/wait-for
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: "DNS 전환이 필요합니다 — ${{ needs.config.outputs.domain }} (서비스는 이미 새 계정)"
+          instruction: |
+            가비아 콘솔에서 A 레코드를 바꿔 주세요. 서비스는 이미 새 계정이 처리하고 있어 급하지 않습니다.
+
+            호스트: ${{ needs.config.outputs.domain }}
+            타입:   A
+            값:     ${{ steps.ip.outputs.new }}   ← 이 값으로 변경
+
+            바뀐 것이 확인되면 15분 뒤 예전 서버의 전달을 자동으로 걷어냅니다.
+            바꾸기 전까지 이 환경의 배포는 도메인 확인에서 멈춥니다.
+          # 정확히 신 IP 하나만 돌아와야 한다. 편집 중 구·신 레코드가 공존하는 순간을 완료로 보지 않는다.
+          check: |
+            NEW="${{ steps.ip.outputs.new }}"
+            for R in 1.1.1.1 8.8.8.8; do
+              GOT=$(dig +short "@$R" ${{ needs.config.outputs.domain }} | grep -E '^[0-9.]+$' | sort -u)
+              [ "$GOT" = "$NEW" ] || exit 1
+            done
+          timeout-minutes: "120"
+          interval-seconds: "30"
+          remind-minutes: "30"
+
+      # 가비아 최소 TTL(600초)에 여유를 둔다.
+      - name: DNS 캐시가 빠질 때까지 대기 (15분)
+        run: sleep 900
+
+      # 신 계정 역할 세션은 1시간이라 DNS 대기 뒤엔 만료됐을 수 있다.
+      - name: 신 계정 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 신 계정 앱 박스 SSH 준비 (SSM 경유)
+        id: dst
+        uses: TeamPiKi/infra/.github/actions/ssm-ssh@main
+        with:
+          instance-name: ${{ needs.config.outputs.app_tag }}
+          user: ubuntu
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: 구 계정 앱 박스 SSH 준비 (SSM 경유)
+        id: src
+        uses: ./.github/actions/migrate-src-ssh
+        with:
+          instance-name: ${{ needs.config.outputs.app_tag }}
+          user: ubuntu
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      - name: 전달·신뢰 걷어내기
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "$SSH_KEY" > key.pem
+          SSH_KEY_FILE=key.pem bash infra/scripts/migrate-forward.sh off
+          rm -f key.pem
+
+      # 다음 이관의 출발 계정. 예전 계정 접근이 모두 끝난 이 자리에서 바꾼다(앞에서 바꾸면 위 단계가 새 계정을 예전 계정으로 안다).
+      - name: 현재 계정 변수 갱신 (prod)
+        if: ${{ inputs.env == 'prod' }}
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          NEW_ACCOUNT: ${{ inputs.target_account_id }}
+        run: |
+          set -euo pipefail
+          # dev 전달이 아직 남아 있으면 미룬다. 지금 바꾸면 dev 의 only=forward-off 가 구 계정을 못 찾는다.
+          DEV_ID=$(aws ec2 describe-instances --filters Name=tag:Name,Values=piki-dev-app Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$DEV_ID" ] && [ "$DEV_ID" != None ]; then
+            CID=$(aws ssm send-command --instance-ids "$DEV_ID" --document-name AWS-RunShellScript \
+              --parameters 'commands=["test -f /etc/nginx/conf.d/piki-migrate-realip.conf && echo LEFT || echo CLEAN"]' \
+              --query Command.CommandId --output text)
+            aws ssm wait command-executed --command-id "$CID" --instance-id "$DEV_ID" || true
+            DEV_STATE=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$DEV_ID" --query StandardOutputContent --output text | tr -d '[:space:]')
+            if [ "$DEV_STATE" != CLEAN ]; then
+              echo "::warning::dev 전달이 아직 남아 있다($DEV_STATE) — AWS_ACCOUNT_ID 갱신을 미룬다. dev 를 only=forward-off 로 정리한 뒤 prod 를 only=forward-off 로 다시 돌릴 것"
+              exit 0
+            fi
+          fi
+          gh variable set AWS_ACCOUNT_ID --body "$NEW_ACCOUNT" --repo "$GITHUB_REPOSITORY"
+          echo "::notice::AWS_ACCOUNT_ID = $NEW_ACCOUNT"
+
+      - name: Discord — forward_off 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "forward_off ${{ job.status }} (env=${{ inputs.env }})"
+          detail: "실패했다면 새 계정 앱 박스의 /etc/nginx/conf.d/piki-migrate-realip.conf 가 남아 있을 수 있다. DNS 확인 뒤 only=forward-off 로 다시 돌릴 것."
+
   # ── migrate-6b: 배포 배선 갱신. 컷오버가 끝난 env 의 GitHub 설정을 신 계정 값으로 돌린다. ──
   #
   # 이것을 자동화하지 않고 안내만 했더니, dev 컷오버 직후 평소 배포가 곧바로 깨졌다(실측).
@@ -1739,7 +1900,7 @@ jobs:
   # core 는 Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
   # 영향을 받지 않는다(dev 이관 시점에 prod 는 계속 구 계정 값을 써야 한다).
   # extractor·renderer 는 Environment 없이 repo 수준 값으로 배포하고 박스가 전 환경 공용이라 prod 이관에서만 바꾼다.
-  # repo 변수 AWS_ACCOUNT_ID(다음 이관의 출발 계정)도 같은 이유로 prod 이관에서만 바꾼다.
+  # repo 변수 AWS_ACCOUNT_ID(다음 이관의 출발 계정)는 여기서 바꾸지 않는다. 뒤의 forward_off 가 그 값으로 예전 계정을 찾는다.
   rewire:
     needs: [guard, config, cutover]
     if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
@@ -1781,7 +1942,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
           ENV: ${{ inputs.env }}
-          NEW_ACCOUNT: ${{ inputs.target_account_id }}
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
           EXTRACTOR_ROLE: ${{ steps.tf.outputs.extractor_role }}
@@ -1822,7 +1982,6 @@ jobs:
             [ -n "$RENDERER_ROLE" ] && [ "$RENDERER_ROLE" != None ] \
               && set_repo_var TeamPiKi/renderer AWS_DEPLOY_ROLE_ARN "$RENDERER_ROLE" \
               || { echo "::warning::renderer 배포 역할을 못 찾았다(piki-headless-browser-gha-deploy)"; fail=1; }
-            set_repo_var "$GITHUB_REPOSITORY" AWS_ACCOUNT_ID "$NEW_ACCOUNT"
           fi
 
           if [ "$fail" -eq 0 ]; then
@@ -1968,7 +2127,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, forward_off, rewire, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리와 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1984,6 +2143,7 @@ jobs:
           ENV: ${{ inputs.env }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
           REWIRE_DONE: ${{ needs.rewire.outputs.done }}
+          FWD_RESULT: ${{ needs.forward_off.result }}
         run: |
           set -euo pipefail
           {
@@ -2005,9 +2165,10 @@ jobs:
                 echo "| \`AWS_DEPLOY_ROLE_ARN\` | renderer 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-headless-browser-gha-deploy\` (rewire 미완료) |"
               fi
             fi
-            echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
-            if [ "$ENV" = prod ] && [ "$REWIRE_DONE" != "true" ]; then
-              echo "| \`AWS_ACCOUNT_ID\` | core repo variable | \`$NEW_ACCOUNT\` (rewire 미완료) |"
+            echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, forward_off 까지 끝난 뒤 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
+            if [ "$FWD_RESULT" != success ]; then
+              echo "| 예전 서버 전달·새 nginx 의 예전 IP 신뢰 | 양쪽 앱 박스 | DNS 전환 확인 뒤 \`only=forward-off\` 로 걷어낸다 (forward_off 미완료) |"
+              [ "$ENV" = prod ] && echo "| \`AWS_ACCOUNT_ID\` | core repo variable | \`$NEW_ACCOUNT\` — forward_off 가 끝에서 바꾼다 |"
             fi
             echo
             echo "\`EC2_SSH_KEY\` 는 바꿀 필요 없다 — bootstrap 이 같은 키의 공개키를 신 계정에 등록했다."
@@ -2041,12 +2202,13 @@ jobs:
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
             echo "| rewire (배포 배선 갱신) | ${{ needs.rewire.result }} |"
+            echo "| forward_off (DNS 전환 뒤 전달 걷어내기) | ${{ needs.forward_off.result }} |"
             echo "| verify (외부 API 실검증) | ${{ needs.verify.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_grafana=${{ needs.infra_grafana.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} verify=${{ needs.verify.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_grafana=${{ needs.infra_grafana.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} forward_off=${{ needs.forward_off.result }} verify=${{ needs.verify.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 

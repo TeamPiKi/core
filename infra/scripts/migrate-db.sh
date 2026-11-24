@@ -62,10 +62,14 @@ SRC_AWS_PROFILE="${SRC_AWS_PROFILE:?구 계정 프로필}"
 # 경계를 공유하려고 파일로 남긴다 — migrate-unfreeze.sh 가 이 파일을 읽어 되살린다.
 FREEZE_STATE_FILE="${FREEZE_STATE_FILE:-/tmp/piki-migrate-frozen}"
 
+# Redis 는 두 환경 모두 DB 와 같은 박스에 있어(prod DB 박스·dev 앱 박스) DB 와 같은 경로로 옮긴다.
+REDIS_CONTAINER="${REDIS_CONTAINER:?Redis 컨테이너명}"
+
 # ConnectTimeout 은 주지 않는다. 호스트는 SSM 별칭이라 ssm-ssh 가 쓴 30초가 맞고, 명령줄 값이 그걸 덮는다.
 SSHOPT=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21" # db-backup.sh 와 같은 핀. 박스에 aws CLI 가 없어도 된다.
 RELAY_KEY="migrate/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+REDIS_RELAY_KEY="migrate/redis-$(date -u +%Y%m%dT%H%M%SZ).tgz"
 WORK=/tmp/piki-migrate
 mkdir -p "$WORK"
 
@@ -337,6 +341,78 @@ verify_counts() {
   return 1
 }
 
+# ── Redis ────────────────────────────────────────────────────────────────────
+# 구 Redis 는 멈추지 않는다. SAVE 로 디스크에 내린 뒤 데이터 폴더를 통째로 묶어, 롤백할 때 되살릴 것이 없다.
+# 폴더 전체라 AOF 를 켜도 appendonlydir 이 함께 간다. 볼륨은 이름이 아니라 컨테이너로 잡는다(이름이 틀리면 빈 볼륨이 새로 생겨 조용히 성공한다).
+redis_vars() {
+  printf 'set -euo pipefail\nREDIS_CONTAINER=%q\nAWSCLI_IMAGE=%q\nREGION=%q\n' \
+    "$REDIS_CONTAINER" "$AWSCLI_IMAGE" "$AWS_REGION"
+  cat <<'REMOTE'
+WORK=/var/tmp/piki-migrate
+mkdir -p "$WORK"
+aws_cli() { docker run --rm --network host -v "$WORK:/work" "$AWSCLI_IMAGE" "$@"; }
+IMG=$(docker inspect -f '{{.Config.Image}}' "$REDIS_CONTAINER")
+rcli() { docker exec "$REDIS_CONTAINER" sh -c '[ -z "${REDIS_PASSWORD:-}" ] || export REDISCLI_AUTH="$REDIS_PASSWORD"; redis-cli "$@"' rcli "$@"; }
+REMOTE
+}
+
+# $1 이 있으면 묶은 파일을 그 S3 위치로 올리고, 없으면 표준출력으로 흘린다(직전송).
+# shellcheck disable=SC2016  # $REGION·$WORK 는 박스에서 펼친다
+redis_pack() {
+  redis_vars
+  cat <<'REMOTE'
+[ "$(rcli SAVE)" = OK ] || { echo "Redis SAVE 실패" >&2; exit 1; }
+echo "REDIS_KEYS=$(rcli DBSIZE)" >&2
+docker run --rm --entrypoint tar --volumes-from "$REDIS_CONTAINER:ro" -v "$WORK:/out" "$IMG" czf /out/redis.tgz -C /data .
+REMOTE
+  if [ -n "${1:-}" ]; then
+    printf 'aws_cli s3 cp /work/redis.tgz %q --region "$REGION" >/dev/null\n' "$1"
+  else
+    echo 'cat "$WORK/redis.tgz"'
+  fi
+  echo 'rm -f "$WORK/redis.tgz"'
+}
+
+# $1 이 있으면 그 S3 위치에서 먼저 받는다. 없으면 러너가 미리 올려 둔 파일을 쓴다(직전송).
+# shellcheck disable=SC2016  # $REGION 은 박스에서 펼친다
+redis_unpack() {
+  redis_vars
+  [ -z "${1:-}" ] || printf 'aws_cli s3 cp %q /work/redis.tgz --region "$REGION" >/dev/null\n' "$1"
+  cat <<'REMOTE'
+docker stop "$REDIS_CONTAINER" >/dev/null
+trap 'docker start "$REDIS_CONTAINER" >/dev/null' EXIT
+docker run --rm --entrypoint sh --volumes-from "$REDIS_CONTAINER" -v "$WORK:/in" "$IMG" \
+  -c 'find /data -mindepth 1 -delete && tar xzf /in/redis.tgz -C /data'
+rm -f "$WORK/redis.tgz"
+docker start "$REDIS_CONTAINER" >/dev/null
+trap - EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  N=$(rcli DBSIZE 2>/dev/null) && [ -n "$N" ] && { echo "REDIS_RESTORED=$N"; exit 0; }
+  sleep 1
+done
+echo "복원 뒤 Redis 응답 없음" >&2; exit 1
+REMOTE
+}
+
+# Redis 가 비어도 서비스는 돈다(사용자 재로그인). 이 단계 실패로 컷오버를 되돌리지 않고 경고로 남긴다.
+redis_transfer() {
+  log "Redis 이전 — SAVE 뒤 데이터 폴더 복사"
+  if [ "$SRC_EXEC" = ssh ] && [ "$DST_EXEC" = ssh ]; then
+    redis_pack | ssh "${SSHOPT[@]}" -i "$SRC_DB_KEY" "ubuntu@$SRC_DB_HOST" 'bash -s' > "$WORK/redis.tgz" || return 1
+    ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'mkdir -p /var/tmp/piki-migrate' || return 1
+    scp "${SSHOPT[@]}" -i "$DST_DB_KEY" "$WORK/redis.tgz" "ubuntu@$DST_DB_HOST:/var/tmp/piki-migrate/redis.tgz" >/dev/null || return 1
+    redis_unpack | ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'bash -s' | tee "$WORK/redis.out" || return 1
+  else
+    redis_pack "s3://$SRC_RELAY_BUCKET/$REDIS_RELAY_KEY" | remote_exec src || return 1
+    aws --profile "$SRC_AWS_PROFILE" s3 cp "s3://$SRC_RELAY_BUCKET/$REDIS_RELAY_KEY" "$WORK/redis.tgz" --region "$AWS_REGION" >/dev/null || return 1
+    aws s3 cp "$WORK/redis.tgz" "s3://$DST_RELAY_BUCKET/$REDIS_RELAY_KEY" --region "$AWS_REGION" >/dev/null || return 1
+    redis_unpack "s3://$DST_RELAY_BUCKET/$REDIS_RELAY_KEY" | remote_exec dst | tee "$WORK/redis.out" || return 1
+  fi
+  rm -f "$WORK/redis.tgz"
+  grep -q '^REDIS_RESTORED=' "$WORK/redis.out" || return 1
+  log "Redis 이전 완료 — 키 $(sed -n 's/^REDIS_RESTORED=//p' "$WORK/redis.out" | tail -1)개"
+}
+
 # ── 흐름 ─────────────────────────────────────────────────────────────────────
 # 전송 경로 선택 — 양쪽 다 ssh 면 러너가 직접 닿으므로 S3 릴레이가 불필요하고, dev 는 릴레이 버킷
 # 자체가 없어 직전송만 성립한다. 한쪽이라도 ssm(keyless prod DB 박스)이면 릴레이를 탄다.
@@ -351,6 +427,7 @@ transfer() {
 case "$MODE" in
   rehearsal)
     transfer; rewrite_urls; verify_counts
+    redis_transfer || echo "::warning::Redis 이전 리허설 실패 — 컷오버 전에 원인 확인"
     log "rehearsal 완료 — 라이브 무영향"
     ;;
   cutover)
@@ -359,10 +436,11 @@ case "$MODE" in
     trap rollback_freeze EXIT
     freeze_source
     transfer; rewrite_urls; verify_counts
+    redis_transfer || echo "::warning::Redis 이전 실패 — 서비스는 돌지만 사용자가 다시 로그인해야 한다"
     # 여기서 trap 을 풀지 않는다 — 남은 단계(S3 sync·스모크·DNS)는 워크플로가 돌리고,
     # 그쪽도 같은 FREEZE_STATE_FILE 로 migrate-unfreeze.sh 를 걸어 경계를 이어받는다.
     trap - EXIT
-    log "cutover DB 파이프라인 완료 — 다음: S3 델타 sync·배포·스모크·DNS(워크플로가 처리)"
+    log "cutover DB 파이프라인 완료 — 다음: S3 델타 sync·스모크·전달(워크플로가 처리)"
     log "롤백 경계 인계 — 남은 단계가 실패하면 워크플로가 $FREEZE_STATE_FILE 로 구 앱을 되살린다"
     ;;
   *)
