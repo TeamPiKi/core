@@ -1,0 +1,39 @@
+name: 구 계정 자격 (OIDC)
+description: >-
+  계정 이관 중 구(출발) 계정 역할을 job 의 GitHub OIDC 토큰으로 맡아 piki-migrate-src 프로필에 쓴다.
+  job 의 기본 자격은 신 계정이라 구 계정 호출은 `aws --profile piki-migrate-src` 로 한다.
+
+inputs:
+  role-arn:
+    description: 구 계정의 이관 출발용 역할 ARN (terraform/oidc.tf 의 piki-migrate-source)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 구 계정 역할 assume → piki-migrate-src 프로필
+      shell: bash
+      env:
+        ROLE_ARN: ${{ inputs.role-arn }}
+      run: |
+        set -euo pipefail
+        [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || { echo "::error::OIDC 토큰을 못 받는다 — job permissions 에 id-token: write 필요"; exit 1; }
+        TOKEN=$(curl -sf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+        # 컷오버는 DNS 대기를 포함해 1시간을 넘길 수 있어 역할의 최대(2시간)로 받는다.
+        read -r AK SK ST < <(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+          aws sts assume-role-with-web-identity --role-arn "$ROLE_ARN" --role-session-name piki-migrate-src \
+            --web-identity-token "$TOKEN" --duration-seconds 7200 \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+        echo "::add-mask::$SK"
+        echo "::add-mask::$ST"
+        umask 077
+        mkdir -p ~/.aws
+        # 다시 부르면 만료 전 자격으로 갈아 끼운다. printf 는 셸 내장이라 값이 프로세스 목록에 뜨지 않는다.
+        for f in credentials config; do
+          [ -f ~/.aws/$f ] && awk '/^\[/{skip = ($0 ~ /piki-migrate-src\]$/)} !skip' ~/.aws/$f > ~/.aws/$f.tmp && mv ~/.aws/$f.tmp ~/.aws/$f
+        done
+        printf '[piki-migrate-src]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\n' "$AK" "$SK" "$ST" >> ~/.aws/credentials
+        printf '[profile piki-migrate-src]\nregion = %s\n' "${AWS_REGION:?}" >> ~/.aws/config
+        ACCOUNT=$(aws --profile piki-migrate-src sts get-caller-identity --query Account --output text)
+        echo "::notice::구 계정 자격 확인 — $ACCOUNT"

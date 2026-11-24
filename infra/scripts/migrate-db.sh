@@ -54,13 +54,9 @@ SRC_APP_KEY="${SRC_APP_KEY:?구 계정 앱 박스 SSH 키파일}"
 OLD_IMAGE_BUCKET="${OLD_IMAGE_BUCKET:?구 이미지 버킷명}"
 NEW_IMAGE_BUCKET="${NEW_IMAGE_BUCKET:?신 이미지 버킷명}"
 
-# 구 계정 자격. 러너가 구 계정에 ssm send-command·s3 를 칠 때만 쓴다(박스 안 명령은 인스턴스 role 로 돈다).
-#
-# 신 계정 자격은 받지 않는다 — 호출측 워크플로가 OIDC 로 신 계정 역할을 맡은 상태라 러너의
-# 주변 환경(AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN)이 이미 신 계정이다. 여기서 또 받으면
-# 같은 것을 두 경로로 관리하게 되고, 임시 자격의 SESSION_TOKEN 을 빠뜨리기 쉽다.
-SRC_AWS_KEY="${SRC_AWS_KEY:?구 계정 액세스 키}"
-SRC_AWS_SECRET="${SRC_AWS_SECRET:?구 계정 시크릿}"
+# 구 계정 자격 프로필(migrate-src-creds 가 만든다). 러너가 구 계정에 ssm send-command·s3 를 칠 때만 쓴다.
+# 신 계정은 러너의 주변 환경(호출측이 OIDC 로 맡은 역할)을 그대로 쓴다.
+SRC_AWS_PROFILE="${SRC_AWS_PROFILE:?구 계정 프로필}"
 
 # freeze 가 실제로 멈춘 컨테이너 목록. 워크플로의 후속 단계(S3 sync·스모크·DNS)까지 같은 롤백
 # 경계를 공유하려고 파일로 남긴다 — migrate-unfreeze.sh 가 이 파일을 읽어 되살린다.
@@ -84,11 +80,11 @@ remote_exec() {
   body="$(cat)"
   if [ "$side" = src ]; then
     [ "$SRC_EXEC" = ssh ] && { _exec_ssh "$SRC_DB_HOST" "$SRC_DB_KEY" "$body"; return; }
-    _exec_ssm "$SRC_DB_TAG" "$SRC_AWS_KEY" "$SRC_AWS_SECRET" "$body"
+    _exec_ssm "$SRC_DB_TAG" "$SRC_AWS_PROFILE" "$body"
   else
     [ "$DST_EXEC" = ssh ] && { _exec_ssh "$DST_DB_HOST" "$DST_DB_KEY" "$body"; return; }
-    # 빈 자격 = 러너의 주변 환경을 쓴다(OIDC 로 맡은 신 계정 역할).
-    _exec_ssm "$DST_DB_TAG" "" "" "$body"
+    # 빈 프로필 = 러너의 주변 환경을 쓴다(OIDC 로 맡은 신 계정 역할).
+    _exec_ssm "$DST_DB_TAG" "" "$body"
   fi
 }
 
@@ -101,17 +97,10 @@ _exec_ssh() {
 # 성공으로 넘어가고, 그 실패는 한참 뒤(복원·대조)에 엉뚱한 증상으로 드러난다. 반드시 대기하고
 # 종료 상태를 전파한다.
 _exec_ssm() {
-  local tag="$1" akey="$2" asec="$3" body="$4" cmd_id instance_id status
-  # 자격을 export 하지 않고 aws 호출마다 앞에 붙인다 — export 하면 같은 셸의 뒤 호출(반대 계정)까지
-  # 물들어 엉뚱한 계정에 명령이 나간다. 키가 비면 주변 환경을 그대로 쓴다(신 계정 OIDC 역할).
-  local -a A
-  if [ -n "$akey" ]; then
-    # 구 계정 자격은 장기 키라 SESSION_TOKEN 이 없다. 주변에 남아 있으면 키와 짝이 안 맞아
-    # InvalidClientTokenId 가 나므로 명시적으로 비운다.
-    A=(env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$akey" "AWS_SECRET_ACCESS_KEY=$asec" "AWS_DEFAULT_REGION=$AWS_REGION" aws)
-  else
-    A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
-  fi
+  local tag="$1" profile="$2" body="$3" cmd_id instance_id status
+  # 프로필을 호출마다 붙인다 — AWS_PROFILE 로 export 하면 같은 셸의 반대 계정 호출까지 물든다.
+  local -a A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
+  [ -z "$profile" ] || A+=(--profile "$profile")
   local b64; b64="$(printf '%s' "$body" | base64 -w0)"
   cmd_id=$("${A[@]}" ssm send-command \
     --targets "Key=tag:Name,Values=$tag" \
@@ -258,8 +247,7 @@ REMOTE
 # 두 계정 버킷 사이엔 cross-account 정책이 없다. 러너가 구 자격으로 받아 신 자격(주변 환경)으로 올린다.
 relay_dump() {
   log "릴레이 — 구 계정 버킷 → 러너 → 신 계정 버킷"
-  env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" \
-    aws s3 cp "s3://$SRC_RELAY_BUCKET/$RELAY_KEY" "$WORK/dump.sql.gz" --region "$AWS_REGION" >/dev/null
+  aws --profile "$SRC_AWS_PROFILE" s3 cp "s3://$SRC_RELAY_BUCKET/$RELAY_KEY" "$WORK/dump.sql.gz" --region "$AWS_REGION" >/dev/null
   aws s3 cp "$WORK/dump.sql.gz" "s3://$DST_RELAY_BUCKET/$RELAY_KEY" --region "$AWS_REGION" >/dev/null
   rm -f "$WORK/dump.sql.gz"
   log "릴레이 완료"

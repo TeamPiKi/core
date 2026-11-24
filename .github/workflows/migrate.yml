@@ -13,12 +13,8 @@ name: Migrate
 # 자격증명은 절대 workflow_dispatch 입력에 받지 않는다 — 마스킹되지 않아 로그에 평문으로 남는다.
 #   신 계정: OIDC 로 역할(BOOTSTRAP_ROLE)을 맡는다. GitHub 에 신 계정 장기 키를 두지 않는다 — 사람이 CloudShell 에
 #           infra/scripts/bootstrap-oidc.sh 를 한 번 붙여넣으면 발판이 생기고, 나중에 지울 키가 남지 않는다.
-#   구 계정: secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET. 순수 read-only 는 아니다 — 릴레이·이미지 버킷 읽기에
-#           더해, prod DB 제어(SSM 경로)에서 ssm:SendCommand·ListCommandInvocations·GetCommandInvocation 이,
-#           구 앱 박스 SSH(SSM 경유)에서 ec2:DescribeInstances·ssm:StartSession(AWS-StartSSHSession)·
-#           ssm:TerminateSession·ssmmessages:OpenDataChannel(session/*) 이 필요하다. 마지막이 없으면 세션이
-#           열리자마자 끊긴다(terraform/iam_people.tf 실측). 이관 전에 이 키로 start-session 을 한 번 확인할 것.
-#           (박스 안 GetParameter·kms:Decrypt·릴레이 업로드는 DB 인스턴스 role 이 하고, 이 키가 하지 않는다.) 이미 있는 계정이라 키가 정상 경로다.
+#   구 계정: OIDC 로 역할(MIGRATE_SOURCE_ROLE)을 맡아 piki-migrate-src 프로필로 쓴다(migrate-src-creds).
+#           역할과 권한은 terraform/oidc.tf 가 계정마다 미리 만들어 둔다.
 #   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout).
 #
 # SSH 키는 하나다: bootstrap 이 EC2_SSH_KEY 의 공개키를 신 계정에 import 하므로, 이관 중에도 구·신
@@ -27,7 +23,7 @@ name: Migrate
 #
 # 박스 SSH 는 전부 SSM 경유다(#1210). 두 계정 모두 22번 인바운드가 없다.
 #   신 계정 박스: infra 의 ssm-ssh 를 job 의 OIDC 자격으로. 별칭은 Name 태그(piki-dev-app 등)
-#   구 계정 박스: ./.github/actions/migrate-src-ssh 가 구 계정 키를 프로필로 써 두고 붙는다. 별칭은 src-<Name 태그>
+#   구 계정 박스: ./.github/actions/migrate-src-ssh 가 구 계정 역할 프로필로 붙는다. 별칭은 src-<Name 태그>
 
 on:
   workflow_dispatch:
@@ -75,6 +71,7 @@ env:
   # 신 계정에서 이 워크플로가 맡는 역할. 사람이 CloudShell 에 infra/scripts/bootstrap-oidc.sh 를 한 번
   # 붙여넣으면 생긴다. 이름을 바꾸면 그 스크립트의 ROLE_NAME 도 함께 바꿔야 한다.
   BOOTSTRAP_ROLE: piki-migrate-bootstrap
+  MIGRATE_SOURCE_ROLE: piki-migrate-source
 
 jobs:
   # ── 가드: 오발·엉뚱한 계정 방지(입력 검증만, 자격증명 없음). 나머지 job 은 전부 이 job 의 성공에 매인다. ──
@@ -475,17 +472,17 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: SSM 파라미터 이식 (구 계정 전량 복사 + 계정번호 치환)
         env:
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
-          SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
-            echo "::error::구 계정 읽기 자격(MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET) 미설정 — SSM 이식 불가"; exit 1; }
-
-          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
+          src() { aws --profile piki-migrate-src "$@"; }
 
           # 경로를 열거하지 않고 구 계정의 파라미터 전량을 옮긴다. 경로 목록을 코드에 박으면 소비자가 늘
           # 때마다 여기가 낡는다 — 실제로 /piki-core·/piki/observability 만 박아 둔 탓에 extractor 가
@@ -563,11 +560,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: 개발자 IAM 유저 재생성 (PiKi-Developer 그룹)
         env:
           GROUP_NAME: PiKi-Developer
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           # 임시 비번은 채널이 아니라 admin DM 으로만 — 봇이 ADMIN_DISCORD_ID 에게 DM(팀 노출·로그 잔존 없음).
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           ADMIN_DISCORD_ID: ${{ secrets.MIGRATE_ADMIN_DISCORD_ID }}
@@ -1006,8 +1007,7 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       # HTTP-01 은 DNS 가 그 박스를 가리켜야 발급되는데, 컷오버 전 DNS 는 구 박스라 신 박스 발급이 원리적으로 실패한다.
       # cert 는 도메인에 묶여 있어 구 박스 것을 옮기면 바로 유효하고, deploy.yml 의 'Ensure TLS cert' 는 cert 가 있으면 건너뛴다.
@@ -1060,15 +1060,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: 박스 IP 매핑으로 SSM 주소 값 재작성
-        env:
-          SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
-            echo "::error::구 계정 읽기 자격 미설정 — 주소 재작성 불가"; exit 1; }
-          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
+          src() { aws --profile piki-migrate-src "$@"; }
 
           # terraform 이 Name 태그에 박는 값들(ec2.tf·db_ec2.tf·두 side 레포의 main.tf 실측).
           # 구·신 계정이 같은 이름을 쓰므로 이름이 곧 매핑 키다.
@@ -1178,8 +1178,7 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       # 컷오버의 freeze 가 같은 경로로 구 앱을 멈춘다. 그 경로가 막혀 있으면 다운타임 밖인 여기서 드러나야 한다.
       - name: 구 앱 박스 SSH 사전 점검 (컷오버 freeze 경로)
@@ -1198,7 +1197,7 @@ jobs:
           title: "[리허설] 시작 (env=${{ inputs.env }}) — 라이브 무영향"
           detail: "읽기전용 덤프로 신 계정에 복원·대조만 한다. 실서비스는 그대로. 실제 전환(cutover) 아님."
 
-      - name: 덤프→복원→URL재작성→행수 대조 + S3 이미지 동기화
+      - name: 덤프→복원→URL재작성→행수 대조
         env:
           DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }} # dev 카나리에서 실 스키마명 확정(레포 var 로 덮어쓰기)
           DB_EXEC: ${{ needs.config.outputs.db_exec }}
@@ -1212,8 +1211,7 @@ jobs:
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다(bootstrap 이 공개키를 등록)
         run: |
           set -euo pipefail
@@ -1231,16 +1229,28 @@ jobs:
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
-            SRC_AWS_KEY="$SRC_AWS_KEY" SRC_AWS_SECRET="$SRC_AWS_SECRET" \
+            SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
             bash infra/scripts/migrate-db.sh
-          # S3 이미지 델타 동기화 — 구 자격으로 러너에 받아 신 자격으로 업로드(cross-account 정책 불필요).
-          # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
-          if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
-            mkdir -p imgs
-            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
-            aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
-            rm -rf imgs
-          fi
+
+      # 덤프·복원이 길었으면 구 계정 자격(2시간)이 이미지 sync 중에 만료될 수 있어 다시 받는다.
+      - name: 구 계정 자격 갱신 (이미지 sync 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      # 구 자격으로 러너에 받아 신 자격으로 올린다(cross-account 정책 불필요).
+      # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
+      - name: S3 이미지 동기화
+        env:
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
+        run: |
+          set -euo pipefail
+          [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ] || exit 0
+          mkdir -p imgs
+          aws --profile piki-migrate-src s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+          aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
+          rm -rf imgs
           rm -f key.pem
 
       - name: Discord — 리허설 결과
@@ -1535,8 +1545,7 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       # 이미지 벌크 sync 를 freeze *앞*에 둔다. 러너의 imgs 는 매 실행 빈 디렉터리라 s3 sync 가 버킷
       # 전량을 내려받는데(이름만 델타다), 이게 freeze 뒤에 있으면 다운타임이 곧 버킷 전체 전송 시간이
@@ -1546,15 +1555,20 @@ jobs:
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
         run: |
           set -euo pipefail
           [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ] || { echo "::notice::같은 버킷 — sync 불필요"; exit 0; }
           mkdir -p imgs
-          env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+          aws --profile "$SRC_AWS_PROFILE" s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
           aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
           echo "::notice::이미지 벌크 sync 완료 — $(find imgs -type f | wc -l) 개 (freeze 밖)"
+
+      # 구 계정 자격은 2시간짜리다. 벌크 sync 가 길었으면 freeze 이후 덤프·롤백 중에 만료될 수 있어 다시 받는다.
+      - name: 구 계정 자격 갱신 (freeze 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       - name: freeze→덤프/복원→URL재작성→행수 대조
         env:
@@ -1570,8 +1584,7 @@ jobs:
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다
         run: |
           set -euo pipefail
@@ -1593,15 +1606,14 @@ jobs:
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
-            SRC_AWS_KEY="$SRC_AWS_KEY" SRC_AWS_SECRET="$SRC_AWS_SECRET" \
+            SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
             bash infra/scripts/migrate-db.sh
 
       - name: S3 이미지 최종 델타 sync → 신 계정 앱 스모크
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           DST_APP_HOST: ${{ steps.dst.outputs.host }}
           SRC_APP_HOST: ${{ steps.src.outputs.host }}
           SRC_APP_KEY: key.pem
@@ -1616,7 +1628,7 @@ jobs:
             # imgs 는 위 벌크 sync 가 남겨 둔 것이다(같은 job = 같은 워크스페이스). 지우지 않고 재사용해야
             # s3 sync 의 크기·mtime 비교가 먹어 freeze 구간에서는 증분만 오간다.
             mkdir -p imgs
-            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            aws --profile "$SRC_AWS_PROFILE" s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
           fi
           # 스모크 — 신 계정 앱 헬스(nginx 상태 파일이 가리키는 서빙 슬롯). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
@@ -1682,6 +1694,14 @@ jobs:
       # 채 영구 방치된다. freeze 는 이 워크플로의 유일한 다운타임이라 가장 비싼 실패다.
       # 성공 경로에서는 바로 위 스텝이 상태 파일을 지우고 migrate-unfreeze.sh 가 그걸 보고 즉시 빠져나가
       # no-op 이므로, always() 로 둬도 되살리는 오작동이 없다.
+      # 롤백 SSH 도 구 계정 자격으로 열리므로 DNS 대기 뒤 만료됐을 수 있어 직전에 다시 받는다.
+      - name: 구 계정 자격 갱신 (롤백 직전)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: freeze 롤백 (최종 안전망 — 실패·취소 공통)
         if: always()
         env:
