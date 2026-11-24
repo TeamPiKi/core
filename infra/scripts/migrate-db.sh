@@ -299,18 +299,14 @@ REMOTE
   log "URL 재작성 완료(3 컬럼)"
 }
 
-TABLES="users tournaments tournament_users items item_snapshots notifications"
-
-# 한 번의 원격 호출로 전 테이블 COUNT 를 받는다(테이블마다 접속하면 호출이 12번으로 늘고
-# SSM 모드에서는 그만큼 send-command 가 쌓인다).
+# 한 번의 원격 호출로 전 테이블 COUNT 를 받는다(테이블마다 접속하면 SSM 모드에서 send-command 가 쌓인다).
+# 테이블 목록은 서버에서 읽는다. 코드에 박아 두면 이후 추가된 테이블이 대조 밖으로 빠진다.
 counts_of() {
-  local side="$1" container="$2" prefix="$3" sql=""
-  local t first=1
-  for t in $TABLES; do
-    [ "$first" -eq 1 ] || sql="$sql UNION ALL"
-    sql="$sql SELECT '$t' AS t, COUNT(*) AS c FROM \`$DB_NAME\`.\`$t\`"
-    first=0
-  done
+  local side="$1" container="$2" prefix="$3" sql
+  sql="SET SESSION group_concat_max_len = 1000000;
+SELECT GROUP_CONCAT(CONCAT('SELECT ''', table_name, ''', COUNT(*) FROM \`', table_schema, '\`.\`', table_name, '\`') SEPARATOR ' UNION ALL ')
+  INTO @q FROM information_schema.tables WHERE table_schema = '$DB_NAME' AND table_type = 'BASE TABLE';
+PREPARE s FROM @q; EXECUTE s; DEALLOCATE PREPARE s"
   # SQL 을 -e 인자로 넘기지 않고 quoted heredoc(<<'SQL')으로 준다. 식별자 인용에 쓴 백틱이
   # 원격 셸의 큰따옴표 안에 들어가면 명령치환으로 해석돼 쿼리가 통째로 깨진다.
   { remote_preamble "$container" "$prefix"
@@ -322,35 +318,34 @@ REMOTE
   } | remote_exec "$side"
 }
 
-# 덤프 전(소스)·복원 후(대상) 주요 테이블 COUNT(*) 비교.
+# 덤프 전(소스)·복원 후(대상) 전체 테이블 COUNT(*) 비교.
 #
-# rehearsal 에서는 불일치를 실패로 보지 않는다. freeze 가 없어 소스는 계속 쓰기를 받고, 소스
-# COUNT 는 --single-transaction 스냅샷 이후의 라이브 값이다. 덤프 도중 정상적인 쓰기가 한 건만
-# 들어와도 어긋나므로, 여기서 exit 1 하면 "정상 상황에서 실패하는 검증"이 된다.
-# cutover 는 freeze 로 쓰기가 막힌 뒤라 불일치가 곧 이상 신호다 — 그때만 중단한다.
+# rehearsal 은 freeze 가 없어 소스가 계속 쓰기를 받으므로 불일치를 경고로만 둔다.
+# cutover 는 소스 쓰기가 막혔지만 신 계정 앱은 이미 떠 있어 대상에 행이 늘 수 있다. 대상이 적을 때만 유실로 보고 중단한다.
 verify_counts() {
-  log "행수 대조 — 주요 테이블"
-  counts_of src "$SRC_DB_CONTAINER" "$SRC_SSM_PREFIX" | grep -E "^[a-z_]+[[:space:]]+[0-9]+$" > "$WORK/src.counts" || true
-  counts_of dst "$DST_DB_CONTAINER" "$DST_SSM_PREFIX" | grep -E "^[a-z_]+[[:space:]]+[0-9]+$" > "$WORK/dst.counts" || true
+  log "행수 대조 — 전체 테이블"
+  counts_of src "$SRC_DB_CONTAINER" "$SRC_SSM_PREFIX" | grep -E "^[a-z0-9_]+[[:space:]]+[0-9]+$" > "$WORK/src.counts" || true
+  counts_of dst "$DST_DB_CONTAINER" "$DST_SSM_PREFIX" | grep -E "^[a-z0-9_]+[[:space:]]+[0-9]+$" > "$WORK/dst.counts" || true
   [ -s "$WORK/src.counts" ] && [ -s "$WORK/dst.counts" ] || { log "행수 조회 실패 — 대조 불가"; return 1; }
 
-  local mismatch=0 t s d
-  for t in $TABLES; do
-    s=$(awk -v k="$t" '$1==k{print $2}' "$WORK/src.counts")
+  local missing=0 extra=0 t s d
+  while read -r t s; do
     d=$(awk -v k="$t" '$1==k{print $2}' "$WORK/dst.counts")
-    log "  $t: src=${s:-?} dst=${d:-?}"
-    [ "${s:-x}" = "${d:-y}" ] || mismatch=$((mismatch + 1))
-  done
+    log "  $t: src=$s dst=${d:-?}"
+    if [ -z "$d" ] || [ "$d" -lt "$s" ]; then missing=$((missing + 1))
+    elif [ "$d" -gt "$s" ]; then extra=$((extra + 1)); fi
+  done < "$WORK/src.counts"
 
-  if [ "$mismatch" -eq 0 ]; then
+  [ "$extra" -eq 0 ] || log "대상이 더 많은 테이블 $extra 건 — 복원 뒤 신 계정 앱의 쓰기로 정상 발생"
+  if [ "$missing" -eq 0 ]; then
     log "행수 대조 통과"
     return 0
   fi
   if [ "$MODE" = rehearsal ]; then
-    log "행수 불일치 $mismatch 건 — rehearsal 이라 경고로만 둔다(덤프 스냅샷 이후의 라이브 쓰기로 정상 발생)"
+    log "대상이 더 적은 테이블 $missing 건 — rehearsal 이라 경고로만 둔다(덤프 스냅샷 이후의 라이브 쓰기로 정상 발생)"
     return 0
   fi
-  log "행수 불일치 $mismatch 건 — cutover 는 쓰기가 막힌 뒤라 이상 신호다. 중단"
+  log "대상이 더 적은 테이블 $missing 건 — 쓰기가 막힌 뒤라 유실 신호다. 중단"
   return 1
 }
 
