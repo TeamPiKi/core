@@ -1,5 +1,6 @@
 package com.depromeet.piki.common.config
 
+import com.depromeet.piki.common.event.RedisStreamSubscription
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -30,13 +31,13 @@ class AsyncConfig : AsyncConfigurer {
             initialize()
         }
 
-    @Bean(PARSE_RESULT_RECLAIM_EXECUTOR)
-    fun parseResultReclaimExecutor(): ThreadPoolTaskExecutor =
+    @Bean(REDIS_STREAM_RECLAIM_EXECUTOR)
+    fun redisStreamReclaimExecutor(subscriptions: List<RedisStreamSubscription>): ThreadPoolTaskExecutor =
         ThreadPoolTaskExecutor().apply {
-            corePoolSize = 1
-            maxPoolSize = 1
+            corePoolSize = subscriptions.size.coerceAtLeast(1)
+            maxPoolSize = subscriptions.size.coerceAtLeast(1)
             queueCapacity = 0
-            setThreadNamePrefix("parse-result-reclaim-")
+            setThreadNamePrefix("redis-stream-reclaim-")
             setTaskDecorator(ContextPropagatingTaskDecorator())
             setRejectedExecutionHandler(ThreadPoolExecutor.DiscardPolicy())
             initialize()
@@ -62,7 +63,7 @@ class AsyncConfig : AsyncConfigurer {
         }
 
     companion object {
-        const val PARSE_RESULT_RECLAIM_EXECUTOR = "parseResultReclaimExecutor"
+        const val REDIS_STREAM_RECLAIM_EXECUTOR = "redisStreamReclaimExecutor"
         const val EVENT_PUBLICATION_EXECUTOR = "eventPublicationExecutor"
         const val NOTIFICATION_EXECUTOR = "notificationExecutor"
     }

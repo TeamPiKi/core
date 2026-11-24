@@ -37,7 +37,7 @@ class RunCatchingExceptionTest {
         // 위 포획 범위는 이 경로가 이 함수를 쓸 때만 의미가 있다. 한 곳이라도 표준 runCatching 으로 되돌아가면
         // 그 자리에서만 Error 가 다시 삼켜지는데, 그건 리뷰로만 걸러야 해서 조용히 새기 쉽다 — 기계로 못 박는다.
         val parsers =
-            listOf("ParseResultConsumer.kt", "ParseResultReclaimer.kt", "ParseRequestDeadline.kt")
+            listOf("ParseResultConsumer.kt", "ParseRequestDeadline.kt")
                 .map { java.io.File("src/main/kotlin/com/depromeet/piki/item/service/$it") }
         assertTrue(parsers.all { it.exists() }, "검사 대상 파일이 사라짐: ${parsers.filterNot { it.exists() }.map { it.name }}")
 

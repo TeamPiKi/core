@@ -1,5 +1,7 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.common.event.RedisStreamReclaimer
+import com.depromeet.piki.common.event.RedisStreamSubscription
 import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
@@ -47,7 +49,9 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
 
     @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
 
-    @Autowired private lateinit var parseResultReclaimer: ParseResultReclaimer
+    @Autowired private lateinit var redisStreamReclaimer: RedisStreamReclaimer
+
+    @Autowired private lateinit var parseResultSubscription: RedisStreamSubscription
 
     @Test
     fun `링크로 위시를 담으면 요청 스트림과 결과 스트림을 거쳐 상품이 채워진다`() {
@@ -153,7 +157,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
         takeWithoutAcknowledging(mapOf("requestId" to requestId, "code" to "BLOCKED_DOMAIN"))
         assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(wish.slot))
 
-        parseResultReclaimer.reclaim(Duration.ZERO)
+        redisStreamReclaimer.reclaim(parseResultSubscription, Duration.ZERO)
 
         assertEquals(ParseRequestStatus.FAILED, jdbcTemplate.parseRequestStatusOf(wish.slot))
         assertEquals(emptyList(), streamEntriesOf(requestId))
