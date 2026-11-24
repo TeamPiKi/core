@@ -53,10 +53,10 @@ resource "aws_security_group" "db_ec2" {
     security_groups = [aws_security_group.ec2.id]
   }
 
-  # extractor 는 몰별 추출 규칙의 배포본만 읽는다. 포트는 여기서 열고 읽을 수 있는 범위는 Redis 계정
-  # (infra/compose/db.yml 의 extraction-rules-reader)이 키 하나로 좁힌다. MySQL 은 열지 않는다.
+  # extractor 는 몰별 추출 규칙을 읽고 파싱 스트림을 소비한다. 포트는 여기서 열고 닿는 범위는 Redis 계정
+  # (infra/compose/db.yml 의 extraction-rules-reader·extraction-stream-worker)이 좁힌다. MySQL 은 열지 않는다.
   ingress {
-    description     = "Redis from extractor (extraction rules, read-only account)"
+    description     = "Redis from extractor (extraction rules and parse streams, scoped accounts)"
     from_port       = 6379
     to_port         = 6379
     protocol        = "tcp"

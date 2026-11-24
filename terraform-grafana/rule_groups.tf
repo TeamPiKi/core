@@ -72,7 +72,7 @@ resource "grafana_rule_group" "piki_db" {
     }
   }
 
-  # allkeys-lru 라 축출이 곧 가득 참이다. TTL 만료는 별도 카운터(expired_keys)라 잡히지 않는다 (#1205).
+  # 축출이 곧 가득 참이다. volatile-lru 라 지워지는 것은 만료가 있는 키(세션)뿐이고, TTL 만료는 별도 카운터(expired_keys)라 잡히지 않는다 (#1205).
   rule {
     name           = "prod Redis 가 가득 차 키를 축출함"
     condition      = "B"
@@ -81,7 +81,7 @@ resource "grafana_rule_group" "piki_db" {
     exec_err_state = "Alerting"
     is_paused      = false
     annotations = {
-      description = "Redis 가 maxmemory(64MB)에 닿아 오래 안 쓴 키부터 지우고 있습니다. 해당 사용자는 다시 로그인하게 되고, 사용자별 세션 인덱스가 지워졌다면 탈퇴·정지 때 그 사용자 세션이 남을 수 있습니다. DB 박스에서 `docker exec piki-prod-redis sh -c 'REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli INFO memory'` 로 사용량을 보고 maxmemory 증설이나 세션 저장소 DB 이관을 결정합니다. 지표가 아예 없어 NoData 로 발화한 경우라면 redis-exporter 나 alloy 수집기가 멈춘 것입니다."
+      description = "Redis 가 maxmemory(64MB)에 닿아 만료가 있는 키(로그인 세션)를 오래 안 쓴 것부터 지우고 있습니다. 해당 사용자는 다시 로그인하게 되고, 사용자별 세션 인덱스가 지워졌다면 탈퇴·정지 때 그 사용자 세션이 남을 수 있습니다. 파싱 스트림처럼 만료가 없는 키는 지워지지 않으므로, 그쪽이 쌓여 한도를 채운 것이면 지울 키가 바닥나는 순간 쓰기가 전부 실패합니다. DB 박스에서 `docker exec piki-prod-redis sh -c 'REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli INFO memory'` 로 사용량을, `XLEN parse:requests`·`XLEN parse:results` 로 스트림 길이를 보고 maxmemory 증설이나 세션 저장소 DB 이관을 결정합니다. 지표가 아예 없어 NoData 로 발화한 경우라면 redis-exporter 나 alloy 수집기가 멈춘 것입니다."
       summary     = "prod Redis 가 메모리 한도에 닿아 키를 축출하고 있습니다."
     }
     labels = {

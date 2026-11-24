@@ -110,21 +110,62 @@ else
   sudo sysctl -w net.ipv4.tcp_retries2=8
 fi
 
-# 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 없을 때만 named 볼륨(piki-redis-data)으로 기동.
-#    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
-#    이후 컨테이너 재생성에도 refresh token 이 유지된다.
+# 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 설정 값과 extractor 계정의 근거도 그쪽이다.
+#    extractor 서버가 파싱 스트림을 읽으러 들어오므로 바깥 인터페이스에 묶고 비밀번호를 건다.
+#    노출 범위는 보안그룹(terraform/security_groups.tf 의 dev_app)이 extractor 로 좁힌다.
 if [ "$ENVIRONMENT" = "prod" ]; then
   echo "[redis] prod — DB 박스 Redis 사용, skip"
-elif docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
-  echo "[redis] piki-redis 이미 존재 — skip"
 else
-  echo "[redis] piki-redis named 볼륨으로 기동"
-  docker run -d \
-    --name piki-redis \
-    --restart unless-stopped \
-    -p 172.17.0.1:6379:6379 \
-    -v piki-redis-data:/data \
-    redis:7-alpine
+  redis_ssm_param() {
+    docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
+      --name "/piki-core/${ENVIRONMENT}/redis-password" --with-decryption \
+      --region ap-northeast-2 --query Parameter.Value --output text
+  }
+  REDIS_PASSWORD="$(redis_ssm_param)" || { echo "[redis] SSM redis-password 조회 실패 — /piki-core/${ENVIRONMENT}/redis-password 를 먼저 만들 것"; exit 1; }
+  REDIS_IMAGE="redis:8.10-alpine"
+  # 비밀번호는 환경변수로 넘겨 기동 인자에 남지 않게 한다. 인자 비교로 재생성 여부를 정하므로 인자에 값이 섞이면 안 된다.
+  REDIS_COMMAND="exec redis-server --requirepass \"\$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy volatile-lru --appendonly yes --appendfsync everysec --stop-writes-on-bgsave-error no --user extraction-stream-worker on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~parse:requests' '%W~parse:results' '%R~piki:extraction:policy' +xreadgroup +xgroup +xpending +xclaim +xackdel +xinfo +xadd +get"
+  redis_cli() { docker exec -e REDISCLI_AUTH="$1" piki-redis redis-cli "${@:2}"; }
+
+  # 있으면 skip 이라 이미지나 인자만 바꾸면 기존 컨테이너에 반영되지 않는다. 다를 때만 재생성한다.
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis' \
+    && { [ "$(docker inspect -f '{{.Config.Image}}' piki-redis)" != "$REDIS_IMAGE" ] \
+      || [ "$(docker inspect -f '{{index .Config.Cmd 2}}' piki-redis 2>/dev/null)" != "$REDIS_COMMAND" ]; }; then
+    echo "[redis] piki-redis 이미지나 기동 인자가 다름 — 재생성"
+    # 옛 컨테이너가 named 볼륨을 쓰고 있을 때만 데이터를 잇는다. AOF 파일 없이 appendonly yes 로 뜨면 Redis 가 스냅샷을
+    # 읽지 않으므로(실측) 떠 있는 동안 먼저 켠다. 옛 컨테이너는 비밀번호가 없을 수도 있어 두 경우를 다 시도한다.
+    if docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' piki-redis | grep -qw 'piki-redis-data' \
+      && docker ps --format '{{.Names}}' | grep -qx 'piki-redis'; then
+      redis_cli "$REDIS_PASSWORD" config set appendonly yes >/dev/null 2>&1 \
+        || redis_cli "" config set appendonly yes >/dev/null 2>&1 \
+        || echo "[redis] AOF 를 미리 켜지 못함 — dev 세션이 초기화될 수 있다"
+      sleep 3
+    else
+      echo "[redis] 옛 컨테이너가 named 볼륨을 쓰지 않음 — dev 세션이 초기화된다"
+    fi
+    docker stop -t 30 piki-redis >/dev/null
+    docker rm piki-redis >/dev/null
+  fi
+  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
+    echo "[redis] piki-redis 이미 존재 — skip"
+  else
+    echo "[redis] piki-redis named 볼륨으로 기동"
+    docker run -d \
+      --name piki-redis \
+      --restart unless-stopped \
+      -p 6379:6379 \
+      -v piki-redis-data:/data \
+      -e REDIS_PASSWORD="$REDIS_PASSWORD" \
+      "$REDIS_IMAGE" sh -c "$REDIS_COMMAND"
+  fi
+  for i in $(seq 1 15); do
+    if redis_cli "$REDIS_PASSWORD" ping 2>/dev/null | grep -q PONG; then
+      echo "[redis] ready (attempt $i)"
+      break
+    fi
+    sleep 2
+    [ "$i" -eq 15 ] && { echo "[redis] readiness timeout (30s)"; exit 1; }
+  done
 fi
 
 # 3) mysql (dev 전용) — prod 는 전용 DB 박스(provision-db.sh)를 쓰므로 dev 일 때만 로컬 컨테이너로 기동.
