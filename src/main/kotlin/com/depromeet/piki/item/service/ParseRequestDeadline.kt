@@ -24,7 +24,8 @@ class ParseRequestDeadline(
     init {
         // 기한이 정상 경로의 최악보다 짧으면 처리 중인 요청을 실패로 닫음. 식의 정본은 extraction-api.md 8절
         val firstSendDelay = stalePublishedAfter + staleCheckInterval + resubmitInterval
-        val worstCase = firstSendDelay + REDELIVERY_AFTER.multipliedBy(MAX_DELIVERIES - 1L) + EXTRACTION_MAX.multipliedBy(MAX_DELIVERIES.toLong())
+        val untilRedelivery = REDELIVERY_AFTER + REDELIVERY_SCAN_INTERVAL
+        val worstCase = firstSendDelay + untilRedelivery.multipliedBy(MAX_DELIVERIES - 1L) + PROCESSING_TIMEOUT.multipliedBy(MAX_DELIVERIES.toLong())
         check(DEADLINE > worstCase) { "계약의 result_deadline_seconds($DEADLINE)가 정상 경로의 최악($worstCase)보다 커야 한다" }
     }
 
@@ -51,14 +52,7 @@ class ParseRequestDeadline(
         private val DEADLINE = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.resultDeadlineSeconds).toLong())
         private val REDELIVERY_AFTER = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.redeliveryAfterSeconds).toLong())
         private val MAX_DELIVERIES = REQUEST_OPTIONS.getExtension(ExtractionProto.maxDeliveries)
-        private val EXTRACTION_MAX =
-            Duration.ofSeconds(
-                ExtractionProto
-                    .getDescriptor()
-                    .findServiceByName("ExtractionService")
-                    .options
-                    .getExtension(ExtractionProto.callerReadTimeoutSeconds)
-                    .toLong(),
-            )
+        private val REDELIVERY_SCAN_INTERVAL = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.redeliveryScanIntervalSeconds).toLong())
+        private val PROCESSING_TIMEOUT = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.processingTimeoutSeconds).toLong())
     }
 }
