@@ -57,48 +57,30 @@ class ExploreFeedRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var exploreFeedStore: ExploreFeedStore
 
     @Test
-    fun `폴더에 없는 위시와 공개 폴더에 든 위시가 피드에 오른다`() {
+    fun `프로필이 공개인 사람의 위시는 폴더에 들었든 아니든 피드에 오른다`() {
         val owner = member()
         val loose = readyWish(owner)
-        val inPublic = readyWish(owner)
-        putWish(owner, createFolder(owner, "공개 폴더"), inPublic)
+        val inFolder = readyWish(owner)
+        putWish(owner, createFolder(owner, "폴더"), inFolder)
 
         val wishIds = refreshedWishIds()
 
         assertTrue(loose in wishIds)
-        assertTrue(inPublic in wishIds)
-    }
-
-    @Test
-    fun `비공개 폴더에만 든 위시는 빠지고 공개 폴더에도 든 위시는 남는다`() {
-        val owner = member()
-        val hidden = createFolder(owner, "비공개 폴더")
-        hide(owner, hidden)
-        val open = createFolder(owner, "공개 폴더")
-        val onlyHidden = readyWish(owner)
-        putWish(owner, hidden, onlyHidden)
-        val both = readyWish(owner)
-        putWish(owner, hidden, both)
-        putWish(owner, open, both)
-
-        val wishIds = refreshedWishIds()
-
-        assertFalse(onlyHidden in wishIds)
-        assertTrue(both in wishIds)
+        assertTrue(inFolder in wishIds)
     }
 
     @Test
     fun `프로필을 비공개로 둔 사람의 위시는 폴더와 관계없이 빠진다`() {
         val owner = member()
         val loose = readyWish(owner)
-        val inPublic = readyWish(owner)
-        putWish(owner, createFolder(owner, "공개 폴더"), inPublic)
+        val inFolder = readyWish(owner)
+        putWish(owner, createFolder(owner, "폴더"), inFolder)
         makeProfilePrivate(owner)
 
         val wishIds = refreshedWishIds()
 
         assertFalse(loose in wishIds)
-        assertFalse(inPublic in wishIds)
+        assertFalse(inFolder in wishIds)
     }
 
     @Test
@@ -200,15 +182,6 @@ class ExploreFeedRefreshIntegrationTest : IntegrationTestSupport() {
     ) {
         mockMvc()
             .perform(post("/api/v1/folders/$folderId/wishes").by(userId).json(mapOf("wishIds" to listOf(wishId))))
-            .andExpect(status().isOk)
-    }
-
-    private fun hide(
-        userId: UUID,
-        folderId: Long,
-    ) {
-        mockMvc()
-            .perform(patch("/api/v1/folders/$folderId/visibility").by(userId).json(mapOf("isPublic" to false)))
             .andExpect(status().isOk)
     }
 
