@@ -1,7 +1,10 @@
 package com.depromeet.piki.item.service
 
+import com.depromeet.piki.contracts.extraction.v1.ExtractionProto
+import com.depromeet.piki.contracts.extraction.v1.ParseRequest
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
@@ -12,8 +15,18 @@ class ParseRequestDeadline(
     private val itemParseOutboxRepository: ItemParseOutboxRepository,
     private val itemParsingService: ItemParsingService,
     private val itemParseResultRecorder: ItemParseResultRecorder,
+    @Value("\${spring.modulith.events.staleness.published}") stalePublishedAfter: Duration,
+    @Value("\${spring.modulith.events.staleness.check-interval}") staleCheckInterval: Duration,
+    @Value("\${event-publication.resubmit-interval}") resubmitInterval: Duration,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    init {
+        // 기한이 정상 경로의 최악보다 짧으면 처리 중인 요청을 실패로 닫음. 식의 정본은 extraction-api.md 8절
+        val firstSendDelay = stalePublishedAfter + staleCheckInterval + resubmitInterval
+        val worstCase = firstSendDelay + REDELIVERY_AFTER.multipliedBy(MAX_DELIVERIES - 1L) + EXTRACTION_MAX.multipliedBy(MAX_DELIVERIES.toLong())
+        check(DEADLINE > worstCase) { "계약의 result_deadline_seconds($DEADLINE)가 정상 경로의 최악($worstCase)보다 커야 한다" }
+    }
 
     @Scheduled(fixedDelay = CHECK_INTERVAL_MS)
     fun closeOverdue() = closeOverdue(DEADLINE)
@@ -33,6 +46,19 @@ class ParseRequestDeadline(
     companion object {
         private const val CHECK_INTERVAL_MS = 60_000L
         private const val LIMIT = 100
-        private val DEADLINE = Duration.ofMinutes(7)
+
+        private val REQUEST_OPTIONS = ParseRequest.getDescriptor().options
+        private val DEADLINE = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.resultDeadlineSeconds).toLong())
+        private val REDELIVERY_AFTER = Duration.ofSeconds(REQUEST_OPTIONS.getExtension(ExtractionProto.redeliveryAfterSeconds).toLong())
+        private val MAX_DELIVERIES = REQUEST_OPTIONS.getExtension(ExtractionProto.maxDeliveries)
+        private val EXTRACTION_MAX =
+            Duration.ofSeconds(
+                ExtractionProto
+                    .getDescriptor()
+                    .findServiceByName("ExtractionService")
+                    .options
+                    .getExtension(ExtractionProto.callerReadTimeoutSeconds)
+                    .toLong(),
+            )
     }
 }

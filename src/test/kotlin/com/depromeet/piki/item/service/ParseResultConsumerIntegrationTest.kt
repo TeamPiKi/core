@@ -169,7 +169,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
         redis.execute(
             DefaultRedisScript(ADD_AND_TAKE, String::class.java),
             listOf(ParseResultMessage.STREAM),
-            ParseResultConsumer.GROUP,
+            ParseResultMessage.GROUP,
             "gone-${UUID.randomUUID()}",
             *fields.flatMap { (field, value) -> listOf(field, value) }.toTypedArray(),
         )
@@ -188,7 +188,7 @@ class ParseResultConsumerIntegrationTest : IntegrationTestSupport() {
             .filter { it["requestId"] == requestId }
 
     private fun pendingCount(): Long =
-        redis.opsForStream<String, String>().pending(ParseResultMessage.STREAM, ParseResultConsumer.GROUP)?.totalPendingMessages ?: 0L
+        redis.opsForStream<String, String>().pending(ParseResultMessage.STREAM, ParseResultMessage.GROUP)?.totalPendingMessages ?: 0L
 
     private fun registerWish(
         userId: UUID,

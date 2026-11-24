@@ -1,6 +1,8 @@
 package com.depromeet.piki.support
 
 import com.depromeet.piki.common.exception.HttpMappable
+import com.depromeet.piki.contracts.extraction.v1.ExtractionProto
+import com.depromeet.piki.contracts.extraction.v1.ParseRequest
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.event.ItemParseRequested
 import com.depromeet.piki.item.service.ParseResultMessage
@@ -89,7 +91,7 @@ class FakeExtractor(
     }
 
     companion object {
-        private const val GROUP = "extractor"
+        private val GROUP: String = ParseRequest.getDescriptor().options.getExtension(ExtractionProto.redisConsumerGroup)
         private const val CONSUMER = "fake-extractor"
         private const val BATCH = 100L
         private const val TRANSIENT_CODE = "UPSTREAM_ERROR"

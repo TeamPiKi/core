@@ -10,7 +10,7 @@ class ParseResultStreamConfig {
     fun parseResultSubscription(consumer: ParseResultConsumer): RedisStreamSubscription =
         RedisStreamSubscription(
             stream = ParseResultMessage.STREAM,
-            group = ParseResultConsumer.GROUP,
+            group = ParseResultMessage.GROUP,
             consumer = consumer.name,
             listener = consumer,
         )

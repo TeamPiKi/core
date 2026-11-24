@@ -11,6 +11,7 @@ data class ItemParseRequested(
     val inputValue: String,
 ) {
     companion object {
+        // 어노테이션 인자라 계약에서 읽지 못함. ParseStreamContractTest 가 계약의 값과 대조
         const val STREAM = "parse:requests"
 
         fun of(request: ItemParseOutbox): ItemParseRequested = ItemParseRequested(request.getId(), request.inputType, request.inputValue)

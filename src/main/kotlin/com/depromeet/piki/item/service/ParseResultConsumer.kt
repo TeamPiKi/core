@@ -22,7 +22,7 @@ class ParseResultConsumer(
 
     override fun onMessage(message: MapRecord<String, String, String>) {
         ParseResultMessage.of(message.value)?.let(::apply) ?: log.error("item.parse.result.malformed message={} fields={}", message.id, message.value.keys)
-        redis.opsForStream<String, String>().acknowledgeAndDelete(GROUP, message, XDelOptions.defaults())
+        redis.opsForStream<String, String>().acknowledgeAndDelete(ParseResultMessage.GROUP, message, XDelOptions.defaults())
     }
 
     private fun apply(result: ParseResultMessage) {
@@ -67,9 +67,5 @@ class ParseResultConsumer(
 
     private fun logSuperseded(result: ParseResultMessage) {
         log.info("item.parse.result.superseded request={} 이미 닫힌 요청의 결과를 버림", result.requestId)
-    }
-
-    companion object {
-        const val GROUP = "core"
     }
 }
