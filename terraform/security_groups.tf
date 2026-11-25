@@ -49,8 +49,6 @@ resource "aws_security_group" "ec2" {
 # dev 앱 EC2 Security Group — prod 앱 SG 와 같은 입구(80·443)를 갖되 그룹을 나눈다.
 # prod DB SG 는 prod 앱 SG 만 참조하므로, 그룹을 나눈 것만으로 dev 박스에서 prod DB 로 가는 길이 닫힌다(#1213).
 # dev 는 자기 박스의 MySQL·Redis 를 쓴다. 이 그룹을 참조하는 쪽은 extractor 인바운드뿐이다.
-# extractor 서버 한 대가 dev 의 파싱 스트림도 읽으므로 Redis 포트만 extractor 에 연다. 닿는 범위는 Redis 계정
-# (infra/scripts/provision-runtime.sh 의 extraction-stream-worker)이 좁힌다.
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "dev_app" {
   name        = "piki-dev-app-sg"
@@ -71,14 +69,6 @@ resource "aws_security_group" "dev_app" {
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description     = "Redis from extractor (parse streams, scoped account)"
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [data.aws_security_group.extractor.id]
   }
 
   egress {

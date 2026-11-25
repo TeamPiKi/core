@@ -135,8 +135,7 @@ services:
     #   extraction-stream-worker 요청 스트림 소비, 결과 스트림 쓰기, 정책 키 읽기만.
     # 키·스트림 이름의 정본은 TeamPiKi/infra 의 contracts/extraction.proto, 비밀번호 원문은 SSM(/piki-extractor/app/)에만
     # 있고 여기에는 sha256 해시를 둔다. 두 계정은 같은 비밀번호를 쓴다 - 나눈 것은 연결마다의 권한이다.
-    # dev Redis(infra/scripts/provision-runtime.sh)에도 같은 스트림 계정이 있다. 비밀번호를 바꾸면 세 곳의 해시를 함께 바꾸고,
-    # 떠 있는 Redis 에는 같은 인자로 ACL SETUSER 를 친다(재시작 불필요).
+    # 비밀번호를 바꾸면 두 해시를 함께 바꾸고, 떠 있는 Redis 에는 같은 인자로 ACL SETUSER 를 친다(재시작 불필요).
     command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy volatile-lru --appendonly yes --appendfsync everysec --stop-writes-on-bgsave-error no --user extraction-rules-reader on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~piki:extraction:rules' +get --user extraction-stream-worker on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~parse:requests' '%W~parse:results' '%R~piki:extraction:policy' +xreadgroup +xgroup +xpending +xclaim +xackdel +xinfo +xadd +get"]
 
     mem_limit: 128m
