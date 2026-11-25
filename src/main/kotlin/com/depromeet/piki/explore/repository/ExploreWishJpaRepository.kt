@@ -2,6 +2,8 @@ package com.depromeet.piki.explore.repository
 
 import com.depromeet.piki.folder.domain.Folder
 import com.depromeet.piki.wishlist.domain.Wish
+import com.depromeet.piki.wishlist.repository.WishCardView
+import org.springframework.data.domain.Limit
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -34,6 +36,24 @@ interface ExploreWishJpaRepository : JpaRepository<Wish, Long> {
         @Param("wishId") wishId: Long,
         @Param("ownerId") ownerId: UUID,
     ): List<Folder>
+
+    @Query(
+        "SELECT w FROM Wish w WHERE w.userId IN :ownerIds AND w.deletedAt IS NULL AND w.itemId IS NOT NULL " +
+            "AND w.id < :beforeWishId ORDER BY w.id DESC",
+    )
+    fun findLatestOfOwners(
+        @Param("ownerIds") ownerIds: Collection<UUID>,
+        @Param("beforeWishId") beforeWishId: Long,
+        limit: Limit,
+    ): List<Wish>
+
+    @Query(
+        "SELECT w.userId AS userId, MAX(w.id) AS wishId FROM Wish w " +
+            "WHERE w.userId IN :ownerIds AND w.deletedAt IS NULL AND w.itemId IS NOT NULL GROUP BY w.userId",
+    )
+    fun findLatestWishIdByOwner(
+        @Param("ownerIds") ownerIds: Collection<UUID>,
+    ): List<WishCardView>
 
     @Query("SELECT COUNT(w) FROM Wish w WHERE w.itemId = :itemId AND w.deletedAt IS NULL")
     fun countLiveByItemId(

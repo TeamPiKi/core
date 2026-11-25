@@ -7,9 +7,13 @@ import com.depromeet.piki.common.response.ApiResponseBody
 import com.depromeet.piki.common.response.PageResponse
 import com.depromeet.piki.contracts.extraction.v1.ExtractionMethod
 import com.depromeet.piki.explore.controller.dto.ExploreFolderView
+import com.depromeet.piki.explore.controller.dto.ExploreFriendView
+import com.depromeet.piki.explore.controller.dto.ExploreFriendWishResponse
+import com.depromeet.piki.explore.controller.dto.ExploreFriendsResponse
 import com.depromeet.piki.explore.controller.dto.ExploreItemView
 import com.depromeet.piki.explore.controller.dto.ExploreOwnerView
 import com.depromeet.piki.explore.controller.dto.ExploreRecentResponse
+import com.depromeet.piki.explore.controller.dto.ExploreWishCopyResponse
 import com.depromeet.piki.explore.controller.dto.ExploreWishDetailResponse
 import com.depromeet.piki.explore.controller.dto.ExploreWishResponse
 import com.depromeet.piki.item.domain.ItemStatus
@@ -59,6 +63,39 @@ class ExploreApiExamples(
                         payload = ApiResponseBody.ok(friendsWish.copy(owner = null)),
                     )
                     add(WishException.notFound(), name = "없는 위시 · 지운 위시 · 상품이 아직 정해지지 않은 위시")
+                }
+            }
+            if (handlerMethod.binds(ExploreController::copyWish)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(
+                        status = HttpStatus.OK,
+                        name = "새로 담음",
+                        payload = ApiResponseBody.ok(ExploreWishCopyResponse(wishId = 2048, alreadySaved = false)),
+                    )
+                    add(
+                        status = HttpStatus.OK,
+                        name = "이미 내 위시에 있던 상품",
+                        payload = ApiResponseBody.ok(ExploreWishCopyResponse(wishId = 1900, alreadySaved = true)),
+                    )
+                    unauthorized()
+                    add(WishException.guestCannotUseWishlist(), name = "게스트")
+                    add(WishException.notFound(), name = "없는 위시 · 지운 위시 · 상품이 아직 정해지지 않은 위시")
+                }
+            }
+            if (handlerMethod.binds(ExploreController::getFriendWishes)) {
+                operation.examples(openApiObjectMapper.delegate) {
+                    add(
+                        status = HttpStatus.OK,
+                        name = "조회 성공",
+                        payload = ApiResponseBody.ok(friendsFeed, PageResponse(nextCursor = "1024", hasNext = true)),
+                    )
+                    add(
+                        status = HttpStatus.OK,
+                        name = "친구 없음",
+                        payload = ApiResponseBody.ok(ExploreFriendsResponse(friends = emptyList(), wishes = emptyList())),
+                    )
+                    add(WishException.invalidCursor(), name = "cursor 가 숫자가 아님")
+                    unauthorized()
                 }
             }
             operation
@@ -141,6 +178,28 @@ class ExploreApiExamples(
             ExploreRecentResponse(
                 updatedAt = LocalDateTime.of(2026, 11, 24, 1, 0),
                 wishes = listOf(linkWish, imageWish),
+            )
+
+        private val friend =
+            ExploreFriendView(
+                userId = UUID.fromString("3f2b8c1e-5d47-4a9b-8e21-6c0d9f7a1b23"),
+                nickname = "잠자는 고양이",
+                profileImage = "https://cdn.piki.day/profiles/cat.png",
+            )
+
+        private val friendsFeed =
+            ExploreFriendsResponse(
+                friends = listOf(friend),
+                wishes =
+                    listOf(
+                        ExploreFriendWishResponse(
+                            wishId = linkWish.wishId,
+                            addedAt = linkWish.addedAt,
+                            saved = false,
+                            item = linkWish.item,
+                            friend = friend,
+                        ),
+                    ),
             )
     }
 }

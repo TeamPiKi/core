@@ -1,7 +1,9 @@
 package com.depromeet.piki.explore.controller
 
 import com.depromeet.piki.common.response.ApiResponseBody
+import com.depromeet.piki.explore.controller.dto.ExploreFriendsResponse
 import com.depromeet.piki.explore.controller.dto.ExploreRecentResponse
+import com.depromeet.piki.explore.controller.dto.ExploreWishCopyResponse
 import com.depromeet.piki.explore.controller.dto.ExploreWishDetailResponse
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -107,4 +109,119 @@ interface ExploreApi {
         @Parameter(hidden = true) viewerId: UUID?,
         @Parameter(description = "볼 위시 id") wishId: Long,
     ): ApiResponseBody<ExploreWishDetailResponse>
+
+    @Operation(
+        summary = "내 위시로 담기",
+        description =
+            "다른 사람의 위시와 같은 상품을 내 위시에 담는다. 카드의 하트와 상세의 [내 위시로 담기] 가 같은 API 다.\n\n" +
+                "- 폴더를 고르지 않는다. 전체 위시에만 저장된다.\n" +
+                "- **이미 내 위시에 있는 상품이면 새로 만들지 않고 그대로 성공한다**(`alreadySaved=true`).\n" +
+                "- 상품을 다시 추출하지 않는다. 등록 한도도 깎이지 않는다.\n" +
+                "- 담은 뒤에는 탐색 목록과 상세의 `saved` 가 바로 true 다.\n" +
+                "- 위시 상세로 볼 수 있는 위시만 담을 수 있다.\n" +
+                "- 담긴 내 위시의 값은 내 위시 목록의 규칙을 따른다. 담은 사람이 직접 고친 이름·가격은 따라오지 않아, " +
+                "탐색에서 본 값과 다를 수 있다.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "담기 성공 (이미 가진 상품이면 alreadySaved=true)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "인증 필요 (토큰 없음·만료). 화면은 로그인 시트를 띄운다",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "403",
+                description = "게스트는 담을 수 없음 (code: WISH-001). 화면은 로그인 시트를 띄운다",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "위시를 찾을 수 없음 (위시 상세의 404 와 같은 경우 — code: WISH-004)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun copyWish(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "담을 위시 id") wishId: Long,
+    ): ApiResponseBody<ExploreWishCopyResponse>
+
+    @Operation(
+        summary = "친구가 담은 위시",
+        description =
+            "내 친구들이 최근에 담은 위시를 최신순으로 돌려준다. 탐색 첫 화면의 가로 섹션은 `size=20` 으로 부른다.\n\n" +
+                "- 방금 담긴 위시와 달리 호출한 순간의 상태로 답한다.\n" +
+                "- 같은 상품을 여러 친구가 담았으면 친구마다 한 장씩 나온다.\n" +
+                "- 프로필을 비공개로 바꾼 친구와 차단 관계가 된 친구는 칩과 목록에서 빠진다.\n" +
+                "- `friends` 는 상단 칩이고 쪽과 무관하게 매번 전체가 내려간다. 최근에 위시를 담은 친구 순이다.\n" +
+                "- `friendId` 를 주면 그 친구의 위시만 나온다. 친구가 아닌 사람이면 빈 목록이다.\n" +
+                "- 친구가 없거나 친구가 담은 위시가 없으면 `wishes=[]` 다. 첫 화면은 이때 섹션을 숨긴다.\n" +
+                "- 이름·가격·이미지가 모두 있는 상품만 나온다. 그래서 한 쪽이 `size` 보다 적을 수 있고, " +
+                "다음 쪽이 있는지는 `pageResponse.hasNext` 로 판단한다.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "조회 (친구가 없으면 friends=[] · wishes=[])",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "잘못된 요청 (cursor 가 숫자가 아님)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "인증 필요 (토큰 없음·만료)",
+                content = [
+                    Content(
+                        mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        schema = Schema(implementation = ApiResponseBody::class),
+                    ),
+                ],
+            ),
+        ],
+    )
+    fun getFriendWishes(
+        @Parameter(hidden = true) userId: UUID,
+        @Parameter(description = "이 친구의 위시만 본다. 비우면 전체") friendId: UUID?,
+        @Parameter(description = "직전 쪽의 pageResponse.nextCursor. 첫 쪽은 비운다") cursor: String?,
+        @Parameter(description = "쪽 크기. 기본 20, 1 에서 50 사이로 보정된다") size: Int?,
+    ): ApiResponseBody<ExploreFriendsResponse>
 }
