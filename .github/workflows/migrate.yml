@@ -15,7 +15,9 @@ name: Migrate
 #           infra/scripts/bootstrap-oidc.sh 를 한 번 붙여넣으면 발판이 생기고, 나중에 지울 키가 남지 않는다.
 #   구 계정: OIDC 로 역할(MIGRATE_SOURCE_ROLE)을 맡아 piki-migrate-src 프로필로 쓴다(migrate-src-creds).
 #           역할과 권한은 terraform/oidc.tf 가 계정마다 미리 만들어 둔다.
-#   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout).
+#   다른 repo·변수(core·extractor·renderer): 조직 GitHub App(teampiki-migrate)의 토큰을 job 마다 받는다.
+#           앱 Client ID 는 vars.MIGRATE_APP_CLIENT_ID, 비공개 키는 secrets.MIGRATE_APP_PRIVATE_KEY.
+#   기타 secret: DISCORD_WEBHOOK_URL(진행보고).
 #
 # SSH 키는 하나다: bootstrap 이 EC2_SSH_KEY 의 공개키를 신 계정에 import 하므로, 이관 중에도 구·신
 # 계정 박스에 같은 키로 붙는다. 새 키를 발급하면 프라이빗 키 보관에 PAT 가 필요하고, 구·신 키가 갈려
@@ -100,25 +102,27 @@ jobs:
           [ "$TARGET" != "$OLD_ACCOUNT_ID" ] || { echo "::error::target 이 구 계정($OLD_ACCOUNT_ID)과 같다 — 이관 대상은 신규 계정이어야 한다"; exit 1; }
           echo "::notice::guard 통과"
 
-      # 토큰이 없거나 만료되면 infra_apps 에서야 드러나고, extractor 없이는 core 배포 헬스 확인이 실패해
+      # 앱 설치·키가 어긋나면 infra_apps 에서야 드러나고, extractor 없이는 core 배포 헬스 확인이 실패해
       # 컷오버까지 못 간다(3차 이관 실측). 모든 job 이 guard 성공에 매여 있어 여기서 멈추면 아무것도 안 돈다.
-      - name: 다른 repo 접근 토큰 점검
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core,extractor,renderer
+
+      - name: 다른 repo 접근 점검
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           set -euo pipefail
-          [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — infra_apps·사이드 배포·rewire 가 이 토큰을 쓴다"; exit 1; }
           for path in repos/TeamPiKi/renderer/actions/variables repos/TeamPiKi/extractor/actions/variables \
                       repos/TeamPiKi/core/actions/variables repos/TeamPiKi/core/environments/prod/variables; do
-            gh api "$path" --silent || { echo "::error::CROSS_REPO_TOKEN 으로 $path 조회 실패 — 만료·권한 확인"; exit 1; }
+            gh api "$path" --silent || { echo "::error::앱 토큰으로 $path 조회 실패 — teampiki-migrate 의 설치 repo·권한 확인"; exit 1; }
           done
-          EXP=$(gh api -i repos/TeamPiKi/renderer | tr -d '\r' | awk -F': ' 'tolower($1)=="github-authentication-token-expiration"{print $2}')
-          if [ -n "$EXP" ]; then
-            LEFT=$(( ($(date -d "$EXP" +%s) - $(date +%s)) / 86400 ))
-            [ "$LEFT" -ge 1 ] || { echo "::error::CROSS_REPO_TOKEN 이 하루 안에 만료된다($EXP)"; exit 1; }
-            [ "$LEFT" -ge 14 ] || echo "::warning::CROSS_REPO_TOKEN 만료 ${LEFT}일 전($EXP) — 다음 이관 전에 재발급"
-          fi
-          echo "::notice::CROSS_REPO_TOKEN 확인 — 만료 ${EXP:-없음}"
+          echo "::notice::다른 repo 접근 확인"
 
       - name: Discord — guard 결과
         if: always()
@@ -759,13 +763,7 @@ jobs:
 
   # ── migrate-2b: extractor·renderer terraform. core 의 VPC·subnet·SG 를 data 소스로 참조 → core 성공에 의존(needs). ──
   #
-  # 이 job 만 다른 레포(TeamPiKi/extractor·renderer)의 terraform 을 돌린다. 그래서 여기만
-  # CROSS_REPO_TOKEN 이 필요하다 — 워크플로 기본 GITHUB_TOKEN 은 자기 레포 밖을 못 읽는다.
-  #
-  # 토큰이 없으면 실패가 아니라 skip 한다. 없을 때 그냥 두면 checkout 이 의미 불명한 git 인증
-  # 오류로 죽고, 그 실패가 downstream 조건에 걸려 provision·rehearsal·cutover 까지 막는다.
-  # 앱·DB 이관 자체는 이 레포만으로 완결되므로, 추출·렌더 박스는 나중에 세워도 된다.
-  # 대신 조용히 넘기지 않는다 — config 가 경고를 남기고 finalize 요약이 미완료로 표시한다.
+  # 다른 레포(TeamPiKi/extractor·renderer)의 terraform 을 돌린다. 기본 GITHUB_TOKEN 은 자기 레포 밖을 못 읽어 앱 토큰으로 checkout 한다.
   infra_apps:
     needs: [guard, config, infra_core]
     if: ${{ needs.infra_core.result == 'success' && (inputs.only == 'all' || inputs.only == 'infra') }}
@@ -783,11 +781,20 @@ jobs:
           - { repo: extractor, path: infra/extractor, checkout: TeamPiKi/extractor }
           - { repo: renderer, path: infra/headless-browser, checkout: TeamPiKi/renderer }
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: ${{ matrix.repo }}
+
       - name: checkout (${{ matrix.repo }})
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.checkout }}
-          token: ${{ secrets.CROSS_REPO_TOKEN }} # 타 레포 read 권한 PAT (org 기본 GITHUB_TOKEN 은 자기 레포만)
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: 이관 워크플로 액션 checkout (Discord 보고용)
         uses: actions/checkout@v4
@@ -1384,9 +1391,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: extractor
+
       - name: extractor 배포 트리거 + 완료 대기
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
@@ -1437,9 +1453,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: renderer
+
       - name: renderer 배포 트리거 + 완료 대기
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
@@ -1857,11 +1882,21 @@ jobs:
           SSH_KEY_FILE=key.pem bash infra/scripts/migrate-forward.sh off
           rm -f key.pem
 
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        if: ${{ inputs.env == 'prod' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core
+
       # 다음 이관의 출발 계정. 예전 계정 접근이 모두 끝난 이 자리에서 바꾼다(앞에서 바꾸면 위 단계가 새 계정을 예전 계정으로 안다).
       - name: 현재 계정 변수 갱신 (prod)
         if: ${{ inputs.env == 'prod' }}
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
         run: |
           set -euo pipefail
@@ -1937,10 +1972,19 @@ jobs:
             echo "renderer_role=$(aws iam get-role --role-name piki-headless-browser-gha-deploy --query Role.Arn --output text 2>/dev/null || true)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core,extractor,renderer
+
       - name: Environment 배선 갱신
         id: rewire
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ENV: ${{ inputs.env }}
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
@@ -1954,14 +1998,14 @@ jobs:
             if gh variable set "$1" --env "$env" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
               echo "  var     $1 = $2 (env=$env)"
             else
-              echo "::warning::variable $1 갱신 실패 — 토큰 권한(Variables: write) 확인"; fail=1
+              echo "::warning::variable $1 갱신 실패 — teampiki-migrate 앱의 core 설치·Environments 쓰기 권한 확인"; fail=1
             fi
           }
           set_repo_var() { # $1=repo $2=name $3=value
             if gh variable set "$2" --body "$3" --repo "$1" 2>/dev/null; then
               echo "  var     $2 = $3 ($1)"
             else
-              echo "::warning::$1 의 variable $2 갱신 실패 — CROSS_REPO_TOKEN 에 그 레포 Variables 쓰기 권한 확인"; fail=1
+              echo "::warning::$1 의 variable $2 갱신 실패 — teampiki-migrate 앱의 그 레포 설치·Variables 쓰기 권한 확인"; fail=1
             fi
           }
 
