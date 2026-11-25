@@ -1,0 +1,33 @@
+{
+  "builtAt": "2026-11-23T10:00:00",
+  "cards": [
+    {
+      "wishId": 1024,
+      "ownerId": "3f2b8c1e-5d47-4a9b-8e21-6c0d9f7a1b23",
+      "itemId": 512,
+      "addedAt": "2026-11-23T09:58:30",
+      "name": "에어 조던 1 미드",
+      "price": 119000,
+      "originalPrice": 139000,
+      "discountRate": 14,
+      "currency": "KRW",
+      "imageUrl": "https://cdn.example.com/p/512.jpg",
+      "sourceUrl": "https://www.example-shop.com/products/12345",
+      "sourcePlatform": "29CM"
+    },
+    {
+      "wishId": 1023,
+      "ownerId": "9a7d4e02-1c3b-4f58-b6a9-2e8f0c5d7141",
+      "itemId": 498,
+      "addedAt": "2026-11-23T09:41:02",
+      "name": "직접 찍은 가방",
+      "price": 45000,
+      "originalPrice": null,
+      "discountRate": null,
+      "currency": null,
+      "imageUrl": "https://cdn.example.com/u/498.jpg",
+      "sourceUrl": null,
+      "sourcePlatform": null
+    }
+  ]
+}
