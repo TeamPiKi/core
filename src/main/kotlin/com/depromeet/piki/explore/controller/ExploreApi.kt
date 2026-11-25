@@ -25,7 +25,7 @@ interface ExploreApi {
                 "- 같은 상품을 여러 사람이 담았으면 가장 최근에 담긴 한 장만 나온다.\n" +
                 "- 이름·가격·이미지가 모두 있는 상품만 나온다.\n" +
                 "- 토큰이 있으면 차단 관계(어느 방향이든)인 사람의 위시가 빠지고, `saved` 에 내가 이미 가진 상품인지가 실린다.\n" +
-                "- 다음 쪽은 `pageResponse.nextCursor` 를 `cursor` 로 넘긴다. 최근 300건까지만 내려간다.\n" +
+                "- 다음 쪽은 `pageResponse.nextCursor` 를 `cursor` 로 넘긴다. 최근에 담긴 상품 100개까지만 내려간다.\n" +
                 "- 목록이 아직 만들어지지 않았으면 `updatedAt=null` · `wishes=[]` 다.",
     )
     @ApiResponses(
