@@ -12,14 +12,13 @@
 #
 # 필터: 그룹 멤버만 복제하므로 서비스 유저(offway-*·piki-migration, 그룹 없음)는 자동 제외된다.
 #
-# 자격: 구 계정 읽기는 SRC 키(장기 키라 AWS_SESSION_TOKEN 을 비운다). 신 계정 쓰기는 러너의 주변 환경
+# 자격: 구 계정 읽기는 SRC_AWS_PROFILE(migrate-src-creds 가 만든 프로필). 신 계정 쓰기는 러너의 주변 환경
 #       자격(워크플로가 OIDC 로 맡은 역할)으로 한다. 멱등 — 이미 있으면 건너뛰거나 갱신한다.
 set -euo pipefail
 
 GROUP_NAME="${GROUP_NAME:-PiKi-Developer}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
-SRC_AWS_KEY="${SRC_AWS_KEY:?구 계정 액세스 키}"
-SRC_AWS_SECRET="${SRC_AWS_SECRET:?구 계정 시크릿}"
+SRC_AWS_PROFILE="${SRC_AWS_PROFILE:?구 계정 프로필}"
 # 발급한 임시 비번은 채널이 아니라 admin DM 으로만 보낸다 — webhook 은 채널이라 모두가 남의 비번까지 본다.
 # 봇이 ADMIN_DISCORD_ID 에게 DM(admin 진입 경로와 같은 결). 둘 중 하나라도 없으면 전송 생략(콘솔에서 재설정).
 DISCORD_BOT_TOKEN="${DISCORD_BOT_TOKEN:-}"
@@ -31,8 +30,8 @@ log() { echo "[migrate-iam] $(date -u +%H:%M:%S) $*" >&2; }
 # 정책 문서 두 개가 의미상 같은지(키 순서·포맷 무시) 비교.
 docs_equal() { python3 -c 'import json,sys; sys.exit(0 if json.dumps(json.loads(sys.argv[1]),sort_keys=True)==json.dumps(json.loads(sys.argv[2]),sort_keys=True) else 1)' "$1" "$2"; }
 
-# 구 계정 읽기 — 장기 키라 세션토큰을 비운다(주변 OIDC 세션토큰이 섞이면 InvalidClientTokenId).
-src() { env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" "AWS_DEFAULT_REGION=$AWS_REGION" aws "$@"; }
+# 구 계정 읽기 — --profile 이 주변 환경변수 자격보다 우선한다.
+src() { aws --profile "$SRC_AWS_PROFILE" --region "$AWS_REGION" "$@"; }
 # 신 계정 쓰기 — 주변 환경(OIDC 로 맡은 역할).
 dst() { aws --region "$AWS_REGION" "$@"; }
 

@@ -54,22 +54,22 @@ SRC_APP_KEY="${SRC_APP_KEY:?구 계정 앱 박스 SSH 키파일}"
 OLD_IMAGE_BUCKET="${OLD_IMAGE_BUCKET:?구 이미지 버킷명}"
 NEW_IMAGE_BUCKET="${NEW_IMAGE_BUCKET:?신 이미지 버킷명}"
 
-# 구 계정 자격. 러너가 구 계정에 ssm send-command·s3 를 칠 때만 쓴다(박스 안 명령은 인스턴스 role 로 돈다).
-#
-# 신 계정 자격은 받지 않는다 — 호출측 워크플로가 OIDC 로 신 계정 역할을 맡은 상태라 러너의
-# 주변 환경(AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN)이 이미 신 계정이다. 여기서 또 받으면
-# 같은 것을 두 경로로 관리하게 되고, 임시 자격의 SESSION_TOKEN 을 빠뜨리기 쉽다.
-SRC_AWS_KEY="${SRC_AWS_KEY:?구 계정 액세스 키}"
-SRC_AWS_SECRET="${SRC_AWS_SECRET:?구 계정 시크릿}"
+# 구 계정 자격 프로필(migrate-src-creds 가 만든다). 러너가 구 계정에 ssm send-command·s3 를 칠 때만 쓴다.
+# 신 계정은 러너의 주변 환경(호출측이 OIDC 로 맡은 역할)을 그대로 쓴다.
+SRC_AWS_PROFILE="${SRC_AWS_PROFILE:?구 계정 프로필}"
 
 # freeze 가 실제로 멈춘 컨테이너 목록. 워크플로의 후속 단계(S3 sync·스모크·DNS)까지 같은 롤백
 # 경계를 공유하려고 파일로 남긴다 — migrate-unfreeze.sh 가 이 파일을 읽어 되살린다.
 FREEZE_STATE_FILE="${FREEZE_STATE_FILE:-/tmp/piki-migrate-frozen}"
 
+# Redis 는 두 환경 모두 DB 와 같은 박스에 있어(prod DB 박스·dev 앱 박스) DB 와 같은 경로로 옮긴다.
+REDIS_CONTAINER="${REDIS_CONTAINER:?Redis 컨테이너명}"
+
 # ConnectTimeout 은 주지 않는다. 호스트는 SSM 별칭이라 ssm-ssh 가 쓴 30초가 맞고, 명령줄 값이 그걸 덮는다.
 SSHOPT=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21" # db-backup.sh 와 같은 핀. 박스에 aws CLI 가 없어도 된다.
 RELAY_KEY="migrate/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+REDIS_RELAY_KEY="migrate/redis-$(date -u +%Y%m%dT%H%M%SZ).tgz"
 WORK=/tmp/piki-migrate
 mkdir -p "$WORK"
 
@@ -84,11 +84,11 @@ remote_exec() {
   body="$(cat)"
   if [ "$side" = src ]; then
     [ "$SRC_EXEC" = ssh ] && { _exec_ssh "$SRC_DB_HOST" "$SRC_DB_KEY" "$body"; return; }
-    _exec_ssm "$SRC_DB_TAG" "$SRC_AWS_KEY" "$SRC_AWS_SECRET" "$body"
+    _exec_ssm "$SRC_DB_TAG" "$SRC_AWS_PROFILE" "$body"
   else
     [ "$DST_EXEC" = ssh ] && { _exec_ssh "$DST_DB_HOST" "$DST_DB_KEY" "$body"; return; }
-    # 빈 자격 = 러너의 주변 환경을 쓴다(OIDC 로 맡은 신 계정 역할).
-    _exec_ssm "$DST_DB_TAG" "" "" "$body"
+    # 빈 프로필 = 러너의 주변 환경을 쓴다(OIDC 로 맡은 신 계정 역할).
+    _exec_ssm "$DST_DB_TAG" "" "$body"
   fi
 }
 
@@ -101,17 +101,10 @@ _exec_ssh() {
 # 성공으로 넘어가고, 그 실패는 한참 뒤(복원·대조)에 엉뚱한 증상으로 드러난다. 반드시 대기하고
 # 종료 상태를 전파한다.
 _exec_ssm() {
-  local tag="$1" akey="$2" asec="$3" body="$4" cmd_id instance_id status
-  # 자격을 export 하지 않고 aws 호출마다 앞에 붙인다 — export 하면 같은 셸의 뒤 호출(반대 계정)까지
-  # 물들어 엉뚱한 계정에 명령이 나간다. 키가 비면 주변 환경을 그대로 쓴다(신 계정 OIDC 역할).
-  local -a A
-  if [ -n "$akey" ]; then
-    # 구 계정 자격은 장기 키라 SESSION_TOKEN 이 없다. 주변에 남아 있으면 키와 짝이 안 맞아
-    # InvalidClientTokenId 가 나므로 명시적으로 비운다.
-    A=(env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$akey" "AWS_SECRET_ACCESS_KEY=$asec" "AWS_DEFAULT_REGION=$AWS_REGION" aws)
-  else
-    A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
-  fi
+  local tag="$1" profile="$2" body="$3" cmd_id instance_id status
+  # 프로필을 호출마다 붙인다 — AWS_PROFILE 로 export 하면 같은 셸의 반대 계정 호출까지 물든다.
+  local -a A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
+  [ -z "$profile" ] || A+=(--profile "$profile")
   local b64; b64="$(printf '%s' "$body" | base64 -w0)"
   cmd_id=$("${A[@]}" ssm send-command \
     --targets "Key=tag:Name,Values=$tag" \
@@ -258,8 +251,7 @@ REMOTE
 # 두 계정 버킷 사이엔 cross-account 정책이 없다. 러너가 구 자격으로 받아 신 자격(주변 환경)으로 올린다.
 relay_dump() {
   log "릴레이 — 구 계정 버킷 → 러너 → 신 계정 버킷"
-  env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" \
-    aws s3 cp "s3://$SRC_RELAY_BUCKET/$RELAY_KEY" "$WORK/dump.sql.gz" --region "$AWS_REGION" >/dev/null
+  aws --profile "$SRC_AWS_PROFILE" s3 cp "s3://$SRC_RELAY_BUCKET/$RELAY_KEY" "$WORK/dump.sql.gz" --region "$AWS_REGION" >/dev/null
   aws s3 cp "$WORK/dump.sql.gz" "s3://$DST_RELAY_BUCKET/$RELAY_KEY" --region "$AWS_REGION" >/dev/null
   rm -f "$WORK/dump.sql.gz"
   log "릴레이 완료"
@@ -349,6 +341,78 @@ verify_counts() {
   return 1
 }
 
+# ── Redis ────────────────────────────────────────────────────────────────────
+# 구 Redis 는 멈추지 않는다. SAVE 로 디스크에 내린 뒤 데이터 폴더를 통째로 묶어, 롤백할 때 되살릴 것이 없다.
+# 폴더 전체라 AOF 를 켜도 appendonlydir 이 함께 간다. 볼륨은 이름이 아니라 컨테이너로 잡는다(이름이 틀리면 빈 볼륨이 새로 생겨 조용히 성공한다).
+redis_vars() {
+  printf 'set -euo pipefail\nREDIS_CONTAINER=%q\nAWSCLI_IMAGE=%q\nREGION=%q\n' \
+    "$REDIS_CONTAINER" "$AWSCLI_IMAGE" "$AWS_REGION"
+  cat <<'REMOTE'
+WORK=/var/tmp/piki-migrate
+mkdir -p "$WORK"
+aws_cli() { docker run --rm --network host -v "$WORK:/work" "$AWSCLI_IMAGE" "$@"; }
+IMG=$(docker inspect -f '{{.Config.Image}}' "$REDIS_CONTAINER")
+rcli() { docker exec "$REDIS_CONTAINER" sh -c '[ -z "${REDIS_PASSWORD:-}" ] || export REDISCLI_AUTH="$REDIS_PASSWORD"; redis-cli "$@"' rcli "$@"; }
+REMOTE
+}
+
+# $1 이 있으면 묶은 파일을 그 S3 위치로 올리고, 없으면 표준출력으로 흘린다(직전송).
+# shellcheck disable=SC2016  # $REGION·$WORK 는 박스에서 펼친다
+redis_pack() {
+  redis_vars
+  cat <<'REMOTE'
+[ "$(rcli SAVE)" = OK ] || { echo "Redis SAVE 실패" >&2; exit 1; }
+echo "REDIS_KEYS=$(rcli DBSIZE)" >&2
+docker run --rm --entrypoint tar --volumes-from "$REDIS_CONTAINER:ro" -v "$WORK:/out" "$IMG" czf /out/redis.tgz -C /data .
+REMOTE
+  if [ -n "${1:-}" ]; then
+    printf 'aws_cli s3 cp /work/redis.tgz %q --region "$REGION" >/dev/null\n' "$1"
+  else
+    echo 'cat "$WORK/redis.tgz"'
+  fi
+  echo 'rm -f "$WORK/redis.tgz"'
+}
+
+# $1 이 있으면 그 S3 위치에서 먼저 받는다. 없으면 러너가 미리 올려 둔 파일을 쓴다(직전송).
+# shellcheck disable=SC2016  # $REGION 은 박스에서 펼친다
+redis_unpack() {
+  redis_vars
+  [ -z "${1:-}" ] || printf 'aws_cli s3 cp %q /work/redis.tgz --region "$REGION" >/dev/null\n' "$1"
+  cat <<'REMOTE'
+docker stop "$REDIS_CONTAINER" >/dev/null
+trap 'docker start "$REDIS_CONTAINER" >/dev/null' EXIT
+docker run --rm --entrypoint sh --volumes-from "$REDIS_CONTAINER" -v "$WORK:/in" "$IMG" \
+  -c 'find /data -mindepth 1 -delete && tar xzf /in/redis.tgz -C /data'
+rm -f "$WORK/redis.tgz"
+docker start "$REDIS_CONTAINER" >/dev/null
+trap - EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  N=$(rcli DBSIZE 2>/dev/null) && [ -n "$N" ] && { echo "REDIS_RESTORED=$N"; exit 0; }
+  sleep 1
+done
+echo "복원 뒤 Redis 응답 없음" >&2; exit 1
+REMOTE
+}
+
+# Redis 가 비어도 서비스는 돈다(사용자 재로그인). 이 단계 실패로 컷오버를 되돌리지 않고 경고로 남긴다.
+redis_transfer() {
+  log "Redis 이전 — SAVE 뒤 데이터 폴더 복사"
+  if [ "$SRC_EXEC" = ssh ] && [ "$DST_EXEC" = ssh ]; then
+    redis_pack | ssh "${SSHOPT[@]}" -i "$SRC_DB_KEY" "ubuntu@$SRC_DB_HOST" 'bash -s' > "$WORK/redis.tgz" || return 1
+    ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'mkdir -p /var/tmp/piki-migrate' || return 1
+    scp "${SSHOPT[@]}" -i "$DST_DB_KEY" "$WORK/redis.tgz" "ubuntu@$DST_DB_HOST:/var/tmp/piki-migrate/redis.tgz" >/dev/null || return 1
+    redis_unpack | ssh "${SSHOPT[@]}" -i "$DST_DB_KEY" "ubuntu@$DST_DB_HOST" 'bash -s' | tee "$WORK/redis.out" || return 1
+  else
+    redis_pack "s3://$SRC_RELAY_BUCKET/$REDIS_RELAY_KEY" | remote_exec src || return 1
+    aws --profile "$SRC_AWS_PROFILE" s3 cp "s3://$SRC_RELAY_BUCKET/$REDIS_RELAY_KEY" "$WORK/redis.tgz" --region "$AWS_REGION" >/dev/null || return 1
+    aws s3 cp "$WORK/redis.tgz" "s3://$DST_RELAY_BUCKET/$REDIS_RELAY_KEY" --region "$AWS_REGION" >/dev/null || return 1
+    redis_unpack "s3://$DST_RELAY_BUCKET/$REDIS_RELAY_KEY" | remote_exec dst | tee "$WORK/redis.out" || return 1
+  fi
+  rm -f "$WORK/redis.tgz"
+  grep -q '^REDIS_RESTORED=' "$WORK/redis.out" || return 1
+  log "Redis 이전 완료 — 키 $(sed -n 's/^REDIS_RESTORED=//p' "$WORK/redis.out" | tail -1)개"
+}
+
 # ── 흐름 ─────────────────────────────────────────────────────────────────────
 # 전송 경로 선택 — 양쪽 다 ssh 면 러너가 직접 닿으므로 S3 릴레이가 불필요하고, dev 는 릴레이 버킷
 # 자체가 없어 직전송만 성립한다. 한쪽이라도 ssm(keyless prod DB 박스)이면 릴레이를 탄다.
@@ -363,6 +427,7 @@ transfer() {
 case "$MODE" in
   rehearsal)
     transfer; rewrite_urls; verify_counts
+    redis_transfer || echo "::warning::Redis 이전 리허설 실패 — 컷오버 전에 원인 확인"
     log "rehearsal 완료 — 라이브 무영향"
     ;;
   cutover)
@@ -371,10 +436,11 @@ case "$MODE" in
     trap rollback_freeze EXIT
     freeze_source
     transfer; rewrite_urls; verify_counts
+    redis_transfer || echo "::warning::Redis 이전 실패 — 서비스는 돌지만 사용자가 다시 로그인해야 한다"
     # 여기서 trap 을 풀지 않는다 — 남은 단계(S3 sync·스모크·DNS)는 워크플로가 돌리고,
     # 그쪽도 같은 FREEZE_STATE_FILE 로 migrate-unfreeze.sh 를 걸어 경계를 이어받는다.
     trap - EXIT
-    log "cutover DB 파이프라인 완료 — 다음: S3 델타 sync·배포·스모크·DNS(워크플로가 처리)"
+    log "cutover DB 파이프라인 완료 — 다음: S3 델타 sync·스모크·전달(워크플로가 처리)"
     log "롤백 경계 인계 — 남은 단계가 실패하면 워크플로가 $FREEZE_STATE_FILE 로 구 앱을 되살린다"
     ;;
   *)

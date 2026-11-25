@@ -1,7 +1,7 @@
 name: 구 계정 박스 SSH 준비
 description: >-
   계정 이관 중 구 계정 박스에 SSM Session Manager 경유 SSH 를 준비한다(infra 의 ssm-ssh).
-  job 이 OIDC 로 잡은 자격은 신 계정이라, 구 계정 키를 프로필로 써 두고 그 프로필로 붙는다.
+  job 의 기본 자격은 신 계정이라, 구 계정 역할로 만든 piki-migrate-src 프로필로 붙는다.
   신 계정 박스와 Name 태그가 같아 별칭은 src-<Name 태그> 다.
 
 inputs:
@@ -18,11 +18,8 @@ inputs:
   ssh-key:
     description: 박스 authorized_keys 에 등록된 개인 키
     required: true
-  aws-access-key-id:
-    description: 구 계정 키 (MIGRATE_SOURCE_AWS_ACCESS_KEY_ID)
-    required: true
-  aws-secret-access-key:
-    description: 구 계정 시크릿 (MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY)
+  role-arn:
+    description: 구 계정의 이관 출발용 역할 ARN (migrate-src-creds 로 넘긴다)
     required: true
 
 outputs:
@@ -33,21 +30,10 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: 구 계정 프로필 (piki-migrate-src)
-      shell: bash
-      env:
-        SRC_KEY: ${{ inputs.aws-access-key-id }}
-        SRC_SECRET: ${{ inputs.aws-secret-access-key }}
-      run: |
-        set -euo pipefail
-        [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
-          echo "::error::구 계정 자격(MIGRATE_SOURCE_AWS_*) 미설정"; exit 1; }
-        grep -qx '\[piki-migrate-src\]' ~/.aws/credentials 2>/dev/null && exit 0
-        umask 077
-        mkdir -p ~/.aws
-        # printf 는 셸 내장이라 키가 프로세스 목록에 뜨지 않는다(aws configure set 은 argv 로 받는다).
-        printf '[piki-migrate-src]\naws_access_key_id = %s\naws_secret_access_key = %s\n' "$SRC_KEY" "$SRC_SECRET" >> ~/.aws/credentials
-        printf '[profile piki-migrate-src]\nregion = %s\n' "${AWS_REGION:?}" >> ~/.aws/config
+    - name: 구 계정 자격
+      uses: ./.github/actions/migrate-src-creds
+      with:
+        role-arn: ${{ inputs.role-arn }}
 
     - name: SSM 경유 SSH
       id: ssh
@@ -59,7 +45,7 @@ runs:
         user: ${{ inputs.user }}
         ssh-key: ${{ inputs.ssh-key }}
 
-    # 구 계정 키가 엉뚱한 계정을 가리켜도 Name 태그는 맞을 수 있다. 서비스 중인 박스는 도메인이 정본이다.
+    # 구 계정 역할이 엉뚱한 계정을 가리켜도 Name 태그는 맞을 수 있다. 서비스 중인 박스는 도메인이 정본이다.
     - name: 도메인이 가리키는 박스인지 확인
       if: ${{ inputs.expected-ip != '' }}
       shell: bash
