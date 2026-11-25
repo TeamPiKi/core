@@ -23,6 +23,11 @@ class ExtractionRuleStore(
     private val writer: ExtractionRuleWriter,
     private val publisher: ExtractionRulePublisher,
 ) {
+    // 저장하지 않고 입력만 본다. 저장 앞에 비싼 확인(시험 추출)을 두는 호출자가 값싼 오류를 먼저 걸러 내는 데 쓴다.
+    fun check(command: SaveExtractionRuleCommand) {
+        normalize(command)
+    }
+
     fun create(command: SaveExtractionRuleCommand): Long {
         val id = writer.create(normalize(command), command.actor)
         publisher.publishQuietly()

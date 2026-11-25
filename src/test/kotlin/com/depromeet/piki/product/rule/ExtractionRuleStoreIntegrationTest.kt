@@ -73,7 +73,7 @@ class ExtractionRuleStoreIntegrationTest : IntegrationTestSupport() {
                 )
             val twentyNine =
                 store.create(command("""{"host": "29cm.co.kr", "absentOriginalPrice": "NO_DISCOUNT"}""", label = "29CM"))
-            store.create(command("""{"marker": "meta[name='generator']"}""", label = "꺼 둔 규칙", enabled = false))
+            store.create(command("""{"marker": "meta[name='generator']", "fetch": "RENDER"}""", label = "꺼 둔 규칙", enabled = false))
 
             val set = published()
 
@@ -93,12 +93,12 @@ class ExtractionRuleStoreIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `규칙을 끄거나 지우면 배포본에서 빠지고 판 번호는 커진다`() {
         try {
-            val kept = store.create(command("""{"host": "29cm.co.kr"}""", label = "29CM"))
-            val disabled = store.create(command("""{"host": "oliveyoung.co.kr"}"""))
-            val deleted = store.create(command("""{"host": "musinsa.com"}""", label = "무신사"))
+            val kept = store.create(command("""{"host": "29cm.co.kr", "fetch": "RENDER"}""", label = "29CM"))
+            val disabled = store.create(command("""{"host": "oliveyoung.co.kr", "fetch": "RENDER"}"""))
+            val deleted = store.create(command("""{"host": "musinsa.com", "fetch": "RENDER"}""", label = "무신사"))
             val versionBefore = published().version
 
-            store.update(disabled, command("""{"host": "oliveyoung.co.kr"}""", enabled = false))
+            store.update(disabled, command("""{"host": "oliveyoung.co.kr", "fetch": "RENDER"}""", enabled = false))
             store.delete(deleted, "tester")
 
             val set = published()
@@ -169,14 +169,14 @@ class ExtractionRuleStoreIntegrationTest : IntegrationTestSupport() {
     @Test
     fun `읽지 못하는 규칙은 저장하지 않고 이력도 배포본도 바뀌지 않는다`() {
         try {
-            val existing = store.create(command("""{"host": "29cm.co.kr"}""", label = "29CM"))
+            val existing = store.create(command("""{"host": "29cm.co.kr", "fetch": "RENDER"}""", label = "29CM"))
             val publishedBefore = redisTemplate.opsForValue().get(ExtractionRulePublisher.KEY)
             val revisionsBefore = revisionRepository.count()
 
             assertFailsWith<IllegalArgumentException> { store.create(command("""{"host": "oliveyoung.co.kr", "curentPrice": {}}""")) }
             assertFailsWith<IllegalArgumentException> { store.create(command("""{"absentOriginalPrice": "NO_DISCOUNT"}""")) }
             assertFailsWith<IllegalArgumentException> { store.update(existing, command("""{"host": """)) }
-            assertFailsWith<IllegalArgumentException> { store.create(command("""{"host": "oliveyoung.co.kr"}""", label = " ")) }
+            assertFailsWith<IllegalArgumentException> { store.create(command("""{"host": "oliveyoung.co.kr", "fetch": "RENDER"}""", label = " ")) }
             assertFailsWith<IllegalArgumentException> { store.delete(existing + 1_000, "tester") }
 
             assertEquals(1, ruleRepository.count())

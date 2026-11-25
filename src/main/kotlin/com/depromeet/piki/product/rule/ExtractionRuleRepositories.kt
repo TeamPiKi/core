@@ -18,4 +18,7 @@ interface ExtractionRuleJpaRepository : JpaRepository<ExtractionRuleEntity, Long
 interface ExtractionRuleRevisionJpaRepository : JpaRepository<ExtractionRuleRevisionEntity, Long> {
     @Query("select coalesce(max(r.id), 0) from ExtractionRuleRevisionEntity r")
     fun lastRevisionId(): Long
+
+    // 인덱스 없이 읽는다. 이력은 사람이 규칙을 저장할 때만 한 줄씩 늘어 전수를 훑어도 수백 행이다
+    fun findTop20ByExtractionRuleIdOrderByIdDesc(extractionRuleId: Long): List<ExtractionRuleRevisionEntity>
 }
