@@ -43,6 +43,8 @@ class HttpExtractionRuleProbeTest {
         override fun authorizedFor(link: ProductLink): Boolean = access == DomainAccess.ALLOWED
 
         override fun blockedDomains(): List<String> = blockedDomains
+
+        override fun authorizedDomains(): List<String> = emptyList()
     }
 
     private fun probeWith(
