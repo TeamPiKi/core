@@ -23,6 +23,11 @@ data class MyProfileResponse(
         example = "user@gmail.com",
     )
     val email: String?,
+    @field:Schema(
+        description = "내 프로필 공개 여부. false 면 폴더 공개 설정과 관계없이 다른 사람에게 폴더·위시가 보이지 않는다. 닉네임·프로필 이미지는 늘 보인다",
+        example = "true",
+    )
+    val isProfilePublic: Boolean,
 ) {
     companion object {
         fun from(
@@ -35,6 +40,7 @@ data class MyProfileResponse(
                 profileImage = user.profileImage,
                 identityType = user.identityType,
                 email = email,
+                isProfilePublic = user.isProfilePublic,
             )
     }
 }

@@ -13,13 +13,11 @@ name: Migrate
 # 자격증명은 절대 workflow_dispatch 입력에 받지 않는다 — 마스킹되지 않아 로그에 평문으로 남는다.
 #   신 계정: OIDC 로 역할(BOOTSTRAP_ROLE)을 맡는다. GitHub 에 신 계정 장기 키를 두지 않는다 — 사람이 CloudShell 에
 #           infra/scripts/bootstrap-oidc.sh 를 한 번 붙여넣으면 발판이 생기고, 나중에 지울 키가 남지 않는다.
-#   구 계정: secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET. 순수 read-only 는 아니다 — 릴레이·이미지 버킷 읽기에
-#           더해, prod DB 제어(SSM 경로)에서 ssm:SendCommand·ListCommandInvocations·GetCommandInvocation 이,
-#           구 앱 박스 SSH(SSM 경유)에서 ec2:DescribeInstances·ssm:StartSession(AWS-StartSSHSession)·
-#           ssm:TerminateSession·ssmmessages:OpenDataChannel(session/*) 이 필요하다. 마지막이 없으면 세션이
-#           열리자마자 끊긴다(terraform/iam_people.tf 실측). 이관 전에 이 키로 start-session 을 한 번 확인할 것.
-#           (박스 안 GetParameter·kms:Decrypt·릴레이 업로드는 DB 인스턴스 role 이 하고, 이 키가 하지 않는다.) 이미 있는 계정이라 키가 정상 경로다.
-#   기타 secret: DISCORD_WEBHOOK_URL(진행보고)·CROSS_REPO_TOKEN(extractor/renderer checkout).
+#   구 계정: OIDC 로 역할(MIGRATE_SOURCE_ROLE)을 맡아 piki-migrate-src 프로필로 쓴다(migrate-src-creds).
+#           역할과 권한은 terraform/oidc.tf 가 계정마다 미리 만들어 둔다.
+#   다른 repo·변수(core·extractor·renderer): 조직 GitHub App(teampiki-migrate)의 토큰을 job 마다 받는다.
+#           앱 Client ID 는 vars.MIGRATE_APP_CLIENT_ID, 비공개 키는 secrets.MIGRATE_APP_PRIVATE_KEY.
+#   기타 secret: DISCORD_WEBHOOK_URL(진행보고).
 #
 # SSH 키는 하나다: bootstrap 이 EC2_SSH_KEY 의 공개키를 신 계정에 import 하므로, 이관 중에도 구·신
 # 계정 박스에 같은 키로 붙는다. 새 키를 발급하면 프라이빗 키 보관에 PAT 가 필요하고, 구·신 키가 갈려
@@ -27,7 +25,7 @@ name: Migrate
 #
 # 박스 SSH 는 전부 SSM 경유다(#1210). 두 계정 모두 22번 인바운드가 없다.
 #   신 계정 박스: infra 의 ssm-ssh 를 job 의 OIDC 자격으로. 별칭은 Name 태그(piki-dev-app 등)
-#   구 계정 박스: ./.github/actions/migrate-src-ssh 가 구 계정 키를 프로필로 써 두고 붙는다. 별칭은 src-<Name 태그>
+#   구 계정 박스: ./.github/actions/migrate-src-ssh 가 구 계정 역할 프로필로 붙는다. 별칭은 src-<Name 태그>
 
 on:
   workflow_dispatch:
@@ -46,21 +44,11 @@ on:
         required: true
         type: string
       only:
-        description: "all 이면 전체 실행. 특정 단계명을 고르면 그 단계만(dry-run·부분 재개용)."
+        description: "all 이면 전체 실행. 특정 단계명을 고르면 그 단계만(부분 재개용)."
         required: false
         default: all
         type: choice
-        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, verify, finalize]
-      dry_run:
-        description: "true 면 되돌리기 어려운 파괴적 단계(infra apply·cutover)를 건너뛰고 plan·검증만 한다."
-        required: false
-        default: false
-        type: boolean
-      deploy_side_services:
-        description: "extractor·renderer 서비스 배포 여부. 두 레포는 자기 EC2_SSH_KEY 로 박스에 붙는데 신 계정 박스는 core 키로 생성돼 인증이 안 된다(키 통일 전까지 false 권장)."
-        required: false
-        default: false
-        type: boolean
+        options: [all, bootstrap, ssm, iam, infra, grafana, provision, rehearsal, deploy, cutover, forward-off, verify, finalize]
 
 # 호출한 워크플로(deploy.yml)는 호출자의 권한을 넘겨받되 그보다 넓을 수 없다. 좁으면
 # "nested job is requesting X, but is only allowed none" 으로 migrate.yml 자체가 유효성 검사에서 거부된다.
@@ -80,10 +68,12 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  OLD_ACCOUNT_ID: "731770491043" # 현재(구) 계정 — ssm 치환·이미지 URL 재작성의 원본. 이관 완료 후 갱신.
+  # 지금 서비스가 도는 계정. prod rewire 가 신 계정 번호로 갱신해 다음 이관의 출발점이 된다.
+  OLD_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
   # 신 계정에서 이 워크플로가 맡는 역할. 사람이 CloudShell 에 infra/scripts/bootstrap-oidc.sh 를 한 번
   # 붙여넣으면 생긴다. 이름을 바꾸면 그 스크립트의 ROLE_NAME 도 함께 바꿔야 한다.
   BOOTSTRAP_ROLE: piki-migrate-bootstrap
+  MIGRATE_SOURCE_ROLE: piki-migrate-source
 
 jobs:
   # ── 가드: 오발·엉뚱한 계정 방지(입력 검증만, 자격증명 없음). 나머지 job 은 전부 이 job 의 성공에 매인다. ──
@@ -98,7 +88,7 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: start
-          title: "이관 시작 — env=${{ inputs.env }} account=${{ inputs.target_account_id }} dry_run=${{ inputs.dry_run }} only=${{ inputs.only }}"
+          title: "이관 시작 — env=${{ inputs.env }} account=${{ inputs.target_account_id }} only=${{ inputs.only }}"
 
       - name: confirm · 계정번호 형식 검증
         env:
@@ -108,8 +98,31 @@ jobs:
           set -euo pipefail
           [ "$CONFIRM" = "MIGRATE" ] || { echo "::error::confirm 이 MIGRATE 가 아니다 — 중단"; exit 1; }
           echo "$TARGET" | grep -Eq '^[0-9]{12}$' || { echo "::error::target_account_id 가 12자리 숫자가 아니다"; exit 1; }
+          echo "$OLD_ACCOUNT_ID" | grep -Eq '^[0-9]{12}$' || { echo "::error::repo 변수 AWS_ACCOUNT_ID(현재 계정)가 12자리 숫자가 아니다: '$OLD_ACCOUNT_ID'"; exit 1; }
           [ "$TARGET" != "$OLD_ACCOUNT_ID" ] || { echo "::error::target 이 구 계정($OLD_ACCOUNT_ID)과 같다 — 이관 대상은 신규 계정이어야 한다"; exit 1; }
           echo "::notice::guard 통과"
+
+      # 앱 설치·키가 어긋나면 infra_apps 에서야 드러나고, extractor 없이는 core 배포 헬스 확인이 실패해
+      # 컷오버까지 못 간다(3차 이관 실측). 모든 job 이 guard 성공에 매여 있어 여기서 멈추면 아무것도 안 돈다.
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core,extractor,renderer
+
+      - name: 다른 repo 접근 점검
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for path in repos/TeamPiKi/renderer/actions/variables repos/TeamPiKi/extractor/actions/variables \
+                      repos/TeamPiKi/core/actions/variables repos/TeamPiKi/core/environments/prod/variables; do
+            gh api "$path" --silent || { echo "::error::앱 토큰으로 $path 조회 실패 — teampiki-migrate 의 설치 repo·권한 확인"; exit 1; }
+          done
+          echo "::notice::다른 repo 접근 확인"
 
       - name: Discord — guard 결과
         if: always()
@@ -126,6 +139,7 @@ jobs:
     outputs:
       ssm_prefix: ${{ steps.map.outputs.ssm_prefix }}
       db_container: ${{ steps.map.outputs.db_container }}
+      redis_container: ${{ steps.map.outputs.redis_container }}
       db_exec: ${{ steps.map.outputs.db_exec }}
       app_ip_output: ${{ steps.map.outputs.app_ip_output }}
       db_tag: ${{ steps.map.outputs.db_tag }}
@@ -139,7 +153,6 @@ jobs:
       tfstate_bucket: ${{ steps.map.outputs.tfstate_bucket }}
       domain: ${{ steps.map.outputs.domain }}
       src_app_host: ${{ steps.src.outputs.src_app_host }}
-      has_cross_repo_token: ${{ steps.tok.outputs.has_cross_repo_token }}
       deploy_sha: ${{ steps.sha.outputs.deploy_sha }}
     steps:
       - name: env·계정 파생값 계산
@@ -162,12 +175,14 @@ jobs:
           # 그래서 변수가 아니라 여기 박는다. deploy.yml(63-70)·infra/nginx/*.conf 가 이미 같은 매핑을
           # 문자열로 갖고 있어, 셋이 같은 사실을 말한다. 도메인을 옮기는 날엔 세 곳을 함께 고친다.
           if [ "$ENV" = "prod" ]; then
+            REDIS_CONTAINER=piki-prod-redis
             DB_CONTAINER=piki-prod-mysql; DB_EXEC=ssm; APP_IP_OUTPUT=ec2_public_ip;     DB_TAG=piki-prod-db;  APP_TAG=piki-prod-app;  DOMAIN=api.piki.day
             # prod 는 provision-db.sh 가 별도 DB 박스를 띄우며 root 비번을 db-root-password 로 따로 둔다.
             ROOT_PW_PARAM=db-root-password
             # prod 이미지 버킷은 접두사 없는 var.image_bucket_name 그대로다(terraform/s3.tf).
             IMAGE_PREFIX=""
           else
+            REDIS_CONTAINER=piki-redis
             DB_CONTAINER=piki-mysql;      DB_EXEC=ssh; APP_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-app;  APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
             # dev 는 provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가
             # 곧 root 비번이고, db-root-password 라는 파라미터는 존재하지 않는다(실측).
@@ -183,6 +198,7 @@ jobs:
             echo "domain=$DOMAIN"
             echo "ssm_prefix=/piki-core/$ENV"
             echo "db_container=$DB_CONTAINER"
+            echo "redis_container=$REDIS_CONTAINER"   # Redis 는 DB 와 같은 박스(compose/db.yml · provision-runtime.sh)
             echo "db_exec=$DB_EXEC"
             echo "app_ip_output=$APP_IP_OUTPUT"
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
@@ -246,21 +262,6 @@ jobs:
             echo "::error::$DOMAIN 이 A레코드로 해소되지 않는다 — 가비아 존과 도메인 매핑을 확인할 것"; exit 1; }
           echo "src_app_host=$HOST" >> "$GITHUB_OUTPUT"
           echo "::notice::구 계정 앱 박스 = $HOST ($DOMAIN 해소)"
-
-      # secrets 컨텍스트는 job 레벨 if 에서 못 읽는다(GitHub 제약). 여기서 존재 여부만 output 으로
-      # 내려 infra_apps 가 자기 실행 여부를 판단하게 한다. 값은 절대 내보내지 않는다.
-      - name: CROSS_REPO_TOKEN 유무 확인
-        id: tok
-        env:
-          TOK: ${{ secrets.CROSS_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${TOK:-}" ]; then
-            echo "has_cross_repo_token=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_cross_repo_token=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::CROSS_REPO_TOKEN 미설정 — extractor·renderer 인프라(infra_apps)를 건너뛴다. 앱·DB 이관은 그대로 진행되지만 신 계정에 추출·렌더 박스가 서지 않는다."
-          fi
 
   # ── migrate-0: 계정 부트스트랩. 사람이 CloudShell 에 한 번 붙여넣어 발판을 놓고, 나머지는 자동. 계정 단위. ──
   bootstrap:
@@ -333,14 +334,41 @@ jobs:
           [ "$ACTUAL" = "$TARGET" ] || { echo "::error::접속 계정($ACTUAL) != target($TARGET) — 엉뚱한 계정 사고 차단"; exit 1; }
           echo "::notice::STS 확인 — 접속 계정=$ACTUAL"
 
+      # 새 계정의 vCPU 기본 한도(5)로는 박스 5대(각 2 vCPU)가 다 안 떠 infra apply 중간에 멈췄다(3차 이관 실측).
+      - name: EC2 한도 점검 (vCPU·EIP, 모자라면 증설 요청 후 승인 대기)
+        run: |
+          set -euo pipefail
+          ensure_quota() { # $1=quota code $2=필요값 $3=이름
+            local cur
+            cur=$(aws service-quotas get-service-quota --service-code ec2 --quota-code "$1" --query Quota.Value --output text)
+            if awk -v c="$cur" -v n="$2" 'BEGIN{exit !(c >= n)}'; then
+              echo "::notice::$3 한도 $cur (필요 $2)"; return 0
+            fi
+            echo "::warning::$3 한도 $cur < $2 — 증설 요청"
+            local err
+            if ! err=$(aws service-quotas request-service-quota-increase --service-code ec2 --quota-code "$1" --desired-value "$2" 2>&1 >/dev/null); then
+              case "$err" in
+                *ResourceAlreadyExists*) echo "::notice::이미 열린 증설 요청을 기다린다" ;;
+                *) echo "::error::$3 증설 요청 실패 — $err"; return 1 ;;
+              esac
+            fi
+            for _ in $(seq 1 60); do
+              sleep 30
+              cur=$(aws service-quotas get-service-quota --service-code ec2 --quota-code "$1" --query Quota.Value --output text)
+              awk -v c="$cur" -v n="$2" 'BEGIN{exit !(c >= n)}' && { echo "::notice::$3 한도 승인 — $cur"; return 0; }
+            done
+            echo "::error::$3 한도 증설이 30분 안에 승인되지 않았다 — Service Quotas 콘솔에서 요청 상태 확인"; return 1
+          }
+          # 필요 10 vCPU 에 박스 교체 때 잠깐 겹치는 여유를 더한 값. 3차 이관 때 16 요청이 약 5분 만에 자동 승인됐다.
+          ensure_quota L-1216C47A 16 "EC2 vCPU(On-Demand Standard)"
+          # EIP 는 core 2·extractor 1·renderer 1. DB 박스는 EIP 가 없다.
+          ensure_quota L-0263D0A3 4 "EIP"
+
       - name: tfstate 버킷 (생성은 조건부·보호설정은 항상). 3레포 terraform backend 의 전제.
         env:
           TFSTATE_BUCKET: ${{ needs.config.outputs.tfstate_bucket }}
         run: |
           set -euo pipefail
-          # dry_run 이어도 이 버킷은 만든다 — S3 backend 라 없으면 infra 의 terraform init·plan 자체가 불가하다.
-          # dry_run 이 건너뛰는 건 "되돌리기 어려운 파괴적 변경(infra apply·cutover)"이고, 빈 tfstate 버킷은 그 범주가 아니다.
-          [ "${{ inputs.dry_run }}" = "true" ] && echo "::notice::dry_run — tfstate 버킷은 plan 전제라 예외적으로 생성/보정(빈 버킷, 저위험)"
           if aws s3api head-bucket --bucket "$TFSTATE_BUCKET" 2>/dev/null; then
             echo "::notice::tfstate 버킷 이미 존재 — $TFSTATE_BUCKET"
           else
@@ -354,99 +382,56 @@ jobs:
             --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
           echo "::notice::tfstate 버킷 보호설정 적용(버저닝·퍼블릭차단) — $TFSTATE_BUCKET"
 
-      # 키페어는 "새로 만들어 배포"가 아니라 "쓰던 키의 공개키를 신 계정에 등록"이다. 멱등.
-      #
-      # 만들지 않는 이유가 설계의 핵심이다. create-key-pair 는 프라이빗 키를 그 자리에서 한 번만
-      # 돌려주고 재발급이 없다. 그 키를 GitHub secret 에 넣으려면 secrets write 권한 PAT 가 필요하고,
-      # 그 PAT 가 없거나 만료된 순간 "키페어는 계정에 있는데 프라이빗 키는 아무도 못 가진" 복구 불가
-      # 상태가 만들어진다. 게다가 새 키를 쓰면 이관 중 구/신 계정 키가 갈려 EC2_SSH_KEY 를 언제
-      # 갈아끼울지가 또 하나의 상태 전환이 된다(그 사이 deploy.yml 이 깨진다).
-      #
-      # 공개키만 import 하면 그 문제가 통째로 사라진다. EC2_SSH_KEY 는 계정이 바뀌어도 그대로
-      # 통하고, 승격할 것도 새로 둘 secret 도 PAT 도 없다. 프라이빗 키는 GitHub 밖으로 나가지 않는다.
-      #
-      # 대가는 계정을 옮겨도 키 재료가 그대로라는 것이다. 어차피 이 키는 모든 배포가 쓰는 하나뿐인
-      # 키라 노출 범위가 이미 "우리 박스 전부"이고, 이관은 키 회전을 위한 이벤트가 아니다. 회전이
-      # 필요하면 이관과 무관하게 따로 한다.
-      - name: 키페어 — 쓰던 공개키를 신 계정에 등록 (env 인식·멱등)
+      # 새 키를 만들지 않고 쓰던 공개키를 등록한다. create-key-pair 의 개인키는 한 번만 받을 수 있어
+      # secret 에 넣으려면 secrets write PAT 가 필요하고, 이관 중 EC2_SSH_KEY 교체가 또 하나의 전환이 된다.
+      # core terraform 은 dev·prod 박스를 한 state 에 두고 서로 다른 키페어(ec2.tf)를 쓰는데, 이 실행이
+      # 아는 개인키는 입력 env 의 EC2_SSH_KEY 하나뿐이다. 두 공개키를 상수로 둬야 dev 실행이 prod 박스를
+      # 엉뚱한 키로 만들지 않는다(3차 이관 실측: prod 실행 때 앱 박스 종료·재생성 필요).
+      - name: 키페어 — dev·prod 공개키를 신 계정에 등록 (멱등)
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           ENV: ${{ inputs.env }}
+          # 각 Environment 의 EC2_SSH_KEY 공개키. 그 secret 을 바꾸면 여기도 함께 바꾼다(아래 대조가 잡는다).
+          PROD_PUBKEY: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMMzEP9p9W6YV6ApzqRjMag0HepfUgbSJb6V4BSWIrl/upQghjbg8lEffFbke6Wzh80uKfVWRqzt7X0rouvN47+xNIDUZrS6M5aFpBgdiU5OakLW2/S7AoTotR6CGpIx7JSA9LyrlhV0c8PaaeS2K3cxeN7QKQexRR+vLe33WSaXo32I1r2DhoMBt8ffp0hMt7eYzoQ4/+eBVSiiluA2U/c1nfNo9xoWGkOfN4rKJaleMsZJjO//wUNq8mazijGE/F/FuB1wn+h8dbJrxTO+97WmcswBXz0nUShEOcx6CtKgCFp6zVW3j35bPrWu7Nf286Rk1/+AmxkpzkZsL2N5xn"
+          DEV_PUBKEY: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjmJKPNgXQt+a5fVaFV6y25sTmhFgGXPDoNc/To1UWtSj6/d2gROaydn9foeFMSa+HfUL7gOKkEUBSj9KccErBAr48N3YrCuka6QB0323QwgwNB7ebdv45FMF04Ptah7Bg+Z2h+IXZg35TzIX2jmAqLwOsFMJjCSV+Wo3nXipQLVTGPVt+a658TxXFsLWuK5aM9lC2dkFm5dzszLyJuagVpoilMbRak36hD6V2Kvq4ZuqMFT2z4zKc5SELdeys+p2BBeC67HZjcu7YHcftAiyGGIIIsD8luyyDRGeL5AYmwbVC1RW5lTRwElf9lPZO1LG9m8ZqjY/c3Tfj3LWqllj/"
         run: |
           set -euo pipefail
-          # core terraform 은 dev·prod 박스를 한 state 에 함께 정의하고 **서로 다른 키페어**를 쓴다
-          # (ec2.tf:45 team3-SE-1=prod, :79 team3-dev-SE-1=dev — "dev 키 유출이 prod 접근으로
-          # 번지지 않게" 분리한 것이다). 그리고 EC2_SSH_KEY 는 Environment 별 secret 이라 이 실행이
-          # 아는 개인키는 **입력 env 의 것 하나뿐**이다.
-          #
-          # 이전에는 그 하나로 두 키페어를 모두 등록했다. 그 결과 env=dev 실행이 prod 키페어
-          # (team3-SE-1)를 dev 공개키로 만들어 버렸고, 그 키페어로 생성된 신 계정 prod 박스에
-          # prod 키로 붙자 "Permission denied (publickey)" 가 났다(실측).
-          #
-          # 그래서 둘을 구분한다.
-          #   내 env 키페어  — 반드시 이 실행의 공개키와 일치해야 한다. 다르면 고친다.
-          #   상대 env 키페어 — 올바른 재료가 없다. 없을 때만 자리채움으로 만들고(없으면 apply 가
-          #                    InvalidKeyPair.NotFound 로 죽는다) 그 사실을 경고로 남긴다.
-          [ -n "${SSH_KEY:-}" ] || {
-            echo "::error::EC2_SSH_KEY 미설정 — 등록할 공개키를 유도할 원본이 없다"; exit 1; }
+          [ -n "${SSH_KEY:-}" ] || { echo "::error::EC2_SSH_KEY 미설정"; exit 1; }
           umask 077
           printf '%s\n' "$SSH_KEY" > /tmp/src.pem
-          # 프라이빗 키에서 공개키를 유도한다. 프라이빗 키는 러너 밖으로 나가지 않고,
-          # AWS 에는 공개키만 올라간다.
-          ssh-keygen -y -f /tmp/src.pem > /tmp/src.pub 2>/dev/null || {
-            echo "::error::EC2_SSH_KEY 에서 공개키를 유도하지 못했다 — PEM 형식·줄바꿈 손상 확인"; rm -f /tmp/src.pem; exit 1; }
-          # 주석 필드는 비교에서 뺀다 — 같은 키라도 주석은 유도 시점마다 다를 수 있다.
-          WANT=$(awk '{print $1" "$2}' /tmp/src.pub)
+          ACTUAL=$(ssh-keygen -y -f /tmp/src.pem 2>/dev/null | awk '{print $1" "$2}') || true
+          rm -f /tmp/src.pem
+          if [ "$ENV" = prod ]; then EXPECT=$PROD_PUBKEY; else EXPECT=$DEV_PUBKEY; fi
+          [ "$ACTUAL" = "$EXPECT" ] || {
+            echo "::error::$ENV 의 EC2_SSH_KEY 공개키가 이 워크플로의 ${ENV^^}_PUBKEY 와 다르다 — secret 을 바꿨으면 상수도 갱신"; exit 1; }
 
-          if [ "$ENV" = "prod" ]; then MINE=team3-SE-1; OTHER=team3-dev-SE-1
-          else                         MINE=team3-dev-SE-1; OTHER=team3-SE-1; fi
-
-          # 등록된 공개키를 그대로 받아 비교한다(지문 계산보다 정확하다 — import 한 키와 AWS 가
-          # 만든 키는 지문 알고리즘이 다르다).
-          #
-          # 정규화를 awk 파이프로 하지 않는다. `aws --output text` 는 값이 없을 때 문자열 "None" 을
-          # 내는데, `awk '{print $1" "$2}'` 는 그것을 "None "(뒤 공백)으로 만들어 None 판정을
-          # 빠져나간다. 그러면 멀쩡한 키페어가 매번 "다른 공개키" 로 오판돼 교체·중단이 반복된다(실측).
-          # 빈 값·None 을 먼저 거르고, 그 뒤에만 앞 두 필드를 취한다.
+          # aws --output text 는 값이 없으면 "None" 을 낸다. 빈 값처럼 다뤄야 멀쩡한 키페어를 오판하지 않는다.
           registered_pub() {
             local raw
             raw=$(aws ec2 describe-key-pairs --key-names "$1" --include-public-key \
                     --query 'KeyPairs[0].PublicKey' --output text 2>/dev/null) || return 1
             case "$raw" in ""|None) return 1 ;; esac
-            # 주석 필드는 비교에서 뺀다 — 같은 키라도 주석은 유도 시점마다 다르다.
             set -- $raw
-            [ -n "${2:-}" ] || return 1
-            printf '%s %s' "$1" "$2"
+            printf '%s %s' "$1" "${2:-}"
           }
-
-          if ! CUR=$(registered_pub "$MINE"); then
-            # 없거나, 이 CLI 로는 공개키를 읽을 수 없는 경우다. 확신이 없으면 손대지 않는다 —
-            # 근거 없이 교체하면 멀쩡히 붙던 박스의 키페어를 헛되이 갈아 치운다.
-            if aws ec2 describe-key-pairs --key-names "$MINE" >/dev/null 2>&1; then
-              echo "::warning::$MINE 이 등록돼 있으나 공개키를 읽지 못해 대조를 건너뛴다. 키가 어긋나 있으면 뒤따르는 provision 의 SSH 에서 드러난다"
+          ensure_keypair() { # $1=이름 $2=공개키
+            local cur
+            if ! cur=$(registered_pub "$1"); then
+              printf '%s\n' "$2" > /tmp/k.pub
+              aws ec2 import-key-pair --key-name "$1" --public-key-material fileb:///tmp/k.pub >/dev/null
+              echo "::notice::키페어 등록 — $1"
+            elif [ "$cur" = "$2" ]; then
+              echo "::notice::키페어 일치 — $1"
             else
-              aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
-              echo "::notice::키페어 등록 — $MINE ($ENV 용)"
+              printf '%s\n' "$2" > /tmp/k.pub
+              aws ec2 delete-key-pair --key-name "$1" >/dev/null
+              aws ec2 import-key-pair --key-name "$1" --public-key-material fileb:///tmp/k.pub >/dev/null
+              echo "::warning::$1 의 공개키를 교체했다. 옛 키로 이미 부팅된 박스는 SSH 가 안 되니 종료 후 only=infra 로 재생성할 것"
             fi
-          elif [ "$CUR" = "$WANT" ]; then
-            echo "::notice::키페어 일치 확인 — $MINE ($ENV 용)"
-          else
-            aws ec2 delete-key-pair --key-name "$MINE" >/dev/null
-            aws ec2 import-key-pair --key-name "$MINE" --public-key-material "fileb:///tmp/src.pub" >/dev/null
-            # 키페어를 고쳐도 이미 그 키로 부팅된 인스턴스의 authorized_keys 는 바뀌지 않는다.
-            # 다만 여기서 멈추지는 않는다 — 박스가 실제로 붙는지는 뒤따르는 provision 의 SSH 가
-            # 판정하고, 그쪽이 정확하다. 이 자리에서 중단하면 판정 근거 없이 이관 전체가 막힌다.
-            echo "::warning::$MINE 을 이 실행의 공개키로 교체했다. 이 키로 이미 부팅된 $ENV 앱 박스가 있다면 옛 공개키를 갖고 있어 SSH 가 통하지 않는다 — provision 이 publickey 거부로 실패하면 그 인스턴스를 종료한 뒤 only=infra 로 다시 세울 것"
-          fi
-
-          if aws ec2 describe-key-pairs --key-names "$OTHER" >/dev/null 2>&1; then
-            echo "::notice::상대 env 키페어 존재 — $OTHER (이 실행은 그 개인키를 모르므로 건드리지 않는다)"
-          else
-            aws ec2 import-key-pair --key-name "$OTHER" --public-key-material "fileb:///tmp/src.pub" >/dev/null
-            echo "::warning::$OTHER 를 자리채움으로 만들었다 — core terraform 이 dev·prod 박스를 한 state 에 정의해 이 키페어가 없으면 apply 가 InvalidKeyPair.NotFound 로 죽기 때문이다. 이 키페어로 만들어진 박스는 그 env 의 개인키로 붙지 않으므로, 반대편 env 이관 때 이 스텝이 키페어를 교체하고 박스 재생성을 요구한다."
-          fi
-          rm -f /tmp/src.pem /tmp/src.pub
-          echo "::notice::core 키페어 처리 완료 — $ENV 용 $MINE 가 이 실행의 EC2_SSH_KEY 와 일치"
+            rm -f /tmp/k.pub
+          }
+          ensure_keypair team3-SE-1 "$PROD_PUBKEY"
+          ensure_keypair team3-dev-SE-1 "$DEV_PUBKEY"
 
       # extractor·renderer 는 각자 자기 레포의 EC2_SSH_KEY 로 박스에 붙는다(그 레포 deploy.yml).
       # core 키로 만든 박스에는 그 키가 안 통해 "unable to authenticate" 가 난다(실측).
@@ -495,17 +480,17 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: SSM 파라미터 이식 (구 계정 전량 복사 + 계정번호 치환)
         env:
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
-          SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
-            echo "::error::구 계정 읽기 자격(MIGRATE_SOURCE_AWS_ACCESS_KEY_ID/SECRET) 미설정 — SSM 이식 불가"; exit 1; }
-
-          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
+          src() { aws --profile piki-migrate-src "$@"; }
 
           # 경로를 열거하지 않고 구 계정의 파라미터 전량을 옮긴다. 경로 목록을 코드에 박으면 소비자가 늘
           # 때마다 여기가 낡는다 — 실제로 /piki-core·/piki/observability 만 박아 둔 탓에 extractor 가
@@ -521,9 +506,19 @@ jobs:
           [ -n "$rows" ] || { echo "::error::구 계정 SSM 파라미터 0개 — 자격·리전 확인"; exit 1; }
           echo "대상 $(printf '%s\n' "$rows" | wc -l) 개"
 
+          # terraform 이 만드는 값을 여기서 먼저 쓰면 infra_core apply 가 ParameterAlreadyExists 로 멈춘다(3차 이관 실측).
+          tf_owned=$(awk '/^resource "aws_ssm_parameter"/{b=1} b && /^[[:space:]]*name[[:space:]]*=/{print; b=0}' terraform/*.tf \
+            | sed -E 's/^[^"]*"([^"]*)".*/\1/')
+          case "$tf_owned" in *\$\{*)
+            echo "::error::terraform 의 aws_ssm_parameter 이름에 보간이 있어 복사 제외 목록을 만들 수 없다"; exit 1 ;;
+          esac
+
           count=0
           while IFS=$'\t' read -r name tier; do
             [ -n "$name" ] || continue
+            if printf '%s\n' "$tf_owned" | grep -qxF "$name"; then
+              echo "  건너뜀(terraform 이 생성): $name"; continue
+            fi
             # describe-parameters 가 Tier 를 안 돌려주는 경우(None)엔 Standard 로 둔다 — 그 값이 기본이다.
             case "$tier" in ""|None) tier=Standard ;; esac
             type=$(src ssm get-parameter --name "$name" --with-decryption --region "$AWS_REGION" \
@@ -558,10 +553,9 @@ jobs:
 
   # ── migrate-1b: 개발자 IAM 유저 이관. 계정 단위·멱등 — dev(첫 실행)에 생기고 prod 재실행은 no-op. ──
   # 그룹(PiKi-Developer)·멤버·정책 재생성 + 콘솔 디폴트 비번(최초 로그인 시 강제 변경). 액세스키·MFA 는 각자 등록.
-  # 실제 사람 계정 생성이라 mutation → dry_run(리허설) 에선 건너뛴다.
   iam_users:
     needs: [guard, config, bootstrap]
-    if: ${{ always() && needs.guard.result == 'success' && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped') && inputs.dry_run == false && (inputs.only == 'all' || inputs.only == 'iam') }}
+    if: ${{ always() && needs.guard.result == 'success' && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'iam') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
@@ -574,11 +568,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: 개발자 IAM 유저 재생성 (PiKi-Developer 그룹)
         env:
           GROUP_NAME: PiKi-Developer
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           # 임시 비번은 채널이 아니라 admin DM 으로만 — 봇이 ADMIN_DISCORD_ID 에게 DM(팀 노출·로그 잔존 없음).
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           ADMIN_DISCORD_ID: ${{ secrets.MIGRATE_ADMIN_DISCORD_ID }}
@@ -673,8 +671,7 @@ jobs:
           export TF_VAR_image_bucket_name="$IMAGE_BUCKET" TF_VAR_db_backup_bucket_name="$DB_BACKUP_BUCKET"
           terraform plan -input=false -out=tfplan
 
-      - name: apply (dry_run 이면 건너뜀)
-        if: ${{ inputs.dry_run == false }}
+      - name: apply
         working-directory: terraform
         run: |
           set -euo pipefail
@@ -749,8 +746,7 @@ jobs:
           fi
           [ -z "$creates$replaces" ]
 
-      - name: apply (dry_run 이면 건너뜀)
-        if: ${{ inputs.dry_run == false }}
+      - name: apply
         working-directory: terraform-grafana
         run: |
           set -euo pipefail
@@ -767,19 +763,10 @@ jobs:
 
   # ── migrate-2b: extractor·renderer terraform. core 의 VPC·subnet·SG 를 data 소스로 참조 → core 성공에 의존(needs). ──
   #
-  # 이 job 만 다른 레포(TeamPiKi/extractor·renderer)의 terraform 을 돌린다. 그래서 여기만
-  # CROSS_REPO_TOKEN 이 필요하다 — 워크플로 기본 GITHUB_TOKEN 은 자기 레포 밖을 못 읽는다.
-  #
-  # 토큰이 없으면 실패가 아니라 skip 한다. 없을 때 그냥 두면 checkout 이 의미 불명한 git 인증
-  # 오류로 죽고, 그 실패가 downstream 조건에 걸려 provision·rehearsal·cutover 까지 막는다.
-  # 앱·DB 이관 자체는 이 레포만으로 완결되므로, 추출·렌더 박스는 나중에 세워도 된다.
-  # 대신 조용히 넘기지 않는다 — config 가 경고를 남기고 finalize 요약이 미완료로 표시한다.
+  # 다른 레포(TeamPiKi/extractor·renderer)의 terraform 을 돌린다. 기본 GITHUB_TOKEN 은 자기 레포 밖을 못 읽어 앱 토큰으로 checkout 한다.
   infra_apps:
     needs: [guard, config, infra_core]
-    # dry_run 에서는 건너뛴다. core 가 apply 되지 않아 VPC·SG 가 실재하지 않는데, 이 두 레포의
-    # terraform 은 data.aws_vpc·data.aws_security_group 으로 그것들을 조회한다 — "no matching EC2 VPC
-    # found" 로 확정적으로 실패한다(실측). 예상된 상황이 실패로 뜨면 진짜 결함을 가리므로 skip 이 맞다.
-    if: ${{ needs.infra_core.result == 'success' && inputs.dry_run == false && needs.config.outputs.has_cross_repo_token == 'true' && (inputs.only == 'all' || inputs.only == 'infra') }}
+    if: ${{ needs.infra_core.result == 'success' && (inputs.only == 'all' || inputs.only == 'infra') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     strategy:
@@ -794,11 +781,20 @@ jobs:
           - { repo: extractor, path: infra/extractor, checkout: TeamPiKi/extractor }
           - { repo: renderer, path: infra/headless-browser, checkout: TeamPiKi/renderer }
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: ${{ matrix.repo }}
+
       - name: checkout (${{ matrix.repo }})
         uses: actions/checkout@v4
         with:
           repository: ${{ matrix.checkout }}
-          token: ${{ secrets.CROSS_REPO_TOKEN }} # 타 레포 read 권한 PAT (org 기본 GITHUB_TOKEN 은 자기 레포만)
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: 이관 워크플로 액션 checkout (Discord 보고용)
         uses: actions/checkout@v4
@@ -835,11 +831,9 @@ jobs:
         run: |
           set -euo pipefail
           # extractor/renderer 는 name_prefix·data 소스 기본값을 쓴다(그 외 TF_VAR 없음, variables.tf 실측).
-          # dry_run(plan-only)에서는 core 가 아직 apply 전이라 data 소스(VPC/SG) 조회가 실패할 수 있다 — 첫 이관은 not-dry_run 으로 core apply 후 이 job 이 돈다.
           terraform plan -input=false -out=tfplan
 
-      - name: apply (dry_run 이면 건너뜀)
-        if: ${{ inputs.dry_run == false }}
+      - name: apply
         working-directory: ${{ matrix.path }}
         env:
           TF_VAR_key_name: ${{ matrix.repo == 'extractor' && 'piki-extractor-key' || 'piki-renderer-key' }}
@@ -859,9 +853,8 @@ jobs:
   # ── migrate-3: provision. 컷오버 밖에서 며칠 앞서. env 단위. dev=SSH(앱박스, DB 동거) / prod=별도 DB 박스는 SSM. ──
   provision:
     needs: [guard, config, infra_core, infra_apps]
-    # dry_run 에서는 건너뛴다 — apply 를 안 해 박스가 실재하지 않는데 SSH·SSM 으로 붙으려다 실패한다.
     # only=provision 으로 단계만 따로 돌릴 때는 앞 단계가 skipped 여도 진행해야 하므로 그 경우만 허용.
-    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'provision' || (needs.infra_core.result == 'success' && (needs.infra_apps.result == 'success' || needs.infra_apps.result == 'skipped'))) && (inputs.only == 'all' || inputs.only == 'provision') }}
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'provision' || (needs.infra_core.result == 'success' && (needs.infra_apps.result == 'success' || needs.infra_apps.result == 'skipped'))) && (inputs.only == 'all' || inputs.only == 'provision') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
@@ -896,6 +889,15 @@ jobs:
           done
           echo "::error::10분 안에 SSM 에 등록되지 않았다 — $INSTANCE_ID (인스턴스 프로필의 AmazonSSMManagedInstanceCore 확인)"
           exit 1
+
+      # 갓 뜬 박스는 첫 시간 안에 unattended-upgrade 가 돌며 systemd-resolved 를 재시작한다. 그 틈에
+      # docker pull 이 이름 해석에 실패했다(3차 이관 실측). 타이머는 cutover 끝에서 다시 켠다.
+      - name: 새 박스 자동 업데이트 정지·종료 대기
+        env:
+          TAGS: ${{ inputs.env == 'prod' && format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) || needs.config.outputs.app_tag }}
+        run: |
+          set -euo pipefail
+          bash infra/scripts/migrate-box-apt.sh hold "$TAGS"
 
       - name: 앱 박스 provision (SSH, 멱등)
         env:
@@ -963,7 +965,7 @@ jobs:
             --targets "Key=tag:Name,Values=$DB_TAG" \
             --document-name AWS-RunShellScript \
             --comment "migrate provision-db" \
-            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh\"]" \
+            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh --environment prod\"]" \
             --query 'Command.CommandId' --output text)
           echo "::notice::SSM provision-db 전송 — CommandId=$CMD_ID"
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
@@ -1016,8 +1018,7 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       # HTTP-01 은 DNS 가 그 박스를 가리켜야 발급되는데, 컷오버 전 DNS 는 구 박스라 신 박스 발급이 원리적으로 실패한다.
       # cert 는 도메인에 묶여 있어 구 박스 것을 옮기면 바로 유효하고, deploy.yml 의 'Ensure TLS cert' 는 cert 가 있으면 건너뛴다.
@@ -1057,7 +1058,7 @@ jobs:
   # 새 키가 생길 때마다 여기가 낡고, 그 낡음은 조용하다(값이 그냥 구 계정을 가리킨 채 배포된다).
   ssm_hosts:
     needs: [guard, config, bootstrap, infra_core, infra_apps, provision]
-    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && needs.infra_core.result == 'success' && (needs.provision.result == 'success' || needs.provision.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
+    if: ${{ always() && needs.guard.result == 'success' && needs.infra_core.result == 'success' && (needs.provision.result == 'success' || needs.provision.result == 'skipped') && (inputs.only == 'all' || inputs.only == 'provision') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
@@ -1070,15 +1071,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
           role-session-name: piki-migrate
 
+      - name: 구 계정 자격
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
       - name: 박스 IP 매핑으로 SSM 주소 값 재작성
-        env:
-          SRC_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          [ -n "${SRC_KEY:-}" ] && [ -n "${SRC_SECRET:-}" ] || {
-            echo "::error::구 계정 읽기 자격 미설정 — 주소 재작성 불가"; exit 1; }
-          src() { env -u AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID="$SRC_KEY" AWS_SECRET_ACCESS_KEY="$SRC_SECRET" aws "$@"; }
+          src() { aws --profile piki-migrate-src "$@"; }
 
           # terraform 이 Name 태그에 박는 값들(ec2.tf·db_ec2.tf·두 side 레포의 main.tf 실측).
           # 구·신 계정이 같은 이름을 쓰므로 이름이 곧 매핑 키다.
@@ -1188,8 +1189,7 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       # 컷오버의 freeze 가 같은 경로로 구 앱을 멈춘다. 그 경로가 막혀 있으면 다운타임 밖인 여기서 드러나야 한다.
       - name: 구 앱 박스 SSH 사전 점검 (컷오버 freeze 경로)
@@ -1200,6 +1200,13 @@ jobs:
           N=$(ssh "$SRC" 'docker ps --format "{{.Names}}" | grep -cE "^piki-core-(blue|green)$" || true')
           echo "::notice::구 앱 박스 SSH 확인 — $SRC 의 앱 컨테이너 ${N}개"
 
+      # 컷오버가 전달을 켠 뒤에는 새 DB 가 운영 중이다. 이 시점의 리허설은 낡은 구 DB 로 새 DB 를 덮는다.
+      - name: 예전 서버가 이미 전달 중인지 확인
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: bash infra/scripts/migrate-forward.sh check
+
       - name: Discord — 리허설 시작 (라이브 무영향)
         uses: ./.github/actions/discord-notify
         with:
@@ -1208,7 +1215,7 @@ jobs:
           title: "[리허설] 시작 (env=${{ inputs.env }}) — 라이브 무영향"
           detail: "읽기전용 덤프로 신 계정에 복원·대조만 한다. 실서비스는 그대로. 실제 전환(cutover) 아님."
 
-      - name: 덤프→복원→URL재작성→행수 대조 + S3 이미지 동기화
+      - name: 덤프→복원→URL재작성→행수 대조
         env:
           DB_NAME: ${{ vars.MIGRATE_DB_NAME || 'piki' }} # dev 카나리에서 실 스키마명 확정(레포 var 로 덮어쓰기)
           DB_EXEC: ${{ needs.config.outputs.db_exec }}
@@ -1222,8 +1229,8 @@ jobs:
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
+          REDIS_CONTAINER: ${{ needs.config.outputs.redis_container }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다(bootstrap 이 공개키를 등록)
         run: |
           set -euo pipefail
@@ -1241,16 +1248,29 @@ jobs:
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
-            SRC_AWS_KEY="$SRC_AWS_KEY" SRC_AWS_SECRET="$SRC_AWS_SECRET" \
+            SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
+            REDIS_CONTAINER="$REDIS_CONTAINER" \
             bash infra/scripts/migrate-db.sh
-          # S3 이미지 델타 동기화 — 구 자격으로 러너에 받아 신 자격으로 업로드(cross-account 정책 불필요).
-          # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
-          if [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ]; then
-            mkdir -p imgs
-            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
-            aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
-            rm -rf imgs
-          fi
+
+      # 덤프·복원이 길었으면 구 계정 자격(2시간)이 이미지 sync 중에 만료될 수 있어 다시 받는다.
+      - name: 구 계정 자격 갱신 (이미지 sync 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      # 구 자격으로 러너에 받아 신 자격으로 올린다(cross-account 정책 불필요).
+      # prod 규모에선 러너 디스크 부담이 커 cross-account 버킷 정책 sync 로 대체 검토(후속).
+      - name: S3 이미지 동기화
+        env:
+          OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
+          NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
+        run: |
+          set -euo pipefail
+          [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ] || exit 0
+          mkdir -p imgs
+          aws --profile piki-migrate-src s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+          aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
+          rm -rf imgs
           rm -f key.pem
 
       - name: Discord — 리허설 결과
@@ -1269,14 +1289,13 @@ jobs:
   # Flyway 는 복원된 history 와 같은 버전이라 no-op 로 지나간다.
   #
   # 대상 호스트는 terraform output(신 계정 EIP)이고, ECR push 는 bootstrap 역할로 한다.
-  # 파괴적이지 않지만(신 계정에만 씀) dry_run 에선 인프라가 apply 전이라 대상이 없으므로 건너뛴다.
   deploy_core:
     needs: [guard, config, infra_core, provision, ssm_hosts, rehearsal]
     # cutover 와 같은 이유로 skipped 를 통과로 보지 않는다 — 인프라·박스가 없으면 배포 대상 자체가 없다
     # (실측: infra_core 실패로 rehearsal 이 skip 됐는데 이 job 이 success 로 떴다).
     # ssm_hosts 도 성공을 요구한다 — 그게 실패하면 SSM 의 db-host·redis-host·headless-base-url 이 구
     # 계정을 가리킨 채라, 배포된 신 계정 앱이 구 계정 DB 에 붙는다(컷오버 후 데이터가 갈린다).
-    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'deploy' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.ssm_hosts.result == 'success' && needs.rehearsal.result == 'success')) && (inputs.only == 'all' || inputs.only == 'deploy') }}
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'deploy' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.ssm_hosts.result == 'success' && needs.rehearsal.result == 'success')) && (inputs.only == 'all' || inputs.only == 'deploy') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:
@@ -1316,11 +1335,9 @@ jobs:
   # core 앱 — 빌드·ECR push·배포·nginx 까지 deploy.yml 이 통째로 처리한다. cert 는 provision 이 옮겨 뒀다.
   deploy_core_app:
     needs: [guard, config, deploy_core, deploy_extractor]
-    # extractor 가 먼저 떠 있어야 한다 — deploy.yml 이 배포 전 extractor 헬스를 실측하고(#862), 안 뜬
-    # 상태면 배포를 막는다(fail-fast, 의도된 안전장치). deploy_extractor 를 끈 경우(skipped)도 진행한다 —
-    # extractor 박스 자체는 infra_apps 가 세웠고, 서비스가 아직 안 떴다면 그 프로브가 걸러낸다.
+    # deploy.yml 이 배포 전 extractor 헬스를 실측해(#862) extractor 가 먼저 떠 있어야 한다.
     # extractor 주소는 deploy.yml 이 넘겨받은 역할의 계정에서 Name 태그로 계산하므로 이관용 override 가 없다.
-    if: ${{ always() && needs.deploy_core.result == 'success' && (needs.deploy_extractor.result == 'success' || needs.deploy_extractor.result == 'skipped') }}
+    if: ${{ always() && needs.deploy_core.result == 'success' && needs.deploy_extractor.result == 'success' }}
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
     with:
@@ -1370,17 +1387,25 @@ jobs:
   # secret 을 쓴다. renderer 와 같은 형태 — 트리거 후 request_id 로 실행을 특정해 완료를 폴링한다.
   deploy_extractor:
     needs: [side_hosts]
-    if: ${{ needs.side_hosts.result == 'success' && inputs.deploy_side_services }}
+    if: ${{ needs.side_hosts.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: extractor
+
       - name: extractor 배포 트리거 + 완료 대기
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
-          [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — extractor 배포를 트리거할 수 없다"; exit 1; }
           REPO=TeamPiKi/extractor
           REQ="migrate-${{ github.run_id }}-${{ github.run_attempt }}"
           # migration_role_arn: 그 레포의 vars.AWS_ECR_PUSH_ROLE_ARN 은 구 계정 역할이라 신 계정에서
@@ -1420,23 +1445,29 @@ jobs:
           [ "$CC" = "success" ] || { echo "::error::extractor 배포 실패(conclusion=$CC) — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
           echo "::notice::extractor 배포 완료"
 
-  # renderer 는 private 레포라 `uses:` 재사용 호출이 성립하지 않는다 — access_level=organization 을 켜도
-  # 호출측 유효성 검사가 "workflow was not found" 로 막아 migrate.yml 전체가 디스패치조차 거부된다(실측).
-  # 그래서 이쪽만 API 로 트리거하고 완료·결론을 폴링한다. extractor 는 public 이라 `uses:` 를 유지한다.
+  # renderer 는 private 레포라 `uses:` 재사용 호출이 애초에 성립하지 않는다(호출측 유효성 검사가
+  # "workflow was not found" 로 거부, 실측). extractor 와 같은 API dispatch 를 쓴다.
   deploy_renderer:
     needs: [side_hosts]
-    # deploy_extractor 와 같은 이유로 기본 false (위 주석 참고).
-    if: ${{ needs.side_hosts.result == 'success' && inputs.deploy_side_services }}
+    if: ${{ needs.side_hosts.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: renderer
+
       - name: renderer 배포 트리거 + 완료 대기
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ROLE: arn:aws:iam::${{ inputs.target_account_id }}:role/piki-migrate-bootstrap
         run: |
           set -euo pipefail
-          [ -n "${GH_TOKEN:-}" ] || { echo "::error::CROSS_REPO_TOKEN 미설정 — renderer 배포를 트리거할 수 없다"; exit 1; }
           REPO=TeamPiKi/renderer
           # 이 실행만 가리키는 고유 키. renderer 가 run-name 에 실어 주므로(그쪽 request_id 입력),
           # 제목으로 정확히 우리 dispatch 로 생긴 실행만 고른다. 시각+최근순으로 고르면 그 사이 끼어든
@@ -1480,7 +1511,7 @@ jobs:
           [ "$CC" = "success" ] || { echo "::error::renderer 배포 실패(conclusion=$CC) — https://github.com/$REPO/actions/runs/$RUN_ID"; exit 1; }
           echo "::notice::renderer 배포 완료"
 
-  # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. 파괴적이라 dry_run 이면 통째 건너뜀. dev 로 먼저 카나리 후 prod. ──
+  # ── migrate-5/6: 컷오버. 유일한 다운타임 구간. dev 로 먼저 카나리 후 prod. ──
   #
   # 롤백 경계가 이 job 의 핵심이다. freeze 가 구 앱을 정지시킨 순간부터 DNS 가 신 계정으로 넘어갈
   # 때까지, 어느 단계에서 실패해도 구 앱을 되살려야 한다. 그 경계는 migrate-db.sh 안에서 시작해
@@ -1491,7 +1522,7 @@ jobs:
     # 앞 단계를 skipped 까지 통과로 보면, 인프라가 서지도 않은 상태에서 구 앱을 freeze 한다(실측 —
     # infra_core 가 키페어 문제로 실패했는데 cutover 가 돌아 dev 를 정지시켰고 롤백이 받아냈다).
     # only=cutover 로 단계만 따로 돌릴 때는 앞 단계가 skipped 라 그 경우만 예외로 허용한다.
-    if: ${{ always() && needs.guard.result == 'success' && inputs.dry_run == false && (inputs.only == 'cutover' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.rehearsal.result == 'success' && needs.deploy_core_app.result == 'success')) && (inputs.only == 'all' || inputs.only == 'cutover') }}
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'cutover' || (needs.infra_core.result == 'success' && needs.provision.result == 'success' && needs.rehearsal.result == 'success' && needs.deploy_core_app.result == 'success' && needs.deploy_renderer.result == 'success')) && (inputs.only == 'all' || inputs.only == 'cutover') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     env:
@@ -1552,8 +1583,15 @@ jobs:
           expected-ip: ${{ needs.config.outputs.src_app_host }}
           user: ubuntu
           ssh-key: ${{ secrets.EC2_SSH_KEY }}
-          aws-access-key-id: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      # 전달을 켠 뒤 DNS 를 바꾸기 전까지는 DNS 가 구 IP 라 위 점검을 통과한다. 그 구간의 재실행이
+      # 낡은 구 DB 로 운영 중인 새 DB 를 덮지 않게 구 nginx 의 상태로 한 번 더 막는다.
+      - name: 예전 서버가 이미 전달 중인지 확인
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: bash infra/scripts/migrate-forward.sh check
 
       # 이미지 벌크 sync 를 freeze *앞*에 둔다. 러너의 imgs 는 매 실행 빈 디렉터리라 s3 sync 가 버킷
       # 전량을 내려받는데(이름만 델타다), 이게 freeze 뒤에 있으면 다운타임이 곧 버킷 전체 전송 시간이
@@ -1563,15 +1601,20 @@ jobs:
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
         run: |
           set -euo pipefail
           [ "$OLD_IMAGE_BUCKET" != "$NEW_IMAGE_BUCKET" ] || { echo "::notice::같은 버킷 — sync 불필요"; exit 0; }
           mkdir -p imgs
-          env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+          aws --profile "$SRC_AWS_PROFILE" s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
           aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
           echo "::notice::이미지 벌크 sync 완료 — $(find imgs -type f | wc -l) 개 (freeze 밖)"
+
+      # 구 계정 자격은 2시간짜리다. 벌크 sync 가 길었으면 freeze 이후 덤프·롤백 중에 만료될 수 있어 다시 받는다.
+      - name: 구 계정 자격 갱신 (freeze 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
       - name: freeze→덤프/복원→URL재작성→행수 대조
         env:
@@ -1587,8 +1630,8 @@ jobs:
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
+          REDIS_CONTAINER: ${{ needs.config.outputs.redis_container }}
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }} # 구·신 계정 박스 모두 이 키로 붙는다
         run: |
           set -euo pipefail
@@ -1610,15 +1653,15 @@ jobs:
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
             SRC_APP_HOST="$SRC_APP_HOST" SRC_APP_KEY=key.pem \
             OLD_IMAGE_BUCKET="$OLD_IMAGE_BUCKET" NEW_IMAGE_BUCKET="$NEW_IMAGE_BUCKET" \
-            SRC_AWS_KEY="$SRC_AWS_KEY" SRC_AWS_SECRET="$SRC_AWS_SECRET" \
+            SRC_AWS_PROFILE="$SRC_AWS_PROFILE" \
+            REDIS_CONTAINER="$REDIS_CONTAINER" \
             bash infra/scripts/migrate-db.sh
 
       - name: S3 이미지 최종 델타 sync → 신 계정 앱 스모크
         env:
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
-          SRC_AWS_KEY: ${{ secrets.MIGRATE_SOURCE_AWS_ACCESS_KEY_ID }}
-          SRC_AWS_SECRET: ${{ secrets.MIGRATE_SOURCE_AWS_SECRET_ACCESS_KEY }}
+          SRC_AWS_PROFILE: piki-migrate-src
           DST_APP_HOST: ${{ steps.dst.outputs.host }}
           SRC_APP_HOST: ${{ steps.src.outputs.host }}
           SRC_APP_KEY: key.pem
@@ -1633,7 +1676,7 @@ jobs:
             # imgs 는 위 벌크 sync 가 남겨 둔 것이다(같은 job = 같은 워크스페이스). 지우지 않고 재사용해야
             # s3 sync 의 크기·mtime 비교가 먹어 freeze 구간에서는 증분만 오간다.
             mkdir -p imgs
-            env -u AWS_SESSION_TOKEN "AWS_ACCESS_KEY_ID=$SRC_AWS_KEY" "AWS_SECRET_ACCESS_KEY=$SRC_AWS_SECRET" aws s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
+            aws --profile "$SRC_AWS_PROFILE" s3 sync "s3://$OLD_IMAGE_BUCKET" imgs --region "$AWS_REGION"
             aws s3 sync imgs "s3://$NEW_IMAGE_BUCKET" --region "$AWS_REGION"
           fi
           # 스모크 — 신 계정 앱 헬스(nginx 상태 파일이 가리키는 서빙 슬롯). 앱 이미지 배포는 신 계정 ECR 로 선행돼야 한다.
@@ -1643,68 +1686,91 @@ jobs:
             || { echo "::error::신 계정 앱 헬스 실패 — 배포 상태 확인 후 재실행"; exit 1; }
           echo "::notice::신 계정 앱 헬스 OK"
 
-      # DNS 전환 — 가비아는 레코드 변경 API 가 없어 사람이 콘솔에서 바꿔야 한다(#1100 이 이걸 없앤다).
-      # 버튼·승인 게이트를 두지 않는다. 레코드 자체가 신호이고, "눌렸다" 가 아니라 "우리가 원한 IP 로
-      # 바뀌었다" 를 봐야 오타로 엉뚱한 값이 들어간 경우까지 걸러진다.
-      - name: DNS 전환 대기 (사람)
-        uses: ./.github/actions/wait-for
+      # 두 계정 자격 모두 시한이 있다(신 계정 역할 1시간, 구 계정 2시간). 벌크 sync·덤프가 길었으면
+      # 전달 켜기와 그 원복이 만료된 자격으로 실패할 수 있어 직전에 다시 받는다.
+      - name: 신 계정 자격 갱신 (전달 직전)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "DNS 전환이 필요합니다 — ${{ needs.config.outputs.domain }}"
-          instruction: |
-            가비아 콘솔에서 A 레코드를 바꿔 주세요. 지금 구 서비스는 정지 상태(freeze)입니다.
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
 
-            호스트: ${{ needs.config.outputs.domain }}
-            타입:   A
-            값:     ${{ steps.tf.outputs.dst_app }}   ← 이 값으로 변경
-            TTL:    600 (가비아 최소)
+      - name: 구 계정 자격 갱신 (전달 직전)
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
 
-            바꾸시면 자동으로 감지해 이어서 진행합니다. 따로 누르실 것은 없습니다.
-            시간이 초과되면 구 서비스를 자동으로 되살리니, 그 뒤 only=cutover 로 다시 실행하시면 됩니다.
-          # 복수 해소기를 본다 — 하나만 보면 그 resolver 만 갱신된 상태를 전파 완료로 오인한다.
-          #
-          # "신 IP 가 응답에 들어 있나" 가 아니라 "정확히 신 IP 하나만 돌아오나" 로 닫는다. 가비아에서
-          # 레코드를 편집하는 동안 구·신 A 레코드가 잠시 공존하면 응답이 2줄이 되는데, tail -1 로 보면
-          # 그 순간을 전파 완료로 오인한다. 바로 다음 스텝이 롤백 경계를 해제하므로, 그 오판은 트래픽
-          # 절반이 정지된 구 박스로 가는 채 되돌릴 수단이 사라지는 상태로 직결된다.
-          # CNAME 줄은 걸러낸다(config 의 구 계정 주소 해소와 같은 필터).
-          check: |
-            NEW="${{ steps.tf.outputs.dst_app }}"
-            for R in 1.1.1.1 8.8.8.8; do
-              GOT=$(dig +short "@$R" ${{ needs.config.outputs.domain }} | grep -E '^[0-9.]+$' | sort -u)
-              [ "$GOT" = "$NEW" ] || exit 1
-            done
-          timeout-minutes: "45"
-          interval-seconds: "20"
-          remind-minutes: "10"
-
-      - name: 롤백 경계 해제 · 마무리
+      # 롤백할 수 있는 마지막 지점이다. 전달을 켜면 새 DB 에 쓰기가 쌓여, 그 뒤 구 앱을 되살리면 데이터가 갈라진다.
+      # 그래서 전달이 확인되면 바로 롤백 경계를 푼다. DNS 변경은 forward_off job 이 기다린다(다운타임 밖).
+      - name: 예전 nginx 전달 켜기 · 롤백 경계 해제
         env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          SSH_KEY_FILE: key.pem
           DOMAIN: ${{ needs.config.outputs.domain }}
           NEW_IP: ${{ steps.tf.outputs.dst_app }}
+          OLD_IP: ${{ needs.config.outputs.src_app_host }}
         run: |
           set -euo pipefail
-          echo "::notice::DNS 전환 확인 — $DOMAIN → $NEW_IP"
-          # 여기까지 왔으면 신 계정이 트래픽을 받는다. 구 앱은 정지 상태로 두는 것이 맞고(되돌릴 여지),
-          # 상태 파일을 지워 이후 스텝이 실수로 구 앱을 되살리지 않게 한다.
+          bash infra/scripts/migrate-forward.sh on
           rm -f "$FREEZE_STATE_FILE"
-          rm -f key.pem
-          echo "::notice::cutover 완료 — 롤백 경계 해제. 구 앱은 정지 상태 유지(롤백 여지)"
+          echo "::notice::전달 시작 — $DOMAIN 요청은 예전 IP($OLD_IP)로 와도 새 계정($NEW_IP)이 처리한다. 롤백 경계 해제"
+          # 배포의 도메인 가드가 DNS 와 대상 박스를 비교하므로, DNS 를 바꾸기 전까지 이 env 의 배포는 거기서 멈춘다(안전한 실패).
+          echo "::warning::가비아에서 $DOMAIN A 레코드를 $NEW_IP 로 바꿀 때까지 이 환경의 배포는 도메인 확인에서 멈춘다"
 
       # 어느 스텝에서 어떻게 끝났든 마지막으로 한 번 더 확인한다. 위 trap 은 그 스텝 안에서만 유효하고,
       # 상태 파일이 남아 있다는 건 freeze 가 걸린 채 끝났다는 뜻이다.
       #
-      # failure() 가 아니라 always() 다 — failure() 는 취소에서 false 라, freeze 이후 가장 긴 구간인
-      # "DNS 전환 대기(45분)" 중에 사람이 Actions 에서 취소하거나 job timeout 에 걸리면 구 앱이 정지된
-      # 채 영구 방치된다. freeze 는 이 워크플로의 유일한 다운타임이라 가장 비싼 실패다.
-      # 성공 경로에서는 바로 위 스텝이 상태 파일을 지우고 migrate-unfreeze.sh 가 그걸 보고 즉시 빠져나가
-      # no-op 이므로, always() 로 둬도 되살리는 오작동이 없다.
+      # failure() 가 아니라 always() 다 — failure() 는 취소에서 false 라, freeze 이후 사람이 Actions 에서
+      # 취소하거나 job timeout 에 걸리면 구 앱이 정지된 채 영구 방치된다.
+      # 성공 경로에서는 전달 스텝이 상태 파일을 지워 아래 원복·롤백이 모두 no-op 이다.
+      - name: 구 계정 자격 갱신 (롤백 직전)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/migrate-src-creds
+        with:
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      - name: 신 계정 자격 갱신 (롤백 직전)
+        if: always()
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      # 전달 켜기가 취소·시간 초과로 끊기거나 그 안의 원복이 실패했을 수 있다. 구 앱을 되살리기 전에
+      # 구 nginx 를 원본으로, 새 nginx 의 신뢰를 지운 상태로 되돌린다. 멱등이라 전달을 안 켰어도 무해하다.
+      - name: 전달 원복 (롤백 경계 안에서 끝났을 때만)
+        if: always()
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          SSH_KEY_FILE: key.pem
+          DOMAIN: ${{ needs.config.outputs.domain }}
+        run: |
+          [ -s "$FREEZE_STATE_FILE" ] || exit 0
+          [ -n "$SRC_APP_HOST" ] && [ -n "$DST_APP_HOST" ] || exit 0
+          bash infra/scripts/migrate-forward.sh revert \
+            || echo "::error::전달 원복 실패 — 구 nginx 링크와 새 박스의 piki-migrate-realip.conf 를 손으로 되돌릴 것"
+
       - name: freeze 롤백 (최종 안전망 — 실패·취소 공통)
         if: always()
         env:
           SRC_APP_HOST: ${{ steps.src.outputs.host }}
           SRC_APP_KEY: key.pem
         run: bash infra/scripts/migrate-unfreeze.sh
+
+      # provision 이 멈춘 자동 업데이트를 되돌린다. 이미 트래픽이 넘어간 뒤라 실패해도 cutover 를 실패로
+      # 만들지 않는다(그러면 rewire 가 건너뛰어진다). 재부팅하면 타이머는 다시 켜진다.
+      - name: 새 박스 자동 업데이트 재개
+        if: always()
+        env:
+          TAGS: ${{ inputs.env == 'prod' && format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) || needs.config.outputs.app_tag }}
+        run: |
+          bash infra/scripts/migrate-box-apt.sh release "$TAGS" \
+            || echo "::warning::자동 업데이트 타이머 재개 실패 — 박스에서 systemctl start apt-daily.timer apt-daily-upgrade.timer"
 
       - name: Discord — cutover 결과
         if: always()
@@ -1717,6 +1783,149 @@ jobs:
           # 그 경우 실행 로그에 롤백 실패 error 가 남으므로, 사람이 그걸 보고 판단하도록 안내한다.
           detail: "실패 시 freeze 롤백이 자동으로 돈다. 실행 로그에서 '롤백 완료' 를 확인할 것 — '롤백 실패' 가 보이면 구 서비스가 내려간 채이므로 구 계정 박스에서 직접 docker start 해야 한다. 원인 해소 후 only=cutover 로 재실행."
 
+  # ── migrate-6a: DNS 전환 뒤 전달 걷어내기. 다운타임 밖이라 서두를 일이 없다. ──
+  # 컷오버가 켠 전달(예전 nginx → 새 서버)과 새 nginx 의 예전 IP 신뢰는 DNS 가 넘어가고 캐시가 빠진 뒤 걷어낸다.
+  # 신뢰를 남겨 두면 예전 계정 EIP 가 반납돼 남에게 간 뒤 그쪽이 X-Forwarded-For 로 IP 를 꾸밀 수 있다.
+  # 2시간 안에 DNS 를 못 바꿨으면 바꾼 뒤 only=forward-off 로 이 job 만 다시 돌린다. 오래 붙잡으면 같은 계정의
+  # 다음 이관 실행(보통 prod)이 concurrency 로 그만큼 기다린다.
+  forward_off:
+    needs: [guard, config, cutover]
+    if: ${{ always() && needs.guard.result == 'success' && (inputs.only == 'forward-off' || (inputs.only == 'all' && needs.cutover.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 (신 계정 OIDC 역할)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 신 계정 앱 박스 주소
+        id: ip
+        env:
+          APP_TAG: ${{ needs.config.outputs.app_tag }}
+        run: |
+          set -euo pipefail
+          NEW_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$APP_TAG" Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].PublicIpAddress' --output text)
+          echo "$NEW_IP" | grep -Eq '^[0-9.]+$' || { echo "::error::$APP_TAG 의 공인 IP 를 못 찾았다"; exit 1; }
+          echo "new=$NEW_IP" >> "$GITHUB_OUTPUT"
+
+      - name: DNS 전환 대기 (사람, 급하지 않음)
+        uses: ./.github/actions/wait-for
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: "DNS 전환이 필요합니다 — ${{ needs.config.outputs.domain }} (서비스는 이미 새 계정)"
+          instruction: |
+            가비아 콘솔에서 A 레코드를 바꿔 주세요. 서비스는 이미 새 계정이 처리하고 있어 급하지 않습니다.
+
+            호스트: ${{ needs.config.outputs.domain }}
+            타입:   A
+            값:     ${{ steps.ip.outputs.new }}   ← 이 값으로 변경
+
+            바뀐 것이 확인되면 15분 뒤 예전 서버의 전달을 자동으로 걷어냅니다.
+            바꾸기 전까지 이 환경의 배포는 도메인 확인에서 멈춥니다.
+          # 정확히 신 IP 하나만 돌아와야 한다. 편집 중 구·신 레코드가 공존하는 순간을 완료로 보지 않는다.
+          check: |
+            NEW="${{ steps.ip.outputs.new }}"
+            for R in 1.1.1.1 8.8.8.8; do
+              GOT=$(dig +short "@$R" ${{ needs.config.outputs.domain }} | grep -E '^[0-9.]+$' | sort -u)
+              [ "$GOT" = "$NEW" ] || exit 1
+            done
+          timeout-minutes: "120"
+          interval-seconds: "30"
+          remind-minutes: "30"
+
+      # 가비아 최소 TTL(600초)에 여유를 둔다.
+      - name: DNS 캐시가 빠질 때까지 대기 (15분)
+        run: sleep 900
+
+      # 신 계정 역할 세션은 1시간이라 DNS 대기 뒤엔 만료됐을 수 있다.
+      - name: 신 계정 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ inputs.target_account_id }}:role/${{ env.BOOTSTRAP_ROLE }}
+          role-session-name: piki-migrate
+
+      - name: 신 계정 앱 박스 SSH 준비 (SSM 경유)
+        id: dst
+        uses: TeamPiKi/infra/.github/actions/ssm-ssh@main
+        with:
+          instance-name: ${{ needs.config.outputs.app_tag }}
+          user: ubuntu
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: 구 계정 앱 박스 SSH 준비 (SSM 경유)
+        id: src
+        uses: ./.github/actions/migrate-src-ssh
+        with:
+          instance-name: ${{ needs.config.outputs.app_tag }}
+          user: ubuntu
+          ssh-key: ${{ secrets.EC2_SSH_KEY }}
+          role-arn: arn:aws:iam::${{ env.OLD_ACCOUNT_ID }}:role/${{ env.MIGRATE_SOURCE_ROLE }}
+
+      - name: 전달·신뢰 걷어내기
+        env:
+          SRC_APP_HOST: ${{ steps.src.outputs.host }}
+          DST_APP_HOST: ${{ steps.dst.outputs.host }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "$SSH_KEY" > key.pem
+          SSH_KEY_FILE=key.pem bash infra/scripts/migrate-forward.sh off
+          rm -f key.pem
+
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        if: ${{ inputs.env == 'prod' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core
+
+      # 다음 이관의 출발 계정. 예전 계정 접근이 모두 끝난 이 자리에서 바꾼다(앞에서 바꾸면 위 단계가 새 계정을 예전 계정으로 안다).
+      - name: 현재 계정 변수 갱신 (prod)
+        if: ${{ inputs.env == 'prod' }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          NEW_ACCOUNT: ${{ inputs.target_account_id }}
+        run: |
+          set -euo pipefail
+          # dev 전달이 아직 남아 있으면 미룬다. 지금 바꾸면 dev 의 only=forward-off 가 구 계정을 못 찾는다.
+          DEV_ID=$(aws ec2 describe-instances --filters Name=tag:Name,Values=piki-dev-app Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$DEV_ID" ] && [ "$DEV_ID" != None ]; then
+            CID=$(aws ssm send-command --instance-ids "$DEV_ID" --document-name AWS-RunShellScript \
+              --parameters 'commands=["test -f /etc/nginx/conf.d/piki-migrate-realip.conf && echo LEFT || echo CLEAN"]' \
+              --query Command.CommandId --output text)
+            aws ssm wait command-executed --command-id "$CID" --instance-id "$DEV_ID" || true
+            DEV_STATE=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$DEV_ID" --query StandardOutputContent --output text | tr -d '[:space:]')
+            if [ "$DEV_STATE" != CLEAN ]; then
+              echo "::warning::dev 전달이 아직 남아 있다($DEV_STATE) — AWS_ACCOUNT_ID 갱신을 미룬다. dev 를 only=forward-off 로 정리한 뒤 prod 를 only=forward-off 로 다시 돌릴 것"
+              exit 0
+            fi
+          fi
+          gh variable set AWS_ACCOUNT_ID --body "$NEW_ACCOUNT" --repo "$GITHUB_REPOSITORY"
+          echo "::notice::AWS_ACCOUNT_ID = $NEW_ACCOUNT"
+
+      - name: Discord — forward_off 결과
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status == 'success' && 'success' || 'failure' }}
+          title: "forward_off ${{ job.status }} (env=${{ inputs.env }})"
+          detail: "실패했다면 새 계정 앱 박스의 /etc/nginx/conf.d/piki-migrate-realip.conf 가 남아 있을 수 있다. DNS 확인 뒤 only=forward-off 로 다시 돌릴 것."
+
   # ── migrate-6b: 배포 배선 갱신. 컷오버가 끝난 env 의 GitHub 설정을 신 계정 값으로 돌린다. ──
   #
   # 이것을 자동화하지 않고 안내만 했더니, dev 컷오버 직후 평소 배포가 곧바로 깨졌다(실측).
@@ -1726,16 +1935,13 @@ jobs:
   # core 는 Environment 수준에 쓴다. repo 수준 값을 덮어쓰지 않으므로 아직 이관하지 않은 반대편 env 는
   # 영향을 받지 않는다(dev 이관 시점에 prod 는 계속 구 계정 값을 써야 한다).
   # extractor·renderer 는 Environment 없이 repo 수준 값으로 배포하고 박스가 전 환경 공용이라 prod 이관에서만 바꾼다.
-  #
-  # 코드에 박힌 것(migrate.yml 의 OLD_ACCOUNT_ID)은 여기서 손대지 않는다 — 커밋·리뷰를 거쳐야 하고,
-  # 그 값은 "다음 이관의 출발점" 이라 사람이 보고 넘기는 편이 맞다. finalize 안내에 남는다.
+  # repo 변수 AWS_ACCOUNT_ID(다음 이관의 출발 계정)는 여기서 바꾸지 않는다. 뒤의 forward_off 가 그 값으로 예전 계정을 찾는다.
   rewire:
     needs: [guard, config, cutover]
     if: ${{ always() && needs.guard.result == 'success' && needs.cutover.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     outputs:
-      # 토큰이 없으면 job 은 success 로 끝나도 아무것도 안 바꾼다. finalize 는 결과가 아니라 이 값을 본다.
       done: ${{ steps.rewire.outputs.done }}
     steps:
       - uses: actions/checkout@v4
@@ -1766,10 +1972,19 @@ jobs:
             echo "renderer_role=$(aws iam get-role --role-name piki-headless-browser-gha-deploy --query Role.Arn --output text 2>/dev/null || true)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: 다른 repo 접근 토큰 발급
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MIGRATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MIGRATE_APP_PRIVATE_KEY }}
+          owner: TeamPiKi
+          repositories: core,extractor,renderer
+
       - name: Environment 배선 갱신
         id: rewire
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           ENV: ${{ inputs.env }}
           ECR_ROLE: ${{ steps.tf.outputs.ecr_role }}
           DB_ROLE: ${{ steps.tf.outputs.db_role }}
@@ -1777,24 +1992,20 @@ jobs:
           RENDERER_ROLE: ${{ steps.tf.outputs.renderer_role }}
         run: |
           set -uo pipefail
-          [ -n "${GH_TOKEN:-}" ] || {
-            echo "::warning::CROSS_REPO_TOKEN 미설정 — 배선을 자동으로 못 바꾼다. 아래 finalize 안내대로 손으로 갱신할 것"
-            echo "done=false" >> "$GITHUB_OUTPUT"; exit 0; }
-
           fail=0
           set_var() {
             local env="${3:-$ENV}"
             if gh variable set "$1" --env "$env" --body "$2" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
               echo "  var     $1 = $2 (env=$env)"
             else
-              echo "::warning::variable $1 갱신 실패 — 토큰 권한(Variables: write) 확인"; fail=1
+              echo "::warning::variable $1 갱신 실패 — teampiki-migrate 앱의 core 설치·Environments 쓰기 권한 확인"; fail=1
             fi
           }
           set_repo_var() { # $1=repo $2=name $3=value
             if gh variable set "$2" --body "$3" --repo "$1" 2>/dev/null; then
               echo "  var     $2 = $3 ($1)"
             else
-              echo "::warning::$1 의 variable $2 갱신 실패 — CROSS_REPO_TOKEN 에 그 레포 Variables 쓰기 권한 확인"; fail=1
+              echo "::warning::$1 의 variable $2 갱신 실패 — teampiki-migrate 앱의 그 레포 설치·Variables 쓰기 권한 확인"; fail=1
             fi
           }
 
@@ -1960,7 +2171,7 @@ jobs:
 
   # ── 마무리: 결과 요약 + Discord 보드. 앞 단계 결과와 무관하게 항상 요약을 남긴다. ──
   finalize:
-    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, rewire, verify]
+    needs: [guard, config, bootstrap, ssm, iam_users, infra_core, infra_grafana, infra_apps, provision, ssm_hosts, rehearsal, deploy_core, side_hosts, deploy_core_app, deploy_extractor, deploy_renderer, cutover, forward_off, rewire, verify]
     # only 로 게이트하지 않는다. cutover 실패 안내가 모두 "only=cutover 로 재실행" 을 지시하는데, 그
     # 실행에서 finalize 가 skip 되면 정작 성공했을 때 남은 수동 정리와 요약 보드가 나오지 않는다.
     # 표는 skipped 를 그대로 보여 주므로 부분 실행에서도 오해가 없다.
@@ -1970,18 +2181,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 컷오버가 성공했으면 사람이 손으로 옮겨야 할 것이 둘 남는다. 자동화하지 않는다 —
-      # 둘 다 "다음 이관의 출발점"을 정하는 값이라 사람이 보고 넘기는 편이 안전하고,
-      # 자동화하려면 secrets write PAT 와 워크플로 파일 커밋 권한이 필요해 얻는 것보다 잃는 게 크다.
-      #
-      # SSH 키는 여기 없다. bootstrap 이 쓰던 키의 공개키를 신 계정에 등록했으므로
-      # EC2_SSH_KEY 는 그대로 두면 된다 — 승격할 것이 애초에 없다.
       - name: 남은 수동 정리 안내
         if: ${{ needs.cutover.result == 'success' }}
         env:
           ENV: ${{ inputs.env }}
           NEW_ACCOUNT: ${{ inputs.target_account_id }}
           REWIRE_DONE: ${{ needs.rewire.outputs.done }}
+          FWD_RESULT: ${{ needs.forward_off.result }}
         run: |
           set -euo pipefail
           {
@@ -2003,8 +2209,11 @@ jobs:
                 echo "| \`AWS_DEPLOY_ROLE_ARN\` | renderer 레포 repo variable | \`arn:aws:iam::$NEW_ACCOUNT:role/piki-headless-browser-gha-deploy\` (rewire 미완료) |"
               fi
             fi
-            echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, 이관 후 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
-            echo "| \`OLD_ACCOUNT_ID\` | \`.github/workflows/migrate.yml\` | \`$NEW_ACCOUNT\` |"
+            echo "| \`${{ env.BOOTSTRAP_ROLE }}\` 역할 | 신 계정 IAM | **삭제** — \`detach-role-policy\`(AdministratorAccess) 후 \`delete-role\`. trust 가 \`repo:${{ github.repository }}:*\` 라 이 레포에 워크플로를 넣을 수 있는 누구나 신 계정 Admin 을 상시 assume 할 수 있어, forward_off 까지 끝난 뒤 반드시 제거(삭제 전 infra_core state 가 이 역할을 참조 안 하는지 확인) |"
+            if [ "$FWD_RESULT" != success ]; then
+              echo "| 예전 서버 전달·새 nginx 의 예전 IP 신뢰 | 양쪽 앱 박스 | DNS 전환 확인 뒤 \`only=forward-off\` 로 걷어낸다 (forward_off 미완료) |"
+              [ "$ENV" = prod ] && echo "| \`AWS_ACCOUNT_ID\` | core repo variable | \`$NEW_ACCOUNT\` — forward_off 가 끝에서 바꾼다 |"
+            fi
             echo
             echo "\`EC2_SSH_KEY\` 는 바꿀 필요 없다 — bootstrap 이 같은 키의 공개키를 신 계정에 등록했다."
             echo
@@ -2012,14 +2221,14 @@ jobs:
             echo "(\`\${project}-\${environment}\` 접두사를 쓴다)."
           } >> "$GITHUB_STEP_SUMMARY"
           ROLES=""; [ "$REWIRE_DONE" = "true" ] || ROLES=" · 배포 역할 ARN(rewire 미완료)"
-          echo "::warning::남은 수동 정리 — OLD_ACCOUNT_ID · ${{ env.BOOTSTRAP_ROLE }} 역할 삭제${ROLES}. 자세한 내용은 실행 Summary."
+          echo "::warning::남은 수동 정리 — ${{ env.BOOTSTRAP_ROLE }} 역할 삭제${ROLES}. 자세한 내용은 실행 Summary."
 
       - name: 요약 조립
         id: sum
         run: |
           set -euo pipefail
           {
-            echo "### 이관 요약 (env=${{ inputs.env }}, dry_run=${{ inputs.dry_run }}, only=${{ inputs.only }})"
+            echo "### 이관 요약 (env=${{ inputs.env }}, only=${{ inputs.only }})"
             echo "| 단계 | 결과 |"
             echo "|---|---|"
             echo "| bootstrap | ${{ needs.bootstrap.result }} |"
@@ -2037,24 +2246,13 @@ jobs:
             echo "| deploy renderer | ${{ needs.deploy_renderer.result }} |"
             echo "| cutover | ${{ needs.cutover.result }} |"
             echo "| rewire (배포 배선 갱신) | ${{ needs.rewire.result }} |"
+            echo "| forward_off (DNS 전환 뒤 전달 걷어내기) | ${{ needs.forward_off.result }} |"
             echo "| verify (외부 API 실검증) | ${{ needs.verify.result }} |"
-            # skipped 는 두 뜻이다 — only 로 안 고른 단계이거나, 토큰이 없어 못 돈 단계이거나.
-            # 후자는 "안 한 일"이 남았다는 뜻이라 요약에서 구분해 준다.
-            # config 가 skip·실패하면 빈 문자열로 치환된다. != 'true' 로 보면 그때도 참이 되어
-            # "토큰이 없어 안 세웠다" 는 사실과 다른 안내가 나가므로, 명시적으로 false 일 때만 띄운다.
-            if [ "${{ needs.config.outputs.has_cross_repo_token }}" = "false" ]; then
-              echo
-              echo "> **미완료** — \`CROSS_REPO_TOKEN\` 이 없어 extractor·renderer 인프라를 세우지 않았다."
-              echo "> 그 결과 이 실행은 인프라·DB 까지만 갔다. core 배포는 배포 직전 extractor 헬스를"
-              echo "> 실측 프로브하는데 그 박스가 없어 \`side_hosts\` 가 멈추고, 그 뒤 core 배포와 컷오버가"
-              echo "> 함께 막힌다(의도된 fail-closed — 반쯤 이관된 상태로 DNS 를 넘기지 않기 위해서다)."
-              echo "> 토큰을 등록한 뒤 \`only=all\` 로 다시 돌리면 이어서 진행된다."
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
           # Discord detail 용 한 줄 요약
           {
             echo "board<<EOF"
-            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_grafana=${{ needs.infra_grafana.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} verify=${{ needs.verify.result }}"
+            echo "bootstrap=${{ needs.bootstrap.result }} ssm=${{ needs.ssm.result }} infra_core=${{ needs.infra_core.result }} infra_grafana=${{ needs.infra_grafana.result }} infra_apps=${{ needs.infra_apps.result }} provision=${{ needs.provision.result }} ssm_hosts=${{ needs.ssm_hosts.result }} rehearsal=${{ needs.rehearsal.result }} deploy(core=${{ needs.deploy_core_app.result }} ext=${{ needs.deploy_extractor.result }} ren=${{ needs.deploy_renderer.result }}) cutover=${{ needs.cutover.result }} rewire=${{ needs.rewire.result }} forward_off=${{ needs.forward_off.result }} verify=${{ needs.verify.result }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -2065,5 +2263,5 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
           status: info
-          title: "이관 요약 — env=${{ inputs.env }} dry_run=${{ inputs.dry_run }}"
+          title: "이관 요약 — env=${{ inputs.env }}"
           detail: ${{ steps.sum.outputs.board }}

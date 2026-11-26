@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>몰별 추출 규칙 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+  <style>
+    :root{--accent:#0EA5E9;--ink:#111827;--muted:#6b7280;--border:#e5e7eb;--danger:#b91c1c;--danger-soft:#fee2e2;--ok:#15803d;--ok-soft:#dcfce7;--warn:#92400e;--warn-soft:#fffbeb;--warn-border:#fde68a;}
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:820px;margin:0 auto;padding:26px 24px;}
+    h1{font-size:19px;font-weight:800;letter-spacing:-.02em;margin:0;}
+    .meta{margin-top:7px;font-size:12.5px;color:var(--muted);}
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px;margin-top:18px;}
+    .card h2{font-size:14px;font-weight:800;margin:0 0 12px;}
+    label,.lbl{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 6px;}
+    label:first-of-type{margin-top:0;}
+    input[type=text],textarea{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
+    textarea{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.6;min-height:260px;resize:vertical;}
+    input:focus,textarea:focus{outline:2px solid var(--accent);border-color:var(--accent);}
+    .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
+    .hint ul{margin:4px 0 0;padding-left:16px;}
+    .hint code,td code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#f1f5f9;padding:1px 5px;border-radius:4px;}
+    .check{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13.5px;font-weight:600;color:var(--ink);}
+    .check input{width:16px;height:16px;}
+    .actions{margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;}
+    .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .btn.second{background:#fff;color:var(--accent);border:1px solid var(--accent);}
+    .btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--border);text-decoration:none;display:inline-block;padding:11px 18px;}
+    .ok{margin-top:16px;background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 12px;font-size:13px;}
+    .err{margin-top:16px;background:var(--danger-soft);border:1px solid #fecaca;color:var(--danger);border-radius:8px;padding:9px 12px;font-size:13px;}
+    .warn{margin-top:12px;background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;}
+    table{width:100%;border-collapse:collapse;font-size:13px;}
+    th,td{text-align:left;padding:9px 10px;border-top:1px solid var(--border);vertical-align:top;}
+    thead th{border-top:none;font-size:11.5px;color:var(--muted);font-weight:700;}
+    td.k{width:90px;font-weight:700;color:var(--muted);font-size:12px;}
+    td.none{color:#9aa1aa;}
+    td.url{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;word-break:break-all;}
+    .verdict{font-size:13px;font-weight:700;margin-bottom:10px;}
+    .verdict.pass{color:var(--ok);} .verdict.fail{color:var(--danger);}
+    details.rev{border-top:1px solid var(--border);padding:10px 0;}
+    details.rev:first-of-type{border-top:none;}
+    details.rev summary{cursor:pointer;font-size:12.5px;color:#374151;}
+    details.rev pre{margin:8px 0 0;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11.5px;line-height:1.55;overflow-x:auto;white-space:pre-wrap;}
+    .danger{margin-top:18px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:18px;}
+    .danger .t{font-size:13px;font-weight:800;color:var(--danger);}
+    .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.6;}
+    .danger button{margin-top:14px;background:#fff;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .danger button:hover{background:var(--danger);color:#fff;}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin/extraction-rules', '← 규칙 목록')}"></div>
+  <div class="wrap">
+    <h1 th:text="${ruleId} ? '규칙 #' + ${ruleId} : '새 규칙'">새 규칙</h1>
+    <div class="meta" th:if="${updatedAt}">마지막 수정 <b th:text="${#temporals.format(updatedAt, 'yyyy-MM-dd HH:mm')}">-</b></div>
+
+    <div class="ok" th:if="${param.saved}">저장됐습니다. 켜진 규칙은 약 1분 안에 추출에 적용됩니다.</div>
+    <div class="err" th:if="${error}" th:text="${error}">에러</div>
+
+    <!-- 시험 결과. 규칙이 읽은 값과 공통 규칙이 읽은 값을 나란히 둔다 — 규칙이 다른 요소를 가리켜 엉뚱한 값을 읽으면
+         두 칸이 어긋나 보인다. -->
+    <div class="card" th:if="${probe}">
+      <h2>시험 추출 결과</h2>
+      <div class="verdict fail" th:if="${probeRejection}" th:text="${probeRejection}">거절 사유</div>
+      <div class="verdict pass" th:unless="${probeRejection}">이 페이지에서 규칙이 적용됩니다. 아래 값이 실제 화면과 같은지 확인해 주세요.</div>
+      <div class="warn" th:if="${needsConfirmation}" style="margin:0 0 12px">
+        <b>아직 저장하지 않았습니다.</b> 이 규칙으로 읽은 값을 본 적이 없어 먼저 보여 드립니다.
+        값이 실제 화면과 같으면 아래에서 <b>저장</b>을 한 번 더 눌러 주세요.
+      </div>
+      <table>
+        <thead><tr><th></th><th>규칙이 읽은 값</th><th>공통 규칙이 읽은 값</th></tr></thead>
+        <tbody>
+          <tr><td class="k">이름</td>
+            <td th:classappend="${probe.byRule.name != null} ? '' : 'none'" th:text="${probe.byRule.name} ?: '없음'">-</td>
+            <td th:classappend="${probe.byCommon.name != null} ? '' : 'none'" th:text="${probe.byCommon.name} ?: '없음'">-</td></tr>
+          <tr><td class="k">판매가</td>
+            <td th:classappend="${probe.byRule.currentPrice != null} ? '' : 'none'" th:text="${probe.byRule.currentPrice != null} ? ${#numbers.formatInteger(probe.byRule.currentPrice, 1, 'COMMA')} : '없음'">-</td>
+            <td th:classappend="${probe.byCommon.currentPrice != null} ? '' : 'none'" th:text="${probe.byCommon.currentPrice != null} ? ${#numbers.formatInteger(probe.byCommon.currentPrice, 1, 'COMMA')} : '없음'">-</td></tr>
+          <tr><td class="k">정가</td>
+            <td th:classappend="${probe.byRule.originalPrice != null} ? '' : 'none'" th:text="${probe.byRule.originalPrice != null} ? ${#numbers.formatInteger(probe.byRule.originalPrice, 1, 'COMMA')} : '없음'">-</td>
+            <td th:classappend="${probe.byCommon.originalPrice != null} ? '' : 'none'" th:text="${probe.byCommon.originalPrice != null} ? ${#numbers.formatInteger(probe.byCommon.originalPrice, 1, 'COMMA')} : '없음'">-</td></tr>
+          <tr><td class="k">이미지</td>
+            <td class="url" th:classappend="${probe.byRule.imageUrl != null} ? '' : 'none'" th:text="${probe.byRule.imageUrl} ?: '없음'">-</td>
+            <td class="url" th:classappend="${probe.byCommon.imageUrl != null} ? '' : 'none'" th:text="${probe.byCommon.imageUrl} ?: '없음'">-</td></tr>
+          <tr><td class="k">최종 주소</td><td class="url" colspan="2" th:text="${probe.finalUrl} ?: '없음'">-</td></tr>
+        </tbody>
+      </table>
+      <div class="warn" th:if="${probe.noDiscountApplied}">
+        <b>정가 자리가 없어 "할인 없음" 으로 채워집니다.</b> 실제 추출에서는 정가가 판매가와 같은 값으로 저장됩니다.
+        이 상품이 정말 할인이 없는 상품인지 화면에서 확인해 주세요.
+      </div>
+      <div class="warn" th:if="${!#lists.isEmpty(probe.unreadFields) and !probe.discarded}">
+        출처를 적었지만 이 페이지에서 못 읽은 필드: <b th:text="${#strings.listJoin(probe.unreadFields, ', ')}">originalPrice</b>
+      </div>
+    </div>
+
+    <form class="card" method="post" th:action="${ruleId} ? @{/admin/extraction-rules/{id}(id=${ruleId})} : @{/admin/extraction-rules}">
+      <input type="hidden" name="id" th:if="${ruleId}" th:value="${ruleId}">
+      <!-- confirmation: 지금 화면의 시험 결과가 어느 본문·주소의 것인지. 본문을 고치면 서버가 어긋남을 알아채고 다시 보여 준다.
+           baseRevisionId: 이 폼을 열었을 때의 마지막 이력 번호. 그 뒤 다른 운영자가 고쳤으면 저장을 거절한다. -->
+      <input type="hidden" name="confirmation" th:value="${confirmation}">
+      <input type="hidden" name="baseRevisionId" th:value="${baseRevisionId}">
+
+      <label for="label">이름</label>
+      <input id="label" name="label" type="text" maxlength="100" autocomplete="off" placeholder="예: 올리브영" th:value="${draft.label}" required>
+
+      <label for="ruleJson">규칙</label>
+      <textarea id="ruleJson" name="ruleJson" spellcheck="false" required
+                placeholder='{
+  "host": "oliveyoung.co.kr",
+  "fetch": "RENDER",
+  "name": {"css": {"selector": "h3[class*=\"GoodsDetailInfo_title__\"]"}},
+  "currentPrice": {"css": {"selector": "[class^=\"GoodsDetailInfo_price__\"] span"}},
+  "originalPrice": {"css": {"selector": "[class*=\"GoodsDetailInfo_price-before\"] span"}},
+  "imageUrl": {"css": {"selector": "meta[property=\"og:image\"]", "attribute": "content"}},
+  "absentOriginalPrice": "NO_DISCOUNT"
+}' th:text="${draft.ruleJson}"></textarea>
+      <div class="hint">
+        <ul>
+          <li>대상은 <code>host</code>(서브도메인 포함) 또는 <code>marker</code>(페이지에 이 선택자가 있으면 대상) 중 하나</li>
+          <li>필드는 <code>name</code>·<code>imageUrl</code>·<code>currentPrice</code>·<code>originalPrice</code>. 적지 않은 필드는 공통 규칙이 채웁니다</li>
+          <li>출처는 <code>css</code>(selector, attribute) 또는 <code>json</code>(script, pointer)</li>
+          <li>가격 선택자는 금액 하나만 든 요소를 가리켜야 합니다. 금액이 둘 이상이면 읽지 않습니다</li>
+          <li><code>"fetch": "RENDER"</code> 는 값이 스크립트 실행 뒤에만 생기는 몰에 씁니다</li>
+          <li><code>"absentOriginalPrice": "NO_DISCOUNT"</code> 는 할인 상품이면 정가를 반드시 싣는 몰에만 씁니다</li>
+        </ul>
+      </div>
+
+      <label for="sampleUrl">시험에 쓸 상품 주소</label>
+      <input id="sampleUrl" name="sampleUrl" type="text" maxlength="2048" autocomplete="off" placeholder="https://..." th:value="${draft.sampleUrl}" required>
+      <div class="hint">할인 상품과 할인 없는 상품을 각각 한 번씩 시험해 보는 것이 좋습니다.
+        켠 채 저장하려면 이 주소로 읽은 값을 먼저 봐야 합니다.</div>
+
+      <label class="check"><input type="checkbox" name="enabled" value="on" th:checked="${draft.enabled}"> 켜기 (끄면 추출에 적용되지 않고, 시험 없이 저장됩니다)</label>
+
+      <div class="actions">
+        <button class="btn second" type="submit" th:formaction="@{/admin/extraction-rules/probe}">시험 추출</button>
+        <button class="btn" type="submit">저장</button>
+        <a class="btn ghost" th:href="@{/admin/extraction-rules}">취소</a>
+      </div>
+    </form>
+
+    <div class="card" th:if="${!#lists.isEmpty(revisions)}">
+      <h2>변경 이력 (최근 20건)</h2>
+      <details class="rev" th:each="v : ${revisions}">
+        <summary>
+          <b th:text="${#temporals.format(v.createdAt, 'yyyy-MM-dd HH:mm')}">-</b>
+          · <span th:text="${v.actor}">actor</span>
+          · <span th:text="${v.changeType == 'DELETED'} ? '삭제' : (${v.enabled} ? '저장 (켬)' : '저장 (끔)')">저장</span>
+        </summary>
+        <pre th:text="${v.ruleJson}">{}</pre>
+      </details>
+    </div>
+
+    <div class="danger" th:if="${ruleId}">
+      <div class="t">규칙 삭제</div>
+      <div class="d">삭제하면 이 몰의 추출이 약 1분 안에 <b>공통 규칙과 LLM</b> 으로 돌아갑니다. 본문은 이력에 남습니다.
+        잠깐 멈추려는 것이면 삭제 대신 끄고 저장해 주세요.</div>
+      <form method="post" th:action="@{/admin/extraction-rules/{id}/delete(id=${ruleId})}">
+        <button type="submit">이 규칙 삭제</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

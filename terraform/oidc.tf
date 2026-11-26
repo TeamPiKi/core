@@ -173,3 +173,112 @@ resource "aws_iam_role_policy" "github_db_provision" {
   role   = aws_iam_role.github_db_provision.id
   policy = data.aws_iam_policy_document.db_provision.json
 }
+
+# -----------------------------------------------------------------------------
+# GitHub Actions → 계정 이관의 출발 계정 접근 (#1310)
+#
+# 이관 워크플로(migrate.yml)가 다음 이관 때 이 계정을 "구 계정"으로 읽는다. 장기 키를 이관마다 만들고
+# 지우던 절차를 없애려고 계정마다 미리 둔다.
+# 신뢰는 배포와 같은 dev·prod Environment 다. 이관 job 이 env 별 EC2_SSH_KEY 를 함께 써야 해서
+# prod-db 같은 전용 Environment 로 가를 수 없다.
+# -----------------------------------------------------------------------------
+resource "aws_iam_role" "github_migrate_source" {
+  # migrate.yml 의 MIGRATE_SOURCE_ROLE 과 같은 이름이어야 한다.
+  name                 = "piki-migrate-source"
+  assume_role_policy   = data.aws_iam_policy_document.github_push_assume.json
+  max_session_duration = 7200
+}
+
+data "aws_iam_policy_document" "migrate_source" {
+  statement {
+    sid       = "ListParameters"
+    actions   = ["ssm:DescribeParameters"]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "ReadParameters"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/*"]
+  }
+  statement {
+    sid       = "DecryptParameters"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${var.aws_region}.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "ListImages"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.images.arn, aws_s3_bucket.dev_images.arn]
+  }
+  statement {
+    sid     = "ReadImagesAndDumpRelay"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.images.arn}/*",
+      "${aws_s3_bucket.dev_images.arn}/*",
+      "${aws_s3_bucket.db_backup.arn}/migrate/*",
+    ]
+  }
+
+  statement {
+    sid       = "FindInstances"
+    actions   = ["ec2:DescribeInstances"]
+    resources = ["*"]
+  }
+  # 구 계정 Run Command 는 prod DB 덤프 하나다. 앱 박스는 SSH(아래 SshOverSsm)로만 붙는다.
+  statement {
+    sid     = "RunShellOnDbBox"
+    actions = ["ssm:SendCommand"]
+    resources = [
+      aws_instance.db.arn,
+      "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
+    ]
+  }
+  statement {
+    sid       = "ReadCommandResult"
+    actions   = ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations"]
+    resources = ["*"]
+  }
+  statement {
+    sid     = "SshOverSsm"
+    actions = ["ssm:StartSession"]
+    resources = [
+      aws_instance.app.arn,
+      aws_instance.dev_app.arn,
+      "arn:aws:ssm:${var.aws_region}::document/AWS-StartSSHSession",
+    ]
+    condition {
+      test     = "BoolIfExists"
+      variable = "ssm:SessionDocumentAccessCheck"
+      values   = ["true"]
+    }
+  }
+  statement {
+    sid       = "SsmSessionChannel"
+    actions   = ["ssm:TerminateSession", "ssmmessages:OpenDataChannel"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:session/*"]
+  }
+
+  # migrate-iam-users.sh 가 개발자 그룹·사용자·정책을 읽어 신 계정에 다시 만든다.
+  statement {
+    sid = "ReadPeople"
+    actions = [
+      "iam:GetGroup", "iam:GetGroupPolicy", "iam:ListGroupPolicies", "iam:ListAttachedGroupPolicies",
+      "iam:GetUser", "iam:GetUserPolicy", "iam:ListUserPolicies", "iam:ListAttachedUserPolicies",
+      "iam:GetPolicy", "iam:GetPolicyVersion",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "github_migrate_source" {
+  name   = "piki-migrate-source"
+  role   = aws_iam_role.github_migrate_source.id
+  policy = data.aws_iam_policy_document.migrate_source.json
+}

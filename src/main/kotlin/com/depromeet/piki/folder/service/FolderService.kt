@@ -12,7 +12,6 @@ import com.depromeet.piki.folder.repository.FolderWishRepository
 import com.depromeet.piki.folder.service.dto.FolderMoveResult
 import com.depromeet.piki.folder.service.dto.FolderResult
 import com.depromeet.piki.folder.service.dto.FolderWishCountResult
-import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.service.UserService
 import com.depromeet.piki.wishlist.domain.WishException
@@ -27,7 +26,7 @@ class FolderService(
     private val folderRepository: FolderRepository,
     private val folderWishRepository: FolderWishRepository,
     private val wishRepository: WishRepository,
-    private val itemCardService: ItemCardService,
+    private val folderCovers: FolderCovers,
     private val userService: UserService,
 ) {
     // 폴더는 위시를 묶는 기능이라 위시리스트와 같은 회원 전용 계약을 그대로 쓴다
@@ -67,6 +66,18 @@ class FolderService(
         requireMemberForUpdate(userId)
         val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
         folder.rename(name)
+        return resultsOf(listOf(folder)).single()
+    }
+
+    @Transactional
+    fun changeVisibility(
+        userId: UUID,
+        folderId: Long,
+        isPublic: Boolean,
+    ): FolderResult {
+        requireMemberForUpdate(userId)
+        val folder = folderRepository.findOwnedForUpdate(folderId, userId) ?: throw FolderException.notFound()
+        folder.changeVisibility(isPublic)
         return resultsOf(listOf(folder)).single()
     }
 
@@ -161,31 +172,15 @@ class FolderService(
 
     private fun countOf(folder: Folder): FolderWishCountResult = FolderWishCountResult(folderId = folder.getId(), wishCount = folderWishRepository.countLiveByFolderId(folder.getId()))
 
-    // 표지는 최근 넣은 위시 최대 3개. 이미지가 없는 위시(파싱 중·실패)도 칸을 차지하고 null 로 둔다 — 앱이 그 칸을 기본 이미지로 채운다(정책 5장).
-    // 연결 id 는 전부 읽지만(개수에도 쓰임) 비싼 카드 계산은 폴더당 표지 칸만큼만 한다
     private fun resultsOf(folders: List<Folder>): List<FolderResult> {
         val wishIdsByFolder = folderWishRepository.findLiveWishIdsByFolderIds(folders.map { it.getId() })
-        val coverWishesByFolder = wishIdsByFolder.mapValues { (_, ids) -> ids.take(COVER_IMAGE_COUNT) }
-        val imageByWish = imageUrlsOf(coverWishesByFolder.values.flatten().distinct())
+        val coversByFolder = folderCovers.coversOf(wishIdsByFolder)
         return folders.map { folder ->
             FolderResult(
                 folder = folder,
                 wishCount = wishIdsByFolder[folder.getId()].orEmpty().size,
-                coverImageUrls = coverWishesByFolder[folder.getId()].orEmpty().map { imageByWish[it] },
+                coverImageUrls = coversByFolder[folder.getId()].orEmpty(),
             )
         }
-    }
-
-    private fun imageUrlsOf(wishIds: List<Long>): Map<Long, String> {
-        if (wishIds.isEmpty()) return emptyMap()
-        val wishes = wishRepository.findAllByIds(wishIds)
-        val cards = itemCardService.cardsOf(wishes.map { it.cardQuery() })
-        return wishes
-            .mapNotNull { wish -> cards.getValue(wish.cardQuery()).display?.imageUrl?.let { wish.getId() to it } }
-            .toMap()
-    }
-
-    companion object {
-        private const val COVER_IMAGE_COUNT = 3
     }
 }

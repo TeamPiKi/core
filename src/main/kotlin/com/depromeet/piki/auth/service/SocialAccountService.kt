@@ -2,7 +2,6 @@ package com.depromeet.piki.auth.service
 
 import com.depromeet.piki.auth.infrastructure.oauth.OAuthUserInfo
 import com.depromeet.piki.user.domain.User
-import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.service.UserService
 import org.slf4j.LoggerFactory
@@ -55,7 +54,7 @@ class SocialAccountService(
 
         // 3. 순수 신규 가입 → MEMBER 생성 + 소셜 연결
         return try {
-            createSocialUserAndLinkRetryingNickname(userInfo).also {
+            socialAccountWriter.createSocialUserAndLink(userInfo).also {
                 log.info("신규 소셜 회원 가입 userId={} provider={}", it.id, userInfo.provider)
             }
         } catch (e: DataIntegrityViolationException) {
@@ -67,27 +66,6 @@ class SocialAccountService(
     }
 
     // 소셜 신규 가입의 닉네임 충돌 재시도(#920). 닉네임은 자동 생성이라 '중복'이 사용자 입력 오류가 아니고,
-    // 생성과 저장 사이 race 로만 충돌한다 — 게스트 생성(UserService.createGuest)이 같은 이유로 재시도하는 것과 같은 결.
-    //
-    // 재시도가 여기(트랜잭션 밖)에 있어야 하는 이유: createSocialUserAndLink 는 @Transactional 이라 그 안에서
-    // 재시도하면 첫 충돌에 트랜잭션이 rollback-only 로 마킹돼 이후 시도가 커밋될 수 없다. 이 서비스는 비트랜잭션이라
-    // 매 시도가 REQUIRED 로 새 트랜잭션을 열고 닫는다.
-    //
-    // 닉네임 충돌만 삼킨다 — 소셜 선점 충돌(user_details unique)은 그대로 던져 호출부의 '기존 계정 합류' 분기가
-    // 받게 한다. 둘을 뭉뚱그리면 닉네임 race 가 소셜 충돌로 오진돼, 선점되지 않은 소셜을 loginExisting 으로
-    // 찾다 실패하고 500 이 된다.
-    private fun createSocialUserAndLinkRetryingNickname(userInfo: OAuthUserInfo): User {
-        repeat(SOCIAL_NICKNAME_MAX_ATTEMPTS) {
-            try {
-                return socialAccountWriter.createSocialUserAndLink(userInfo)
-            } catch (e: DataIntegrityViolationException) {
-                if (!userService.isNicknameConflict(e)) throw e
-                log.info("소셜 가입 닉네임 충돌 → 재발급 재시도 provider={}", userInfo.provider)
-            }
-        }
-        throw UserException.nicknameGenerationFailed()
-    }
-
     // 기존 가입자 재로그인 경로. email 은 provider 가 준 값으로 backfill·최신 유지하되(#442), "매 로그인 write"가
     // 아니라 값이 실제로 바뀐 경우에만 upsert 한다 — findByProviderAndSocialId 로 이미 읽은 UserDetail 의 email 과
     // 비교해, 동일하거나 provider 가 안 준(null) 재로그인(대부분)은 updateEmail 의 새 트랜잭션·SELECT·UPDATE 를
@@ -155,10 +133,6 @@ class SocialAccountService(
     }
 
     companion object {
-        // 소셜 가입 닉네임 충돌 재시도 횟수. 게스트(UserService.GUEST_NICKNAME_MAX_ATTEMPTS)와 같은 값으로 둔다 —
-        // 같은 race 를 같은 방식으로 흡수하므로 두 경로의 내구성이 달라질 이유가 없다.
-        private const val SOCIAL_NICKNAME_MAX_ATTEMPTS = 5
-
         // 승계 중 참여 경합 재시도 횟수(#1081). 재조회 한 번이면 충돌한 방이 건너뛰기로 갈려 수렴하므로 2회면 충분하고,
         // 여유 1회만 더 둔다. 로그인 경로라 길게 매달리는 것이 사용자에게 더 나쁘다.
         private const val TAKEOVER_MAX_ATTEMPTS = 3

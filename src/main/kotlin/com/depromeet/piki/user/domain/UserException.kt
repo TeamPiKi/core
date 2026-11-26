@@ -25,7 +25,6 @@ class UserException private constructor(
 
         fun duplicateNickname(): UserException = UserException(UserErrorCode.DUPLICATE_NICKNAME)
 
-        fun nicknameGenerationFailed(): UserException = UserException(UserErrorCode.NICKNAME_GENERATION_FAILED)
 
         // 구 invalidNickname(reason) 을 3케이스로 분리(에픽 #728). reason 은 User.validateNickname 이 넘기던
         // 3개 고정 문구뿐이었으므로, 코드↔문구 1:1 로 정적화한다.
@@ -41,6 +40,9 @@ class UserException private constructor(
 
         // 프로필 이미지 수정은 MEMBER 전용 — 게스트가 이미지 파트를 담아 PATCH /me 를 호출하면 닿는 계약 응답(403).
         fun guestCannotUpdateProfileImage(): UserException = UserException(UserErrorCode.GUEST_CANNOT_UPDATE_PROFILE_IMAGE)
+
+        // 프로필 공개 설정은 MEMBER 전용 — 게스트가 isProfilePublic 을 담아 PATCH /me 를 호출하면 닿는 계약 응답(403).
+        fun guestCannotUpdateProfileVisibility(): UserException = UserException(UserErrorCode.GUEST_CANNOT_UPDATE_PROFILE_VISIBILITY)
 
         fun emptyProfileImage(): UserException = UserException(UserErrorCode.EMPTY_PROFILE_IMAGE)
 

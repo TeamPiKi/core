@@ -31,6 +31,10 @@ class IntegrationStubs {
     @Primary
     fun extractionModelProbe(): StubExtractionModelProbe = StubExtractionModelProbe()
 
+    @Bean
+    @Primary
+    fun extractionRuleProbe(): StubExtractionRuleProbe = StubExtractionRuleProbe()
+
     // 운영 FirebaseMessageSender 는 키가 없는 테스트 환경에서 안 뜨지만, ObjectProvider 로 찾는 쪽이 있어 stub 이 필요함
     @Bean
     @Primary
@@ -64,4 +68,8 @@ class IntegrationStubs {
     @Bean
     @Primary
     fun discordMessageSender(): StubDiscordMessageSender = StubDiscordMessageSender()
+
+    @Bean
+    @Primary
+    fun discordWebhookSender(): StubDiscordWebhookSender = StubDiscordWebhookSender()
 }

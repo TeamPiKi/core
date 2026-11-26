@@ -1,6 +1,8 @@
 package com.depromeet.piki.folder.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
+import com.depromeet.piki.common.exception.CommonErrorCode
+import com.depromeet.piki.folder.controller.dto.FolderVisibilityRequest
 import com.depromeet.piki.folder.domain.FolderErrorCode
 import com.depromeet.piki.item.service.ItemParsingService
 import com.depromeet.piki.product.domain.ProductLink
@@ -219,6 +221,62 @@ class FolderIntegrationTest : IntegrationTestSupport() {
             .perform(patch("/api/v1/folders/$folderId").by(member()).json(mapOf("name" to "내꺼")))
             .andExpect(status().isNotFound)
             .andExpect(jsonPath("$.code").value(FolderErrorCode.NOT_FOUND.code))
+    }
+
+    @Test
+    fun `새 폴더는 공개이고 비공개로 바꾸면 200 과 함께 목록에도 비공개로 나온다`() {
+        val userId = member()
+        val folderId = createFolder(userId, "가방")
+
+        mockMvc()
+            .perform(patch("/api/v1/folders/$folderId/visibility").by(userId).json(mapOf("isPublic" to false)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.code").value(nullValue()))
+            .andExpect(jsonPath("$.data.id").value(folderId))
+            .andExpect(jsonPath("$.data.name").value("가방"))
+            .andExpect(jsonPath("$.data.isPublic").value(false))
+
+        mockMvc()
+            .perform(get("/api/v1/folders").by(userId))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data[0].isPublic").value(false))
+    }
+
+    @Test
+    fun `isPublic 없이 공개 여부를 바꾸면 400 COMMON-INVALID-INPUT 이 반환된다`() {
+        val userId = member()
+        val folderId = createFolder(userId, "가방")
+
+        mockMvc()
+            .perform(patch("/api/v1/folders/$folderId/visibility").by(userId).json(emptyMap<String, Any>()))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value(CommonErrorCode.INVALID_INPUT.code))
+            .andExpect(jsonPath("$.detail").value(FolderVisibilityRequest.IS_PUBLIC_REQUIRED_MESSAGE))
+    }
+
+    @Test
+    fun `남의 폴더 공개 여부를 바꾸면 404 FOLDER-001 이 반환되고 폴더는 공개로 남는다`() {
+        val owner = member()
+        val folderId = createFolder(owner, "가방")
+
+        mockMvc()
+            .perform(patch("/api/v1/folders/$folderId/visibility").by(member()).json(mapOf("isPublic" to false)))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value(FolderErrorCode.NOT_FOUND.code))
+
+        mockMvc()
+            .perform(get("/api/v1/folders").by(owner))
+            .andExpect(jsonPath("$.data[0].isPublic").value(true))
+    }
+
+    @Test
+    fun `게스트가 폴더 공개 여부를 바꾸면 403 WISH-001 이 반환된다`() {
+        val guest = UUID.randomUUID().also { insertUser(it, IdentityType.GUEST) }
+
+        mockMvc()
+            .perform(patch("/api/v1/folders/1/visibility").by(guest, IdentityType.GUEST).json(mapOf("isPublic" to false)))
+            .andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value(WishErrorCode.GUEST_CANNOT_USE_WISHLIST.code))
     }
 
     @Test

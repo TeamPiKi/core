@@ -6,6 +6,8 @@ import tools.jackson.databind.JsonNode
 object DiscordInteractions {
     const val TYPE_PING = 1
     const val TYPE_PONG = 1
+    const val TYPE_APPLICATION_COMMAND = 2
+    const val TYPE_MESSAGE_COMPONENT = 3
     const val TYPE_CHANNEL_MESSAGE = 4
     const val FLAG_EPHEMERAL = 64
     const val COLOR_GREEN = 0x2ECC71
@@ -13,6 +15,35 @@ object DiscordInteractions {
 
     // data.name — 어느 슬래시커맨드인가(라우팅 키).
     fun commandName(root: JsonNode): String = root.path("data").path("name").takeIf { it.isString }?.asString() ?: ""
+
+    // data.custom_id — 어느 버튼을 눌렀나(컴포넌트 인터랙션의 라우팅 키).
+    fun customId(root: JsonNode): String = root.path("data").path("custom_id").takeIf { it.isString }?.asString() ?: ""
+
+    fun interactionType(root: JsonNode): Int = root.path("type").takeIf { it.canConvertToInt() }?.asInt() ?: 0
+
+    fun channelId(root: JsonNode): String = root.path("channel_id").takeIf { it.isString }?.asString() ?: ""
+
+    /**
+     * 이 인터랙션을 이 채널에서 받아도 되는가. 슬래시커맨드는 admin 채널, 버튼은 신고 알림 채널에서만 받는다(#1291).
+     *
+     * 버튼을 admin 채널 기준으로 재면 늘 거부된다 — 알림이 게시되는 곳은 신고 채널이기 때문이다. 반대로 두 채널을
+     * 합쳐 허용하면 신고 채널에서 슬래시커맨드가 돌아 운영 인터랙션이 그 채널로 새어 나간다.
+     *
+     * 설정이 비어 있으면 거부한다(fail-closed). 빈 값을 통과시키면 설정 실수가 "아무 채널에서나 열림" 이 된다.
+     */
+    fun isAllowedChannel(
+        channelId: String,
+        interactionType: Int,
+        adminChannelId: String,
+        reportChannelId: String,
+    ): Boolean {
+        val allowed =
+            when (interactionType) {
+                TYPE_MESSAGE_COMPONENT -> reportChannelId
+                else -> adminChannelId
+            }
+        return allowed.isNotBlank() && channelId == allowed
+    }
 
     // 최상위 커맨드 옵션 값(data.options[name==?].value). 서브커맨드 없이 인덱스 순회로 찾는다(Jackson 3).
     fun optionValue(
@@ -97,4 +128,19 @@ interface DiscordCommandHandler {
     val commandName: String
 
     fun handle(interaction: DiscordInteraction): Map<String, Any>
+}
+
+/**
+ * 버튼 클릭(컴포넌트 인터랙션) 처리기(#1291). 커맨드와 같은 게이트(서명·채널·allowlist)를 통과한 뒤 불린다.
+ *
+ * custom_id 는 `<prefix>:<인자>` 모양이고, prefix 로 라우팅한다. 인자 파싱은 각 핸들러가 한다 —
+ * 버튼마다 인자 모양이 다르고, 잘못된 인자를 거부하는 방식도 그 버튼의 책임이다.
+ */
+interface DiscordComponentHandler {
+    val customIdPrefix: String
+
+    fun handle(
+        interaction: DiscordInteraction,
+        argument: String,
+    ): Map<String, Any>
 }

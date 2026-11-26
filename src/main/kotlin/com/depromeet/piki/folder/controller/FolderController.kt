@@ -5,10 +5,12 @@ import com.depromeet.piki.folder.controller.dto.FolderMoveRequest
 import com.depromeet.piki.folder.controller.dto.FolderMoveResponse
 import com.depromeet.piki.folder.controller.dto.FolderNameRequest
 import com.depromeet.piki.folder.controller.dto.FolderResponse
+import com.depromeet.piki.folder.controller.dto.FolderVisibilityRequest
 import com.depromeet.piki.folder.controller.dto.FolderWishCountResponse
 import com.depromeet.piki.folder.controller.dto.FolderWishesRequest
 import com.depromeet.piki.folder.domain.FolderWishSelection
 import com.depromeet.piki.folder.service.FolderService
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -50,6 +52,17 @@ class FolderController(
         @RequestBody request: FolderNameRequest,
     ): ApiResponseBody<FolderResponse> {
         val result = folderService.rename(userId, folderId, request.toFolderName())
+        return ApiResponseBody.ok(FolderResponse.from(result))
+    }
+
+    // 이름 바꾸기 PATCH 는 name 이 필수라 공개 전환을 따로 둔다. 거기에 넣으면 name 을 선택으로 바꿔야 해 계약이 바뀐다
+    @PatchMapping("/{folderId}/visibility")
+    override fun changeVisibility(
+        @AuthenticationPrincipal userId: UUID,
+        @PathVariable folderId: Long,
+        @Valid @RequestBody request: FolderVisibilityRequest,
+    ): ApiResponseBody<FolderResponse> {
+        val result = folderService.changeVisibility(userId, folderId, request.toIsPublic())
         return ApiResponseBody.ok(FolderResponse.from(result))
     }
 

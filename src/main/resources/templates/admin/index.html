@@ -64,6 +64,10 @@
           <div class="t">추출 LLM 모델</div>
           <div class="d">링크, 이미지 경로별 모델 지정</div>
         </a>
+        <a class="card" th:href="@{/admin/extraction-rules}" style="text-decoration:none;color:inherit">
+          <div class="t">몰별 추출 규칙</div>
+          <div class="d">쇼핑몰별 값의 위치 지정, 시험 추출</div>
+        </a>
         <a class="card" th:href="@{/admin/extraction-identity}" style="text-decoration:none;color:inherit">
           <div class="t">추출 신원</div>
           <div class="d">쇼핑몰에 밝히는 이름 설정</div>
@@ -81,6 +85,16 @@
         <a class="card" th:href="@{/admin/metrics}" style="text-decoration:none;color:inherit">
           <div class="t">운영 통계 대시보드</div>
           <div class="d">기간별 가입, 위시, 토너먼트, 리텐션, 푸시</div>
+        </a>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h2>신고</h2>
+      <div class="grid">
+        <a class="card" th:href="@{/admin/reports}" style="text-decoration:none;color:inherit">
+          <div class="t">사용자 신고</div>
+          <div class="d">접수된 신고, 사용자별 누적 내역</div>
         </a>
       </div>
     </section>

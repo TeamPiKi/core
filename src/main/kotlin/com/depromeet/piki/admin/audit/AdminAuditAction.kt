@@ -17,6 +17,9 @@ enum class AdminAuditAction {
     // 추출 신원 지정(#1276) — 누가 대상 몰에 밝히는 이름을 무엇으로 바꿨는지. 값에 따라 몰이 우리 요청을 막을 수 있다.
     EXTRACTION_IDENTITY_UPDATE,
 
+    // 몰별 추출 규칙(#1318) — 누가 어느 규칙을 만들고 고치고 지웠는지. 본문은 길어 extraction_rule_revisions 에 남는다.
+    EXTRACTION_RULE_UPDATE,
+
     // 아이템 등록 한도(#934) — 누가 어느 노브를 무슨 값으로 바꿨는지. 한도는 비용·사용자 차단에 직결되고
     // 배포 없이 바뀌므로, 값이 왜 이렇게 되어 있는지를 되짚을 유일한 기록이 이 로그다.
     ITEM_QUOTA_UPDATE,

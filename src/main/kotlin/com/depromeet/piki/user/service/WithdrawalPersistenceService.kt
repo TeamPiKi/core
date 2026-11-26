@@ -1,15 +1,19 @@
 package com.depromeet.piki.user.service
 
+import com.depromeet.piki.block.repository.UserBlockRepository
 import com.depromeet.piki.folder.repository.FolderRepository
 import com.depromeet.piki.folder.repository.FolderWishRepository
+import com.depromeet.piki.friendship.repository.FriendshipRepository
 import com.depromeet.piki.notification.fcm.repository.UserDeviceRepository
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.user.domain.UserException
+import com.depromeet.piki.user.event.UserWithdrawn
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.wishlist.repository.WishMemoRepository
 import com.depromeet.piki.wishlist.repository.WishRepository
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -27,7 +31,10 @@ class WithdrawalPersistenceService(
     private val folderRepository: FolderRepository,
     private val folderWishRepository: FolderWishRepository,
     private val notificationRepository: NotificationRepository,
+    private val friendshipRepository: FriendshipRepository,
+    private val userBlockRepository: UserBlockRepository,
     private val defaultProfileImages: DefaultProfileImages,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -75,6 +82,23 @@ class WithdrawalPersistenceService(
         // 5. notifications 하드삭제 — 수신자 알림 즉시 파기.
         val notifications = notificationRepository.hardDeleteAllByUserId(userId)
 
-        log.info("회원 탈퇴 cascade 완료 userId={} wishes={} notifications={}", userId, wishes, notifications)
+        // 6. friendships 하드삭제 — 양방향(#1288). 내가 추가한 행과 나를 추가한 행을 모두 지운다.
+        //    단방향이라 한쪽만 지우면 남의 친구 목록에 탈퇴자가 계속 남는다.
+        val friendships = friendshipRepository.hardDeleteAllInvolving(userId)
+
+        // 7. user_blocks 하드삭제 — 양방향(#1289). 내가 건 차단과 나를 향한 차단을 모두 지운다.
+        //    남겨 두면 남의 차단 목록에 탈퇴자가 남고, 노출 판정이 없는 사람을 계속 막는다.
+        val blocks = userBlockRepository.hardDeleteAllInvolving(userId)
+
+        eventPublisher.publishEvent(UserWithdrawn(userId))
+
+        log.info(
+            "회원 탈퇴 cascade 완료 userId={} wishes={} notifications={} friendships={} blocks={}",
+            userId,
+            wishes,
+            notifications,
+            friendships,
+            blocks,
+        )
     }
 }

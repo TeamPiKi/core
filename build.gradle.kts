@@ -177,6 +177,12 @@ tasks.withType<Test> {
     useJUnitPlatform()
     // JDK 21+부터 동적 에이전트 로딩이 제한됨. Mockito(ByteBuddy)가 런타임에 에이전트를 붙이므로 명시적 허용 필요.
     jvmArgs("-XX:+EnableDynamicAgentLoading")
+    // nginx 설정은 소스·리소스가 아니라 테스트가 파일로 읽는 자료다(NginxErrorPayloadTest). 입력으로 선언하지
+    // 않으면 설정만 바뀐 변경에서 Gradle 이 테스트를 UP-TO-DATE 로 건너뛰어, 드리프트 가드가 조용히 꺼진다.
+    inputs
+        .files(fileTree("infra/nginx"))
+        .withPropertyName("nginxConfigs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // Spring Boot 플러그인은 실행 가능한 boot jar 와 라이브러리용 plain jar 를 함께 만든다. 이 앱은 라이브러리로

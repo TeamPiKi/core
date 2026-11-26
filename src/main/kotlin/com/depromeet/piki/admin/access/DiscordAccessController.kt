@@ -37,14 +37,19 @@ class DiscordAccessController(
     private val adminProperties: AdminProperties,
     private val objectMapper: ObjectMapper,
     handlers: List<DiscordCommandHandler>,
+    componentHandlers: List<DiscordComponentHandler>,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val handlersByName: Map<String, DiscordCommandHandler> = handlers.associateBy { it.commandName }
+    private val componentsByPrefix: Map<String, DiscordComponentHandler> = componentHandlers.associateBy { it.customIdPrefix }
 
     init {
         // 커맨드명이 겹치면 associateBy 가 조용히 하나를 덮어써 그 라우팅이 사라진다. 부팅 시점에 깨 fail-fast.
         require(handlers.size == handlersByName.size) {
             "Discord 커맨드명이 중복됐다: ${handlers.map { it.commandName }}"
+        }
+        require(componentHandlers.size == componentsByPrefix.size) {
+            "Discord 버튼 custom_id prefix 가 중복됐다: ${componentHandlers.map { it.customIdPrefix }}"
         }
     }
 
@@ -76,11 +81,20 @@ class DiscordAccessController(
             return DiscordInteractions.pong()
         }
 
-        // admin 전용 채널에서만 — 원타임 링크·대화형 조회 등 운영 인터랙션을 한 채널로 국한한다(봇이 여러 채널에 있어도).
-        // 채널 미설정(blank)이면 fail-closed 로 전부 거부(설정 실수로 아무 채널에서나 열리는 것 방지).
-        val channelId = root.path("channel_id").takeIf { it.isString }?.asString() ?: ""
-        if (adminProperties.discordAdminChannelId.isBlank() || channelId != adminProperties.discordAdminChannelId) {
-            return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 사용 불가", "이 명령은 지정된 admin 채널에서만 사용할 수 있습니다.")
+        // 지정 채널에서만 — 원타임 링크·대화형 조회 등 운영 인터랙션을 정해진 채널로 국한한다(봇이 여러 채널에 있어도).
+        // 슬래시커맨드는 admin 채널, 신고 알림 버튼은 신고 채널에서 눌린다(#1291) — 알림이 그 채널에 게시되므로
+        // admin 채널만 허용하면 버튼이 늘 거부된다. 어느 쪽도 미설정(blank)이면 fail-closed 로 거부한다
+        // (설정 실수로 아무 채널에서나 열리는 것 방지).
+        val channelId = DiscordInteractions.channelId(root)
+        val allowedChannel =
+            DiscordInteractions.isAllowedChannel(
+                channelId = channelId,
+                interactionType = DiscordInteractions.interactionType(root),
+                adminChannelId = adminProperties.discordAdminChannelId,
+                reportChannelId = adminProperties.discordReportChannelId,
+            )
+        if (!allowedChannel) {
+            return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 사용 불가", "이 채널에서는 사용할 수 없습니다.")
         }
 
         val userId = DiscordInteractions.userId(root)
@@ -92,6 +106,12 @@ class DiscordAccessController(
             return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 접근 불가", "이 Discord 계정은 관리자 목록에 없습니다.")
         }
 
+        val interaction = DiscordInteraction(root, userId, userName, ClientIp.of(request))
+        // 버튼 클릭(컴포넌트)과 슬래시커맨드는 같은 엔드포인트로 들어온다. 게이트를 통과한 뒤 type 으로 갈린다.
+        if (DiscordInteractions.interactionType(root) == DiscordInteractions.TYPE_MESSAGE_COMPONENT) {
+            return handleComponent(interaction, DiscordInteractions.customId(root))
+        }
+
         // data.name 라우팅 — 등록되지 않은 커맨드는 거부(운영 실수·미배포 커맨드 방지).
         val commandName = DiscordInteractions.commandName(root)
         val handler =
@@ -99,12 +119,29 @@ class DiscordAccessController(
                 ?: return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 알 수 없는 명령", "지원하지 않는 명령입니다.")
         // 핸들러 예외(DB 조회 실패 등)가 인터랙션 응답을 통째로 깨지 않게 감싼다.
         // Discord 는 3초 안에 응답이 없으면 사용자에게 "상호작용 실패" 를 띄우므로, 예외도 사용자 대면 embed 로 되돌린다.
-        return runCatching { handler.handle(DiscordInteraction(root, userId, userName, ClientIp.of(request))) }
+        return runCatching { handler.handle(interaction) }
             .getOrElse { e ->
                 log.error("Discord 커맨드 처리 실패: command={}", commandName, e)
                 DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 처리 실패", "요청 처리 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
             }
     }
+
+    // custom_id = `<prefix>:<인자>`. prefix 로 핸들러를 찾고 인자는 그대로 넘긴다 — 인자 모양은 버튼마다 다르다.
+    private fun handleComponent(
+        interaction: DiscordInteraction,
+        customId: String,
+    ): Map<String, Any> {
+        val prefix = customId.substringBefore(':')
+        val handler =
+            componentsByPrefix[prefix]
+                ?: return DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 알 수 없는 버튼", "지원하지 않는 버튼입니다.")
+        return runCatching { handler.handle(interaction, customId.substringAfter(':', "")) }
+            .getOrElse { e ->
+                log.error("Discord 버튼 처리 실패: customId={}", customId, e)
+                DiscordInteractions.embed(DiscordInteractions.COLOR_RED, "❌ 처리 실패", "요청 처리 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            }
+    }
+
 
     // grant 링크 클릭 — 토큰 검증(서명·만료·env·one-time) 후 접속자 IP 를 캡처해 allowlist 등록 후 목적지(dest)로 리다이렉트.
     //   ADMIN → admin 세션 발급(신원·IP 바인딩) + /admin.  DOCS/SPEC(#733) → IP 등록만(세션 없이) + /docs·/v3/api-docs.
@@ -147,6 +184,8 @@ class DiscordAccessController(
             "원타임 링크로 접근 허용(IP 캡처, dest=${identity.dest})",
             ip,
         )
-        response.sendRedirect(identity.dest.redirectPath)
+        // 목적지 경로는 enum 이 조립한다 — 대상이 있으면 그 사람의 신고 상세로 직행한다(#1291).
+        // 토큰에는 UUID 만 서명돼 있어 임의 경로가 들어올 수 없다.
+        response.sendRedirect(identity.dest.pathFor(identity.target))
     }
 }

@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 # EC2 런타임 프로비저닝 — 멱등(idempotent). 배포 때 실행되어 박스 안 런타임 설정
-# (swap / redis(dev) / nginx default·exporter / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
-# swap·redis·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
+# (swap / nginx default·exporter / grafana alloy)이 레포 정의 상태가 되도록 보장한다.
+# swap·nginx 는 이미 있으면 skip 하고, alloy 는 공용 블록(TeamPiKi/infra)이 매 배포 갱신·재기동한다. (#217, #743)
 #
 # docker 명령은 sudo 없이(ubuntu 가 docker 그룹), 시스템·nginx 는 sudo 로 — deploy.yml 기존 패턴과 동일.
 set -euo pipefail
-
-# dockerized aws-cli — mysql(3절)의 SSM pull 이 쓴다. 박스엔 aws cli 가 없다.
-# 이미지 핀은 deploy.yml 의 SSM pull 과 같은 버전을 쓴다.
-# (alloy(4절)는 공용 블록 provision-alloy-ssm.sh 가 자기 핀으로 조회하므로 이 값을 쓰지 않는다.)
-AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
 
 # --skip-alloy: 관측 수집기 설치를 생략한다. 이 스크립트는 alloy 공용 블록이 /tmp/piki-deploy/alloy/ 에
 # 미리 올라와 있다고 전제하는데(deploy.yml 의 Upload deploy files), 계정 이관처럼 그 블록을 올리지 않는
@@ -30,7 +25,7 @@ esac
 #
 # 이 스크립트는 오랫동안 "박스에 docker 가 이미 있다" 를 전제했다. 그 전제는 terraform 의 user_data
 # (dev) 나 사람이 손으로 깐 기록(구 계정 prod)에 기대고 있었는데, 계정 이관으로 박스를 재생성하자
-# prod 쪽 전제가 통째로 사라져 2절 redis 에서 "docker: command not found" 로 죽었다(실측).
+# prod 쪽 전제가 통째로 사라져 "docker: command not found" 로 죽었다(실측).
 #
 # user_data 에 기대지 않는 이유: 그것은 **첫 부팅에만** 실행된다. 이미 뜬 박스에 적용하려면 인스턴스를
 # 재생성해야 하고(terraform 은 user_data 변경을 in-place update 로 처리해 재생성하지도 않는다),
@@ -110,87 +105,7 @@ else
   sudo sysctl -w net.ipv4.tcp_retries2=8
 fi
 
-# 2) redis (dev 전용) — prod 는 DB 박스의 Redis(compose/db.yml)를 쓴다. 없을 때만 named 볼륨(piki-redis-data)으로 기동.
-#    기존 컨테이너(익명 볼륨 포함)는 보존한다 — 멱등 skip. 새 인스턴스에서만 named 볼륨으로 생성돼,
-#    이후 컨테이너 재생성에도 refresh token 이 유지된다.
-if [ "$ENVIRONMENT" = "prod" ]; then
-  echo "[redis] prod — DB 박스 Redis 사용, skip"
-elif docker ps -a --format '{{.Names}}' | grep -qx 'piki-redis'; then
-  echo "[redis] piki-redis 이미 존재 — skip"
-else
-  echo "[redis] piki-redis named 볼륨으로 기동"
-  docker run -d \
-    --name piki-redis \
-    --restart unless-stopped \
-    -p 172.17.0.1:6379:6379 \
-    -v piki-redis-data:/data \
-    redis:7-alpine
-fi
-
-# 3) mysql (dev 전용) — prod 는 전용 DB 박스(provision-db.sh)를 쓰므로 dev 일 때만 로컬 컨테이너로 기동.
-#    redis 와 동일하게 named 볼륨 + 있으면 skip 패턴. 초기 자격증명은 앱이 쓰는 것과 같은 SSM 값에서 읽는다.
-#    포트는 172.17.0.1:3306 바인딩 — 앱 컨테이너가 docker bridge 를 통해 접근하고 외부엔 노출 안 함.
-if [ "${ENVIRONMENT:-}" = "dev" ]; then
-  # DB 자격증명은 러너 GH secrets 주입 대신 박스에서 SSM 으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
-  # 컨테이너가 이미 있어 값이 안 쓰이는 배포에서도 pull 은 항상 실행한다 — 박스 재생성 때만 도는 경로로
-  # 두면 조용히 썩은 채 가장 필요한 순간(재생성)에 터지므로, 매 배포가 이 경로를 살아있게 검증한다.
-  # --network host: IMDSv2 hop limit(기본 1) 탓에 bridge 컨테이너는 인스턴스 role 자격증명을 못 받는다.
-  # --region 명시: docker run 은 호스트 리전 설정을 상속하지 않는다 (deploy.yml 의 SSM pull 과 동일 고정).
-  ssm_param() {
-    docker run --rm --network host "$AWSCLI_IMAGE" ssm get-parameter \
-      --name "/piki-core/${ENVIRONMENT}/$1" --with-decryption \
-      --region ap-northeast-2 --query Parameter.Value --output text
-  }
-  DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM 권한(app_ssm_read)·파라미터 존재 확인"; exit 1; }
-  DB_USERNAME="$(ssm_param db-username)" || { echo "[mysql] SSM db-username 조회 실패"; exit 1; }
-  DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회 실패"; exit 1; }
-  echo "[mysql] DB 자격증명 SSM 로드 완료 (/piki-core/${ENVIRONMENT}/db-*)"
-
-  # 주의: 이 자격증명은 사실상 불변이다. 값은 컨테이너 "최초 생성" 시에만 쓰이므로, SSM 값만 바꾸면
-  # 기존 MySQL 은 옛 비밀번호로 남고 앱만 새 값으로 붙어 인증이 깨진다. 회전이 필요하면 MySQL 쪽
-  # ALTER USER 와 SSM 갱신을 같은 절차로 묶어 수동 수행한다 (GH secrets 시절부터 동일한 제약).
-  # prod DB 박스와 같은 메모리 튜닝. 값의 근거는 infra/compose/db.yml.
-  MYSQL_ARGS=(--performance-schema=OFF --innodb-buffer-pool-size=64M --max-connections=60)
-  # 있으면 skip 이라 인자만 바꾸면 기존 컨테이너에 반영되지 않는다. 인자가 다를 때만 재생성한다(데이터는 볼륨에 남음).
-  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql' \
-    && [ "$(docker inspect -f '{{join .Config.Cmd " "}}' piki-mysql)" != "${MYSQL_ARGS[*]}" ]; then
-    echo "[mysql] piki-mysql 기동 인자가 다름 — 정상 종료 후 재생성"
-    docker stop -t 60 piki-mysql >/dev/null
-    docker rm piki-mysql >/dev/null
-  fi
-  if docker ps -a --format '{{.Names}}' | grep -qx 'piki-mysql'; then
-    echo "[mysql] piki-mysql 이미 존재 — skip"
-  else
-    echo "[mysql] piki-mysql named 볼륨으로 기동"
-    docker run -d \
-      --name piki-mysql \
-      --restart unless-stopped \
-      -p 172.17.0.1:3306:3306 \
-      -v piki-mysql-data:/var/lib/mysql \
-      -e MYSQL_DATABASE="${DB_NAME}" \
-      -e MYSQL_USER="${DB_USERNAME}" \
-      -e MYSQL_PASSWORD="${DB_PASSWORD}" \
-      -e MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" \
-      mysql:8.4 "${MYSQL_ARGS[@]}"
-  fi
-
-  # MySQL readiness 대기 — docker run 직후엔 init(첫 기동 시 DB/user 생성 + 재시작) 중이라,
-  # 바로 앱이 붙으면 연결/Flyway 가 실패해 헬스체크가 깨진다. 막 떴든 이미 있든(재배포) 앱 기동 전에
-  # ping 으로 준비를 확인해 race 를 제거한다. ping 은 서버가 응답하면 성공(인증과 무관).
-  echo "[mysql] readiness 대기"
-  for i in $(seq 1 30); do
-    if docker exec piki-mysql mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
-      echo "[mysql] ready (attempt $i)"
-      break
-    fi
-    sleep 2
-    [ "$i" -eq 30 ] && { echo "[mysql] readiness timeout (60s)"; exit 1; }
-  done
-else
-  echo "[mysql] prod 환경 — skip (DB 박스 사용)"
-fi
-
-# 4) nginx default 사이트 — 불필요한 stock catch-all 노출. 있으면 제거하고 reload.
+# 2) nginx default 사이트 — 불필요한 stock catch-all 노출. 있으면 제거하고 reload.
 if [ -e /etc/nginx/sites-enabled/default ]; then
   echo "[nginx] sites-enabled/default 제거"
   sudo rm -f /etc/nginx/sites-enabled/default
@@ -199,7 +114,7 @@ else
   echo "[nginx] default 없음 — skip"
 fi
 
-# 4-1) nginx 연결 수 exporter — 127.0.0.1:9112 stub_status(infra/nginx/main/nginx.conf)를 읽어 Alloy 가 라벨로 수집한다.
+# 2-1) nginx 연결 수 exporter — 127.0.0.1:9112 stub_status(infra/nginx/main/nginx.conf)를 읽어 Alloy 가 라벨로 수집한다.
 #    piki-core 가 아니라 piki-nginx 로 붙인다. 같은 job 이면 앱이 죽어도 up{job="piki-core"} 가 1 로 남는다.
 NGINX_EXPORTER_IMAGE="public.ecr.aws/nginx/nginx-prometheus-exporter:1.5.3"
 NGINX_EXPORTER_ARGS="--nginx.scrape-uri=http://127.0.0.1:9112/stub_status --web.listen-address=127.0.0.1:9113"
@@ -214,7 +129,7 @@ else
     "$NGINX_EXPORTER_IMAGE" $NGINX_EXPORTER_ARGS
 fi
 
-# 4) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
+# 3) grafana-alloy — 관측 수집기. config·기동 블록의 SSOT 는 TeamPiKi/infra 공용 블록(blocks/alloy)이고(#743),
 #    deploy.yml 의 'Upload deploy files' 가 /tmp/piki-deploy/alloy/ 로 올려둔다. 여기는 core 박스 값
 #    (--environment/--box)으로 호출만 한다. skip 가드(GRAFANA_METRICS_URL 빈 값 시 exit 0)·기동 전
 #    validate 게이트·--network host·호스트 마운트·Running 확인은 전부 블록이 책임진다.

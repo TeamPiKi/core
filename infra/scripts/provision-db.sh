@@ -5,11 +5,9 @@
 # 여기가 맡는다 — user_data 는 첫 부팅에만 실행돼 스크립트를 고쳐도 반영되지 않고, 반영하려면
 # 인스턴스 교체가 필요한데 이 박스에서 교체는 곧 데이터 손실이기 때문이다.
 #
-# 실행: 이 스크립트와 db-backup.sh, 그리고 공용 alloy 블록을 함께 박스로 올린 뒤 돌린다.
-#   scp -i ~/.ssh/piki-ec2-connect infra/scripts/{provision-db.sh,db-backup.sh} ubuntu@<DB_PUBLIC_IP>:/tmp/
-#   scp -i ~/.ssh/piki-ec2-connect -r <infra-repo>/blocks/alloy ubuntu@<DB_PUBLIC_IP>:/tmp/
-#   ssh  -i ~/.ssh/piki-ec2-connect ubuntu@<DB_PUBLIC_IP> 'bash /tmp/provision-db.sh'
-# (키페어가 없는 박스라 접속 전에 EC2 Instance Connect 로 공개키를 밀어 넣어야 한다 — README 참고.)
+# 실행: 이 스크립트와 db-backup.sh, compose/db.yml, 공용 alloy 블록을 함께 박스로 올린 뒤 돌린다.
+#   bash provision-db.sh --environment <dev|prod> [--skip-alloy]
+# 운영과 dev 의 차이는 이름(컨테이너·볼륨·SSM 경로)과 백업 유무뿐이다. dev 는 백업을 두지 않는다(#1321).
 #
 # alloy 블록을 core 에 복사해 두지 않고 매번 infra 에서 올리는 이유는 배포 워크플로와 같다 —
 # 그 블록의 SSOT 는 TeamPiKi/infra 이고, 사본을 두면 조용히 갈라진다. 안 올리면 4절이 건너뛴다.
@@ -20,19 +18,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --skip-alloy: 관측 수집기 설치를 의도적으로 생략한다(긴급 복구 등). 기본은 생략하지 않으며,
 # 블록이 없으면 실패한다 — 관측 공백이 조용히 생기는 걸 막는 게 기본값이어야 한다.
 SKIP_ALLOY=false
-for arg in "$@"; do
-  case "$arg" in
+ENVIRONMENT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --skip-alloy) SKIP_ALLOY=true ;;
-    *) echo "알 수 없는 인자: $arg" >&2; exit 2 ;;
+    --environment) ENVIRONMENT="${2:-}"; shift ;;
+    *) echo "알 수 없는 인자: $1" >&2; exit 2 ;;
   esac
+  shift
 done
+case "$ENVIRONMENT" in
+  dev|prod) ;;
+  *) echo "--environment 는 dev 또는 prod 여야 한다 (받은 값: '${ENVIRONMENT}')" >&2; exit 2 ;;
+esac
+# compose 파일이 컨테이너·볼륨 이름을 이 값으로 만든다.
+export ENVIRONMENT
 
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21"
 # 이미지 태그와 데이터 볼륨 이름은 compose 파일이 갖는다. 여기 남는 CONTAINER 는 SQL 실행·검증에
 # docker exec 로 부를 때 쓰는 이름이라, compose 쪽 container_name 과 같은 값을 유지해야 한다.
-CONTAINER="piki-prod-mysql"
+CONTAINER="piki-${ENVIRONMENT}-mysql"
+REDIS_CONTAINER="piki-${ENVIRONMENT}-redis"
 REGION="ap-northeast-2"
-SSM_PREFIX="/piki-core/prod"
+SSM_PREFIX="/piki-core/${ENVIRONMENT}"
 
 # 컨테이너 정의(이미지·포트·메모리 캡·MySQL 튜닝·라벨)는 전부 compose 파일에 있다(#918).
 # 여기 남는 것은 그 파일을 찾는 좌표와, SQL·검증에서 쓰는 이름뿐이다.
@@ -71,7 +79,7 @@ fi
 # ── 1) MySQL ────────────────────────────────────────────────────────────────
 # 자격증명은 컨테이너를 "최초 생성"할 때만 쓰인다. 이미 있으면 값이 안 쓰이지만 조회는 매번 한다 —
 # 재생성 때만 도는 경로로 두면 조용히 썩은 채 가장 필요한 순간에 터진다(provision-runtime.sh 와 같은 규율).
-DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM(piki-prod-db-policy)·파라미터 존재 확인"; exit 1; }
+DB_NAME="$(ssm_param db-name)" || { echo "[mysql] SSM db-name 조회 실패 — IAM(piki-${ENVIRONMENT}-db-policy)·파라미터 존재 확인"; exit 1; }
 DB_USERNAME="$(ssm_param db-username)" || { echo "[mysql] SSM db-username 조회 실패"; exit 1; }
 DB_PASSWORD="$(ssm_param db-password)" || { echo "[mysql] SSM db-password 조회 실패"; exit 1; }
 # root 는 앱 계정과 다른 비밀번호를 쓴다. 같은 값을 공유하면 앱 자격증명이 새는 순간 DB 전체
@@ -113,10 +121,10 @@ fi
 #
 # 없을 때만 만든다. 이미 있으면 손대지 않아 데이터가 보존된다. 새로 만들어진 경우는 빈 DB 인데,
 # 이관 흐름에서는 뒤따르는 rehearsal·cutover 가 덤프를 복원하므로 그게 정상 순서다.
-DATA_VOLUME="piki-prod-mysql-data"
+DATA_VOLUME="piki-${ENVIRONMENT}-mysql-data"
 # compose 가 가리키는 이름과 어긋나면 엉뚱한 볼륨을 만들어 두고 compose 는 여전히 실패한다.
 # 그 조용한 어긋남을 막기 위해 여기서 대조한다.
-grep -q "name: ${DATA_VOLUME}" "$COMPOSE_FILE" || {
+grep -qF 'name: piki-${ENVIRONMENT}-mysql-data' "$COMPOSE_FILE" || {
   echo "[mysql] 데이터 볼륨 이름이 compose 와 다르다 — 스크립트의 DATA_VOLUME(${DATA_VOLUME})과 ${COMPOSE_FILE} 을 맞출 것"
   exit 1
 }
@@ -125,6 +133,29 @@ if docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
 else
   echo "[mysql] 데이터 볼륨 생성 — $DATA_VOLUME (빈 DB 로 뜬다. 이관이면 이후 복원이 채운다)"
   docker volume create "$DATA_VOLUME" >/dev/null
+fi
+
+# 떠 있는 Redis 가 AOF 없이 돌고 있으면 교체 전에 켠다. AOF 파일 없이 appendonly yes 로 새로 뜨면 스냅샷을 읽지 않고
+# 빈 상태로 떠 전원이 로그아웃된다(실측). 켜 두면 새 컨테이너가 같은 볼륨의 AOF 로 이어받는다.
+if docker ps --format '{{.Names}}' | grep -qx "$REDIS_CONTAINER"; then
+  redis_info() { docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$REDIS_CONTAINER" redis-cli info persistence | tr -d '\r'; }
+  if redis_info | grep -qx 'aof_enabled:0'; then
+    echo "[redis] 떠 있는 Redis 에 AOF 를 켠다 (교체 전 데이터 보존)"
+    docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$REDIS_CONTAINER" redis-cli config set appendonly yes >/dev/null \
+      || { echo "[redis] CONFIG SET appendonly 실패"; exit 1; }
+  fi
+  for i in $(seq 1 60); do
+    info="$(redis_info)"
+    # 스냅샷 저장이 돌고 있으면 다시 쓰기가 예약만 된 채 진행 중 0 으로 보인다. 예약과 파일까지 본다.
+    if echo "$info" | grep -qx 'aof_enabled:1' && echo "$info" | grep -qx 'aof_rewrite_in_progress:0' \
+      && echo "$info" | grep -qx 'aof_rewrite_scheduled:0' && echo "$info" | grep -qx 'aof_last_bgrewrite_status:ok' \
+      && docker exec "$REDIS_CONTAINER" test -s /data/appendonlydir/appendonly.aof.manifest; then
+      echo "[redis] AOF 준비 완료 (attempt $i)"
+      break
+    fi
+    sleep 1
+    [ "$i" -eq 60 ] && { echo "[redis] AOF 다시 쓰기가 60초 안에 끝나지 않음 — 교체하지 않고 멈춘다"; exit 1; }
+  done
 fi
 
 echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
@@ -268,37 +299,41 @@ done
 # ── 2) 백업 스크립트 + cron ─────────────────────────────────────────────────
 # RDS 의 자동 백업을 대신하는 유일한 복구 경로다. 매 실행마다 최신본으로 덮어써
 # repo 의 스크립트와 박스의 것이 어긋나지 않게 한다.
-if [ ! -f "${SCRIPT_DIR}/db-backup.sh" ]; then
-  echo "[backup] ${SCRIPT_DIR}/db-backup.sh 가 없다 — provision-db.sh 와 함께 올렸는지 확인"
-  exit 1
+if [ "$ENVIRONMENT" = prod ]; then
+  if [ ! -f "${SCRIPT_DIR}/db-backup.sh" ]; then
+    echo "[backup] ${SCRIPT_DIR}/db-backup.sh 가 없다 — provision-db.sh 와 함께 올렸는지 확인"
+    exit 1
+  fi
+  sudo install -m 0755 "${SCRIPT_DIR}/db-backup.sh" /usr/local/bin/piki-db-backup.sh
+  echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
+
+  # 백업 결과 지표가 놓일 자리. alloy 의 node_exporter textfile collector 가 이 디렉터리를
+  # 마운트해 읽는다(#905). 미리 만들어 두는 이유는 두 가지다 - 백업이 root 로 돌아 여기 쓸 수
+  # 있어야 하고, 디렉터리가 없으면 alloy 마운트가 빈 경로를 잡아 지표가 조용히 사라진다.
+  sudo mkdir -p /var/lib/node_exporter/textfile
+  sudo chmod 755 /var/lib/node_exporter/textfile
+  echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
+
+  # 매시 정각. 하루 1회면 서버를 잃었을 때 최대 24시간을 잃는데, 데이터가 작아 덤프가 2초에 끝나고
+  # --single-transaction 이라 락도 거의 없어 주기를 줄이는 비용이 없다(#1230).
+  # 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
+  # cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
+  #
+  # bash -o pipefail 로 감싸는 이유: 파이프라인의 종료 코드는 마지막 명령(logger)의 것이라,
+  # 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
+  # 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
+  # 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
+  CRON_LINE='0 * * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
+  # 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
+  #
+  # `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
+  # set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
+  # 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
+  echo "[backup] cron 등록·갱신 (매시 정각)"
+  { sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
+else
+  echo "[backup] ${ENVIRONMENT} 는 백업을 두지 않는다 — skip"
 fi
-sudo install -m 0755 "${SCRIPT_DIR}/db-backup.sh" /usr/local/bin/piki-db-backup.sh
-echo "[backup] /usr/local/bin/piki-db-backup.sh 설치"
-
-# 백업 결과 지표가 놓일 자리. alloy 의 node_exporter textfile collector 가 이 디렉터리를
-# 마운트해 읽는다(#905). 미리 만들어 두는 이유는 두 가지다 - 백업이 root 로 돌아 여기 쓸 수
-# 있어야 하고, 디렉터리가 없으면 alloy 마운트가 빈 경로를 잡아 지표가 조용히 사라진다.
-sudo mkdir -p /var/lib/node_exporter/textfile
-sudo chmod 755 /var/lib/node_exporter/textfile
-echo "[backup] 지표 디렉터리 준비 (/var/lib/node_exporter/textfile)"
-
-# 매시 정각. 하루 1회면 서버를 잃었을 때 최대 24시간을 잃는데, 데이터가 작아 덤프가 2초에 끝나고
-# --single-transaction 이라 락도 거의 없어 주기를 줄이는 비용이 없다(#1230).
-# 출력은 journald 로 보내 `journalctl -t piki-db-backup` 으로 성공·실패를 추적한다 —
-# cron 기본 동작인 로컬 메일은 이 박스에 MTA 가 없어 사라진다.
-#
-# bash -o pipefail 로 감싸는 이유: 파이프라인의 종료 코드는 마지막 명령(logger)의 것이라,
-# 그냥 파이프하면 백업이 실패해도 cron 이 보는 결과는 항상 성공이 된다. logger 는 거의 언제나
-# 0 을 반환하기 때문이다. pipefail 이 있어야 백업 스크립트의 실패 코드가 그대로 올라와,
-# 나중에 실패 감지(cron 모니터링·systemd timer 등)를 붙일 때 그것이 실제로 동작한다.
-CRON_LINE='0 * * * * /bin/bash -o pipefail -c "/usr/local/bin/piki-db-backup.sh 2>&1 | /usr/bin/logger -t piki-db-backup"'
-# 기존 항목을 걷어낸 뒤 최신 줄을 다시 넣는다 — 등록/갱신을 가르지 않아야 멱등이 단순해진다.
-#
-# `|| true` 가 필요한 이유: crontab 에 우리 줄만 있으면 grep -v 의 출력이 0건이라 종료 코드가 1 이고,
-# set -euo pipefail 이 그걸 실패로 보고 스크립트를 끊는다. 즉 이 가드가 없으면 "두 번째 실행부터
-# 조용히 죽는" 스크립트가 된다(첫 실행은 crontab 이 비어 이 경로를 안 타므로 드러나지 않는다).
-echo "[backup] cron 등록·갱신 (매시 정각)"
-{ sudo crontab -l 2>/dev/null | grep -vF 'piki-db-backup.sh' || true; echo "$CRON_LINE"; } | sudo crontab -
 
 # ── 3) 관측 수집기(alloy) ───────────────────────────────────────────────────
 # RDS 를 걷어내면서 잃은 것을 메운다. 관리형일 때는 CloudWatch 가 메모리·연결 수·디스크 여유·
@@ -343,10 +378,8 @@ else
   bash "${ALLOY_DIR}/provision-alloy.sh" \
     --config "${ALLOY_DIR}/config.alloy" \
     --name piki-alloy \
-    --environment prod \
+    --environment "$ENVIRONMENT" \
     --box piki-db
 fi
 
-echo "DB 박스 프로비저닝 완료"
-echo "  백업 수동 실행: sudo /usr/local/bin/piki-db-backup.sh"
-echo "  백업 로그 확인: journalctl -t piki-db-backup --since '1 day ago'"
+echo "DB 박스 프로비저닝 완료 (${ENVIRONMENT})"

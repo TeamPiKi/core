@@ -18,15 +18,11 @@ interface UserJpaRepository : JpaRepository<User, UUID> {
         @Param("id") id: UUID,
     ): User?
 
-    fun existsByNickname(nickname: String): Boolean
-
-    fun existsByNicknameAndIdNot(
-        nickname: String,
-        id: UUID,
-    ): Boolean
-
-    @Query("SELECT u.nickname FROM User u WHERE u.nickname IN :nicknames")
-    fun findNicknamesIn(
-        @Param("nicknames") nicknames: Collection<String>,
-    ): List<String>
+    // 여러 사용자 행을 id 오름차순으로 잠근다(#1288). 두 사람을 함께 잠가야 하는 경로가 서로 반대 순서로
+    // 잡아 교착하는 것을 막는다 — 정렬을 질의에 박아 호출 순서와 무관하게 같은 순서가 되게 한다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id IN :ids ORDER BY u.id ASC")
+    fun findAllByIdsForUpdate(
+        @Param("ids") ids: Collection<UUID>,
+    ): List<User>
 }

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>사용자 신고 · PiKi 백오피스</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+  <style>
+    :root { --accent:#0EA5E9; --accent-soft:#E0F2FE; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --danger:#b91c1c; --danger-soft:#fee2e2; }
+    /* keep-all: 한국어가 어절 중간에서 꺾이지 않게. anywhere 는 공백 없는 긴 토큰(UUID)이 칸을 밀어내지 않게 하는 안전판. */
+    *{box-sizing:border-box;} body{margin:0;font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;background:#f7f8fa;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;}
+    .wrap{max-width:900px;margin:0 auto;padding:28px 24px;}
+    h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
+    .lede{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.65;}
+    .err{background:var(--danger-soft);color:var(--danger);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
+    .card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px;}
+
+    /* 한 줄 고정 — 어떤 값이 들어와도 행 높이가 벌어지지 않게 각 칸을 ellipsis·nowrap 으로 묶는다.
+       잘린 전문은 칸의 title(hover 툴팁)이 보여준다. source-platforms 의 .row 와 같은 구조. */
+    .row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #f1f3f5;text-decoration:none;color:inherit;}
+    .row:last-child{border-bottom:none;}
+    .row:hover{background:#fcfcfd;}
+    .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+    .row .at{white-space:nowrap;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+    .row .who{min-width:0;max-width:26%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700;}
+    .row .by{min-width:0;max-width:22%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--muted);}
+    .row .why{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:#384049;}
+    /* 누적 2건 이상은 붉게 — 운영이 "여러 번 신고된 사람" 을 훑으며 바로 집어내는 단서다. */
+    .cnt{white-space:nowrap;font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);}
+    .cnt.many{background:var(--danger-soft);color:var(--danger);}
+    .gone{white-space:nowrap;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:#e2e8f0;color:#475569;}
+    .row .go{white-space:nowrap;color:var(--accent);font-weight:700;opacity:0;transition:opacity .12s;}
+    .row:hover .go,.row:focus-visible .go,.row:focus-within .go{opacity:1;}
+    @media (hover:none){.row .go{opacity:1;}}
+    .empty{padding:13px 14px;font-size:12.5px;color:var(--muted);}
+  </style>
+</head>
+<body>
+  <div th:replace="~{admin/fragments :: topbar('/admin', '← 홈')}"></div>
+  <div class="wrap">
+    <h1>사용자 신고</h1>
+    <p class="lede">최근 접수된 신고입니다. 행을 누르면 <b>그 사람이 받은 신고 전체</b>를 봅니다.</p>
+
+    <div class="err" th:if="${param.missing != null}">해당 사용자를 찾을 수 없습니다. 링크의 id 를 확인해주세요.</div>
+
+    <div class="card">
+      <a class="row" th:each="r : ${reports}" th:href="@{/admin/reports/{id}(id=${r.reportedId})}">
+        <span class="at" th:text="${#temporals.format(r.reportedAt, 'MM-dd HH:mm')}"></span>
+        <span class="who" th:text="${r.reportedName}" th:title="${r.reportedId}"></span>
+        <span class="gone" th:if="${r.reportedWithdrawn}">탈퇴</span>
+        <span class="cnt" th:classappend="${r.reportCountOfReported > 1} ? 'many' : ''"
+              th:text="|누적 ${r.reportCountOfReported}건|"></span>
+        <span class="why" th:text="${r.detail != null ? r.reasonLabel + ' · ' + r.detail : r.reasonLabel}"
+              th:title="${r.detail}"></span>
+        <span class="by" th:text="|신고: ${r.reporterName}|"></span>
+        <span class="go" aria-hidden="true">→</span>
+      </a>
+      <div class="empty" th:if="${#lists.isEmpty(reports)}">접수된 신고가 없습니다.</div>
+    </div>
+
+    <p class="lede" th:if="${!#lists.isEmpty(reports)}">최근 <b th:text="${limit}"></b>건까지 보입니다. 시각은 KST 입니다.</p>
+  </div>
+</body>
+</html>

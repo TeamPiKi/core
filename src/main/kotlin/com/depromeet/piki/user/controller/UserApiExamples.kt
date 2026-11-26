@@ -124,10 +124,10 @@ class UserApiExamples(
                         // 둘 다 User.validateNickname 이 잡아 400 으로 나간다.
                         add(UserException.nicknameBlank(), name = "공백만 있는 닉네임")
                         add(UserException.nicknameReserved(), name = "'탈퇴' 예약 prefix 로 시작하는 닉네임")
-                        add(UserException.duplicateNickname(), name = "닉네임 중복")
                         add(UserException.deletedUser(), name = "탈퇴한 유저")
                         unauthorized()
                         add(UserException.guestCannotUpdateProfileImage(), name = "게스트의 프로필 이미지 수정 거부")
+                        add(UserException.guestCannotUpdateProfileVisibility(), name = "게스트의 프로필 공개 설정 수정 거부")
                         // 실제 응답은 UserException.notFound() → USER-001 이므로 예외에서 직접 example 을 만들어 code·detail 을 실제와 일치시킨다.
                         add(UserException.notFound(), name = "유저 없음 (JWT 유효하나 DB에 없음)")
                         add(ImageStorageException.existsCheckFailed(), name = "이미지 저장소(S3) 업로드 상태 확인 실패")
@@ -193,6 +193,7 @@ class UserApiExamples(
             profileImage = defaultProfileImages.urlOf(2),
             identityType = IdentityType.MEMBER,
             email = "user@gmail.com",
+            isProfilePublic = true,
         )
 
     companion object {

@@ -325,8 +325,8 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
 
     @Test
     fun `POST tournaments-id-join-guest 는 이미 점유된 닉네임이면 409 를 반환한다`() {
-        // createGuestWithNickname 은 existsByNickname pre-check 가 없어, 충돌이 save 시점에 난다.
-        // saveAndFlush 로 그 unique 충돌을 같은 메서드 안에서 끌어올려 duplicateNickname(409)으로 변환하는지 검증한다(#636).
+        // 409 의 출처가 바뀌었다(#1287): 예전엔 users.nickname unique 충돌을 save 시점에 끌어올려 변환했고,
+        // 지금은 유일 제약이 없어 createGuestAndJoin 의 "이 토너먼트 안 표시명 중복" 검사가 던진다.
         val mockMvc = buildMockMvc()
         val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
 
@@ -338,13 +338,36 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .content("""{"inviteCode":"$inviteCode","nickname":"철수"}"""),
             ).andExpect(status().isCreated)
 
-        // 같은 닉네임으로 또 합류하면 닉네임 unique 충돌 → 409 (saveAndFlush 변환, 500 아님).
+        // 같은 판에서 같은 닉네임으로 또 합류하면 409 (500 아님).
         mockMvc
             .perform(
                 post("/api/v1/tournaments/$tournamentId/join/guest")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"inviteCode":"$inviteCode","nickname":"철수"}"""),
             ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    // 레거시 참여 행(nickname NULL)은 표시 때 프로필 닉으로 폴백한다. 게스트 합류 검사도 저장값이 아니라
+    // 표시명 기준이어야 그 행과의 충돌을 막는다 — 참여 닉 변경 경로와 같은 쿼리를 쓰므로 함께 고정한다.
+    @Test
+    fun `POST tournaments-id-join-guest 는 레거시 참여자의 폴백 표시명과 겹치면 409 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        // 레거시 참여자: 참여 닉이 NULL 이라 화면엔 프로필 닉("라떼왕")이 뜬다.
+        val legacyUserId = UUID.randomUUID()
+        saveUser(legacyUserId, "https://cdn.example.com/legacy.jpg", "라떼왕")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = tournamentId, userId = legacyUserId, nickname = null),
+        )
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join/guest")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode","nickname":"라떼왕"}"""),
+            ).andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("USER-004"))
     }
 
     @Test
@@ -1842,8 +1865,9 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `PATCH tournaments-id-nickname 은 다른 유저의 프로필 닉과 겹치면 409 를 반환한다`() {
-        // 토너먼트 외부(전역 유저 프로필 닉)와도 유일화(#1018). 참여하지 않은 제3자의 프로필 닉으로 충돌.
+    fun `PATCH tournaments-id-nickname 은 다른 유저의 프로필 닉과 겹쳐도 통과한다`() {
+        // 유일 범위가 한 토너먼트로 좁아졌다(#1287) — 참여하지 않은 제3자의 프로필 닉과 겹쳐도 된다.
+        // 이전엔 전역 유일(#1018)이라 409 USER-004 였다.
         val mockMvc = buildMockMvc()
         saveUser(userId, userProfileImage, "주최자")
         val tournamentId = createTournament(mockMvc)
@@ -1855,8 +1879,109 @@ class TournamentIntegrationTest : IntegrationTestSupport() {
                     .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""{"nickname":"제3자"}"""),
+            ).andExpect(status().isOk)
+    }
+
+    // 프로필 닉네임 중복 허용(#1287) 이후 "이름이 같은 두 사람이 한 판에" 가 가능해졌다. 참여 행은 프로필
+    // 닉네임을 복사하므로, 막지 않으면 둘 다 같은 표시명이 되어 대기실·결과에서 구분이 안 된다. 참여를 409 로
+    // 막는 대신 서버가 뒤에 숫자를 붙여 구분한다 — 이름 때문에 막히지 않는 것이 중복 허용의 취지다.
+    @Test
+    fun `초대 참여는 같은 판에 같은 프로필 닉이 있으면 숫자를 붙여 구분한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "철수")
+        val (tournamentId, inviteCode) = createTournamentWithInviteCode(mockMvc)
+        // 주최자와 프로필 닉이 같은 사람이 초대로 들어온다.
+        val twinId = UUID.randomUUID()
+        saveUser(twinId, "https://cdn.example.com/twin.jpg", "철수")
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/join")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(twinId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"inviteCode":"$inviteCode"}"""),
+            ).andExpect(status().isOk)
+
+        val nicknames =
+            tournamentUserJpaRepository
+                .findByTournamentIdAndDeletedAtIsNull(tournamentId)
+                .associate { it.userId to it.nickname }
+        assertEquals("철수", nicknames[userId], "주최자 표시명은 그대로다")
+        assertEquals("철수2", nicknames[twinId], "뒤에 들어온 쪽이 숫자를 받는다")
+    }
+
+    @Test
+    fun `플레이 링크 참여도 같은 판에 같은 프로필 닉이 있으면 숫자를 붙여 구분한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "철수")
+        // 주최자가 완주한 뒤 플레이 링크를 연다 — 플레이 링크 참여는 완료 상태에서만 가능하다.
+        val tournamentId = completeTournamentWith2Items(mockMvc).tournamentId
+        createPlayLink(mockMvc, tournamentId)
+        val twinId = UUID.randomUUID()
+        saveUser(twinId, "https://cdn.example.com/twin.jpg", "철수")
+
+        mockMvc
+            .perform(
+                post("/api/v1/tournaments/$tournamentId/from-play-link")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(twinId)),
+            ).andExpect(status().isOk)
+
+        val twinNickname =
+            tournamentUserJpaRepository
+                .findByTournamentIdAndDeletedAtIsNull(tournamentId)
+                .first { it.userId == twinId }
+                .nickname
+        assertEquals("철수2", twinNickname)
+    }
+
+    // 레거시 참여 행(nickname NULL)은 표시 때 프로필 닉으로 폴백한다. 저장값만 비교하면 그 표시명과 겹치는
+    // 값이 통과해 같은 판에 같은 이름 둘이 생긴다 — 전역 교차 검사를 걷어내며(#1287) 열린 구멍이라
+    // 중복 검사를 표시명(COALESCE) 기준으로 바꿔 막았다.
+    @Test
+    fun `PATCH tournaments-id-nickname 은 레거시 참여자의 폴백 표시명과 겹치면 409 를 반환한다`() {
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val tournamentId = createTournament(mockMvc)
+        // 레거시 참여자: 참여 닉이 NULL 이라 화면엔 프로필 닉("라떼왕")이 뜬다.
+        val legacyUserId = UUID.randomUUID()
+        saveUser(legacyUserId, "https://cdn.example.com/legacy.jpg", "라떼왕")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = tournamentId, userId = legacyUserId, nickname = null),
+        )
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"라떼왕"}"""),
             ).andExpect(status().isConflict)
             .andExpect(jsonPath("$.code").value("USER-004"))
+    }
+
+    @Test
+    fun `PATCH tournaments-id-nickname 은 다른 토너먼트 참여자의 참여 닉과 겹쳐도 통과한다`() {
+        // 같은 토너먼트 안 충돌만 막는다(#1287). 다른 판의 참여 닉은 같은 값이어도 구분이 필요 없다.
+        val mockMvc = buildMockMvc()
+        saveUser(userId, userProfileImage, "주최자")
+        val otherTournamentId = createTournament(mockMvc, name = "남의 판")
+        // 참여자의 User 행도 만든다 — 중복 검사 쿼리가 users 와 inner join 이라, 이 행이 없으면 그 참여자가
+        // 조인에서 통째로 빠져 "토너먼트 범위" 와 무관하게 통과한다. 그러면 범위 조건을 지워도 깨지지 않는
+        // 공회전 테스트가 된다(실측으로 확인했다).
+        val otherPlayerId = UUID.randomUUID()
+        saveUser(otherPlayerId, "https://cdn.example.com/other.jpg", "남의 판 참여자")
+        tournamentUserJpaRepository.save(
+            TournamentUser(tournamentId = otherTournamentId, userId = otherPlayerId, nickname = "겹치는닉"),
+        )
+        val tournamentId = createTournament(mockMvc)
+
+        mockMvc
+            .perform(
+                patch("/api/v1/tournaments/$tournamentId/nickname")
+                    .header(HttpHeaders.AUTHORIZATION, authHeader(userId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"nickname":"겹치는닉"}"""),
+            ).andExpect(status().isOk)
     }
 
     @Test
