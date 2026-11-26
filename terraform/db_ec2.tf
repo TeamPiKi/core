@@ -10,9 +10,8 @@
 # 모았다. 이관이 끝나 RDS 를 걷어낼 때 rds.tf 만 지우면 되고, 그때 무엇이 그 자리를 대신하는지
 # 이 파일 하나로 드러난다.
 #
-# dev 는 이미 앱 박스 안 docker MySQL 로 돌고 있다(infra/scripts/provision-runtime.sh 3절).
 # prod 는 앱 박스 여유 메모리가 563MB 뿐이고 앱 컨테이너가 캡에 100% 붙어 있어 동거가 불가능해,
-# 별도 박스로 분리한다.
+# 별도 박스로 분리한다. dev 도 같은 모양으로 둔다(db_dev_ec2.tf).
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
@@ -53,10 +52,10 @@ resource "aws_security_group" "db_ec2" {
     security_groups = [aws_security_group.ec2.id]
   }
 
-  # extractor 는 몰별 추출 규칙의 배포본만 읽는다. 포트는 여기서 열고 읽을 수 있는 범위는 Redis 계정
-  # (infra/compose/db.yml 의 extraction-rules-reader)이 키 하나로 좁힌다. MySQL 은 열지 않는다.
+  # extractor 는 몰별 추출 규칙을 읽고 파싱 스트림을 소비한다. 포트는 여기서 열고 닿는 범위는 Redis 계정
+  # (infra/compose/db.yml 의 extraction-rules-reader·extraction-stream-worker)이 좁힌다. MySQL 은 열지 않는다.
   ingress {
-    description     = "Redis from extractor (extraction rules, read-only account)"
+    description     = "Redis from extractor (extraction rules and parse streams, scoped accounts)"
     from_port       = 6379
     to_port         = 6379
     protocol        = "tcp"
@@ -260,30 +259,9 @@ resource "aws_ssm_parameter" "db_backup_bucket" {
   }
 }
 
-# -----------------------------------------------------------------------------
-# DB 박스 인스턴스
-#
-# key_name 을 두지 않는다 — extractor·headless 박스와 같이 EC2 Instance Connect 로만 접근한다.
-# 키페어 파일을 팀이 나눠 갖는 경로가 없어지고, 접근 권한이 IAM 하나로 모인다.
-#
-# EIP 를 붙이지 않고 associate_public_ip_address 로 자동 할당 IP 를 받는다. 요금은 EIP 와
-# 동일($0.005/h)한데, 앱은 이 박스를 사설 IP 로만 보므로 재기동 시 퍼블릭 IP 가 바뀌어도 무관하다.
-# (SSH 할 때만 현재 IP 를 조회하면 된다.)
-# -----------------------------------------------------------------------------
-resource "aws_instance" "db" {
-  ami                         = var.ec2_ami_id != null ? var.ec2_ami_id : data.aws_ami.ubuntu_2404_arm64[0].id
-  instance_type               = var.db_ec2_instance_type
-  subnet_id                   = aws_subnet.public.id
-  availability_zone           = var.azs[0]
-  vpc_security_group_ids      = [aws_security_group.db_ec2.id]
-  iam_instance_profile        = aws_iam_instance_profile.db.name
-  associate_public_ip_address = true
-
-  # 첫 부팅 부트스트랩은 docker 와 swap 까지만 한다. MySQL 기동·백업 cron 설치는
-  # infra/scripts/provision-db.sh 가 멱등으로 맡는다 — user_data 는 첫 부팅에만 돌아
-  # 스크립트를 고쳐도 반영되지 않고, 반영하려면 인스턴스 교체가 필요한데 이 박스는 교체가
-  # 곧 데이터 손실이기 때문이다. 아래 lifecycle 이 그 교체를 막는다.
-  user_data = <<-EOF
+# dev DB 서버(db_dev_ec2.tf)와 같은 부트스트랩을 쓴다.
+locals {
+  db_user_data = <<-EOF
     #!/bin/bash
     set -eux
     export DEBIAN_FRONTEND=noninteractive
@@ -312,6 +290,32 @@ resource "aws_instance" "db" {
     echo 'net.ipv4.tcp_retries2=8' > /etc/sysctl.d/99-tcp-retries2.conf
     sysctl -w net.ipv4.tcp_retries2=8
   EOF
+}
+
+# -----------------------------------------------------------------------------
+# DB 박스 인스턴스
+#
+# key_name 을 두지 않는다 — extractor·headless 박스와 같이 EC2 Instance Connect 로만 접근한다.
+# 키페어 파일을 팀이 나눠 갖는 경로가 없어지고, 접근 권한이 IAM 하나로 모인다.
+#
+# EIP 를 붙이지 않고 associate_public_ip_address 로 자동 할당 IP 를 받는다. 요금은 EIP 와
+# 동일($0.005/h)한데, 앱은 이 박스를 사설 IP 로만 보므로 재기동 시 퍼블릭 IP 가 바뀌어도 무관하다.
+# (SSH 할 때만 현재 IP 를 조회하면 된다.)
+# -----------------------------------------------------------------------------
+resource "aws_instance" "db" {
+  ami                         = var.ec2_ami_id != null ? var.ec2_ami_id : data.aws_ami.ubuntu_2404_arm64[0].id
+  instance_type               = var.db_ec2_instance_type
+  subnet_id                   = aws_subnet.public.id
+  availability_zone           = var.azs[0]
+  vpc_security_group_ids      = [aws_security_group.db_ec2.id]
+  iam_instance_profile        = aws_iam_instance_profile.db.name
+  associate_public_ip_address = true
+
+  # 첫 부팅 부트스트랩은 docker 와 swap 까지만 한다. MySQL 기동·백업 cron 설치는
+  # infra/scripts/provision-db.sh 가 멱등으로 맡는다 — user_data 는 첫 부팅에만 돌아
+  # 스크립트를 고쳐도 반영되지 않고, 반영하려면 인스턴스 교체가 필요한데 이 박스는 교체가
+  # 곧 데이터 손실이기 때문이다. 아래 lifecycle 이 그 교체를 막는다.
+  user_data = local.db_user_data
 
   metadata_options {
     http_endpoint = "enabled"

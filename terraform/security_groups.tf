@@ -48,7 +48,7 @@ resource "aws_security_group" "ec2" {
 # -----------------------------------------------------------------------------
 # dev 앱 EC2 Security Group — prod 앱 SG 와 같은 입구(80·443)를 갖되 그룹을 나눈다.
 # prod DB SG 는 prod 앱 SG 만 참조하므로, 그룹을 나눈 것만으로 dev 박스에서 prod DB 로 가는 길이 닫힌다(#1213).
-# dev 는 자기 박스의 MySQL·Redis 를 쓴다. 이 그룹을 참조하는 쪽은 extractor 인바운드뿐이다.
+# 이 그룹을 참조하는 쪽은 dev DB 서버(db_dev_ec2.tf)와 extractor 의 인바운드다.
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "dev_app" {
   name        = "piki-dev-app-sg"

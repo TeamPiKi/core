@@ -219,6 +219,31 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.folderId").value(folderId))
             .andExpect(jsonPath("$.data.wishes", hasSize<Any>(1)))
             .andExpect(jsonPath("$.data.wishes[0].item.name").exists())
+            .andExpect(jsonPath("$.data.wishes[0].saved").value(false))
+    }
+
+    @Test
+    fun `공개 폴더 상세의 위시는 내가 이미 담은 상품이면 saved 가 true 다`() {
+        val mockMvc = mockMvc()
+        val viewer = member()
+        val owner = member()
+        val folderId = createFolder(owner, "공개 폴더")
+        val saved = readyWish(owner)
+        putWish(owner, folderId, saved)
+        putWish(owner, folderId, readyWish(owner))
+        mockMvc.perform(post("/api/v1/explore/wishes/$saved/copy").by(viewer)).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/profiles/$owner/folders/$folderId").by(viewer))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.wishes", hasSize<Any>(2)))
+            .andExpect(jsonPath("$.data.wishes[?(@.wishId == $saved)].saved").value(true))
+            .andExpect(jsonPath("$.data.wishes[?(@.wishId != $saved)].saved").value(false))
+        // 비로그인은 담은 상품이 없다
+        mockMvc
+            .perform(get("/api/v1/profiles/$owner/folders/$folderId"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.wishes[?(@.wishId == $saved)].saved").value(false))
     }
 
     // 볼 수 없는 네 가지 이유가 모두 같은 404 여야 한다

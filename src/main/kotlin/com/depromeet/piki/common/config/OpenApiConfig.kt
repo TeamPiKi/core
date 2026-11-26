@@ -92,6 +92,7 @@ class OpenApiConfig {
                 "Profile",
                 "Wishlist",
                 "Folder",
+                "Explore",
                 "Tournament",
                 "Tournament Item",
                 "Notification",
