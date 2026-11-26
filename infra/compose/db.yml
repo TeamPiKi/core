@@ -1,4 +1,4 @@
-# prod DB 박스의 컨테이너 정의 (#918).
+# DB 서버의 컨테이너 정의 (#918). 운영과 dev 가 같은 파일을 쓰고 이름만 ENVIRONMENT 로 갈린다(#1321).
 #
 # 왜 Compose 인가: 이전에는 provision-db.sh 가 docker run 인자를 손으로 조립하고 "있으면 skip,
 # 없으면 생성" 하는 멱등 로직까지 직접 짰다. 그 과정에서 셸 특유의 함정을 여러 번 밟았고(파이프
@@ -15,16 +15,16 @@ services:
   mysql:
     # 컨테이너 이름을 고정한다. 백업 스크립트가 docker exec 로 이 이름을 부르고, compose 기본
     # 이름(<project>-<service>-<n>)에 기대면 프로젝트명이 바뀔 때 조용히 어긋난다.
-    container_name: piki-prod-mysql
+    container_name: piki-${ENVIRONMENT:?ENVIRONMENT 미주입}-mysql
     image: mysql:8.4
     restart: unless-stopped
     # 끊긴 상대에 대한 재전송 포기를 호스트(provision-db.sh)와 같은 8 로. 컨테이너 net namespace 라 호스트 값이 안 닿는다(#1249).
     sysctls:
       net.ipv4.tcp_retries2: 8
 
-    # 포트는 모든 인터페이스에 연다. dev 박스가 172.17.0.1 로 묶는 것과 달리 여기서는 앱이 다른
-    # 박스에서 사설 IP 로 접속하기 때문이다. 노출 범위는 보안그룹이 책임진다 - 3306 인바운드는
-    # 앱 EC2 SG 에서 온 것만 허용한다(terraform/db_ec2.tf).
+    # 포트는 모든 인터페이스에 연다. 앱이 다른 박스에서 사설 IP 로 접속하기 때문이다.
+    # 노출 범위는 보안그룹이 책임진다 - 3306 인바운드는 같은 환경의 앱 EC2 SG 에서 온 것만 허용한다
+    # (terraform/db_ec2.tf, db_dev_ec2.tf).
     ports:
       - "3306:3306"
 
@@ -104,7 +104,7 @@ services:
 
   # 앱 박스에 상태를 남기지 않으려고 Redis 를 데이터 박스에 둔다.
   redis:
-    container_name: piki-prod-redis
+    container_name: piki-${ENVIRONMENT:?ENVIRONMENT 미주입}-redis
     image: redis:8.10-alpine
     restart: unless-stopped
     # 끊긴 상대에 대한 재전송 포기를 호스트(provision-db.sh)와 같은 8 로. 컨테이너 net namespace 라 호스트 값이 안 닿는다(#1249).
@@ -177,7 +177,7 @@ volumes:
   # 이름은 스크립트 시절 만든 볼륨 그대로다.
   mysql-data:
     external: true
-    name: piki-prod-mysql-data
+    name: piki-${ENVIRONMENT}-mysql-data
 
   redis-data:
-    name: piki-prod-redis-data
+    name: piki-${ENVIRONMENT}-redis-data
