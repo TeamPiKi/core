@@ -43,6 +43,11 @@ output "db_ec2_public_ip" {
   value       = aws_instance.db.public_ip
 }
 
+output "dev_db_ec2_private_ip" {
+  description = "dev DB 서버 사설 IP. SSM /piki-core/dev/db-host 와 redis-host 에 넣을 값 (#1321)"
+  value       = aws_instance.dev_db.private_ip
+}
+
 output "db_backup_bucket_name" {
   description = "MySQL 논리 백업 저장 버킷명 (#898)"
   value       = aws_s3_bucket.db_backup.id

@@ -402,17 +402,15 @@ jobs:
           EXPORTS=$(for v in NGINX_CONF DOMAIN SERVICE_PORT; do printf 'export %s=%q; ' "$v" "${!v}"; done)
           ssh -n "$HOST" "$EXPORTS$SCRIPT"
 
-      - name: Provision runtime (swap·redis·mysql·nginx·alloy)
+      - name: Provision runtime (swap·nginx·alloy)
         id: provision
         timeout-minutes: 15
         env:
           HOST: ${{ steps.box.outputs.host }}
-          # 환경은 트리거 브랜치에서 derive — dev MySQL 기동/Alloy environment 라벨을 가른다.
-          # MySQL 초기 자격증명은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM
-          # (/piki-core/<env>/db-*)으로 직접 읽는다 (앱 시크릿 SSM 단일화와 같은 결).
+          # 환경은 트리거 브랜치에서 derive — Alloy environment 라벨을 가른다.
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           # Grafana Cloud 자격은 러너가 넘기지 않는다 — provision-runtime.sh 가 박스에서 SSM 공유 경로
-          # (/piki/observability/grafana-*)로 직접 읽는다 (#771, MySQL db-* 와 같은 결. 세 서비스 박스가
+          # (/piki/observability/grafana-*)로 직접 읽는다 (#771. 세 서비스 박스가
           # 같은 경로를 읽어 토큰 회전이 1곳 put-parameter 로 끝난다).
           # EXTRACTOR_METRICS_TARGET(cross-box scrape)은 폐기(#743) — 수집 대상은 컨테이너 label opt-in 이고,
           # extractor prod 박스는 자체 Alloy 가 수집한다 (dev 동거 extractor 는 #862 로 폐지 — 전 환경이 전용 박스 사용).
@@ -717,7 +715,7 @@ jobs:
           elif [ "${{ steps.nginx.outcome }}" = "failure" ]; then
             CAUSE="nginx 설정 적용 실패 (nginx -t 검증 실패)"
           elif [ "${{ steps.provision.outcome }}" = "failure" ]; then
-            CAUSE="런타임 프로비저닝 실패 (swap / redis / MySQL readiness / alloy)"
+            CAUSE="런타임 프로비저닝 실패 (swap / nginx / alloy)"
           elif [ "${{ steps.deploy.outcome }}" = "failure" ]; then
             CAUSE="EC2 배포 실패 (SSM env · docker pull · 기동 · 헬스체크 · 슬롯 전환 중 하나 — 스텝 로그의 [deploy_slot] 단계 참조)"
           else

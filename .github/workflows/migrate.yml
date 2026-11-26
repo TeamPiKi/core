@@ -965,7 +965,7 @@ jobs:
             --targets "Key=tag:Name,Values=$DB_TAG" \
             --document-name AWS-RunShellScript \
             --comment "migrate provision-db" \
-            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh\"]" \
+            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh --environment prod\"]" \
             --query 'Command.CommandId' --output text)
           echo "::notice::SSM provision-db 전송 — CommandId=$CMD_ID"
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
