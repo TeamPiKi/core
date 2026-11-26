@@ -4,6 +4,7 @@ import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.domain.UserException
 import com.depromeet.piki.user.event.UserCreated
+import com.depromeet.piki.user.event.UserProfileHidden
 import com.depromeet.piki.user.repository.UserDetailRepository
 import com.depromeet.piki.user.repository.UserRepository
 import com.depromeet.piki.user.service.dto.UserProfile
@@ -328,7 +329,9 @@ class UserService(
             buildList {
                 // 게스트 거절(403)이 닉네임 변경보다 먼저 나도록 맨 앞에 둔다
                 isProfilePublic?.let {
+                    val wasPublic = user.isProfilePublic
                     user.changeProfileVisibility(it)
+                    if (wasPublic && !it) eventPublisher.publishEvent(UserProfileHidden(userId))
                     add("isProfilePublic")
                 }
                 nickname?.let {
