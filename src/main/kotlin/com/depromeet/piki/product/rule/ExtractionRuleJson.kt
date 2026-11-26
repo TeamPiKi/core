@@ -4,6 +4,7 @@ import com.depromeet.piki.contracts.extraction.v1.ExtractionRule
 import com.depromeet.piki.contracts.extraction.v1.FieldSource
 import com.google.protobuf.InvalidProtocolBufferException
 import com.google.protobuf.util.JsonFormat
+import tools.jackson.core.JacksonException
 import tools.jackson.databind.json.JsonMapper
 
 // 규칙 본문의 입력 경계. 사람이 쓴 JSON 을 계약 모양으로 읽어 보고, 저장할 정규형을 만든다.
@@ -31,6 +32,7 @@ internal object ExtractionRuleJson {
         require(rule.absentOriginalPrice != ExtractionRule.AbsentOriginalPrice.UNRECOGNIZED) {
             "absentOriginalPrice 값을 읽지 못했습니다."
         }
+        require(doesSomething(rule)) { "규칙이 하는 일이 없습니다. 필드의 출처·fetch·absentOriginalPrice 가운데 하나는 적어 주세요." }
         if (rule.hasName()) validateSource(rule.name, "name")
         if (rule.hasImageUrl()) validateSource(rule.imageUrl, "imageUrl")
         if (rule.hasCurrentPrice()) validateSource(rule.currentPrice, "currentPrice")
@@ -43,6 +45,14 @@ internal object ExtractionRuleJson {
         return canonical
     }
 
+    // 편집 화면용. 저장된 한 줄을 사람이 고치기 쉬운 모양으로 편다. 읽지 못하면(손으로 넣은 행) 그대로 돌려준다
+    fun pretty(json: String): String =
+        try {
+            MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(MAPPER.readTree(json))
+        } catch (e: JacksonException) {
+            json
+        }
+
     fun parse(rawJson: String): ExtractionRule {
         val builder = ExtractionRule.newBuilder()
         try {
@@ -52,6 +62,15 @@ internal object ExtractionRuleJson {
         }
         return builder.build()
     }
+
+    // 대상만 적은 규칙은 extractor 의 시험 추출을 "적용됨" 으로 통과하지만 아무 값도 바꾸지 않는다.
+    private fun doesSomething(rule: ExtractionRule): Boolean =
+        rule.hasName() ||
+            rule.hasImageUrl() ||
+            rule.hasCurrentPrice() ||
+            rule.hasOriginalPrice() ||
+            rule.fetch == ExtractionRule.FetchMode.RENDER ||
+            rule.absentOriginalPrice == ExtractionRule.AbsentOriginalPrice.NO_DISCOUNT
 
     private fun validateTarget(rule: ExtractionRule) {
         when (rule.targetCase) {

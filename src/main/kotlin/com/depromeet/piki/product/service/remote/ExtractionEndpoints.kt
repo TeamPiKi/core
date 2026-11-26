@@ -10,6 +10,7 @@ internal object ExtractionEndpoints {
     val LINK_EXTRACTION: String = path("LinkExtraction")
     val IMAGE_EXTRACTION: String = path("ImageExtraction")
     val MODEL_PROBE: String = path("ModelProbe")
+    val RULE_PROBE: String = path("RuleProbe")
 
     val CALLER_READ_TIMEOUT_MS: Int = service.options.getExtension(ExtractionProto.callerReadTimeoutSeconds) * 1_000
 

@@ -68,6 +68,8 @@ class ExtractionRuleJsonTest {
             """{"host": "a.com", "name": {"json": {"script": "", "pointer": "/props/name"}}}""",
             """{"host": "a.com", "name": {"css": {"selector": "${"div > ".repeat(200)}div"}}}""",
             """{"host": "a.com", "fetch": 5}""",
+            """{"host": "a.com"}""",
+            """{"marker": "meta[name='generator']", "fetch": "FETCH_MODE_UNSPECIFIED"}""",
             """{"host": "a.com", "fetch": "BROWSER"}""",
             """{"host": "oliveyoung.co.kr"""",
             "올리브영",
