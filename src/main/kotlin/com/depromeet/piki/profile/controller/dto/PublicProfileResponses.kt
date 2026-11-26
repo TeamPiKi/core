@@ -85,7 +85,11 @@ data class PublicFolderDetailResponse(
                 // 카드 값은 내 위시 목록과 같은 뷰(ItemView)로 내려 한 모양을 유지한다
                 wishes =
                     detail.wishes.map {
-                        PublicWishResponse(wishId = it.wish.getId(), item = WishItemResponse.ItemView.from(it))
+                        PublicWishResponse(
+                            wishId = it.wish.getId(),
+                            saved = detail.isSaved(it),
+                            item = WishItemResponse.ItemView.from(it),
+                        )
                     },
             )
     }
@@ -94,6 +98,11 @@ data class PublicFolderDetailResponse(
 @Schema(description = "공개 폴더 안의 위시 한 장")
 data class PublicWishResponse(
     val wishId: Long,
+    @field:Schema(
+        description = "보는 사람이 이미 내 위시에 가진 상품인지. 탐색 카드의 saved 와 같은 뜻이고, 비로그인·게스트는 false",
+        example = "false",
+    )
+    val saved: Boolean,
     @field:Schema(description = "화면값. 내 위시 목록과 같은 모양이다. 주인의 폴더 구성은 담지 않는다")
     val item: WishItemResponse.ItemView,
 )

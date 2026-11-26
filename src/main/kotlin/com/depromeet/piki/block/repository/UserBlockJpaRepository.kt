@@ -32,6 +32,11 @@ interface UserBlockJpaRepository : JpaRepository<UserBlock, Long> {
         @Param("b") b: UUID,
     ): Boolean
 
+    @Query("SELECT b FROM UserBlock b WHERE b.userId = :userId OR b.blockedId = :userId")
+    fun findAllInvolving(
+        @Param("userId") userId: UUID,
+    ): List<UserBlock>
+
     // 탈퇴 cascade — 그 사용자가 들어간 행을 양방향으로 지운다
     @Modifying
     @Query("DELETE FROM UserBlock b WHERE b.userId = :userId OR b.blockedId = :userId")

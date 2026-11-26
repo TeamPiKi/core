@@ -26,5 +26,8 @@ interface UserBlockRepository {
         b: UUID,
     ): Boolean
 
+    // 내가 차단했거나 나를 차단한 상대 전부
+    fun findCounterpartIds(userId: UUID): Set<UUID>
+
     fun hardDeleteAllInvolving(userId: UUID): Int
 }

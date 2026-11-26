@@ -27,5 +27,11 @@ class UserBlockRepositoryImpl(
         b: UUID,
     ): Boolean = userBlockJpaRepository.existsBetween(a, b)
 
+    override fun findCounterpartIds(userId: UUID): Set<UUID> =
+        userBlockJpaRepository
+            .findAllInvolving(userId)
+            .map { if (it.userId == userId) it.blockedId else it.userId }
+            .toSet()
+
     override fun hardDeleteAllInvolving(userId: UUID): Int = userBlockJpaRepository.hardDeleteAllInvolving(userId)
 }

@@ -123,6 +123,9 @@ class SecurityConfig(
                     // 토큰이 있으면 principal 이 채워져 관계(친구·차단)가 반영된다
                     .requestMatchers(HttpMethod.GET, "/api/v1/profiles/*", "/api/v1/profiles/*/folders/*")
                     .permitAll()
+                    // 탐색 조회: 비로그인도 본다(#1292). 토큰이 있으면 차단 관계와 내가 담은 상품이 반영된다
+                    .requestMatchers(HttpMethod.GET, "/api/v1/explore/recent", "/api/v1/explore/wishes/*")
+                    .permitAll()
                     // 플레이 링크 정보 조회: 미인증 상태에서 링크 진입 시 토너먼트 정보 확인
                     .requestMatchers(HttpMethod.GET, "/api/v1/tournaments/*/play-link-info")
                     .permitAll()

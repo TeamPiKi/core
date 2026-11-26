@@ -127,6 +127,29 @@ else
   docker volume create "$DATA_VOLUME" >/dev/null
 fi
 
+# 떠 있는 Redis 가 AOF 없이 돌고 있으면 교체 전에 켠다. AOF 파일 없이 appendonly yes 로 새로 뜨면 스냅샷을 읽지 않고
+# 빈 상태로 떠 전원이 로그아웃된다(실측). 켜 두면 새 컨테이너가 같은 볼륨의 AOF 로 이어받는다.
+if docker ps --format '{{.Names}}' | grep -qx 'piki-prod-redis'; then
+  redis_info() { docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" piki-prod-redis redis-cli info persistence | tr -d '\r'; }
+  if redis_info | grep -qx 'aof_enabled:0'; then
+    echo "[redis] 떠 있는 Redis 에 AOF 를 켠다 (교체 전 데이터 보존)"
+    docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" piki-prod-redis redis-cli config set appendonly yes >/dev/null \
+      || { echo "[redis] CONFIG SET appendonly 실패"; exit 1; }
+  fi
+  for i in $(seq 1 60); do
+    info="$(redis_info)"
+    # 스냅샷 저장이 돌고 있으면 다시 쓰기가 예약만 된 채 진행 중 0 으로 보인다. 예약과 파일까지 본다.
+    if echo "$info" | grep -qx 'aof_enabled:1' && echo "$info" | grep -qx 'aof_rewrite_in_progress:0' \
+      && echo "$info" | grep -qx 'aof_rewrite_scheduled:0' && echo "$info" | grep -qx 'aof_last_bgrewrite_status:ok' \
+      && docker exec piki-prod-redis test -s /data/appendonlydir/appendonly.aof.manifest; then
+      echo "[redis] AOF 준비 완료 (attempt $i)"
+      break
+    fi
+    sleep 1
+    [ "$i" -eq 60 ] && { echo "[redis] AOF 다시 쓰기가 60초 안에 끝나지 않음 — 교체하지 않고 멈춘다"; exit 1; }
+  done
+fi
+
 echo "[mysql] compose 로 컨테이너 상태 맞추는 중 (${COMPOSE_FILE})"
 DB_NAME="$DB_NAME" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" \
 DB_ROOT_PASSWORD="$DB_ROOT_PASSWORD" DB_EXPORTER_PASSWORD="$DB_EXPORTER_PASSWORD" \
