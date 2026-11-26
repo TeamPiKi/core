@@ -33,10 +33,14 @@ val awsSdkVersion = "2.44.11"
 // Spring Boot BOM 이 protobuf 를 관리하지 않아 명시한다. protoc 도 같은 버전으로 맞춘다(생성 코드와 런타임의 호환).
 val protobufVersion = "4.35.0"
 
+// Spring Boot BOM 이 관리하지 않는다. 2.1.x 가 Boot 4.1 기준이라 Boot 마이너를 올릴 땐 이 라인도 함께 올린다.
+val springModulithVersion = "2.1.2"
+
 dependencyManagement {
     imports {
         mavenBom("org.testcontainers:testcontainers-bom:$testcontainersVersion")
         mavenBom("software.amazon.awssdk:bom:$awsSdkVersion")
+        mavenBom("org.springframework.modulith:spring-modulith-bom:$springModulithVersion")
     }
 }
 
@@ -53,6 +57,11 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-mysql")
     runtimeOnly("com.mysql:mysql-connector-j")
+
+    implementation("org.springframework.modulith:spring-modulith-events-api")
+    implementation("org.springframework.modulith:spring-modulith-events-core")
+    runtimeOnly("org.springframework.modulith:spring-modulith-events-jdbc")
+    runtimeOnly("org.springframework.modulith:spring-modulith-events-jackson")
 
     // springdoc 은 Boot 마이너 버전마다 라인이 갈린다. Boot 를 올릴 땐 springdoc pom 의 parent(Boot) 버전으로 라인을 맞춘다.
     // Swagger UI 없이 /v3/api-docs 만 제공 (UI는 Stoplight Elements 사용)

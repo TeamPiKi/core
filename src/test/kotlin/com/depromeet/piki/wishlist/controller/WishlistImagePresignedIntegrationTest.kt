@@ -1,18 +1,17 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.UploadSize
 import com.depromeet.piki.item.domain.ItemSlot
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubImageSnapshotExtractor
 import com.depromeet.piki.support.StubImageStorage
-import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.deleteWishDataOf
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.presignImages
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.support.wishItemIdOf
@@ -54,7 +53,7 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
     private lateinit var itemSnapshotRepository: ItemSnapshotRepository
 
     @Autowired
-    private lateinit var itemParsingScheduler: ItemParsingScheduler
+    private lateinit var fakeExtractor: FakeExtractor
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
@@ -399,8 +398,8 @@ class WishlistImagePresignedIntegrationTest : IntegrationTestSupport() {
                     .path("id")
                     .asLong()
 
-            itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
+            fakeExtractor.awaitTicking {
+                jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)) == ParseRequestStatus.SUCCEEDED
             }
             val itemId = jdbcTemplate.wishItemIdOf(wishId) ?: error("wish $wishId 에 아이템이 확정되지 않았다")
             val version = itemSnapshotRepository.findAllByItemIds(listOf(itemId)).single()

@@ -1,29 +1,32 @@
 package com.depromeet.piki.wishlist.controller
 
 import com.depromeet.piki.auth.infrastructure.jwt.JwtProvider
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemSnapshot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.item.repository.ItemRepository
 import com.depromeet.piki.item.repository.ItemSnapshotRepository
-import com.depromeet.piki.item.service.ItemParsingScheduler
 import com.depromeet.piki.notification.domain.NotificationType
 import com.depromeet.piki.notification.repository.NotificationRepository
 import com.depromeet.piki.product.domain.ProductLink
+import com.depromeet.piki.product.routing.DbDomainAccessPolicy
+import com.depromeet.piki.product.routing.DomainAccess
+import com.depromeet.piki.product.routing.DomainAccessPolicyEntity
+import com.depromeet.piki.product.routing.DomainAccessPolicyJpaRepository
 import com.depromeet.piki.product.service.ProductSnapshot
+import com.depromeet.piki.support.FakeExtractor
 import com.depromeet.piki.support.IntegrationTestSupport
 import com.depromeet.piki.support.StubLinkSnapshotExtractor
-import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.deleteWishDataOf
 import com.depromeet.piki.support.failedBeforeSave
 import com.depromeet.piki.support.imageItem
 import com.depromeet.piki.support.itemVersion
 import com.depromeet.piki.support.linkItem
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
@@ -49,7 +52,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-// @Async 파서는 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
+// 결과 반영은 소비자 스레드의 별도 트랜잭션이라 커밋 후 awaitTicking 으로 기다림
 class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     @Autowired
     private lateinit var webApplicationContext: WebApplicationContext
@@ -76,10 +79,16 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
     private lateinit var jwtProvider: JwtProvider
 
     @Autowired
-    private lateinit var itemParsingScheduler: ItemParsingScheduler
+    private lateinit var fakeExtractor: FakeExtractor
 
     @Autowired
     private lateinit var notificationRepository: NotificationRepository
+
+    @Autowired
+    private lateinit var policyRepository: DomainAccessPolicyJpaRepository
+
+    @Autowired
+    private lateinit var accessPolicy: DbDomainAccessPolicy
 
     @Test
     fun `READY 위시를 새로고침하면 값은 그대로 refreshing 이 켜지고 성공하면 같은 아이템에 새 버전이 쌓인다`() {
@@ -104,7 +113,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.price").value(10_000))
 
             val slot = ItemSlot.wish(wishId)
-            itemParsingScheduler.awaitTicking { jdbcTemplate.parseOutboxStatusOf(slot) == OutboxStatus.SUCCEEDED }
+            fakeExtractor.awaitTicking { jdbcTemplate.parseRequestStatusOf(slot) == ParseRequestStatus.SUCCEEDED }
 
             val versions = versionsOf(itemId)
             assertEquals(2, versions.size)
@@ -263,8 +272,38 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.data.item.refreshing").value(true))
 
             assertEquals(2, countParseOutbox(slot))
-            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(slot))
         } finally {
+            cleanup(userId)
+        }
+    }
+
+    // 가짜 extractor 를 돌리지 않으므로 결과가 올 수 없다. 응답 직후의 실패는 core 가 직접 닫은 것
+    @Test
+    fun `차단 도메인이 된 상품을 새로고침하면 추출을 기다리지 않고 바로 실패로 닫는다`() {
+        val mockMvc = buildMockMvc()
+        val userId = UUID.randomUUID()
+        insertMember(userId)
+        val domain = "blocked-${UUID.randomUUID()}.example.com"
+        try {
+            val (wishId, itemId, _) = saveReadyWish(userId, "https://shop.$domain/products/1", "옛 상품", 10_000)
+            policyRepository.save(DomainAccessPolicyEntity(domain = domain, access = DomainAccess.BLOCKED.name, reason = "테스트"))
+            accessPolicy.reload()
+
+            mockMvc
+                .perform(
+                    post("/api/v1/wishlists/$wishId/refresh")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
+                ).andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.item.id").value(itemId))
+                .andExpect(jsonPath("$.data.item.refreshing").value(false))
+
+            assertEquals(ParseRequestStatus.FAILED, jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)))
+            assertEquals(1, versionsOf(itemId).size)
+        } finally {
+            policyRepository.findById(domain).ifPresent { policyRepository.delete(it) }
+            accessPolicy.reload()
+            jdbcTemplate.update("DELETE FROM notifications WHERE user_id = ?", uuidToBytes(userId))
             cleanup(userId)
         }
     }
@@ -287,8 +326,8 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer ${memberToken(userId)}"),
                 ).andExpect(status().isOk)
 
-            itemParsingScheduler.awaitTicking {
-                jdbcTemplate.parseOutboxStatusOf(ItemSlot.wish(wishId)) == OutboxStatus.SUCCEEDED
+            fakeExtractor.awaitTicking {
+                jdbcTemplate.parseRequestStatusOf(ItemSlot.wish(wishId)) == ParseRequestStatus.SUCCEEDED
             }
             // AFTER_COMMIT 리스너가 비동기로 저장한다
             await().atMost(Duration.ofSeconds(5)).until {
@@ -328,7 +367,7 @@ class WishlistRefreshIntegrationTest : IntegrationTestSupport() {
                 .andExpect(jsonPath("$.code").value("ITEM-008"))
 
             assertEquals(listOf("기계 값"), versionsOf(itemId).map { it.name })
-            assertEquals(OutboxStatus.PENDING, jdbcTemplate.parseOutboxStatusOf(slot))
+            assertEquals(ParseRequestStatus.PENDING, jdbcTemplate.parseRequestStatusOf(slot))
         } finally {
             cleanup(userId)
         }

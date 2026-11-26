@@ -1,6 +1,6 @@
 package com.depromeet.piki.item.domain
 
-import com.depromeet.piki.common.outbox.Outbox
+import com.depromeet.piki.common.domain.LongBaseEntity
 import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import jakarta.persistence.Column
@@ -35,12 +35,30 @@ class ItemParseOutbox(
     @Column(length = ProductLink.MAX_LENGTH)
     val normalizedInput: NormalizedInput?,
 
-) : Outbox() {
+) : LongBaseEntity() {
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 16)
+    var status: ParseRequestStatus = ParseRequestStatus.PENDING
+        protected set
+
     val slot: ItemSlot get() = ItemSlot(slotType, slotId)
 
     val input: ParseInput get() = ParseInput.of(inputType, inputValue)
 
     fun isRefresh(): Boolean = purpose == ParsePurpose.REFRESH
+
+    fun isInProgress(): Boolean = status == ParseRequestStatus.PENDING || status == ParseRequestStatus.PROCESSING
+
+    fun isFailed(): Boolean = status == ParseRequestStatus.FAILED
+
+    fun succeed() = close(ParseRequestStatus.SUCCEEDED)
+
+    fun fail() = close(ParseRequestStatus.FAILED)
+
+    private fun close(to: ParseRequestStatus) {
+        check(isInProgress()) { "파싱 요청 ${getIdOrNull()} 은 $status 라 $to 로 갈 수 없다" }
+        status = to
+    }
 
     companion object {
         fun of(

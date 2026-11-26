@@ -7,9 +7,11 @@ import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ItemStatus
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.event.ItemParseRequested
 import com.depromeet.piki.item.event.ItemParsingCompleted
 import com.depromeet.piki.item.event.ItemSlotMerged
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
+import com.depromeet.piki.product.domain.ParseInputType
 import com.depromeet.piki.product.domain.ProductLink
 import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
@@ -81,6 +83,29 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
         assertNull(result.wish.itemId)
         assertEquals(ItemStatus.PARSING, result.card.status)
         assertEquals(1, outboxCountOf(result.wish.slot))
+    }
+
+    @Test
+    fun `링크로 위시를 담으면 그 요청 행의 id 와 입력으로 파싱 요청 사실을 발행한다`() {
+        val result = wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse("https://www.musinsa.com/products/8100020")))
+
+        val expected = ItemParseRequested(latestOutboxIdOf(result.wish.slot), ParseInputType.LINK, "https://www.musinsa.com/products/8100020")
+        assertEquals(listOf(expected), applicationEvents.stream(ItemParseRequested::class.java).toList())
+    }
+
+    @Test
+    fun `링크로 위시를 담으면 파싱 요청 사실이 발행 기록에 하나 남는다`() {
+        wishPersistenceService.persist(RegisterWishFromUrlCommand(newMember(), ProductLink.parse("https://www.musinsa.com/products/8100021")))
+
+        assertEquals(1, publicationListenersOf(ItemParseRequested::class.java).size)
+    }
+
+    @Test
+    fun `ApplicationModuleListener 가 아닌 리스너가 받는 파싱 완료 사실은 발행 기록에 남지 않는다`() {
+        registerParsed(newMember(), "https://www.musinsa.com/products/8100022")
+
+        assertEquals(1, applicationEvents.stream(ItemParsingCompleted::class.java).count())
+        assertEquals(emptyList(), publicationListenersOf(ItemParsingCompleted::class.java))
     }
 
     @Test
@@ -312,6 +337,19 @@ class ItemSharingIntegrationTest : IntegrationTestSupport() {
 
     private fun versionCountOf(itemId: Long): Int =
         jdbcTemplate.queryForObject("SELECT COUNT(*) FROM item_snapshots WHERE item_id = ?", Int::class.java, itemId) ?: 0
+
+    private fun publicationListenersOf(eventType: Class<*>): List<String> =
+        jdbcTemplate.queryForList("SELECT LISTENER_ID FROM EVENT_PUBLICATION WHERE EVENT_TYPE = ?", String::class.java, eventType.name).filterNotNull()
+
+    private fun latestOutboxIdOf(slot: ItemSlot): Long {
+        entityManager.flush()
+        return jdbcTemplate.queryForObject(
+            "SELECT MAX(id) FROM item_parse_outbox WHERE slot_type = ? AND slot_id = ?",
+            Long::class.java,
+            slot.type.name,
+            slot.id,
+        ) ?: error("$slot 의 파싱 요청 행이 없다")
+    }
 
     private fun outboxCountOf(slot: ItemSlot): Int {
         entityManager.flush()

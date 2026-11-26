@@ -1,12 +1,22 @@
 package com.depromeet.piki.item.repository
 
-import com.depromeet.piki.common.outbox.OutboxJpaRepository
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlotType
+import jakarta.persistence.LockModeType
+import java.time.LocalDateTime
+import org.springframework.data.domain.Limit
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 
-interface ItemParseOutboxJpaRepository : OutboxJpaRepository<ItemParseOutbox> {
+interface ItemParseOutboxJpaRepository : JpaRepository<ItemParseOutbox, Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from ItemParseOutbox o where o.id = :id and o.deletedAt is null")
+    fun findByIdForUpdate(
+        @Param("id") id: Long,
+    ): ItemParseOutbox?
+
     fun findByIdAndDeletedAtIsNull(id: Long): ItemParseOutbox?
 
     @Query(
@@ -18,4 +28,14 @@ interface ItemParseOutboxJpaRepository : OutboxJpaRepository<ItemParseOutbox> {
         @Param("type") type: ItemSlotType,
         @Param("ids") ids: Collection<Long>,
     ): List<ItemParseOutbox>
+
+    @Query(
+        "select o.id from ItemParseOutbox o where o.status in (com.depromeet.piki.item.domain.ParseRequestStatus.PENDING, " +
+            "com.depromeet.piki.item.domain.ParseRequestStatus.PROCESSING) and o.createdAt < :before and o.deletedAt is null " +
+            "order by o.createdAt asc, o.id asc",
+    )
+    fun findInProgressIdsCreatedBefore(
+        @Param("before") before: LocalDateTime,
+        limit: Limit,
+    ): List<Long>
 }

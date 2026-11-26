@@ -39,7 +39,7 @@ class AsyncTracePropagationIntegrationTest : IntegrationTestSupport() {
         val executors = applicationContext.getBeansOfType(ThreadPoolTaskExecutor::class.java)
         // 자동 순회가 AsyncConfig 의 executor 를 실제로 커버하는지 가드 — 빈 맵이거나 누락되면 테스트가 무의미해진다.
         assertTrue(
-            AsyncConfig.ITEM_PARSING_EXECUTOR in executors && AsyncConfig.NOTIFICATION_EXECUTOR in executors,
+            AsyncConfig.EVENT_PUBLICATION_EXECUTOR in executors && AsyncConfig.NOTIFICATION_EXECUTOR in executors,
             "AsyncConfig 의 executor 빈이 순회 대상에 포함돼야 한다 (현재: ${executors.keys})",
         )
         return executors.map { (name, executor) ->

@@ -7,6 +7,7 @@ import com.depromeet.piki.product.service.remote.DbExtractionIdentitySettings
 import com.depromeet.piki.product.service.remote.ExtractionIdentityEntity
 import com.depromeet.piki.product.service.remote.ExtractionIdentityJpaRepository
 import com.depromeet.piki.product.service.remote.ExtractionIdentityRule
+import com.depromeet.piki.product.service.remote.ExtractionPolicyPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -18,6 +19,7 @@ class AdminExtractionIdentityService(
     private val settings: DbExtractionIdentitySettings,
     private val repository: ExtractionIdentityJpaRepository,
     private val auditService: AdminAuditService,
+    private val policyPublisher: ExtractionPolicyPublisher,
 ) {
     // 화면은 저장소를 직접 읽는다 — 캐시는 afterCommit 갱신이라 방금 저장한 값이 아직 안 보일 수 있다.
     @Transactional(readOnly = true)
@@ -55,7 +57,10 @@ class AdminExtractionIdentityService(
     private fun reloadAfterCommit() {
         TransactionSynchronizationManager.registerSynchronization(
             object : TransactionSynchronization {
-                override fun afterCommit() = settings.reload()
+                override fun afterCommit() {
+                    settings.reload()
+                    policyPublisher.publish()
+                }
             },
         )
     }

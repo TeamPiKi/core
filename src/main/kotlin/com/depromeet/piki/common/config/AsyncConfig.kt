@@ -1,9 +1,11 @@
 package com.depromeet.piki.common.config
 
+import com.depromeet.piki.common.event.RedisStreamSubscription
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.task.support.ContextPropagatingTaskDecorator
+import org.springframework.scheduling.annotation.AsyncConfigurer
 import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import java.util.concurrent.Executor
@@ -11,19 +13,33 @@ import java.util.concurrent.ThreadPoolExecutor
 
 @Configuration
 @EnableAsync
-class AsyncConfig {
+class AsyncConfig : AsyncConfigurer {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Bean(ITEM_PARSING_EXECUTOR)
-    fun itemParsingExecutor(): ThreadPoolTaskExecutor =
+    // 실행기를 지정하지 않은 @Async 가 여기서 돎. Modulith 의 ApplicationModuleListener 가 그 경우
+    override fun getAsyncExecutor(): Executor = eventPublicationExecutor()
+
+    @Bean(EVENT_PUBLICATION_EXECUTOR)
+    fun eventPublicationExecutor(): ThreadPoolTaskExecutor =
         ThreadPoolTaskExecutor().apply {
-            corePoolSize = 8
-            maxPoolSize = 8
-            // 인메모리 대기열 X
-            queueCapacity = 0
-            setThreadNamePrefix("item-parsing-")
+            corePoolSize = 2
+            maxPoolSize = 2
+            queueCapacity = 100
+            setThreadNamePrefix("event-publication-")
             setTaskDecorator(ContextPropagatingTaskDecorator())
             setRejectedExecutionHandler(ThreadPoolExecutor.AbortPolicy())
+            initialize()
+        }
+
+    @Bean(REDIS_STREAM_RECLAIM_EXECUTOR)
+    fun redisStreamReclaimExecutor(subscriptions: List<RedisStreamSubscription>): ThreadPoolTaskExecutor =
+        ThreadPoolTaskExecutor().apply {
+            corePoolSize = subscriptions.size.coerceAtLeast(1)
+            maxPoolSize = subscriptions.size.coerceAtLeast(1)
+            queueCapacity = 0
+            setThreadNamePrefix("redis-stream-reclaim-")
+            setTaskDecorator(ContextPropagatingTaskDecorator())
+            setRejectedExecutionHandler(ThreadPoolExecutor.DiscardPolicy())
             initialize()
         }
 
@@ -47,7 +63,8 @@ class AsyncConfig {
         }
 
     companion object {
-        const val ITEM_PARSING_EXECUTOR = "itemParsingExecutor"
+        const val REDIS_STREAM_RECLAIM_EXECUTOR = "redisStreamReclaimExecutor"
+        const val EVENT_PUBLICATION_EXECUTOR = "eventPublicationExecutor"
         const val NOTIFICATION_EXECUTOR = "notificationExecutor"
     }
 }

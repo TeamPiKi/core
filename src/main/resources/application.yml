@@ -168,8 +168,8 @@ oauth:
 product:
   extract:
     remote:
-      # 파싱(링크·이미지)의 유일 경로인 원격 추출 서비스(extractor) 주소. 기본값을 두지 않는다 —
-      # env 누락이 localhost 등으로 조용히 흘러 모든 파싱이 런타임에만 실패하는 침묵 창을 만들지 않고,
+      # 원격 추출 서비스(extractor) 주소. 모델 검증 호출이 씀. 기본값을 두지 않는다 —
+      # env 누락이 localhost 등으로 조용히 흘러 호출이 런타임에만 실패하는 침묵 창을 만들지 않고,
       # 부팅에서 즉시 실패시킨다(RemoteExtractionHttpClientConfig). 로컬 dual-boot 는 .env 의
       # EXTRACT_REMOTE_BASE_URL 로 명시한다(.env.example 참고). 배포는 정본으로 계산한 주소를 넘긴다.
       base-url: ${EXTRACT_REMOTE_BASE_URL:}

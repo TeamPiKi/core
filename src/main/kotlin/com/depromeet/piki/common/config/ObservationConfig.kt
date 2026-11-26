@@ -13,11 +13,8 @@ import org.springframework.scheduling.support.ScheduledTaskObservationContext
 // 아예 생기지 않는다. Spring Boot 가 @Bean ObservationPredicate 를 ObservationRegistry 에 자동 적용한다.
 //
 // 제외 대상은 "우리 API 표면도, 실제 작업도 아닌" 셋뿐이다:
-//  - @Scheduled 폴링(ItemParsingScheduler.dispatch 매 1s): 할 일이 없어도(claim 0건) 메서드
-//    실행마다 span 을 만들어 한산한 prod 의 Tempo 트레이스를 이 폴링으로 가득 채운다. 실제 파싱 작업은 워커가
-//    독립 "item.parse" span 으로 따로 남기므로(파싱 워커가 @Async 라 이 폴링 trace 가 전파되지 않고
-//    자기 trace 를 새로 연다) 폴링을 꺼도 파싱 추적은 그대로 보존된다. ScheduledTaskObservationContext 타입으로
-//    식별해 observation name 문자열에 의존하지 않는다(컴파일 안전).
+//  - @Scheduled 실행: 할 일이 없어도 실행마다 span 을 만들어 한산한 prod 의 Tempo 트레이스를 가득 채운다.
+//    ScheduledTaskObservationContext 타입으로 식별해 observation name 문자열에 의존하지 않는다(컴파일 안전).
 //  - actuator 요청(EC2 내부 Alloy 의 /actuator/prometheus scrape 등): 우리 API 가 아니라 수집기 트래픽이라 노이즈다.
 //  - 부모 없는 인프라 관측(JDBC 의 connection·query, Redis 의 exists·pexpire, Spring Security 필터체인):
 //    위 @Scheduled·actuator 억제 뒤에도 그 틱·요청 안에서 돌던 인프라 관측이 부모 없는 루트 span 이 되어,

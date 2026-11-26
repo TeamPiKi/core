@@ -3,24 +3,22 @@ package com.depromeet.piki.item.service
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
-import com.depromeet.piki.common.outbox.OutboxStatus
 import com.depromeet.piki.image.domain.ProductImage
 import com.depromeet.piki.item.domain.ItemParseOutbox
 import com.depromeet.piki.item.domain.ItemSlot
 import com.depromeet.piki.item.domain.ParseInput
 import com.depromeet.piki.item.domain.ParsePurpose
+import com.depromeet.piki.item.domain.ParseRequestStatus
 import com.depromeet.piki.item.repository.ItemJpaRepository
 import com.depromeet.piki.item.repository.ItemParseOutboxRepository
 import com.depromeet.piki.product.domain.ProductLink
-import com.depromeet.piki.product.service.ProductSnapshot
 import com.depromeet.piki.support.IntegrationTestSupport
-import com.depromeet.piki.support.StubLinkSnapshotExtractor
-import com.depromeet.piki.support.awaitTicking
 import com.depromeet.piki.support.deleteItems
 import com.depromeet.piki.support.deleteParseOutboxOf
 import com.depromeet.piki.support.deleteWishDataOf
+import com.depromeet.piki.support.latestParseOutboxIdOf
 import com.depromeet.piki.support.linkItem
-import com.depromeet.piki.support.parseOutboxStatusOf
+import com.depromeet.piki.support.parseRequestStatusOf
 import com.depromeet.piki.support.runningQueries
 import com.depromeet.piki.support.uuidToBytes
 import com.depromeet.piki.tournament.domain.TournamentItem
@@ -37,13 +35,15 @@ import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.data.redis.connection.stream.MapRecord
+import org.springframework.data.redis.connection.stream.RecordId
+import org.springframework.data.redis.connection.stream.StreamRecords
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
@@ -54,9 +54,7 @@ import kotlin.test.assertTrue
 class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
     @Autowired private lateinit var wishPersistenceService: WishPersistenceService
 
-    @Autowired private lateinit var itemParsingScheduler: ItemParsingScheduler
-
-    @Autowired private lateinit var stubLinkSnapshotExtractor: StubLinkSnapshotExtractor
+    @Autowired private lateinit var parseResultConsumer: ParseResultConsumer
 
     @Autowired private lateinit var userJpaRepository: UserJpaRepository
 
@@ -103,9 +101,9 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
                 entry.slot
             }
         try {
-            stubBothExtractionsFinishTogether(finalUrl)
+            confirmTogether(entries, finalUrl)
 
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { entries.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED } }
+            assertEquals(listOf(ParseRequestStatus.SUCCEEDED, ParseRequestStatus.SUCCEEDED), entries.map { jdbcTemplate.parseRequestStatusOf(it) })
 
             val live =
                 jdbcTemplate.queryForList(
@@ -187,9 +185,9 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
                     wishPersistenceService.updateMemo(UpdateWishMemoCommand(userId = userId, wishId = wish.getId(), memo = memo))
                     wish.slot
                 }
-            stubBothExtractionsFinishTogether(finalUrl)
+            confirmTogether(slots, finalUrl)
 
-            itemParsingScheduler.awaitTicking(Duration.ofSeconds(10)) { slots.all { jdbcTemplate.parseOutboxStatusOf(it) == OutboxStatus.SUCCEEDED } }
+            assertEquals(listOf(ParseRequestStatus.SUCCEEDED, ParseRequestStatus.SUCCEEDED), slots.map { jdbcTemplate.parseRequestStatusOf(it) })
 
             val live =
                 jdbcTemplate.queryForList(
@@ -206,18 +204,47 @@ class ItemSlotMergeConcurrencyIntegrationTest : IntegrationTestSupport() {
         }
     }
 
-    // 두 추출이 함께 끝나야 두 확정이 서로의 커밋 전에 스냅샷을 잡는다
-    private fun stubBothExtractionsFinishTogether(finalUrl: String) {
-        val bothExtracted = CyclicBarrier(2)
-        stubLinkSnapshotExtractor.build = {
-            bothExtracted.await(5, TimeUnit.SECONDS)
-            ProductSnapshot(
-                name = "합칠 상품",
-                price = 10_000,
-                currency = "KRW",
-                imageUrl = "https://img.example.com/m.png",
-                finalUrl = ProductLink.parse(finalUrl),
-            )
+    // 한 서버의 소비자는 결과를 하나씩 반영한다. 서버가 여럿이거나 이어받기가 겹칠 때 두 확정이 함께 진행된다
+    private fun confirmTogether(
+        slots: List<ItemSlot>,
+        finalUrl: String,
+    ) {
+        val executor = Executors.newFixedThreadPool(slots.size)
+        val ready = CountDownLatch(slots.size)
+        val start = CountDownLatch(1)
+        try {
+            val confirmations =
+                slots.map { slot ->
+                    val result = successResultOf(jdbcTemplate.latestParseOutboxIdOf(slot), finalUrl)
+                    executor.submit {
+                        ready.countDown()
+                        start.await()
+                        parseResultConsumer.onMessage(result)
+                    }
+                }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            start.countDown()
+            confirmations.forEach { it.get(10, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
         }
     }
+
+    private fun successResultOf(
+        requestId: Long,
+        finalUrl: String,
+    ): MapRecord<String, String, String> =
+        StreamRecords
+            .mapBacked<String, String, String>(
+                mapOf(
+                    "requestId" to requestId.toString(),
+                    "code" to ParseResultMessage.CODE_OK,
+                    "name" to "합칠 상품",
+                    "currentPrice" to "10000",
+                    "currency" to "KRW",
+                    "imageUrl" to "https://img.example.com/m.png",
+                    "finalUrl" to finalUrl,
+                ),
+            ).withStreamKey(ParseResultMessage.STREAM)
+            .withId(RecordId.of(requestId, 0))
 }

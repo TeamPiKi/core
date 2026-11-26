@@ -8,6 +8,7 @@ import com.depromeet.piki.product.service.remote.DbExtractionModelSettings
 import com.depromeet.piki.product.service.remote.ExtractionModelEntity
 import com.depromeet.piki.product.service.remote.ExtractionModelJpaRepository
 import com.depromeet.piki.product.service.remote.ExtractionModelProbe
+import com.depromeet.piki.product.service.remote.ExtractionPolicyPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -87,6 +88,7 @@ class ExtractionModelWriter(
     private val repository: ExtractionModelJpaRepository,
     private val settings: DbExtractionModelSettings,
     private val auditService: AdminAuditService,
+    private val policyPublisher: ExtractionPolicyPublisher,
 ) {
     // upsert — 같은 target 이 있으면 교체한다. "해제 후 재지정"으로 수정하게 하면 그 사이 기본 모델로 돌아가는
     // 공백 창이 생긴다 (AdminExtractionPolicyService.save 와 같은 이유).
@@ -129,7 +131,10 @@ class ExtractionModelWriter(
     private fun reloadAfterCommit() {
         TransactionSynchronizationManager.registerSynchronization(
             object : TransactionSynchronization {
-                override fun afterCommit() = settings.reload()
+                override fun afterCommit() {
+                    settings.reload()
+                    policyPublisher.publish()
+                }
             },
         )
     }

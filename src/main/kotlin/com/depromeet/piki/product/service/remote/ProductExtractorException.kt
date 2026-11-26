@@ -7,7 +7,7 @@ import com.depromeet.piki.common.exception.HttpMappable
 import org.springframework.http.HttpStatus
 
 // extractor 호출 실패. 일시 실패는 RETRYABLE, 확정 실패(422)는 비 RETRYABLE 로 번역함. code 별 행선지는 RemoteExtractionContract
-// 소비처가 파서뿐이라 응답 code 로 나가지 않아 공개 카탈로그에 등록하지 않음
+// 소비처가 결과 소비자뿐이라 응답 code 로 나가지 않아 공개 카탈로그에 등록하지 않음
 class ProductExtractorException private constructor(
     override val errorCode: ErrorCode,
     cause: Throwable? = null,

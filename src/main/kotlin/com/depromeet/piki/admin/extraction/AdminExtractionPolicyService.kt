@@ -7,6 +7,7 @@ import com.depromeet.piki.product.routing.DbDomainAccessPolicy
 import com.depromeet.piki.product.routing.DomainAccess
 import com.depromeet.piki.product.routing.DomainAccessPolicyEntity
 import com.depromeet.piki.product.routing.DomainAccessPolicyJpaRepository
+import com.depromeet.piki.product.service.remote.ExtractionPolicyPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -25,6 +26,7 @@ class AdminExtractionPolicyService(
     private val policyRepository: DomainAccessPolicyJpaRepository,
     private val accessPolicy: DbDomainAccessPolicy,
     private val auditService: AdminAuditService,
+    private val policyPublisher: ExtractionPolicyPublisher,
 ) {
     // 화면용 갈래별 보드. filter 를 주면 그 열만 남긴다(열 헤더 링크 = ?access=X).
     //
@@ -156,7 +158,10 @@ class AdminExtractionPolicyService(
     private fun reloadAfterCommit() {
         TransactionSynchronizationManager.registerSynchronization(
             object : TransactionSynchronization {
-                override fun afterCommit() = accessPolicy.reload()
+                override fun afterCommit() {
+                    accessPolicy.reload()
+                    policyPublisher.publish()
+                }
             },
         )
     }
