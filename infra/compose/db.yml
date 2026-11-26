@@ -105,7 +105,7 @@ services:
   # 앱 박스에 상태를 남기지 않으려고 Redis 를 데이터 박스에 둔다.
   redis:
     container_name: piki-prod-redis
-    image: redis:7.4-alpine
+    image: redis:8.10-alpine
     restart: unless-stopped
     # 끊긴 상대에 대한 재전송 포기를 호스트(provision-db.sh)와 같은 8 로. 컨테이너 net namespace 라 호스트 값이 안 닿는다(#1249).
     sysctls:
@@ -121,15 +121,22 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 미주입}
 
-    # 가득 차면 축출한다. 기본값 noeviction 은 모든 쓰기를 실패시켜 전원 로그인 불능이 된다.
-    # 인덱스 키(refresh:idx)가 축출되면 전 기기 무효화가 세션을 놓친다. 이 위험은 축출 알림으로만 지킨다(#1205).
+    # 가득 차면 만료가 있는 키만 축출한다(volatile-lru). 파싱 스트림과 추출 정책·규칙 키는 만료가 없어 지워지지 않는다.
+    # 지울 키가 남지 않으면 쓰기가 실패해 전원 로그인 불능이 된다. 만료 없는 키가 한도를 채우는 일은 축출 알림으로만 지킨다(#1205).
+    # 인덱스 키(refresh:idx)가 축출되면 전 기기 무효화가 세션을 놓친다.
+    #
+    # appendonly 는 스트림 때문이다. 스냅샷만으로는 재시작 때 마지막 스냅샷 뒤의 파싱 요청·결과가 사라진다.
+    # 이미 떠 있는 Redis 에 이 인자를 처음 줄 때는 provision-db.sh 가 먼저 CONFIG SET 으로 켠다. AOF 파일 없이
+    # appendonly yes 로 뜨면 Redis 가 스냅샷을 읽지 않고 빈 상태로 뜬다(실측).
     # RDB 저장 실패에는 쓰기를 막지 않는다. 잃는 것은 재시작 뒤 재로그인뿐이라 로그인 불능보다 가볍다.
     #
-    # extraction-rules-reader 는 extractor 가 몰별 추출 규칙의 배포본을 읽는 계정이다. 그 키 하나에 GET 만 된다 -
-    # 기본 계정의 비밀번호를 주면 extractor 가 세션까지 읽고 쓸 수 있다. 키 이름의 정본은 TeamPiKi/infra 의
-    # contracts/extraction.proto, 비밀번호 원문은 SSM(/piki-extractor/app/)에만 있고 여기에는 sha256 해시를 둔다.
-    # 비밀번호를 바꾸면 이 해시를 함께 바꾸고, 떠 있는 Redis 에는 같은 인자로 ACL SETUSER 를 친다(재시작 불필요).
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy allkeys-lru --stop-writes-on-bgsave-error no --user extraction-rules-reader on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~piki:extraction:rules' +get"]
+    # 아래 두 계정은 extractor 용이다. 기본 계정의 비밀번호를 주면 extractor 가 세션까지 읽고 쓸 수 있다.
+    #   extraction-rules-reader  몰별 추출 규칙의 배포본 키 하나에 GET 만.
+    #   extraction-stream-worker 요청 스트림 소비, 결과 스트림 쓰기, 정책 키 읽기만.
+    # 키·스트림 이름의 정본은 TeamPiKi/infra 의 contracts/extraction.proto, 비밀번호 원문은 SSM(/piki-extractor/app/)에만
+    # 있고 여기에는 sha256 해시를 둔다. 두 계정은 같은 비밀번호를 쓴다 - 나눈 것은 연결마다의 권한이다.
+    # 비밀번호를 바꾸면 두 해시를 함께 바꾸고, 떠 있는 Redis 에는 같은 인자로 ACL SETUSER 를 친다(재시작 불필요).
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy volatile-lru --appendonly yes --appendfsync everysec --stop-writes-on-bgsave-error no --user extraction-rules-reader on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~piki:extraction:rules' +get --user extraction-stream-worker on '#ff648c570da4acb96fcf3d1f470f4ca840fda327fba08c7b375b13617cfa2078' '~parse:requests' '%W~parse:results' '%R~piki:extraction:policy' +xreadgroup +xgroup +xpending +xclaim +xackdel +xinfo +xadd +get"]
 
     mem_limit: 128m
 
