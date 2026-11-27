@@ -121,20 +121,19 @@ class PublicProfileService(
                         sourcePlatform = sourcePlatformResolver.resolve(card.sourceLink),
                     )
                 },
-            savedItemIds = savedItemIdsOf(viewerId, wishes.mapNotNull { it.itemId }),
+            savedWishIdByItemId = savedWishIdByItemId(viewerId, wishes.mapNotNull { it.itemId }),
         )
     }
 
-    private fun savedItemIdsOf(
+    private fun savedWishIdByItemId(
         viewerId: UUID?,
         itemIds: List<Long>,
-    ): Set<Long> {
-        viewerId ?: return emptySet()
-        if (itemIds.isEmpty()) return emptySet()
+    ): Map<Long, Long> {
+        viewerId ?: return emptyMap()
+        if (itemIds.isEmpty()) return emptyMap()
         return wishRepository
             .findByItemIdsAndUserId(itemIds, viewerId)
-            .mapNotNull { it.itemId }
-            .toSet()
+            .associate { requireNotNull(it.itemId) to it.getId() }
     }
 
     // 보는 사람이 볼 수 있는 폴더만. 수는 폴더마다 세지 않고 한 번에 묶어 읽는다 —

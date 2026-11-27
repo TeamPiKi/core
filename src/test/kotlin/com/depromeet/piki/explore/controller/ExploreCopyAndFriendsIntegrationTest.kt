@@ -13,6 +13,7 @@ import com.depromeet.piki.wishlist.service.WishPersistenceService
 import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import jakarta.persistence.EntityManager
 import org.hamcrest.Matchers.hasSize
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -21,6 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -72,6 +74,28 @@ class ExploreCopyAndFriendsIntegrationTest : IntegrationTestSupport() {
             .perform(get("/api/v1/explore/wishes/$source").by(viewer))
             .andExpect(jsonPath("$.data.saved").value(true))
             .andExpect(jsonPath("$.data.savedUserCount").value(2))
+    }
+
+    @Test
+    fun `담은 위시를 savedWishId 로 지우면 빈 하트로 돌아오고 다시 담을 수 있다`() {
+        val mockMvc = mockMvc()
+        val owner = user(IdentityType.MEMBER)
+        val viewer = user(IdentityType.MEMBER)
+        val source = readyWish(owner)
+        val copied = copy(mockMvc, viewer, source).path("wishId").asLong()
+
+        mockMvc
+            .perform(get("/api/v1/explore/wishes/$source").by(viewer))
+            .andExpect(jsonPath("$.data.savedWishId").value(copied))
+        mockMvc.perform(delete("/api/v1/wishlists/$copied").by(viewer)).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/explore/wishes/$source").by(viewer))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.saved").value(false))
+            .andExpect(jsonPath("$.data.savedWishId").value(nullValue()))
+            .andExpect(jsonPath("$.data.savedUserCount").value(1))
+        assertEquals(false, copy(mockMvc, viewer, source).path("alreadySaved").asBoolean())
     }
 
     @Test
@@ -129,6 +153,7 @@ class ExploreCopyAndFriendsIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.wishes[0].friend.userId").value(active.toString()))
             .andExpect(jsonPath("$.data.wishes[0].item.name").value("상품"))
             .andExpect(jsonPath("$.data.wishes[0].saved").value(false))
+            .andExpect(jsonPath("$.data.wishes[0].savedWishId").value(nullValue()))
             // 칩은 최근에 담은 친구가 앞이고, 위시가 없는 친구도 들어 있다
             .andExpect(jsonPath("$.data.friends", hasSize<Any>(2)))
             .andExpect(jsonPath("$.data.friends[0].userId").value(active.toString()))

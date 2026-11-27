@@ -21,6 +21,7 @@ import com.depromeet.piki.user.domain.IdentityType
 import com.depromeet.piki.wishlist.domain.Wish
 import com.depromeet.piki.wishlist.domain.WishErrorCode
 import com.depromeet.piki.wishlist.repository.WishJpaRepository
+import com.jayway.jsonpath.JsonPath
 import org.hamcrest.Matchers.hasSize
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -103,7 +104,7 @@ class ExplorePicksIntegrationTest : IntegrationTestSupport() {
         val blocked = user()
         val stranger = user()
         val sharedItem = machineItem("내가 가진 상품")
-        saveWish(viewer, sharedItem)
+        val viewersWish = saveWish(viewer, sharedItem)
         val visible = finalOf(tournament(stranger, "보이는 토너먼트", sharedItem, machineItem("상대")))
         val last = finalOf(tournament(blocked, "차단된 사람의 토너먼트", machineItem("차단 1위"), machineItem("차단 2위")))
         mockMvc.perform(post("/api/v1/blocks/$blocked").by(viewer)).andExpect(status().isOk)
@@ -114,6 +115,10 @@ class ExplorePicksIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.picks[0].pickId").value(visible.pickId))
             .andExpect(jsonPath("$.data.picks[0].saved").value(true))
+            .andExpect(jsonPath("$.data.picks[0].savedWishId").value(viewersWish))
+        mockMvc
+            .perform(get("/api/v1/explore/picks/${visible.pickId}").by(viewer))
+            .andExpect(jsonPath("$.data.savedWishId").value(viewersWish))
     }
 
     @Test
@@ -243,11 +248,14 @@ class ExplorePicksIntegrationTest : IntegrationTestSupport() {
         val other = tournament(picker, "다른 토너먼트", machineItem("다른 1위"), machineItem("다른 후보"))
         val path = "/api/v1/explore/picks/${pick.pickId}/candidates/${tournament.candidateIds[1]}/copy"
 
-        mockMvc
-            .perform(post(path).by(viewer))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.data.wishId").exists())
-            .andExpect(jsonPath("$.data.alreadySaved").value(false))
+        val copied =
+            mockMvc
+                .perform(post(path).by(viewer))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.data.alreadySaved").value(false))
+                .andReturn()
+                .response.contentAsString
+                .let { JsonPath.read<Number>(it, "$.data.wishId").toLong() }
         mockMvc
             .perform(post(path).by(viewer))
             .andExpect(status().isOk)
@@ -255,6 +263,7 @@ class ExplorePicksIntegrationTest : IntegrationTestSupport() {
         mockMvc
             .perform(get("/api/v1/explore/picks/${pick.pickId}/candidates").by(viewer))
             .andExpect(jsonPath("$.data.candidates[1].saved").value(true))
+            .andExpect(jsonPath("$.data.candidates[1].savedWishId").value(copied))
 
         mockMvc
             .perform(post("/api/v1/explore/picks/${pick.pickId}/candidates/${other.candidateIds[1]}/copy").by(viewer))
@@ -335,9 +344,7 @@ class ExplorePicksIntegrationTest : IntegrationTestSupport() {
     private fun saveWish(
         userId: UUID,
         itemId: Long,
-    ) {
-        wishJpaRepository.save(Wish(userId = userId, itemId = itemId))
-    }
+    ): Long = wishJpaRepository.save(Wish(userId = userId, itemId = itemId)).getId()
 
     private fun user(
         identityType: IdentityType = IdentityType.MEMBER,

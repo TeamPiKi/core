@@ -34,8 +34,7 @@ data class PublicFolderDetail(
     val folderId: Long,
     val name: String,
     val wishes: List<WishResult>,
-    // 보는 사람이 이미 자기 위시로 가진 상품. 비로그인이면 비어 있다
-    val savedItemIds: Set<Long> = emptySet(),
+    val savedWishIdByItemId: Map<Long, Long> = emptyMap(),
 ) {
-    fun isSaved(wish: WishResult): Boolean = wish.wish.itemId?.let { it in savedItemIds } ?: false
+    fun savedWishIdOf(wish: WishResult): Long? = wish.wish.itemId?.let(savedWishIdByItemId::get)
 }

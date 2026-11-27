@@ -12,7 +12,6 @@ import com.depromeet.piki.item.service.ItemCardService
 import com.depromeet.piki.product.source.SourcePlatformResolver
 import com.depromeet.piki.user.domain.User
 import com.depromeet.piki.user.service.UserService
-import com.depromeet.piki.wishlist.repository.WishRepository
 import org.springframework.data.domain.Limit
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -24,7 +23,7 @@ class ExploreFriendsReader(
     private val friendshipRepository: FriendshipRepository,
     private val userBlockRepository: UserBlockRepository,
     private val userService: UserService,
-    private val wishRepository: WishRepository,
+    private val exploreViewerReader: ExploreViewerReader,
     private val exploreWishJpaRepository: ExploreWishJpaRepository,
     private val itemCardService: ItemCardService,
     private val sourcePlatformResolver: SourcePlatformResolver,
@@ -51,7 +50,7 @@ class ExploreFriendsReader(
                 val card = cards.getValue(wish.cardQuery())
                 ExploreCard.from(wish, card, sourcePlatformResolver.resolve(card.sourceLink))
             }
-        val savedItemIds = savedItemIdsOf(query.viewerId, exploreCards.map { it.itemId })
+        val savedWishIds = exploreViewerReader.savedWishIdByItemId(query.viewerId, exploreCards.map { it.itemId })
         val friendById = friends.associateBy { it.getId() }
         return ExploreFriendsResult(
             friends = friends.map { it.toResult() },
@@ -60,7 +59,7 @@ class ExploreFriendsReader(
                     ExploreFriendWishResult(
                         card = it,
                         friend = friendById.getValue(it.ownerId).toResult(),
-                        saved = it.itemId in savedItemIds,
+                        savedWishId = savedWishIds[it.itemId],
                     )
                 },
             nextCursor = page.lastOrNull()?.takeIf { hasNext }?.getId()?.toString(),
@@ -90,17 +89,6 @@ class ExploreFriendsReader(
         val friendIds = friends.map { it.getId() }
         friendId ?: return friendIds
         return friendIds.filter { it == friendId }
-    }
-
-    private fun savedItemIdsOf(
-        viewerId: UUID,
-        itemIds: List<Long>,
-    ): Set<Long> {
-        if (itemIds.isEmpty()) return emptySet()
-        return wishRepository
-            .findByItemIdsAndUserId(itemIds, viewerId)
-            .mapNotNull { it.itemId }
-            .toSet()
     }
 
     private fun User.toResult(): ExploreFriendResult = ExploreFriendResult(userId = getId(), nickname = nickname, profileImage = profileImage)

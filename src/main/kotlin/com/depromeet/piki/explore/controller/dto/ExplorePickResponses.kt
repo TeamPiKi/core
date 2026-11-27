@@ -36,6 +36,12 @@ data class ExplorePickResponse(
     val pickedAt: LocalDateTime,
     @field:Schema(description = "보는 사람이 이미 내 위시에 가진 상품인지. 비로그인이면 false", example = "false")
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     val tournament: ExploreTournamentView,
     val item: ExploreItemView,
 ) {
@@ -46,6 +52,7 @@ data class ExplorePickResponse(
                 candidateId = result.pick.candidateId,
                 pickedAt = result.pick.pickedAt,
                 saved = result.saved,
+                savedWishId = result.savedWishId,
                 tournament = ExploreTournamentView.from(result.pick),
                 item = ExploreItemView.from(result.pick.item),
             )
@@ -74,6 +81,12 @@ data class ExplorePickDetailResponse(
     val pickedAt: LocalDateTime,
     @field:Schema(description = "보는 사람이 이미 내 위시에 가진 상품인지. 비로그인이면 false", example = "false")
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     @field:Schema(description = "이 상품을 위시에 담은 사람 수", example = "12")
     val savedUserCount: Int,
     val item: ExploreItemView,
@@ -88,6 +101,7 @@ data class ExplorePickDetailResponse(
                 candidateId = result.pick.candidateId,
                 pickedAt = result.pick.pickedAt,
                 saved = result.saved,
+                savedWishId = result.savedWishId,
                 savedUserCount = result.savedUserCount,
                 item = ExploreItemView.from(result.pick.item),
                 picker = ExploreOwnerView.from(result.picker),
@@ -140,6 +154,12 @@ data class ExploreCandidateResponse(
     val isPick: Boolean,
     @field:Schema(description = "보는 사람이 이미 내 위시에 가진 상품인지. 비로그인이면 false", example = "false")
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     val item: ExploreItemView,
 ) {
     companion object {
@@ -148,6 +168,7 @@ data class ExploreCandidateResponse(
                 candidateId = result.candidateId,
                 isPick = result.isPick,
                 saved = result.saved,
+                savedWishId = result.savedWishId,
                 item = ExploreItemView.from(result.item),
             )
     }

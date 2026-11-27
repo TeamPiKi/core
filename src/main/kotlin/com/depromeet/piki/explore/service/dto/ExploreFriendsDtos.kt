@@ -29,5 +29,7 @@ data class ExploreFriendResult(
 data class ExploreFriendWishResult(
     val card: ExploreCard,
     val friend: ExploreFriendResult,
-    val saved: Boolean,
-)
+    val savedWishId: Long?,
+) {
+    val saved: Boolean get() = savedWishId?.let { true } ?: false
+}

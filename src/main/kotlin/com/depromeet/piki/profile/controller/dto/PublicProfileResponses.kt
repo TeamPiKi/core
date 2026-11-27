@@ -85,9 +85,11 @@ data class PublicFolderDetailResponse(
                 // 카드 값은 내 위시 목록과 같은 뷰(ItemView)로 내려 한 모양을 유지한다
                 wishes =
                     detail.wishes.map {
+                        val savedWishId = detail.savedWishIdOf(it)
                         PublicWishResponse(
                             wishId = it.wish.getId(),
-                            saved = detail.isSaved(it),
+                            saved = savedWishId?.let { true } ?: false,
+                            savedWishId = savedWishId,
                             item = WishItemResponse.ItemView.from(it),
                         )
                     },
@@ -103,6 +105,12 @@ data class PublicWishResponse(
         example = "false",
     )
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     @field:Schema(description = "화면값. 내 위시 목록과 같은 모양이다. 주인의 폴더 구성은 담지 않는다")
     val item: WishItemResponse.ItemView,
 )

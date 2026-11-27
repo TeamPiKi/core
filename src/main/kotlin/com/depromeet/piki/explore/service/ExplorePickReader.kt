@@ -42,7 +42,7 @@ class ExplorePickReader(
             pick = pick,
             picker = picker,
             candidates = candidates,
-            saved = candidates.first().saved,
+            savedWishId = candidates.first().savedWishId,
             savedUserCount = exploreWishJpaRepository.countLiveByItemId(pick.item.itemId).toInt(),
         )
     }
@@ -79,14 +79,14 @@ class ExplorePickReader(
                 val card = cards.getValue(query)
                 ExploreItem.machineExtracted(card, sourcePlatformResolver.resolve(card.sourceLink))?.let { tournamentItem.getId() to it }
             }
-        val savedItemIds = viewerId?.let { exploreViewerReader.savedItemIdsOf(it, shown.map { (_, item) -> item.itemId }) } ?: emptySet()
+        val savedWishIds = viewerId?.let { exploreViewerReader.savedWishIdByItemId(it, shown.map { (_, item) -> item.itemId }) } ?: emptyMap()
         val candidates =
             shown.map { (candidateId, item) ->
                 ExploreCandidateResult(
                     candidateId = candidateId,
                     item = item,
                     isPick = candidateId == row.candidateId,
-                    saved = item.itemId in savedItemIds,
+                    savedWishId = savedWishIds[item.itemId],
                 )
             }
         if (candidates.none { it.isPick }) throw ExploreException.pickNotFound()

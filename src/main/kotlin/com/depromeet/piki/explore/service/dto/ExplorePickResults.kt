@@ -27,8 +27,10 @@ data class ExplorePicksResult(
 
 data class ExplorePickEntryResult(
     val pick: ExplorePick,
-    val saved: Boolean,
-)
+    val savedWishId: Long?,
+) {
+    val saved: Boolean get() = savedWishId?.let { true } ?: false
+}
 
 data class GetExplorePickQuery(
     val viewerId: UUID?,
@@ -39,9 +41,11 @@ data class ExplorePickDetailResult(
     val pick: ExplorePick,
     val picker: ExploreOwnerResult,
     val candidates: List<ExploreCandidateResult>,
-    val saved: Boolean,
+    val savedWishId: Long?,
     val savedUserCount: Int,
-)
+) {
+    val saved: Boolean get() = savedWishId?.let { true } ?: false
+}
 
 data class ExplorePickCandidatesResult(
     val pick: ExplorePick,
@@ -52,8 +56,10 @@ data class ExploreCandidateResult(
     val candidateId: Long,
     val item: ExploreItem,
     val isPick: Boolean,
-    val saved: Boolean,
-)
+    val savedWishId: Long?,
+) {
+    val saved: Boolean get() = savedWishId?.let { true } ?: false
+}
 
 data class CopyExploreCandidateCommand(
     val userId: UUID,
