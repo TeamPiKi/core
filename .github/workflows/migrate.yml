@@ -162,14 +162,12 @@ jobs:
           ACCOUNT: ${{ inputs.target_account_id }}
         run: |
           set -euo pipefail
-          # dev/prod 토폴로지 비대칭 — dev 는 앱 박스에 DB 동거, prod 는 별도 DB 박스. (terraform ec2.tf·db_ec2.tf 실측)
+          # 두 환경 모두 별도 DB 박스를 쓴다(terraform db_ec2.tf·db_dev_ec2.tf, #1321).
           #
-          # db_exec 는 "DB 명령을 그 박스에 어떻게 던지나" 다. 명령 자체는 양쪽 다 박스 안에서 돈다 —
+          # db_exec 는 "DB 명령을 그 박스에 어떻게 던지나" 다. 명령은 박스 안에서 돈다 —
           # infra/compose/db.yml 이 MYSQL_ROOT_HOST=localhost 로 두어 root 는 컨테이너 밖에서 접속이
-          # 안 되기 때문이다(migrate-db.sh 헤더 참고). 차이는 전달 수단뿐이다.
-          #   dev  = ssh  — 앱 박스에 DB 가 동거하고 그 박스엔 키페어가 있다
-          #   prod = ssm  — 별도 DB 박스는 key_name 없이 뜬다(db_ec2.tf 실측). SSH 키가 아예 없다
-          # 인스턴스 Name 태그는 terraform 이 문자열로 박아 둔 값이다(ec2.tf·db_ec2.tf 실측) — SSM 경유 SSH 와
+          # 안 되기 때문이다(migrate-db.sh 헤더 참고). DB 박스는 key_name 없이 떠 SSH 키가 없으므로 ssm 이다.
+          # 인스턴스 Name 태그는 terraform 이 문자열로 박아 둔 값이다(ec2.tf·db_ec2.tf·db_dev_ec2.tf) — SSM 경유 SSH 와
           # Run Command 가 이걸로 박스를 찾는다.
           # 도메인은 계정이 바뀌어도 그대로다 — 이관에서 바뀌는 것은 A레코드가 가리키는 IP 하나뿐이다.
           # 그래서 변수가 아니라 여기 박는다. deploy.yml(63-70)·infra/nginx/*.conf 가 이미 같은 매핑을
@@ -177,32 +175,29 @@ jobs:
           if [ "$ENV" = "prod" ]; then
             REDIS_CONTAINER=piki-prod-redis
             DB_CONTAINER=piki-prod-mysql; DB_EXEC=ssm; APP_IP_OUTPUT=ec2_public_ip;     DB_TAG=piki-prod-db;  APP_TAG=piki-prod-app;  DOMAIN=api.piki.day
-            # prod 는 provision-db.sh 가 별도 DB 박스를 띄우며 root 비번을 db-root-password 로 따로 둔다.
-            ROOT_PW_PARAM=db-root-password
             # prod 이미지 버킷은 접두사 없는 var.image_bucket_name 그대로다(terraform/s3.tf).
             IMAGE_PREFIX=""
           else
-            REDIS_CONTAINER=piki-redis
-            DB_CONTAINER=piki-mysql;      DB_EXEC=ssh; APP_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-app;  APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
-            # dev 는 provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가
-            # 곧 root 비번이고, db-root-password 라는 파라미터는 존재하지 않는다(실측).
-            ROOT_PW_PARAM=db-password
+            REDIS_CONTAINER=piki-dev-redis
+            DB_CONTAINER=piki-dev-mysql;  DB_EXEC=ssm; APP_IP_OUTPUT=dev_ec2_public_ip; DB_TAG=piki-dev-db;   APP_TAG=piki-dev-app;   DOMAIN=dev.api.piki.day
             # dev 이미지 버킷은 prod 와 분리된 별도 버킷이고 이름이 dev- 로 시작한다(terraform/s3.tf 의
             # aws_s3_bucket.dev_images = "dev-${var.image_bucket_name}", outputs.tf 의 dev_image_bucket_name).
             # 이 분기가 없으면 dev 컷오버가 dev 객체를 하나도 옮기지 않은 채 prod 버킷 전량을 freeze
             # 구간 안에서 실어 나른다 — 컷오버 후 dev 이미지 전멸 + 다운타임 증폭.
             IMAGE_PREFIX="dev-"
           fi
+          # provision-db.sh 가 앱 계정과 다른 root 비번을 이 이름으로 둔다.
+          ROOT_PW_PARAM=db-root-password
           {
             echo "app_tag=$APP_TAG"
             echo "domain=$DOMAIN"
             echo "ssm_prefix=/piki-core/$ENV"
             echo "db_container=$DB_CONTAINER"
-            echo "redis_container=$REDIS_CONTAINER"   # Redis 는 DB 와 같은 박스(compose/db.yml · provision-runtime.sh)
+            echo "redis_container=$REDIS_CONTAINER"   # Redis 는 DB 와 같은 박스(compose/db.yml)
             echo "db_exec=$DB_EXEC"
             echo "app_ip_output=$APP_IP_OUTPUT"
             echo "db_tag=$DB_TAG"                       # ssm 모드의 대상 인스턴스 Name 태그
-            echo "root_pw_param=$ROOT_PW_PARAM"          # root 비번이 담긴 SSM 파라미터 이름(env 별로 다르다)
+            echo "root_pw_param=$ROOT_PW_PARAM"          # root 비번이 담긴 SSM 파라미터 이름
             # image_bucket 은 terraform 변수(var.image_bucket_name)로 들어가는 값이라 접두사가 붙으면
             # 안 된다 — dev 버킷은 terraform 이 스스로 "dev-" 를 붙여 만들고(s3.tf 의 aws_s3_bucket.dev_images),
             # 변수 자체는 piki-images-<계정> 형식만 받는다(variables.tf 의 validation). 접두사를 붙였더니
@@ -894,7 +889,7 @@ jobs:
       # docker pull 이 이름 해석에 실패했다(3차 이관 실측). 타이머는 cutover 끝에서 다시 켠다.
       - name: 새 박스 자동 업데이트 정지·종료 대기
         env:
-          TAGS: ${{ inputs.env == 'prod' && format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) || needs.config.outputs.app_tag }}
+          TAGS: ${{ format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) }}
         run: |
           set -euo pipefail
           bash infra/scripts/migrate-box-apt.sh hold "$TAGS"
@@ -906,23 +901,17 @@ jobs:
         run: |
           set -euo pipefail
           scp infra/scripts/provision-runtime.sh "$HOST:/tmp/"
-          # ENVIRONMENT 를 원격 셸에 넘긴다. 안 넘기면 (1) dev 분기를 못 타 MySQL 을 안 깔고
-          # ("[mysql] prod 환경 — skip" 이 찍힌다) (2) 끝의 alloy 호출이 ${ENVIRONMENT:?} 로 죽는다(실측).
+          # ENVIRONMENT 를 원격 셸에 넘긴다. 안 넘기면 스크립트가 첫 검사에서 exit 2 로 죽는다.
           # --skip-alloy: 관측 블록(config.alloy·provision-alloy-ssm.sh)의 SSOT 는 TeamPiKi/infra 이고
           # 이관 경로는 그 블록을 올리지 않는다. 배포(deploy.yml)가 매번 올려 갱신하므로 여기선 건너뛴다.
           # shellcheck disable=SC2029  # $ENV 의 클라이언트 측 확장은 의도 — 원격엔 그 값이 리터럴로 실려야 한다
           ssh "$HOST" "ENVIRONMENT='$ENV' bash /tmp/provision-runtime.sh --skip-alloy"
-          # dev 는 여기서 끝이다. DB 가 앱 박스에 동거하고, 그 MySQL 은 방금 돈 provision-runtime.sh 가
-          # ENVIRONMENT=dev 분기에서 설치·기동한다(로그의 "[mysql] ready"). provision-db.sh 를 또 부르면
-          # 그 스크립트는 별도 prod DB 박스 전용이라 SSM_PREFIX 가 /piki-core/prod 로 박혀 있어
-          # dev 에서는 ParameterNotFound 로 죽는다(실측). 백업 cron(db-backup.sh)은 prod 관심사다.
           echo "::notice::앱 박스 provision 완료 — $HOST"
 
       # DB 박스는 배포할 앱이 없어 deploy.yml 의 Alloy 갱신 경로를 타지 않는다. 여기서 안 올리면 이관 뒤
       # 관측 없이 돌다가 백업 지표 NoData 알림으로만 드러난다(#1169 실측). 블록의 SSOT 는 TeamPiKi/infra 라
       # deploy.yml 과 같은 방식으로 main 을 sparse checkout 한다(public repo, 기본 GITHUB_TOKEN 으로 충분).
       - name: Checkout infra blocks (DB 박스 Alloy)
-        if: ${{ inputs.env == 'prod' }}
         uses: actions/checkout@v4
         with:
           repository: TeamPiKi/infra
@@ -932,12 +921,15 @@ jobs:
             blocks/alloy
           sparse-checkout-cone-mode: true
 
-      - name: prod DB 박스 provision (SSM, keyless)
-        if: ${{ inputs.env == 'prod' }}
+      - name: DB 박스 provision (SSM, keyless)
         env:
           DB_TAG: ${{ needs.config.outputs.db_tag }}
+          ENV: ${{ inputs.env }}
         run: |
           set -euo pipefail
+          # dev DB 박스는 관측 수집기 없이 돈다(메트릭 시계열 한도, #1321). 블록은 두 환경 모두 올려 내려받는 줄을 같게 둔다.
+          DB_ARGS="--environment $ENV"
+          [ "$ENV" = prod ] || DB_ARGS="$DB_ARGS --skip-alloy"
           # 별도 DB 박스는 키페어가 없어 SSM Run Command 로 provision 한다(EC2 Instance Connect SSH 대체).
           # provision-db.sh·db-backup.sh 를 tfstate 버킷 임시 prefix 에 올려 박스가 내려받아 실행한다.
           BUCKET="${{ needs.config.outputs.tfstate_bucket }}"
@@ -965,7 +957,7 @@ jobs:
             --targets "Key=tag:Name,Values=$DB_TAG" \
             --document-name AWS-RunShellScript \
             --comment "migrate provision-db" \
-            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh --environment prod\"]" \
+            --parameters commands="[\"set -e\",\"command -v docker >/dev/null || { echo 'docker 없음 — user_data 부트스트랩 확인'; exit 1; }\",\"$PULL s3://$BUCKET/provision/provision-db.sh /tmp/provision-db.sh\",\"$PULL s3://$BUCKET/provision/db-backup.sh /tmp/db-backup.sh\",\"mkdir -p /tmp/compose /tmp/alloy\",\"$PULL s3://$BUCKET/provision/db.yml /tmp/compose/db.yml\",\"$PULL s3://$BUCKET/provision/alloy/config.alloy /tmp/alloy/config.alloy\",\"$PULL s3://$BUCKET/provision/alloy/provision-alloy.sh /tmp/alloy/provision-alloy.sh\",\"bash /tmp/provision-db.sh $DB_ARGS\"]" \
             --query 'Command.CommandId' --output text)
           echo "::notice::SSM provision-db 전송 — CommandId=$CMD_ID"
           # send-command 는 비동기다. CommandId 만 받고 끝내면 박스에서 provision 이 실패해도 이 job 은
@@ -988,8 +980,8 @@ jobs:
           aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
             --query '[StandardOutputContent,StandardErrorContent]' --output text
           [ "$STATUS" = "Success" ] || {
-            echo "::error::prod DB provision 실패 — Status=$STATUS (박스 instance-role 의 tfstate provision/* s3:GetObject 권한·스크립트 로그 확인)"; exit 1; }
-          echo "::notice::prod DB provision 완료 — $DB_TAG (MySQL·백업 cron·Alloy)"
+            echo "::error::DB provision 실패 — Status=$STATUS (박스 instance-role 의 tfstate provision/* s3:GetObject 권한·스크립트 로그 확인)"; exit 1; }
+          echo "::notice::DB provision 완료 — $DB_TAG"
 
       # 이미 있으면 구 계정을 부르지 않는다. 컷오버 뒤 provision 재실행은 도메인이 신 박스라 아래 IP 가드에 걸린다.
       - name: 신 앱 박스 TLS cert 유무
@@ -1081,9 +1073,9 @@ jobs:
           set -euo pipefail
           src() { aws --profile piki-migrate-src "$@"; }
 
-          # terraform 이 Name 태그에 박는 값들(ec2.tf·db_ec2.tf·두 side 레포의 main.tf 실측).
+          # terraform 이 Name 태그에 박는 값들(ec2.tf·db_ec2.tf·db_dev_ec2.tf·두 side 레포의 main.tf 실측).
           # 구·신 계정이 같은 이름을 쓰므로 이름이 곧 매핑 키다.
-          BOXES="piki-dev-app piki-prod-app piki-prod-db piki-extractor piki-headless-browser"
+          BOXES="piki-dev-app piki-dev-db piki-prod-app piki-prod-db piki-extractor piki-headless-browser"
 
           # running 만 본다 — 키페어 교체 등으로 terminated 가 남아 있으면 옛 IP 를 집는다.
           ip_of() { # $1=runner(src|aws) $2=Name → "public<TAB>private"
@@ -1226,6 +1218,7 @@ jobs:
           SRC_APP_HOST: ${{ steps.src.outputs.host }}
           DST_DB_HOST: ${{ steps.dst.outputs.host }} # dev 만. prod(ssm 모드)는 보지 않는다
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
+          RELAY_PREFIX: ${{ inputs.env == 'prod' && 'migrate' || 'migrate/dev' }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
@@ -1242,7 +1235,7 @@ jobs:
             SRC_EXEC="$DB_EXEC" DST_EXEC="$DB_EXEC" \
             SRC_DB_CONTAINER="$DB_CONTAINER" DST_DB_CONTAINER="$DB_CONTAINER" \
             SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" ROOT_PW_PARAM="$ROOT_PW_PARAM" \
-            SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" \
+            SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" RELAY_PREFIX="$RELAY_PREFIX" \
             SRC_DB_HOST="$SRC_APP_HOST" SRC_DB_KEY=key.pem \
             DST_DB_HOST="$DST_DB_HOST" DST_DB_KEY=key.pem \
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
@@ -1627,6 +1620,7 @@ jobs:
           SRC_APP_HOST: ${{ steps.src.outputs.host }}
           DST_DB_HOST: ${{ steps.dst.outputs.host }} # dev 만 본다. prod(ssm 모드)는 DB 박스를 Name 태그로 조종
           SRC_RELAY_BUCKET: ${{ needs.config.outputs.src_backup_bucket }}
+          RELAY_PREFIX: ${{ inputs.env == 'prod' && 'migrate' || 'migrate/dev' }}
           DST_RELAY_BUCKET: ${{ needs.config.outputs.db_backup_bucket }}
           OLD_IMAGE_BUCKET: ${{ needs.config.outputs.old_image_bucket }}
           NEW_IMAGE_BUCKET: ${{ needs.config.outputs.sync_image_bucket }}
@@ -1647,7 +1641,7 @@ jobs:
             SRC_EXEC="$DB_EXEC" DST_EXEC="$DB_EXEC" \
             SRC_DB_CONTAINER="$DB_CONTAINER" DST_DB_CONTAINER="$DB_CONTAINER" \
             SRC_SSM_PREFIX="$SSM_PREFIX" DST_SSM_PREFIX="$SSM_PREFIX" ROOT_PW_PARAM="$ROOT_PW_PARAM" \
-            SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" \
+            SRC_RELAY_BUCKET="$SRC_RELAY_BUCKET" DST_RELAY_BUCKET="$DST_RELAY_BUCKET" RELAY_PREFIX="$RELAY_PREFIX" \
             SRC_DB_HOST="$SRC_APP_HOST" SRC_DB_KEY=key.pem \
             DST_DB_HOST="$DST_DB_HOST" DST_DB_KEY=key.pem \
             SRC_DB_TAG="$DB_TAG" DST_DB_TAG="$DB_TAG" \
@@ -1767,7 +1761,7 @@ jobs:
       - name: 새 박스 자동 업데이트 재개
         if: always()
         env:
-          TAGS: ${{ inputs.env == 'prod' && format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) || needs.config.outputs.app_tag }}
+          TAGS: ${{ format('{0},{1}', needs.config.outputs.app_tag, needs.config.outputs.db_tag) }}
         run: |
           bash infra/scripts/migrate-box-apt.sh release "$TAGS" \
             || echo "::warning::자동 업데이트 타이머 재개 실패 — 박스에서 systemctl start apt-daily.timer apt-daily-upgrade.timer"
@@ -2016,7 +2010,7 @@ jobs:
           # DB provision 역할은 prod-db Environment 에 쓴다. provision-db-observability.yml 이 그 Environment 로
           # 돌고 역할의 trust 도 environment:prod-db 로 못박혀 있다(terraform/oidc.tf). $ENV(prod) 에 쓰면
           # 그 워크플로는 repo 변수(구 계정 역할)로 떨어져 assume 이 거부된다(#1169 실측).
-          # dev 는 별도 DB 박스가 없어 이 변수를 쓰는 워크플로가 없다.
+          # 그 워크플로는 운영 DB 박스만 다뤄 dev 에는 이 변수가 없다.
           if [ "$ENV" = prod ]; then
             [ -n "$DB_ROLE" ] && set_var AWS_DB_PROVISION_ROLE_ARN "$DB_ROLE" prod-db \
               || { echo "::warning::DB provision 역할 ARN 을 못 얻었다"; fail=1; }

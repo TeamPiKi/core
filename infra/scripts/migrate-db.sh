@@ -17,7 +17,7 @@
 #   - root 비밀번호를 아무 데도 넘기지 않는다. 박스가 자기 인스턴스 role 로 SSM 에서 직접 읽는다.
 #     러너의 ps·원격 ps·명령 이력 어디에도 비밀번호가 뜨지 않고, 따옴표가 섞인 비번에도 안 깨진다.
 #   - 덤프가 러너 디스크·SSH 세션을 통과하지 않는다. prod 규모에서 긴 스트리밍이 끊길 자리가 없다.
-#   - dev(SSH)·prod(SSM)의 차이가 "명령을 어떻게 던지나" 한 곳(remote_exec)으로 모인다.
+#   - SSH·SSM 의 차이가 "명령을 어떻게 던지나" 한 곳(remote_exec)으로 모인다.
 #
 # 두 계정 버킷 사이엔 cross-account 정책이 없으므로 릴레이(다운로드→업로드)는 러너가 한다.
 set -euo pipefail
@@ -26,20 +26,19 @@ MODE="${MODE:?rehearsal|cutover 를 지정}"
 DB_NAME="${DB_NAME:?이관할 스키마명 (예: piki)}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 
-# 양쪽 DB 박스를 어떻게 조종하나. ssh=키페어 있는 박스(dev 앱 박스 동거), ssm=키페어 없는 박스(prod DB 박스).
+# 양쪽 DB 박스를 어떻게 조종하나. ssh=키페어 있는 박스, ssm=키페어 없는 박스. 지금은 두 환경 모두 DB 박스가 ssm 이다(#1321).
 SRC_EXEC="${SRC_EXEC:?구 계정 DB 박스 조종 방식 (ssh|ssm)}"
 DST_EXEC="${DST_EXEC:?신 계정 DB 박스 조종 방식 (ssh|ssm)}"
 SRC_DB_CONTAINER="${SRC_DB_CONTAINER:?구 계정 MySQL 컨테이너명}"
 DST_DB_CONTAINER="${DST_DB_CONTAINER:?신 계정 MySQL 컨테이너명}"
 SRC_SSM_PREFIX="${SRC_SSM_PREFIX:?구 계정 SSM 프리픽스 (예: /piki-core/prod)}"
 DST_SSM_PREFIX="${DST_SSM_PREFIX:?신 계정 SSM 프리픽스}"
-# root 비밀번호가 담긴 SSM 파라미터 이름. env 마다 다르다 —
-#   prod: 별도 DB 박스를 provision-db.sh 가 띄우며 db-root-password 를 따로 둔다.
-#   dev : provision-runtime.sh 가 MYSQL_ROOT_PASSWORD="${DB_PASSWORD}" 로 띄워 db-password 가 곧 root 비번이고,
-#         db-root-password 라는 파라미터는 애초에 없다(실측 — 이 값을 고정하면 dev 에서 ParameterNotFound).
+# root 비밀번호가 담긴 SSM 파라미터 이름. provision-db.sh 가 앱 계정과 다른 값으로 둔다.
 ROOT_PW_PARAM="${ROOT_PW_PARAM:-db-root-password}"
 SRC_RELAY_BUCKET="${SRC_RELAY_BUCKET:?구 계정 릴레이 버킷 (db_backup)}"
 DST_RELAY_BUCKET="${DST_RELAY_BUCKET:?신 계정 릴레이 버킷 (db_backup)}"
+# 환경마다 prefix 를 나눠 dev DB 박스 role 이 운영 덤프에 닿지 못하게 한다(terraform db_dev_ec2.tf 가 이 값으로 좁힌다).
+RELAY_PREFIX="${RELAY_PREFIX:?릴레이 객체 prefix (prod=migrate, dev=migrate/dev)}"
 
 # ssh 모드에서만 쓴다(빈 값 허용 — ssm 모드면 안 본다).
 SRC_DB_HOST="${SRC_DB_HOST:-}"; SRC_DB_KEY="${SRC_DB_KEY:-}"
@@ -62,14 +61,14 @@ SRC_AWS_PROFILE="${SRC_AWS_PROFILE:?구 계정 프로필}"
 # 경계를 공유하려고 파일로 남긴다 — migrate-unfreeze.sh 가 이 파일을 읽어 되살린다.
 FREEZE_STATE_FILE="${FREEZE_STATE_FILE:-/tmp/piki-migrate-frozen}"
 
-# Redis 는 두 환경 모두 DB 와 같은 박스에 있어(prod DB 박스·dev 앱 박스) DB 와 같은 경로로 옮긴다.
+# Redis 는 두 환경 모두 DB 박스에 있어 DB 와 같은 경로로 옮긴다.
 REDIS_CONTAINER="${REDIS_CONTAINER:?Redis 컨테이너명}"
 
 # ConnectTimeout 은 주지 않는다. 호스트는 SSM 별칭이라 ssm-ssh 가 쓴 30초가 맞고, 명령줄 값이 그걸 덮는다.
 SSHOPT=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.35.21" # db-backup.sh 와 같은 핀. 박스에 aws CLI 가 없어도 된다.
-RELAY_KEY="migrate/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-REDIS_RELAY_KEY="migrate/redis-$(date -u +%Y%m%dT%H%M%SZ).tgz"
+RELAY_KEY="${RELAY_PREFIX}/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+REDIS_RELAY_KEY="${RELAY_PREFIX}/redis-$(date -u +%Y%m%dT%H%M%SZ).tgz"
 WORK=/tmp/piki-migrate
 mkdir -p "$WORK"
 
@@ -106,23 +105,20 @@ _exec_ssm() {
   local -a A=(env "AWS_DEFAULT_REGION=$AWS_REGION" aws)
   [ -z "$profile" ] || A+=(--profile "$profile")
   local b64; b64="$(printf '%s' "$body" | base64 -w0)"
+  # 태그가 아니라 인스턴스 id 로 보낸다. 구 계정 역할(terraform/oidc.tf 의 RunShellOnDbBox)은 SendCommand 를
+  # 인스턴스 ARN 으로 좁혀 두었고, 태그 대상은 그 좁힌 권한으로 인가되지 않는다.
+  instance_id=$("${A[@]}" ec2 describe-instances \
+    --filters "Name=tag:Name,Values=$tag" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[].Instances[].InstanceId' --output text)
+  case "$instance_id" in
+    i-*[[:space:]]*|"") log "SSM 대상이 정확히 하나가 아니다 — tag:Name=$tag (${instance_id:-없음})"; return 1 ;;
+  esac
   cmd_id=$("${A[@]}" ssm send-command \
-    --targets "Key=tag:Name,Values=$tag" \
+    --instance-ids "$instance_id" \
     --document-name AWS-RunShellScript \
     --comment "piki migrate-db ($MODE)" \
     --parameters commands="[\"set -e\",\"echo $b64 | base64 -d > /tmp/piki-migrate-remote.sh\",\"bash /tmp/piki-migrate-remote.sh\",\"rm -f /tmp/piki-migrate-remote.sh\"]" \
     --query 'Command.CommandId' --output text)
-  # send-command 직후엔 invocation 이 아직 전파 안 돼 빈 결과가 올 수 있다. 나타날 때까지 잠깐 재조회한다 —
-  # 첫 조회의 빈 결과를 "대상 없음"으로 오판하면 정상 명령이 실패로 찍힌다(prod SSM 경로).
-  instance_id=None
-  for _ in $(seq 1 30); do
-    instance_id=$("${A[@]}" ssm list-command-invocations --command-id "$cmd_id" \
-      --query 'CommandInvocations[0].InstanceId' --output text 2>/dev/null || echo None)
-    { [ "$instance_id" != None ] && [ -n "$instance_id" ]; } && break
-    sleep 2
-  done
-  { [ "$instance_id" != None ] && [ -n "$instance_id" ]; } || {
-    log "SSM 대상 없음 — tag:Name=$tag 인스턴스가 없거나 SSM Agent 미등록"; return 1; }
   # wait 는 타임아웃(기본 약 10분)에 걸리면 실패 코드를 내지만, 그게 곧 명령 실패는 아니라
   # 판정은 아래 Status 로 한다. 긴 덤프를 넉넉히 기다리도록 재시도로 감싼다.
   local waited=0
@@ -193,9 +189,8 @@ rollback_freeze() {
 }
 
 # ── 직전송 경로 (양쪽 다 ssh 일 때) ──────────────────────────────────────────
-# S3 릴레이를 타지 않는다. 릴레이는 keyless 박스(prod DB)를 SSM 으로만 조종할 수 있어서 둔 우회로인데,
-# dev 는 러너가 앱 박스에 SSH 로 직접 닿는다. 게다가 dev 용 릴레이 버킷은 존재하지 않는다 —
-# piki-db-backup-* 는 prod DB 박스 백업용으로 만든 것이라 dev 덤프를 올릴 자리가 아니다(실측).
+# S3 릴레이를 타지 않는다. 릴레이는 keyless 박스를 SSM 으로만 조종할 수 있어서 둔 우회로다.
+# 두 환경의 DB 박스가 모두 keyless 가 된 뒤로(#1321) 워크플로는 이 경로를 쓰지 않는다.
 # 그래서 덤프를 러너 표준입출력으로 바로 흘려보낸다.
 dump_direct() {
   log "덤프(직전송) — 구 계정 박스에서 러너로"
@@ -414,8 +409,8 @@ redis_transfer() {
 }
 
 # ── 흐름 ─────────────────────────────────────────────────────────────────────
-# 전송 경로 선택 — 양쪽 다 ssh 면 러너가 직접 닿으므로 S3 릴레이가 불필요하고, dev 는 릴레이 버킷
-# 자체가 없어 직전송만 성립한다. 한쪽이라도 ssm(keyless prod DB 박스)이면 릴레이를 탄다.
+# 전송 경로 선택 — 양쪽 다 ssh 면 러너가 직접 닿으므로 S3 릴레이가 불필요하다.
+# 한쪽이라도 ssm(keyless DB 박스)이면 릴레이를 탄다.
 transfer() {
   if [ "$SRC_EXEC" = ssh ] && [ "$DST_EXEC" = ssh ]; then
     dump_direct; restore_direct
