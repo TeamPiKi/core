@@ -1,5 +1,5 @@
 # dev DB 서버. 운영 DB 서버(db_ec2.tf)와 같은 부트스트랩·같은 compose 로 MySQL 과 Redis 를 띄운다(#1321).
-# 운영과 다른 점은 백업 버킷과 종료 보호가 없다는 것뿐이다. dev 데이터는 다시 만들 수 있다.
+# 운영과 다른 점은 백업과 종료 보호가 없다는 것뿐이다. dev 데이터는 다시 만들 수 있다.
 
 resource "aws_security_group" "dev_db" {
   name        = "piki-dev-db-sg"
@@ -66,6 +66,14 @@ data "aws_iam_policy_document" "dev_db_instance" {
     sid       = "ReadObservabilityCredentials"
     actions   = ["ssm:GetParameter", "ssm:GetParameters"]
     resources = ["arn:aws:ssm:${var.aws_region}:*:parameter/piki/observability/*"]
+  }
+
+  # 계정 이관의 덤프 릴레이. 출발 계정에서는 올리고 도착 계정에서는 내려받는다(infra/scripts/migrate-db.sh).
+  # 운영 덤프(migrate/ 바로 아래)에는 닿지 못한다.
+  statement {
+    sid       = "RelayMigrationDumps"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.db_backup.arn}/migrate/dev/*"]
   }
 
   statement {

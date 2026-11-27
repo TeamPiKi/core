@@ -231,12 +231,13 @@ data "aws_iam_policy_document" "migrate_source" {
     actions   = ["ec2:DescribeInstances"]
     resources = ["*"]
   }
-  # 구 계정 Run Command 는 prod DB 덤프 하나다. 앱 박스는 SSH(아래 SshOverSsm)로만 붙는다.
+  # 구 계정 Run Command 는 DB 박스의 덤프뿐이다. 앱 박스는 SSH(아래 SshOverSsm)로만 붙는다.
   statement {
     sid     = "RunShellOnDbBox"
     actions = ["ssm:SendCommand"]
     resources = [
       aws_instance.db.arn,
+      aws_instance.dev_db.arn,
       "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
     ]
   }
