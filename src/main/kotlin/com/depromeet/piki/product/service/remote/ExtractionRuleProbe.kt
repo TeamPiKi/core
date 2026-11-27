@@ -39,6 +39,8 @@ data class ExtractionRuleReading(
     val currentPrice: Int?,
     val originalPrice: Int?,
 ) {
+    fun isEmpty(): Boolean = listOfNotNull(name, imageUrl, currentPrice, originalPrice).isEmpty()
+
     companion object {
         fun from(reading: RuleProbeResult.Reading): ExtractionRuleReading =
             ExtractionRuleReading(
@@ -60,16 +62,21 @@ data class ExtractionRuleProbeResult(
     val discarded: Boolean,
     val noDiscountApplied: Boolean,
 ) {
+    // 두 층이 모두 빈손이면 선택자보다 페이지 쪽 문제다. 몰이 요청을 막아도 extractor 는 200 을 준다(dev 에서 올리브영으로 재현)
+    private val blockedHint: String get() = if (byRule.isEmpty() && byCommon.isEmpty()) " $MESSAGE_MAYBE_BLOCKED" else ""
+
     // 이 규칙을 켠 채 저장하면 안 되는 이유. 없으면 null.
     // 셋 다 "저장해도 이 페이지에서는 적용되지 않는다" 는 뜻이라, 통과시키면 켜 두고 안 도는 규칙이 남는다.
     fun rejection(): String? {
         ruleError?.let { return "extractor 가 규칙을 해석하지 못했습니다: $it" }
-        if (!matched) return "이 상품 주소는 규칙의 대상이 아닙니다 (최종 주소: ${finalUrl ?: "알 수 없음"})."
-        if (discarded) return "출처를 적은 필드를 읽지 못해 규칙이 버려집니다: ${unreadFields.joinToString(", ")}"
+        if (!matched) return "이 상품 주소는 규칙의 대상이 아닙니다 (최종 주소: ${finalUrl ?: "알 수 없음"}).$blockedHint"
+        if (discarded) return "출처를 적은 필드를 읽지 못해 규칙이 버려집니다: ${unreadFields.joinToString(", ")}.$blockedHint"
         return null
     }
 
     companion object {
+        internal const val MESSAGE_MAYBE_BLOCKED = "공통 규칙도 값을 읽지 못했습니다. 몰이 요청을 막았을 수 있으니 한 번 더 시험해 보세요."
+
         fun from(result: RuleProbeResult): ExtractionRuleProbeResult =
             ExtractionRuleProbeResult(
                 matched = result.matched,

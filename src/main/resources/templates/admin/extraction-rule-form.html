@@ -14,27 +14,34 @@
     .meta{margin-top:7px;font-size:12.5px;color:var(--muted);}
     .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px;margin-top:18px;}
     .card h2{font-size:14px;font-weight:800;margin:0 0 12px;}
-    label,.lbl{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:14px 0 6px;}
+    label,.lbl{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:16px 0 6px;}
     label:first-of-type{margin-top:0;}
-    input[type=text],textarea{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit;background:#fbfcfd;}
-    textarea{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.6;min-height:260px;resize:vertical;}
-    input:focus,textarea:focus{outline:2px solid var(--accent);border-color:var(--accent);}
-    .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6;}
-    .hint ul{margin:4px 0 0;padding-left:16px;}
-    .hint code,td code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#f1f5f9;padding:1px 5px;border-radius:4px;}
-    .check{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:13.5px;font-weight:600;color:var(--ink);}
+    input[type=text],textarea,select{width:100%;border:1px solid #e3e6ea;border-radius:10px;padding:10px 12px;font-size:14px;font-family:inherit;background:#fbfcfd;color:var(--ink);}
+    textarea,input.code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;}
+    textarea{line-height:1.6;min-height:260px;resize:vertical;}
+    input:focus,textarea:focus,select:focus{outline:2px solid var(--accent);border-color:var(--accent);}
+    .hint{font-size:12px;color:var(--muted);margin-top:6px;}
+    .modes{display:inline-flex;margin-top:18px;border:1px solid var(--border);border-radius:9px;overflow:hidden;}
+    .modes[hidden]{display:none;}
+    .modes button{border:none;background:#fff;color:var(--muted);padding:7px 14px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;}
+    .modes button[aria-pressed=true]{background:var(--ink);color:#fff;}
+    .line{display:grid;grid-template-columns:56px 112px 1fr 1fr;gap:8px;align-items:center;margin-top:8px;}
+    .line.target{grid-template-columns:176px 1fr;margin-top:0;}
+    .line .name{font-size:12.5px;font-weight:700;color:#374151;}
+    .check{display:flex;align-items:center;gap:8px;margin:14px 0 0;font-size:13.5px;font-weight:600;color:var(--ink);}
     .check input{width:16px;height:16px;}
-    .actions{margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;}
+    .actions{margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;}
     .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
     .btn.second{background:#fff;color:var(--accent);border:1px solid var(--accent);}
     .btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--border);text-decoration:none;display:inline-block;padding:11px 18px;}
     .ok{margin-top:16px;background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 12px;font-size:13px;}
     .err{margin-top:16px;background:var(--danger-soft);border:1px solid #fecaca;color:var(--danger);border-radius:8px;padding:9px 12px;font-size:13px;}
-    .warn{margin-top:12px;background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;}
-    table{width:100%;border-collapse:collapse;font-size:13px;}
+    .warn{margin-top:12px;background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn);border-radius:8px;padding:9px 12px;font-size:12.5px;}
+    table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;}
     th,td{text-align:left;padding:9px 10px;border-top:1px solid var(--border);vertical-align:top;}
     thead th{border-top:none;font-size:11.5px;color:var(--muted);font-weight:700;}
-    td.k{width:90px;font-weight:700;color:var(--muted);font-size:12px;}
+    th.k,td.k{width:84px;}
+    td.k{font-weight:700;color:var(--muted);font-size:12px;}
     td.none{color:#9aa1aa;}
     td.url{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;word-break:break-all;}
     .verdict{font-size:13px;font-weight:700;margin-bottom:10px;}
@@ -45,9 +52,11 @@
     details.rev pre{margin:8px 0 0;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11.5px;line-height:1.55;overflow-x:auto;white-space:pre-wrap;}
     .danger{margin-top:18px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:18px;}
     .danger .t{font-size:13px;font-weight:800;color:var(--danger);}
-    .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.6;}
+    .danger .d{font-size:12.5px;color:var(--muted);margin-top:7px;}
     .danger button{margin-top:14px;background:#fff;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;}
     .danger button:hover{background:var(--danger);color:#fff;}
+    .hint + .check{margin-top:18px;}
+    @media (max-width:560px){.line,.line.target{grid-template-columns:1fr;}.line .name{margin-top:8px;}}
   </style>
 </head>
 <body>
@@ -56,21 +65,17 @@
     <h1 th:text="${ruleId} ? '규칙 #' + ${ruleId} : '새 규칙'">새 규칙</h1>
     <div class="meta" th:if="${updatedAt}">마지막 수정 <b th:text="${#temporals.format(updatedAt, 'yyyy-MM-dd HH:mm')}">-</b></div>
 
-    <div class="ok" th:if="${param.saved}">저장됐습니다. 켜진 규칙은 약 1분 안에 추출에 적용됩니다.</div>
+    <div class="ok" th:if="${param.saved}">저장됐습니다. 약 1분 안에 적용됩니다.</div>
     <div class="err" th:if="${error}" th:text="${error}">에러</div>
 
-    <!-- 시험 결과. 규칙이 읽은 값과 공통 규칙이 읽은 값을 나란히 둔다 — 규칙이 다른 요소를 가리켜 엉뚱한 값을 읽으면
-         두 칸이 어긋나 보인다. -->
     <div class="card" th:if="${probe}">
       <h2>시험 추출 결과</h2>
       <div class="verdict fail" th:if="${probeRejection}" th:text="${probeRejection}">거절 사유</div>
-      <div class="verdict pass" th:unless="${probeRejection}">이 페이지에서 규칙이 적용됩니다. 아래 값이 실제 화면과 같은지 확인해 주세요.</div>
-      <div class="warn" th:if="${needsConfirmation}" style="margin:0 0 12px">
-        <b>아직 저장하지 않았습니다.</b> 이 규칙으로 읽은 값을 본 적이 없어 먼저 보여 드립니다.
-        값이 실제 화면과 같으면 아래에서 <b>저장</b>을 한 번 더 눌러 주세요.
-      </div>
+      <div class="verdict pass" th:unless="${probeRejection}">규칙이 적용됩니다.</div>
+      <div class="warn" th:if="${needsConfirmation}" style="margin:0 0 12px">아직 저장하지 않았습니다. 값이 상품 페이지와 같으면 저장을 한 번 더 눌러 주세요.</div>
+      <!-- 두 층의 값을 나란히 둔다. 선택자가 다른 요소를 가리키면 두 칸이 어긋난다 -->
       <table>
-        <thead><tr><th></th><th>규칙이 읽은 값</th><th>공통 규칙이 읽은 값</th></tr></thead>
+        <thead><tr><th class="k"></th><th>규칙</th><th>공통 규칙</th></tr></thead>
         <tbody>
           <tr><td class="k">이름</td>
             <td th:classappend="${probe.byRule.name != null} ? '' : 'none'" th:text="${probe.byRule.name} ?: '없음'">-</td>
@@ -87,53 +92,65 @@
           <tr><td class="k">최종 주소</td><td class="url" colspan="2" th:text="${probe.finalUrl} ?: '없음'">-</td></tr>
         </tbody>
       </table>
-      <div class="warn" th:if="${probe.noDiscountApplied}">
-        <b>정가 자리가 없어 "할인 없음" 으로 채워집니다.</b> 실제 추출에서는 정가가 판매가와 같은 값으로 저장됩니다.
-        이 상품이 정말 할인이 없는 상품인지 화면에서 확인해 주세요.
-      </div>
+      <div class="warn" th:if="${probe.noDiscountApplied}">정가 자리가 없어 할인 없음으로 저장됩니다 (정가 = 판매가).</div>
       <div class="warn" th:if="${!#lists.isEmpty(probe.unreadFields) and !probe.discarded}">
-        출처를 적었지만 이 페이지에서 못 읽은 필드: <b th:text="${#strings.listJoin(probe.unreadFields, ', ')}">originalPrice</b>
+        못 읽은 필드: <b th:text="${#strings.listJoin(probe.unreadFields, ', ')}">originalPrice</b>
       </div>
     </div>
 
-    <form class="card" method="post" th:action="${ruleId} ? @{/admin/extraction-rules/{id}(id=${ruleId})} : @{/admin/extraction-rules}">
+    <form id="rule-form" class="card" method="post" th:action="${ruleId} ? @{/admin/extraction-rules/{id}(id=${ruleId})} : @{/admin/extraction-rules}">
       <input type="hidden" name="id" th:if="${ruleId}" th:value="${ruleId}">
-      <!-- confirmation: 지금 화면의 시험 결과가 어느 본문·주소의 것인지. 본문을 고치면 서버가 어긋남을 알아채고 다시 보여 준다.
-           baseRevisionId: 이 폼을 열었을 때의 마지막 이력 번호. 그 뒤 다른 운영자가 고쳤으면 저장을 거절한다. -->
+      <!-- confirmation 은 화면의 시험 결과가 어느 본문·주소의 것인지, baseRevisionId 는 폼을 열었을 때의 마지막 이력 번호 -->
       <input type="hidden" name="confirmation" th:value="${confirmation}">
       <input type="hidden" name="baseRevisionId" th:value="${baseRevisionId}">
 
       <label for="label">이름</label>
-      <input id="label" name="label" type="text" maxlength="100" autocomplete="off" placeholder="예: 올리브영" th:value="${draft.label}" required>
+      <input id="label" name="label" type="text" maxlength="100" autocomplete="off" placeholder="올리브영" th:value="${draft.label}" required>
 
-      <label for="ruleJson">규칙</label>
-      <textarea id="ruleJson" name="ruleJson" spellcheck="false" required
-                placeholder='{
-  "host": "oliveyoung.co.kr",
-  "fetch": "RENDER",
-  "name": {"css": {"selector": "h3[class*=\"GoodsDetailInfo_title__\"]"}},
-  "currentPrice": {"css": {"selector": "[class^=\"GoodsDetailInfo_price__\"] span"}},
-  "originalPrice": {"css": {"selector": "[class*=\"GoodsDetailInfo_price-before\"] span"}},
-  "imageUrl": {"css": {"selector": "meta[property=\"og:image\"]", "attribute": "content"}},
-  "absentOriginalPrice": "NO_DISCOUNT"
-}' th:text="${draft.ruleJson}"></textarea>
-      <div class="hint">
-        <ul>
-          <li>대상은 <code>host</code>(서브도메인 포함) 또는 <code>marker</code>(페이지에 이 선택자가 있으면 대상) 중 하나</li>
-          <li>필드는 <code>name</code>·<code>imageUrl</code>·<code>currentPrice</code>·<code>originalPrice</code>. 적지 않은 필드는 공통 규칙이 채웁니다</li>
-          <li>출처는 <code>css</code>(selector, attribute) 또는 <code>json</code>(script, pointer)</li>
-          <li>가격 선택자는 금액 하나만 든 요소를 가리켜야 합니다. 금액이 둘 이상이면 읽지 않습니다</li>
-          <li><code>"fetch": "RENDER"</code> 는 값이 스크립트 실행 뒤에만 생기는 몰에 씁니다</li>
-          <li><code>"absentOriginalPrice": "NO_DISCOUNT"</code> 는 할인 상품이면 정가를 반드시 싣는 몰에만 씁니다</li>
-        </ul>
+      <div class="modes" id="modes" hidden>
+        <button type="button" data-mode="fields" aria-pressed="false">칸으로 입력</button>
+        <button type="button" data-mode="json" aria-pressed="true">JSON</button>
+      </div>
+      <div class="err" id="mode-error" role="alert" hidden>칸으로 옮길 수 없는 내용이 있습니다. JSON 에서 고쳐 주세요.</div>
+
+      <!-- 스크립트가 꺼져 있으면 JSON 칸만 보인다. 서버가 받는 값은 어느 쪽이든 ruleJson 하나 -->
+      <div id="pane-fields" hidden>
+        <span class="lbl">대상</span>
+        <div class="line target">
+          <select id="f-target-kind" aria-label="대상 종류">
+            <option value="host">도메인</option>
+            <option value="marker">페이지 표식</option>
+          </select>
+          <input id="f-target" class="code" type="text" autocomplete="off" spellcheck="false" aria-label="대상">
+        </div>
+        <div class="hint" id="f-target-hint"></div>
+
+        <span class="lbl">읽는 자리</span>
+        <div class="line" th:each="f : ${ {{'name','이름'},{'currentPrice','판매가'},{'originalPrice','정가'},{'imageUrl','이미지'}} }" th:data-field="${f[0]}">
+          <div class="name" th:text="${f[1]}">이름</div>
+          <select class="kind" th:attr="aria-label=${f[1]} + ' 출처'">
+            <option value="">공통 규칙</option>
+            <option value="css">CSS</option>
+            <option value="json">JSON</option>
+          </select>
+          <input class="a code" type="text" autocomplete="off" spellcheck="false" hidden>
+          <input class="b code" type="text" autocomplete="off" spellcheck="false" hidden>
+        </div>
+        <div class="hint">가격은 금액 하나만 든 요소를 가리켜야 읽힙니다.</div>
+
+        <label class="check"><input type="checkbox" id="f-render"> 스크립트 실행 뒤에 읽기</label>
+        <label class="check"><input type="checkbox" id="f-no-discount"> 정가 자리가 없으면 할인 없음으로 저장</label>
       </div>
 
-      <label for="sampleUrl">시험에 쓸 상품 주소</label>
-      <input id="sampleUrl" name="sampleUrl" type="text" maxlength="2048" autocomplete="off" placeholder="https://..." th:value="${draft.sampleUrl}" required>
-      <div class="hint">할인 상품과 할인 없는 상품을 각각 한 번씩 시험해 보는 것이 좋습니다.
-        켠 채 저장하려면 이 주소로 읽은 값을 먼저 봐야 합니다.</div>
+      <div id="pane-json">
+        <label for="ruleJson">규칙</label>
+        <textarea id="ruleJson" name="ruleJson" spellcheck="false" th:text="${draft.ruleJson}"></textarea>
+      </div>
 
-      <label class="check"><input type="checkbox" name="enabled" value="on" th:checked="${draft.enabled}"> 켜기 (끄면 추출에 적용되지 않고, 시험 없이 저장됩니다)</label>
+      <label for="sampleUrl">시험할 상품 주소</label>
+      <input id="sampleUrl" name="sampleUrl" type="text" maxlength="2048" autocomplete="off" placeholder="https://" th:value="${draft.sampleUrl}" required>
+
+      <label class="check"><input type="checkbox" name="enabled" value="on" th:checked="${draft.enabled}"> 추출에 적용</label>
 
       <div class="actions">
         <button class="btn second" type="submit" th:formaction="@{/admin/extraction-rules/probe}">시험 추출</button>
@@ -143,7 +160,7 @@
     </form>
 
     <div class="card" th:if="${!#lists.isEmpty(revisions)}">
-      <h2>변경 이력 (최근 20건)</h2>
+      <h2>변경 이력</h2>
       <details class="rev" th:each="v : ${revisions}">
         <summary>
           <b th:text="${#temporals.format(v.createdAt, 'yyyy-MM-dd HH:mm')}">-</b>
@@ -156,12 +173,138 @@
 
     <div class="danger" th:if="${ruleId}">
       <div class="t">규칙 삭제</div>
-      <div class="d">삭제하면 이 몰의 추출이 약 1분 안에 <b>공통 규칙과 LLM</b> 으로 돌아갑니다. 본문은 이력에 남습니다.
-        잠깐 멈추려는 것이면 삭제 대신 끄고 저장해 주세요.</div>
+      <div class="d">삭제하면 이 몰은 공통 규칙과 LLM 으로 읽습니다. 잠깐 멈출 때는 적용을 끄고 저장하면 됩니다.</div>
       <form method="post" th:action="@{/admin/extraction-rules/{id}/delete(id=${ruleId})}">
-        <button type="submit">이 규칙 삭제</button>
+        <button type="submit">삭제</button>
       </form>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const FIELDS = ['name', 'currentPrice', 'originalPrice', 'imageUrl'];
+      const PLACEHOLDERS = {
+        css: ['선택자', '속성 (비우면 글자)'],
+        json: ['script 선택자', '/offers/price'],
+      };
+      const TARGETS = {
+        host: ['oliveyoung.co.kr', '서브도메인도 포함됩니다.'],
+        marker: ['meta[name="generator"][content*="imweb"]', '이 선택자가 있는 페이지가 대상입니다.'],
+      };
+      const form = document.getElementById('rule-form');
+      const json = document.getElementById('ruleJson');
+      const panes = { fields: document.getElementById('pane-fields'), json: document.getElementById('pane-json') };
+      const modes = document.getElementById('modes');
+      const modeError = document.getElementById('mode-error');
+      const targetKind = document.getElementById('f-target-kind');
+      const target = document.getElementById('f-target');
+      const render = document.getElementById('f-render');
+      const noDiscount = document.getElementById('f-no-discount');
+      const line = (field) => panes.fields.querySelector(`[data-field="${field}"]`);
+      let mode = 'json';
+
+      // 칸에 넣었다 빼도 같은 값만 받는다. 앞뒤 공백과 줄바꿈은 칸을 거치면 사라진다
+      const isText = (v) => typeof v === 'string' && v === v.trim() && !/[\r\n]/.test(v);
+      const onlyKeys = (o, keys) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).every((k) => keys.includes(k));
+
+      // 칸으로 그대로 옮길 수 있는 규칙만 받는다. 아니면 JSON 화면에 둬서 칸에 없는 내용이 저장 때 사라지지 않게 한다
+      function toFields(rule) {
+        if (!onlyKeys(rule, ['host', 'marker', 'fetch', 'absentOriginalPrice', ...FIELDS])) return null;
+        if ('host' in rule && 'marker' in rule) return null;
+        const targetValue = rule.host ?? rule.marker ?? '';
+        if (!isText(targetValue)) return null;
+        if (!['RENDER', undefined].includes(rule.fetch)) return null;
+        if (!['NO_DISCOUNT', undefined].includes(rule.absentOriginalPrice)) return null;
+        const sources = {};
+        for (const field of FIELDS) {
+          const source = rule[field];
+          if (source === undefined) { sources[field] = ['', '', '']; continue; }
+          if (!onlyKeys(source, ['css', 'json']) || Object.keys(source).length !== 1) return null;
+          if ('css' in source) {
+            const { selector = '', attribute = '' } = onlyKeys(source.css, ['selector', 'attribute']) ? source.css : { selector: null };
+            if (!isText(selector) || !isText(attribute)) return null;
+            sources[field] = ['css', selector, attribute];
+          } else {
+            const { script = '', pointer = '' } = onlyKeys(source.json, ['script', 'pointer']) ? source.json : { script: null };
+            if (!isText(script) || !isText(pointer)) return null;
+            sources[field] = ['json', script, pointer];
+          }
+        }
+        return { kind: 'marker' in rule ? 'marker' : 'host', target: targetValue, render: rule.fetch === 'RENDER', noDiscount: rule.absentOriginalPrice === 'NO_DISCOUNT', sources };
+      }
+
+      function fill(state) {
+        targetKind.value = state.kind;
+        target.value = state.target;
+        render.checked = state.render;
+        noDiscount.checked = state.noDiscount;
+        for (const field of FIELDS) {
+          const el = line(field);
+          [el.querySelector('.kind').value, el.querySelector('.a').value, el.querySelector('.b').value] = state.sources[field];
+        }
+        refresh();
+      }
+
+      function refresh() {
+        [target.placeholder, document.getElementById('f-target-hint').textContent] = TARGETS[targetKind.value];
+        for (const field of FIELDS) {
+          const el = line(field);
+          const kind = el.querySelector('.kind').value;
+          const [a, b] = [el.querySelector('.a'), el.querySelector('.b')];
+          a.hidden = b.hidden = !kind;
+          if (kind) [a.placeholder, b.placeholder] = [a.ariaLabel, b.ariaLabel] = PLACEHOLDERS[kind];
+        }
+      }
+
+      function fromFields() {
+        const rule = {};
+        if (target.value.trim() || targetKind.value === 'marker') rule[targetKind.value] = target.value.trim();
+        if (render.checked) rule.fetch = 'RENDER';
+        for (const field of FIELDS) {
+          const el = line(field);
+          const kind = el.querySelector('.kind').value;
+          const [a, b] = [el.querySelector('.a').value.trim(), el.querySelector('.b').value.trim()];
+          if (kind === 'css') rule[field] = { css: b ? { selector: a, attribute: b } : { selector: a } };
+          if (kind === 'json') rule[field] = { json: { script: a, pointer: b } };
+        }
+        if (noDiscount.checked) rule.absentOriginalPrice = 'NO_DISCOUNT';
+        return rule;
+      }
+
+      const sync = () => { if (mode === 'fields') json.value = JSON.stringify(fromFields(), null, 2); };
+
+      function parsed() {
+        if (!json.value.trim()) return toFields({});
+        try { return toFields(JSON.parse(json.value)); } catch { return null; }
+      }
+
+      function show(next) {
+        mode = next;
+        panes.fields.hidden = next !== 'fields';
+        panes.json.hidden = next !== 'json';
+        for (const button of modes.querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.mode === next));
+        try { sessionStorage.setItem('rule-editor', next); } catch { /* 저장소가 막혀 있어도 화면은 그대로 동작한다 */ }
+      }
+
+      modes.addEventListener('click', (event) => {
+        const next = event.target.dataset.mode;
+        if (!next || next === mode) return;
+        modeError.hidden = true;
+        if (next === 'json') { sync(); show('json'); return; }
+        const state = parsed();
+        if (!state) { modeError.hidden = false; return; }
+        fill(state);
+        show('fields');
+      });
+      panes.fields.addEventListener('input', () => { refresh(); sync(); });
+      form.addEventListener('submit', sync);
+
+      let preferred = null;
+      try { preferred = sessionStorage.getItem('rule-editor'); } catch { /* 위와 같음 */ }
+      const initial = parsed();
+      modes.hidden = false;
+      if (initial && preferred !== 'json') { fill(initial); show('fields'); sync(); }
+    })();
+  </script>
 </body>
 </html>

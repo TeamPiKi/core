@@ -291,6 +291,48 @@ class AdminExtractionRuleIntegrationTest : IntegrationTestSupport() {
     }
 
     @Test
+    fun `두 층이 모두 값을 읽지 못한 거절에만 몰의 차단일 수 있다는 안내가 붙는다`() {
+        val mockMvc = mockMvc()
+        val empty = ExtractionRuleReading(name = null, imageUrl = null, currentPrice = null, originalPrice = null)
+        val discarded = probeResult(discarded = true, unreadFields = listOf("currentPrice"))
+        try {
+            probe.behavior = { _, _ -> discarded.copy(byRule = empty, byCommon = empty) }
+            mockMvc
+                .perform(form("/admin/extraction-rules/probe"))
+                .andExpect(content().string(containsString(ExtractionRuleProbeResult.MESSAGE_MAYBE_BLOCKED)))
+            mockMvc
+                .perform(form("/admin/extraction-rules").param("confirmation", confirmationOf()))
+                .andExpect(content().string(containsString(ExtractionRuleProbeResult.MESSAGE_MAYBE_BLOCKED)))
+
+            probe.behavior = { _, _ -> discarded.copy(matched = false, discarded = false, byRule = empty, byCommon = empty) }
+            mockMvc
+                .perform(form("/admin/extraction-rules/probe"))
+                .andExpect(content().string(containsString(ExtractionRuleProbeResult.MESSAGE_MAYBE_BLOCKED)))
+
+            probe.behavior = { _, _ -> discarded.copy(byRule = empty) }
+            mockMvc
+                .perform(form("/admin/extraction-rules/probe"))
+                .andExpect(content().string(not(containsString(ExtractionRuleProbeResult.MESSAGE_MAYBE_BLOCKED))))
+        } finally {
+            cleanUp()
+        }
+    }
+
+    @Test
+    fun `새 규칙 화면은 네 필드의 입력 줄을 낸다`() {
+        val html =
+            mockMvc()
+                .perform(get("/admin/extraction-rules/new"))
+                .andExpect(status().isOk)
+                .andReturn()
+                .response.contentAsString
+
+        listOf("name", "currentPrice", "originalPrice", "imageUrl").forEach {
+            assertTrue(html.contains("data-field=\"$it\""), it)
+        }
+    }
+
+    @Test
     fun `읽지 못하는 입력은 extractor 를 부르기 전에 화면 에러로 돌아오고 없는 규칙은 목록으로 돌린다`() {
         val mockMvc = mockMvc()
         probe.calls.clear()

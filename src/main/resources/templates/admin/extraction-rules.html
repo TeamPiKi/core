@@ -13,7 +13,6 @@
     .head{display:flex;align-items:flex-end;gap:16px;margin-bottom:18px;}
     h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;}
     .lede{color:var(--muted);font-size:13.5px;margin:0;line-height:1.65;}
-    .lede ul{margin:6px 0 0;padding-left:18px;}
     .sp{flex:1;}
     .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap;}
     .ok{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:9px 14px;font-size:13px;margin-bottom:16px;}
@@ -38,20 +37,14 @@
     <div class="head">
       <div>
         <h1>몰별 추출 규칙</h1>
-        <div class="lede">쇼핑몰마다 값이 페이지의 어느 자리에 있는지 적어 둡니다.
-          <ul>
-            <li>추출 순서는 몰별 규칙, 공통 규칙, LLM 입니다</li>
-            <li>켜진 규칙은 저장 후 약 1분 안에 추출에 적용됩니다</li>
-            <li>규칙이 값을 못 읽으면 그 요청은 공통 규칙과 LLM 으로 내려갑니다</li>
-          </ul>
-        </div>
+        <div class="lede">추출은 몰별 규칙, 공통 규칙, LLM 순서로 시도합니다.</div>
       </div>
       <div class="sp"></div>
       <a class="btn" th:href="@{/admin/extraction-rules/new}">규칙 추가</a>
     </div>
 
     <div class="ok" th:if="${param.deleted}">규칙이 삭제됐습니다.</div>
-    <div class="err" th:if="${param.missing}">해당 규칙이 없습니다. (다른 운영자가 삭제했을 수 있습니다)</div>
+    <div class="err" th:if="${param.missing}">없는 규칙입니다.</div>
 
     <div class="card">
       <div class="empty" th:if="${#lists.isEmpty(rules)}">등록된 규칙이 없습니다.</div>
