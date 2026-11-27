@@ -35,6 +35,12 @@ data class ExploreWishResponse(
     val addedAt: LocalDateTime,
     @field:Schema(description = "보는 사람이 이미 내 위시에 가진 상품인지. 비로그인이면 false", example = "false")
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     val item: ExploreItemView,
 ) {
     companion object {
@@ -43,6 +49,7 @@ data class ExploreWishResponse(
                 wishId = result.card.wishId,
                 addedAt = result.card.addedAt,
                 saved = result.saved,
+                savedWishId = result.savedWishId,
                 item = ExploreItemView.from(result.card),
             )
     }

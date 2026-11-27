@@ -40,7 +40,7 @@ class ExploreWishReader(
         return ExploreWishDetailResult(
             wish = WishResult(wish = wish, card = card, sourcePlatform = sourcePlatformResolver.resolve(card.sourceLink)),
             owner = ownerResult,
-            saved = isSavedBy(query.viewerId, itemId),
+            savedWishId = savedWishIdOf(query.viewerId, itemId),
             savedUserCount = exploreWishJpaRepository.countLiveByItemId(itemId).toInt(),
         )
     }
@@ -59,11 +59,11 @@ class ExploreWishReader(
         return card
     }
 
-    private fun isSavedBy(
+    private fun savedWishIdOf(
         viewerId: UUID?,
         itemId: Long,
-    ): Boolean {
-        viewerId ?: return false
-        return wishRepository.findByItemIdsAndUserId(listOf(itemId), viewerId).isNotEmpty()
+    ): Long? {
+        viewerId ?: return null
+        return wishRepository.findByItemIdsAndUserId(listOf(itemId), viewerId).firstOrNull()?.getId()
     }
 }

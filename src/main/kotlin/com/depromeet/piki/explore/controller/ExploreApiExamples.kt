@@ -116,6 +116,7 @@ class ExploreApiExamples(
                 wishId = 1024,
                 addedAt = LocalDateTime.of(2026, 11, 24, 0, 58, 30),
                 saved = false,
+                savedWishId = null,
                 savedUserCount = 12,
                 item =
                     WishItemResponse.ItemView(
@@ -141,6 +142,7 @@ class ExploreApiExamples(
                 wishId = 1024,
                 addedAt = LocalDateTime.of(2026, 11, 24, 0, 58, 30),
                 saved = false,
+                savedWishId = null,
                 item =
                     ExploreItemView(
                         id = 512,
@@ -160,6 +162,7 @@ class ExploreApiExamples(
                 wishId = 1023,
                 addedAt = LocalDateTime.of(2026, 11, 24, 0, 41, 2),
                 saved = true,
+                savedWishId = 1900,
                 item =
                     ExploreItemView(
                         id = 498,
@@ -196,6 +199,7 @@ class ExploreApiExamples(
                             wishId = linkWish.wishId,
                             addedAt = linkWish.addedAt,
                             saved = false,
+                            savedWishId = null,
                             item = linkWish.item,
                             friend = friend,
                         ),

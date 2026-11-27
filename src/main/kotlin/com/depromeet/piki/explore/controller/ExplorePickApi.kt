@@ -154,6 +154,9 @@ interface ExplorePickApi {
             "후보와 같은 상품을 내 위시에 담는다. 1위 카드·1위 상세·후보 목록의 하트가 모두 이 API 다.\n\n" +
                 "- 위시 담기(`POST /api/v1/explore/wishes/{wishId}/copy`)와 같은 동작이다. " +
                 "전체 위시에만 저장되고, 이미 가진 상품이면 `alreadySaved=true` 다.\n" +
+                "- **담기 취소는 따로 없다.** 카드·상세의 `savedWishId`(또는 이 응답의 `wishId`)로 위시 삭제" +
+                "(`DELETE /api/v1/wishlists/{wishId}`)를 부른다. 탐색에 오기 전부터 가진 위시도 같은 위시라 함께 지워지고, " +
+                "들어 있던 폴더에서도 빠진다. 지운 뒤에는 같은 `item.id` 의 하트를 모두 비운다. 이미 지운 위시를 다시 지워도 200 이라 남은 카드로는 알 수 없다.\n" +
                 "- 후보 목록에 보이는 후보만 담을 수 있다. 다른 토너먼트의 후보 id 를 넘기면 404 다.",
     )
     @ApiResponses(

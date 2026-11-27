@@ -23,10 +23,10 @@ class ExploreService(
         val cards = feed.page(query.cursor?.position, size + 1, blockedCounterpartsOf(query.viewerId))
         val page = cards.take(size)
         val hasNext = cards.size > size
-        val savedItemIds = savedItemIdsOf(query.viewerId, page.map { it.itemId })
+        val savedWishIds = savedWishIdsOf(query.viewerId, page.map { it.itemId })
         return ExploreRecentResult(
             updatedAt = feed.builtAt,
-            entries = page.map { ExploreWishResult(card = it, saved = it.itemId in savedItemIds) },
+            entries = page.map { ExploreWishResult(card = it, savedWishId = savedWishIds[it.itemId]) },
             nextCursor = page.lastOrNull()?.takeIf { hasNext }?.wishId?.toString(),
             hasNext = hasNext,
         )
@@ -38,10 +38,10 @@ class ExploreService(
         val picks = feed.page(query.cursor?.position, size + 1, blockedCounterpartsOf(query.viewerId))
         val page = picks.take(size)
         val hasNext = picks.size > size
-        val savedItemIds = savedItemIdsOf(query.viewerId, page.map { it.item.itemId })
+        val savedWishIds = savedWishIdsOf(query.viewerId, page.map { it.item.itemId })
         return ExplorePicksResult(
             updatedAt = feed.builtAt,
-            entries = page.map { ExplorePickEntryResult(pick = it, saved = it.item.itemId in savedItemIds) },
+            entries = page.map { ExplorePickEntryResult(pick = it, savedWishId = savedWishIds[it.item.itemId]) },
             nextCursor = page.lastOrNull()?.takeIf { hasNext }?.pickId?.toString(),
             hasNext = hasNext,
         )
@@ -52,11 +52,11 @@ class ExploreService(
         return exploreViewerReader.blockedCounterpartsOf(viewerId)
     }
 
-    private fun savedItemIdsOf(
+    private fun savedWishIdsOf(
         viewerId: UUID?,
         itemIds: List<Long>,
-    ): Set<Long> {
-        viewerId ?: return emptySet()
-        return exploreViewerReader.savedItemIdsOf(viewerId, itemIds)
+    ): Map<Long, Long> {
+        viewerId ?: return emptyMap()
+        return exploreViewerReader.savedWishIdByItemId(viewerId, itemIds)
     }
 }

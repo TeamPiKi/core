@@ -113,7 +113,7 @@ class ExploreRecentIntegrationTest : IntegrationTestSupport() {
         val owner = member()
         val viewer = member()
         val link = "https://shop.example.com/p/${UUID.randomUUID()}"
-        readyWish(viewer, link)
+        val viewersWish = readyWish(viewer, link)
         val ownersWish = readyWish(owner, link)
         val othersWish = readyWish(owner, "https://shop.example.com/p/${UUID.randomUUID()}")
         exploreFeedRefresher.refresh()
@@ -123,8 +123,10 @@ class ExploreRecentIntegrationTest : IntegrationTestSupport() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.wishes[0].wishId").value(othersWish))
             .andExpect(jsonPath("$.data.wishes[0].saved").value(false))
+            .andExpect(jsonPath("$.data.wishes[0].savedWishId").value(nullValue()))
             .andExpect(jsonPath("$.data.wishes[1].wishId").value(ownersWish))
             .andExpect(jsonPath("$.data.wishes[1].saved").value(true))
+            .andExpect(jsonPath("$.data.wishes[1].savedWishId").value(viewersWish))
     }
 
     @Test

@@ -46,6 +46,12 @@ data class ExploreFriendWishResponse(
     val addedAt: LocalDateTime,
     @field:Schema(description = "내가 이미 내 위시에 가진 상품인지", example = "false")
     val saved: Boolean,
+    @field:Schema(
+        description = "보는 사람이 이 상품을 담은 내 위시의 id. 채워진 하트를 다시 누르면 이 id 로 위시 삭제(DELETE /api/v1/wishlists/{wishId})를 부른다. saved 가 false 면 null",
+        example = "1900",
+        nullable = true,
+    )
+    val savedWishId: Long?,
     val item: ExploreItemView,
     @field:Schema(description = "이 위시를 담은 친구")
     val friend: ExploreFriendView,
@@ -56,6 +62,7 @@ data class ExploreFriendWishResponse(
                 wishId = result.card.wishId,
                 addedAt = result.card.addedAt,
                 saved = result.saved,
+                savedWishId = result.savedWishId,
                 item = ExploreItemView.from(result.card),
                 friend = ExploreFriendView.from(result.friend),
             )

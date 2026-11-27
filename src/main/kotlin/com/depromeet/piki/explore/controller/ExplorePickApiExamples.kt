@@ -122,6 +122,7 @@ class ExplorePickApiExamples(
                 candidateId = 4096,
                 pickedAt = LocalDateTime.of(2026, 11, 27, 0, 58, 30),
                 saved = false,
+                savedWishId = null,
                 tournament = tournament,
                 item = winnerItem,
             )
@@ -141,6 +142,7 @@ class ExplorePickApiExamples(
                 candidateId = 4096,
                 pickedAt = LocalDateTime.of(2026, 11, 27, 0, 58, 30),
                 saved = false,
+                savedWishId = null,
                 savedUserCount = 3,
                 item = winnerItem,
                 picker = picker,
@@ -159,8 +161,8 @@ class ExplorePickApiExamples(
                 tournament = tournament,
                 candidates =
                     listOf(
-                        ExploreCandidateResponse(candidateId = 4096, isPick = true, saved = false, item = winnerItem),
-                        ExploreCandidateResponse(candidateId = 4097, isPick = false, saved = true, item = runnerUpItem),
+                        ExploreCandidateResponse(candidateId = 4096, isPick = true, saved = false, savedWishId = null, item = winnerItem),
+                        ExploreCandidateResponse(candidateId = 4097, isPick = false, saved = true, savedWishId = 1900, item = runnerUpItem),
                     ),
             )
     }

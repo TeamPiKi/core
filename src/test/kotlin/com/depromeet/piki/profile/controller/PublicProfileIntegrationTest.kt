@@ -13,7 +13,9 @@ import com.depromeet.piki.user.domain.UserErrorCode
 import com.depromeet.piki.wishlist.service.WishPersistenceService
 import com.depromeet.piki.wishlist.service.dto.RegisterWishFromUrlCommand
 import jakarta.persistence.EntityManager
+import org.hamcrest.Matchers.contains
 import org.hamcrest.Matchers.hasSize
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -22,6 +24,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -231,7 +234,7 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
         val saved = readyWish(owner)
         putWish(owner, folderId, saved)
         putWish(owner, folderId, readyWish(owner))
-        mockMvc.perform(post("/api/v1/explore/wishes/$saved/copy").by(viewer)).andExpect(status().isOk)
+        val viewersWish = copy(viewer, saved)
 
         mockMvc
             .perform(get("/api/v1/profiles/$owner/folders/$folderId").by(viewer))
@@ -239,11 +242,38 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             .andExpect(jsonPath("$.data.wishes", hasSize<Any>(2)))
             .andExpect(jsonPath("$.data.wishes[?(@.wishId == $saved)].saved").value(true))
             .andExpect(jsonPath("$.data.wishes[?(@.wishId != $saved)].saved").value(false))
+            .andExpect(jsonPath("$.data.wishes[?(@.wishId == $saved)].savedWishId").value(contains(viewersWish.toInt())))
+            .andExpect(jsonPath("$.data.wishes[?(@.wishId != $saved)].savedWishId").value(contains(nullValue())))
         // 비로그인은 담은 상품이 없다
         mockMvc
             .perform(get("/api/v1/profiles/$owner/folders/$folderId"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.data.wishes[?(@.wishId == $saved)].saved").value(false))
+    }
+
+    // 탐색 전부터 가진 위시와 탐색에서 담은 위시는 같은 위시 하나라, 취소가 곧 그 위시 삭제다
+    @Test
+    fun `하트를 savedWishId 로 취소하면 그 위시가 내 폴더에서도 빠진다`() {
+        val mockMvc = mockMvc()
+        val viewer = member()
+        val owner = member()
+        val ownersFolder = createFolder(owner, "주인 폴더")
+        val ownersWish = readyWish(owner)
+        putWish(owner, ownersFolder, ownersWish)
+        val viewersWish = copy(viewer, ownersWish)
+        val viewersFolder = createFolder(viewer, "내 폴더")
+        putWish(viewer, viewersFolder, viewersWish)
+
+        mockMvc.perform(delete("/api/v1/wishlists/$viewersWish").by(viewer)).andExpect(status().isOk)
+
+        mockMvc
+            .perform(get("/api/v1/profiles/$owner/folders/$ownersFolder").by(viewer))
+            .andExpect(jsonPath("$.data.wishes[0].saved").value(false))
+            .andExpect(jsonPath("$.data.wishes[0].savedWishId").value(nullValue()))
+        mockMvc
+            .perform(get("/api/v1/profiles/$viewer/folders/$viewersFolder").by(viewer))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.wishes", hasSize<Any>(0)))
     }
 
     // 볼 수 없는 네 가지 이유가 모두 같은 404 여야 한다
@@ -333,6 +363,23 @@ class PublicProfileIntegrationTest : IntegrationTestSupport() {
             ProductSnapshot(name = "상품", price = 10_000, currency = "KRW", imageUrl = "https://img.example.com/a.png"),
         )
         return result.wish.getId()
+    }
+
+    private fun copy(
+        userId: UUID,
+        wishId: Long,
+    ): Long {
+        val response =
+            mockMvc()
+                .perform(post("/api/v1/explore/wishes/$wishId/copy").by(userId))
+                .andExpect(status().isOk)
+                .andReturn()
+                .response.contentAsString
+        return objectMapper
+            .readTree(response)
+            .path("data")
+            .path("wishId")
+            .asLong()
     }
 
     private fun createFolder(

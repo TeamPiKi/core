@@ -26,5 +26,7 @@ data class ExploreRecentResult(
 
 data class ExploreWishResult(
     val card: ExploreCard,
-    val saved: Boolean,
-)
+    val savedWishId: Long?,
+) {
+    val saved: Boolean get() = savedWishId?.let { true } ?: false
+}

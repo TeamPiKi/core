@@ -16,14 +16,13 @@ class ExploreViewerReader(
     fun blockedCounterpartsOf(viewerId: UUID): Set<UUID> = userBlockRepository.findCounterpartIds(viewerId)
 
     @Transactional(readOnly = true)
-    fun savedItemIdsOf(
+    fun savedWishIdByItemId(
         viewerId: UUID,
         itemIds: List<Long>,
-    ): Set<Long> {
-        if (itemIds.isEmpty()) return emptySet()
+    ): Map<Long, Long> {
+        if (itemIds.isEmpty()) return emptyMap()
         return wishRepository
             .findByItemIdsAndUserId(itemIds, viewerId)
-            .mapNotNull { it.itemId }
-            .toSet()
+            .associate { requireNotNull(it.itemId) to it.getId() }
     }
 }
