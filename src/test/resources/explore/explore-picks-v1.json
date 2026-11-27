@@ -1,0 +1,43 @@
+{
+  "builtAt": "2026-11-27T10:00:00",
+  "picks": [
+    {
+      "pickId": 2048,
+      "pickerId": "3f2b8c1e-5d47-4a9b-8e21-6c0d9f7a1b23",
+      "tournamentId": 301,
+      "tournamentName": "겨울 패딩 뭐 사지",
+      "candidateId": 4096,
+      "pickedAt": "2026-11-27T09:58:30",
+      "item": {
+        "itemId": 512,
+        "name": "숏 패딩 자켓",
+        "price": 159000,
+        "originalPrice": 199000,
+        "discountRate": 20,
+        "currency": "KRW",
+        "imageUrl": "https://cdn.example.com/p/512.jpg",
+        "sourceUrl": "https://www.example-shop.com/products/12345",
+        "sourcePlatform": "29CM"
+      }
+    },
+    {
+      "pickId": 2047,
+      "pickerId": "9a7d4e02-1c3b-4f58-b6a9-2e8f0c5d7141",
+      "tournamentId": 300,
+      "tournamentName": "생일 선물",
+      "candidateId": 4090,
+      "pickedAt": "2026-11-27T09:41:02",
+      "item": {
+        "itemId": 498,
+        "name": "캔버스 토트백",
+        "price": 45000,
+        "originalPrice": null,
+        "discountRate": null,
+        "currency": null,
+        "imageUrl": "https://cdn.example.com/u/498.jpg",
+        "sourceUrl": null,
+        "sourcePlatform": null
+      }
+    }
+  ]
+}

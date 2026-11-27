@@ -1,8 +1,11 @@
 package com.depromeet.piki.explore.service
 
 import com.depromeet.piki.explore.repository.ExploreFeedStore
+import com.depromeet.piki.explore.service.dto.ExplorePickEntryResult
+import com.depromeet.piki.explore.service.dto.ExplorePicksResult
 import com.depromeet.piki.explore.service.dto.ExploreRecentResult
 import com.depromeet.piki.explore.service.dto.ExploreWishResult
+import com.depromeet.piki.explore.service.dto.GetExplorePicksQuery
 import com.depromeet.piki.explore.service.dto.GetExploreRecentQuery
 import org.springframework.stereotype.Service
 import java.util.UUID
@@ -25,6 +28,21 @@ class ExploreService(
             updatedAt = feed.builtAt,
             entries = page.map { ExploreWishResult(card = it, saved = it.itemId in savedItemIds) },
             nextCursor = page.lastOrNull()?.takeIf { hasNext }?.wishId?.toString(),
+            hasNext = hasNext,
+        )
+    }
+
+    fun getPicks(query: GetExplorePicksQuery): ExplorePicksResult {
+        val feed = exploreFeedStore.findPicks() ?: return ExplorePicksResult.EMPTY
+        val size = query.size.value
+        val picks = feed.page(query.cursor?.position, size + 1, blockedCounterpartsOf(query.viewerId))
+        val page = picks.take(size)
+        val hasNext = picks.size > size
+        val savedItemIds = savedItemIdsOf(query.viewerId, page.map { it.item.itemId })
+        return ExplorePicksResult(
+            updatedAt = feed.builtAt,
+            entries = page.map { ExplorePickEntryResult(pick = it, saved = it.item.itemId in savedItemIds) },
+            nextCursor = page.lastOrNull()?.takeIf { hasNext }?.pickId?.toString(),
             hasNext = hasNext,
         )
     }

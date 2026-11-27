@@ -1,6 +1,7 @@
 package com.depromeet.piki.explore.controller.dto
 
 import com.depromeet.piki.explore.domain.ExploreCard
+import com.depromeet.piki.explore.domain.ExploreItem
 import com.depromeet.piki.explore.service.dto.ExploreRecentResult
 import com.depromeet.piki.explore.service.dto.ExploreWishResult
 import io.swagger.v3.oas.annotations.media.Schema
@@ -84,6 +85,19 @@ data class ExploreItemView(
                 imageUrl = card.imageUrl,
                 sourceUrl = card.sourceUrl,
                 sourcePlatform = card.sourcePlatform,
+            )
+
+        fun from(item: ExploreItem): ExploreItemView =
+            ExploreItemView(
+                id = item.itemId,
+                name = item.name,
+                price = item.price,
+                originalPrice = item.originalPrice,
+                discountRate = item.discountRate,
+                currency = item.currency,
+                imageUrl = item.imageUrl,
+                sourceUrl = item.sourceUrl,
+                sourcePlatform = item.sourcePlatform,
             )
     }
 }
